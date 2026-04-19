@@ -116,15 +116,15 @@ HTML_CONTENT = """
         .mac-btn {
             width: 12px;
             height: 12px;
-            border-radius: 50%;
+            border-radius: 3px;
             cursor: pointer;
             transition: background-color 0.2s;
         }
 
-        /* 默认状态加入 75% 白色，让颜色变得更粉嫩柔和 */
-        .mac-btn.close { background-color: #FFD7D4; }
-        .mac-btn.minimize { background-color: #FFEECA; }
-        .mac-btn.maximize { background-color: #C9F1CF; }
+        /* 默认状态加入 60% 白色，让颜色变得更粉嫩柔和 */
+        .mac-btn.close { background-color: #FFBFBB; }
+        .mac-btn.minimize { background-color: #FFE4AB; }
+        .mac-btn.maximize { background-color: #A8E9B2; }
 
         /* hover 时恢复原本鲜艳的颜色 */
         .mac-btn.close:hover { background-color: #FF5F56; }
