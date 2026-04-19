@@ -88,12 +88,14 @@ HTML_CONTENT = """
             opacity: 0.5;
         }
         .explorer-header {
-            height: 44px;
+            height: 56px;
+            padding-top: 8px;
             display: flex;
             align-items: center;
             justify-content: flex-start;
             gap: 10px;
-            padding: 0 16px;
+            padding-left: 16px;
+            padding-right: 16px;
             font-size: 14px;
             font-weight: normal;
             border-bottom: none;
@@ -114,7 +116,12 @@ HTML_CONTENT = """
             height: 12px;
             border-radius: 50%;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: background 0.2s, filter 0.2s;
+            filter: saturate(50%);
+        }
+
+        .mac-btn:hover {
+            filter: saturate(100%);
         }
 
         .mac-btn.close { background-color: #FF5F56; }
@@ -238,11 +245,13 @@ HTML_CONTENT = """
         }
 
         .header {
-            height: 44px;
+            height: 56px;
+            padding-top: 8px;
             border-bottom: none;
             display: flex;
             align-items: center;
-            padding: 0 20px;
+            padding-left: 20px;
+            padding-right: 20px;
             font-size: 14px;
             font-weight: 600;
             background: var(--bg-color);
@@ -530,11 +539,11 @@ HTML_CONTENT = """
 <body>
 
     <div class="file-explorer" id="file-explorer">
-        <div class="explorer-header">
+        <div class="explorer-header pywebview-drag-region" ondblclick="maximizeWindow()">
             <div class="mac-buttons">
-                <div class="mac-btn close" onclick="closeWindow()" title="关闭"></div>
-                <div class="mac-btn minimize" onclick="minimizeWindow()" title="最小化"></div>
-                <div class="mac-btn maximize" onclick="maximizeWindow()" title="最大化"></div>
+                <div class="mac-btn close" onclick="closeWindow(event)" title="关闭"></div>
+                <div class="mac-btn minimize" onclick="minimizeWindow(event)" title="最小化"></div>
+                <div class="mac-btn maximize" onclick="maximizeWindow(event)" title="最大化"></div>
             </div>
             <button class="btn-icon" onclick="collapseAllExplorer()" title="收起全部" id="btn-collapse">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
@@ -550,7 +559,7 @@ HTML_CONTENT = """
     </div>
 
     <div class="main-area">
-        <div class="header">
+        <div class="header pywebview-drag-region" ondblclick="maximizeWindow()">
             <span id="current-agent-name"></span>
             <div class="header-actions">
                 <button class="btn-icon" id="btn-continuous" onclick="toggleContinuous()" title="开启持续对话">
@@ -1376,15 +1385,18 @@ HTML_CONTENT = """
             pywebview.api.open_settings_window();
         }
 
-        function closeWindow() {
+        function closeWindow(event) {
+            if (event) event.stopPropagation();
             pywebview.api.close_window();
         }
 
-        function minimizeWindow() {
+        function minimizeWindow(event) {
+            if (event) event.stopPropagation();
             pywebview.api.minimize_window();
         }
 
-        function maximizeWindow() {
+        function maximizeWindow(event) {
+            if (event) event.stopPropagation();
             pywebview.api.maximize_window();
         }
 
@@ -1514,6 +1526,7 @@ class MainApi:
         self.app = app
         self.window = window
         self.manager = app._agent_manager
+        self.is_maximized = False
 
     def get_config(self):
         from .icons import AGENT_ICONS
@@ -1603,7 +1616,15 @@ class MainApi:
         self.window.minimize()
 
     def maximize_window(self):
-        self.window.toggle_fullscreen()
+        try:
+            if self.is_maximized:
+                self.window.restore()
+                self.is_maximized = False
+            else:
+                self.window.maximize()
+                self.is_maximized = True
+        except:
+            pass
 
     def toggle_silent_mode(self):
         if self.app._silent_mode.is_set():
@@ -1857,7 +1878,7 @@ def create_tray(window):
         logging.getLogger("across_agents_assistant").error(f"Failed to initialize tray: {e}")
 
 def start_main_ui(app):
-    window = webview.create_window('', html=HTML_CONTENT, width=1200, height=800, text_select=True, frameless=True, transparent=True)
+    window = webview.create_window('', html=HTML_CONTENT, width=1200, height=800, text_select=True, frameless=True, transparent=True, easy_drag=False)
     window.voice_app = app  # Attach to window for tray access
     api = MainApi(app, window)
     window.expose(api.get_config, api.get_ui_state, api.set_active, api.detect_or_config, api.send_text_message, api.send_structured_message, api.open_settings_window, api.close_window, api.minimize_window, api.maximize_window, api.toggle_silent_mode, api.toggle_continuous, api.trigger_single_turn, api.list_directory, api.reveal_in_finder, api.rename_file, api.delete_file)
