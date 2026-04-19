@@ -34,3 +34,5 @@ models/whisper-small/*.bin
 models/whisper-small/*.json
 models/whisper-small/*.txt
 models/whisper-small/.cache/
+
+.trae/
