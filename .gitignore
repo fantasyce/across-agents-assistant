@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Logs
+logs/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Mac specific
+.DS_Store
+*.DS_Store
+.AppleDouble
+.LSOverride
+
+# Local config overrides
+.env
+.env.local
+
+# Large model files (should not be checked into Git directly)
+# Suggest users to download them manually or use Git LFS
+models/whisper-small/*.bin
+models/whisper-small/*.json
+models/whisper-small/*.txt
+models/whisper-small/.cache/
