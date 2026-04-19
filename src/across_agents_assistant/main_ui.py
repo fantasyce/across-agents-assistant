@@ -119,6 +119,36 @@ HTML_CONTENT = """
             border-radius: 3px;
             cursor: pointer;
             transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: transparent;
+            font-size: 8px;
+            font-weight: 800;
+            line-height: 1;
+        }
+        
+        .mac-btn svg {
+            width: 8px;
+            height: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            stroke: rgba(0, 0, 0, 0.55);
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            fill: none;
+        }
+
+        .mac-btn.maximize svg {
+            fill: rgba(0, 0, 0, 0.55);
+            stroke: none;
+            width: 7px;
+            height: 7px;
+        }
+
+        .mac-buttons:hover .mac-btn svg {
+            opacity: 1;
         }
 
         /* 默认状态加入 60% 白色，让颜色变得更粉嫩柔和 */
@@ -541,9 +571,18 @@ HTML_CONTENT = """
     <div class="file-explorer" id="file-explorer">
         <div class="explorer-header pywebview-drag-region" ondblclick="maximizeWindow()">
             <div class="mac-buttons">
-                <div class="mac-btn close" onclick="closeWindow(event)" title="关闭"></div>
-                <div class="mac-btn minimize" onclick="minimizeWindow(event)" title="最小化"></div>
-                <div class="mac-btn maximize" onclick="maximizeWindow(event)" title="最大化"></div>
+                <div class="mac-btn close" onclick="closeWindow(event)" title="关闭">
+                    <svg viewBox="0 0 10 10"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+                </div>
+                <div class="mac-btn minimize" onclick="minimizeWindow(event)" title="最小化">
+                    <svg viewBox="0 0 10 10"><line x1="1.5" y1="5" x2="8.5" y2="5"/></svg>
+                </div>
+                <div class="mac-btn maximize" onclick="maximizeWindow(event)" title="最大化">
+                    <svg viewBox="0 0 10 10">
+                        <polygon points="2.5,4.5 2.5,2.5 4.5,2.5"/>
+                        <polygon points="7.5,5.5 7.5,7.5 5.5,7.5"/>
+                    </svg>
+                </div>
             </div>
             <button class="btn-icon" onclick="collapseAllExplorer()" title="收起全部" id="btn-collapse">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
