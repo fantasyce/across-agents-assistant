@@ -101,6 +101,8 @@ HTML_CONTENT = """
             border-bottom: none;
             flex-shrink: 0;
             -webkit-app-region: drag;
+            -webkit-user-select: none;
+            user-select: none;
         }
         
         .mac-buttons {
@@ -119,10 +121,10 @@ HTML_CONTENT = """
             transition: background-color 0.2s;
         }
 
-        /* 默认状态加入 50% 白色，让颜色变得粉嫩柔和 */
-        .mac-btn.close { background-color: #FFAFAA; }
-        .mac-btn.minimize { background-color: #FFDE96; }
-        .mac-btn.maximize { background-color: #93E49F; }
+        /* 默认状态加入 75% 白色，让颜色变得更粉嫩柔和 */
+        .mac-btn.close { background-color: #FFD7D4; }
+        .mac-btn.minimize { background-color: #FFEECA; }
+        .mac-btn.maximize { background-color: #C9F1CF; }
 
         /* hover 时恢复原本鲜艳的颜色 */
         .mac-btn.close:hover { background-color: #FF5F56; }
@@ -256,6 +258,8 @@ HTML_CONTENT = """
             z-index: 5;
             justify-content: space-between;
             -webkit-app-region: drag;
+            -webkit-user-select: none;
+            user-select: none;
         }
         
         .header-actions {
