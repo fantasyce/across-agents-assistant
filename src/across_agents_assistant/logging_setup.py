@@ -9,7 +9,7 @@ def setup_logger(log_dir: Path, log_name: str, debug: bool = True) -> logging.Lo
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / log_name
 
-    logger = logging.getLogger("multi_agents_assistant")
+    logger = logging.getLogger("across_agents_assistant")
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
     logger.handlers.clear()
 

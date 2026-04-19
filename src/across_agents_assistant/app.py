@@ -28,7 +28,7 @@ class AppState:
             self.active_session_ids = {}
 
 
-class MultiAgentsAssistantApp:
+class AcrossAgentsAssistantApp:
     def __init__(self, project_root: Path, config: AppConfig):
         self._project_root = project_root
         self._config = config
@@ -51,7 +51,7 @@ class MultiAgentsAssistantApp:
 
         self._agent_manager = AgentManager()
         self._openclaw = OpenClawClient(manager=self._agent_manager)
-        self._tts = TTSService(temp_dir=Path("/tmp/multi-agents-assistant"))
+        self._tts = TTSService(temp_dir=Path("/tmp/across-agents-assistant"))
         
         self.on_message_callback = None  # To send messages to UI
         
@@ -91,7 +91,7 @@ class MultiAgentsAssistantApp:
 
     def run(self):
         self._logger.info("=" * 50)
-        self._logger.info("multi-agents-assistant")
+        self._logger.info("across-agents-assistant")
         self._logger.info(f"  - 唤醒词: {self._config.wake_word}")
         self._logger.info("  - 退出词: 再见 / 拜拜 / 退出 等")
         self._logger.info("=" * 50)

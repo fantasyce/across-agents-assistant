@@ -8,10 +8,10 @@ _menubar_controller = None
 
 import objc
 
-from .app import MultiAgentsAssistantApp
+from .app import AcrossAgentsAssistantApp
 
 class MenuBarController(NSObject):
-    def initWithApp_(self, app: MultiAgentsAssistantApp):
+    def initWithApp_(self, app: AcrossAgentsAssistantApp):
         self = objc.super(MenuBarController, self).init()
         if self is None:
             return self
@@ -117,7 +117,7 @@ class MenuBarController(NSObject):
 
     def quit_(self, _):
         import logging
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         logger.info("👋 用户点击了退出菜单，准备结束进程...")
         
         # Perform graceful shutdown of all threads, models and streams
@@ -126,7 +126,7 @@ class MenuBarController(NSObject):
         # Finally terminate the NSApplication loop
         NSApplication.sharedApplication().terminate_(None)
 
-def run_menubar(app: MultiAgentsAssistantApp):
+def run_menubar(app: AcrossAgentsAssistantApp):
     from AppKit import NSApplication, NSApplicationActivationPolicyRegular
     from PyObjCTools import AppHelper
     

@@ -38,7 +38,7 @@ class SpeechClient:
     def connect(self) -> bool:
         import sys
         import os
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         if self._connected:
             return True
         logger.info("⏳ 正在加载本地语音识别模型 (Faster-Whisper)...")
@@ -74,7 +74,7 @@ class SpeechClient:
 
     def close(self):
         import logging
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         logger.info("🧹 正在关闭音频流并释放模型资源...")
         if self._stream:
             try:
@@ -101,7 +101,7 @@ class SpeechClient:
 
     def start(self) -> bool:
         import sounddevice as sd
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         if not self._connected:
             self.connect()
 
@@ -176,11 +176,11 @@ class SpeechClient:
             text = "".join(segment.text for segment in segments)
             return text.strip()
         except Exception as e:
-            logging.getLogger("multi_agents_assistant").error(f"Transcription error: {e}")
+            logging.getLogger("across_agents_assistant").error(f"Transcription error: {e}")
             return ""
 
     def listen(self, timeout: float = 10.0, stop_condition: Optional[Callable[[], bool]] = None) -> List[SpeechResult]:
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         if not self._is_recording:
             self.start()
 
@@ -285,7 +285,7 @@ class SpeechClient:
         return results
 
     def listen_continuous(self, callback: Callable[[SpeechResult], None], stop_condition: Callable[[], bool]):
-        logger = logging.getLogger("multi_agents_assistant")
+        logger = logging.getLogger("across_agents_assistant")
         if not self._is_recording:
             return
 

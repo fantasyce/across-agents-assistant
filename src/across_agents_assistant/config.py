@@ -15,24 +15,24 @@ class AppConfig:
     session_timeout_sec: int = 120
     control_double_tap_ms: int = 400
     log_dir: str = "logs"
-    log_file: str = "multi-agents-assistant.log"
+    log_file: str = "across-agents-assistant.log"
 
 
 def load_config(project_root: Path) -> AppConfig:
     speechcli_app_default = str(project_root / "speech_cli" / "SpeechCLI_fixed.app")
 
-    speechcli_app_path = os.environ.get("MULTI_AGENTS_ASSISTANT_SPEECHCLI_APP") or speechcli_app_default
-    speech_socket_path = os.environ.get("MULTI_AGENTS_ASSISTANT_SPEECH_SOCKET") or "/tmp/speech_cli.sock"
-    openclaw_agent = os.environ.get("MULTI_AGENTS_ASSISTANT_OPENCLAW_AGENT") or "main"
-    wake_word = os.environ.get("MULTI_AGENTS_ASSISTANT_WAKE_WORD") or "小落小落"
-    realtime_enabled_default = (os.environ.get("MULTI_AGENTS_ASSISTANT_REALTIME_ENABLED") or "1").lower() in (
+    speechcli_app_path = os.environ.get("ACROSS_AGENTS_ASSISTANT_SPEECHCLI_APP") or speechcli_app_default
+    speech_socket_path = os.environ.get("ACROSS_AGENTS_ASSISTANT_SPEECH_SOCKET") or "/tmp/speech_cli.sock"
+    openclaw_agent = os.environ.get("ACROSS_AGENTS_ASSISTANT_OPENCLAW_AGENT") or "main"
+    wake_word = os.environ.get("ACROSS_AGENTS_ASSISTANT_WAKE_WORD") or "小落小落"
+    realtime_enabled_default = (os.environ.get("ACROSS_AGENTS_ASSISTANT_REALTIME_ENABLED") or "1").lower() in (
         "1",
         "true",
         "yes",
     )
 
-    session_timeout_sec = int(os.environ.get("MULTI_AGENTS_ASSISTANT_SESSION_TIMEOUT_SEC") or "120")
-    control_double_tap_ms = int(os.environ.get("MULTI_AGENTS_ASSISTANT_CONTROL_DOUBLE_TAP_MS") or "400")
+    session_timeout_sec = int(os.environ.get("ACROSS_AGENTS_ASSISTANT_SESSION_TIMEOUT_SEC") or "120")
+    control_double_tap_ms = int(os.environ.get("ACROSS_AGENTS_ASSISTANT_CONTROL_DOUBLE_TAP_MS") or "400")
 
     return AppConfig(
         speech_socket_path=speech_socket_path,

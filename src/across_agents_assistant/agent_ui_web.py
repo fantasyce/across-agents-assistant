@@ -10,7 +10,7 @@ HTML_CONTENT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Agents Assistant</title>
+    <title>Across-Agents Assistant</title>
     <style>
         :root {
             --bg-color: #f5f5f7;
@@ -662,7 +662,7 @@ def show_agent_ui():
     
     # Create window
     window = webview.create_window(
-        'Multi-Agents Assistant - 智能体配置', 
+        'Across-Agents Assistant - 智能体配置', 
         html=HTML_CONTENT,
         width=600, 
         height=650,

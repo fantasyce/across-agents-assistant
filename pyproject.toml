@@ -1,5 +1,5 @@
 [project]
-name = "multi-agents-assistant"
+name = "across-agents-assistant"
 version = "0.1.0"
 description = "macOS voice assistant based on SpeechCLI + OpenClaw + interruptible TTS"
 requires-python = ">=3.10"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-multi-agents-assistant = "multi_agents_assistant.cli:main"
+across-agents-assistant = "across_agents_assistant.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

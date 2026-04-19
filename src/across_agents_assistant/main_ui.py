@@ -12,7 +12,7 @@ HTML_CONTENT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Agents Assistant</title>
+    <title>Across-Agents Assistant</title>
     <style>
         :root {
             --bg-color: #f9f9f9;
@@ -282,7 +282,7 @@ HTML_CONTENT = """
 
     <div class="main-area">
         <div class="header">
-            <span id="current-agent-name">Multi-Agents Assistant</span>
+            <span id="current-agent-name">Across-Agents Assistant</span>
             <div class="header-actions">
                 <button class="btn-icon" id="btn-continuous" onclick="toggleContinuous()" title="开启持续对话">👄</button>
                 <button class="btn-icon" id="btn-speak" onclick="triggerSingleTurn()" title="单次对话 (点击说话)">🎙️</button>
@@ -648,7 +648,7 @@ def check_mic_permission() -> bool:
                 import sys
                 import os
                 import logging
-                logging.getLogger("multi_agents_assistant").info("Microphone permission granted. Restarting to apply...")
+                logging.getLogger("across_agents_assistant").info("Microphone permission granted. Restarting to apply...")
                 subprocess.Popen([sys.executable] + sys.argv[1:])
                 os._exit(0)
                 
@@ -656,7 +656,7 @@ def check_mic_permission() -> bool:
         return True
     except Exception as e:
         import logging
-        logging.getLogger("multi_agents_assistant").error(f"Permission check failed: {e}")
+        logging.getLogger("across_agents_assistant").error(f"Permission check failed: {e}")
         return True
 
 class MainApi:
@@ -803,7 +803,7 @@ try:
                         img.setTemplate_(True) # Adapts to light/dark mode
                         statusitem.button().setImage_(img)
                     else:
-                        statusitem.button().setTitle_("MAA")
+                        statusitem.button().setTitle_("AAA")
                     
                 menu = AppKit.NSMenu.alloc().init()
                 
@@ -914,7 +914,7 @@ try:
                                 item.setAction_(objc.selector(handler.quitApp_, signature=b'v@:@'))
             except Exception as e:
                 import logging
-                logging.getLogger("multi_agents_assistant").error(f"Failed to setup tray: {e}")
+                logging.getLogger("across_agents_assistant").error(f"Failed to setup tray: {e}")
 except ImportError:
     pass
 
@@ -930,10 +930,10 @@ def create_tray(window):
         _tray_globals['manager'] = manager
     except Exception as e:
         import logging
-        logging.getLogger("multi_agents_assistant").error(f"Failed to initialize tray: {e}")
+        logging.getLogger("across_agents_assistant").error(f"Failed to initialize tray: {e}")
 
 def start_main_ui(app):
-    window = webview.create_window('Multi-Agents Assistant', html=HTML_CONTENT, width=900, height=650, text_select=True)
+    window = webview.create_window('Across-Agents Assistant', html=HTML_CONTENT, width=900, height=650, text_select=True)
     window.voice_app = app  # Attach to window for tray access
     api = MainApi(app, window)
     window.expose(api.get_config, api.get_ui_state, api.set_active, api.detect_or_config, api.send_text_message, api.open_settings_window, api.toggle_silent_mode, api.toggle_continuous, api.trigger_single_turn)
@@ -956,7 +956,7 @@ def start_main_ui(app):
                 window.evaluate_js(f"addMessage('{role}', '{escaped_text}', null)")
         except Exception as e:
             import logging
-            logging.getLogger("multi_agents_assistant").error(f"UI update failed: {e}")
+            logging.getLogger("across_agents_assistant").error(f"UI update failed: {e}")
             
     app.on_message_callback = on_message
     

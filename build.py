@@ -5,11 +5,11 @@ import plistlib
 
 PyInstaller.__main__.run([
     'main.py',
-    '--name=MultiAgentsAssistant',
+    '--name=AcrossAgentsAssistant',
     '--windowed',  # Prevent console window appearing
     '--noconfirm', # Overwrite existing output
     '--clean',
-    '--add-data=src/multi_agents_assistant/icons.py:multi_agents_assistant',
+    '--add-data=src/across_agents_assistant/icons.py:across_agents_assistant',
     '--add-data=models/whisper-small:models/whisper-small',
     '--add-data=assets:assets',
     '--copy-metadata=faster_whisper',
@@ -27,7 +27,7 @@ PyInstaller.__main__.run([
     '--icon=assets/app_icon.icns',
 ])
 
-plist_path = 'dist/MultiAgentsAssistant.app/Contents/Info.plist'
+plist_path = 'dist/AcrossAgentsAssistant.app/Contents/Info.plist'
 if os.path.exists(plist_path):
     with open(plist_path, 'rb') as f:
         plist = plistlib.load(f)
@@ -37,8 +37,8 @@ if os.path.exists(plist_path):
     plist['NSAppleEventsUsageDescription'] = '助手需要辅助功能权限来监听全局快捷键。'
     
     # Change Application menu name (next to Apple Logo)
-    plist['CFBundleName'] = 'Multi-Agents Assistant'
-    plist['CFBundleDisplayName'] = 'Multi-Agents Assistant'
+    plist['CFBundleName'] = 'Across-Agents Assistant'
+    plist['CFBundleDisplayName'] = 'Across-Agents Assistant'
     
     with open(plist_path, 'wb') as f:
         plistlib.dump(plist, f)
@@ -58,6 +58,6 @@ if os.path.exists(plist_path):
 </dict>
 </plist>''')
     # Use deep signing and runtime options with library validation disabled
-    subprocess.run(['codesign', '--force', '--deep', '--options', 'runtime', '--entitlements', entitlements, '--sign', '-', 'dist/MultiAgentsAssistant.app'], check=True)
+    subprocess.run(['codesign', '--force', '--deep', '--options', 'runtime', '--entitlements', entitlements, '--sign', '-', 'dist/AcrossAgentsAssistant.app'], check=True)
     os.remove(entitlements)
     print("Re-sign complete.")

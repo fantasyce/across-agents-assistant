@@ -30,7 +30,7 @@ class UniversalAgentClient:
         except Exception as e:
             self.base_env = os.environ.copy()
             import logging
-            logging.getLogger("multi_agents_assistant").error(f"Failed to get real PATH: {e}")
+            logging.getLogger("across_agents_assistant").error(f"Failed to get real PATH: {e}")
 
     def initialize(self):
         # Kept for backward compatibility, not needed anymore
@@ -68,14 +68,14 @@ class UniversalAgentClient:
         try:
             # Set a safe cwd to avoid Claude Code triggering macOS TCC prompts for Desktop/Documents
             import os
-            workspace_dir = os.path.expanduser("~/Library/Application Support/MultiAgentsAssistant/Workspace")
+            workspace_dir = os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/Workspace")
             os.makedirs(workspace_dir, exist_ok=True)
             
             result = subprocess.run(args, env=self.base_env, capture_output=True, text=True, cwd=workspace_dir)
             elapsed = time.time() - t0
         except Exception as e:
             import logging
-            logging.getLogger("multi_agents_assistant").error(f"Failed to execute {agent_id}: {e}")
+            logging.getLogger("across_agents_assistant").error(f"Failed to execute {agent_id}: {e}")
             return OpenClawReply(
                 text=f"抱歉，处理失败。我无法连接到 {agent_id}，请检查配置是否正确。", 
                 session_id=session_id, 
@@ -90,7 +90,7 @@ class UniversalAgentClient:
             start_idx = clean.find("{")
             if start_idx == -1:
                 import logging
-                logging.getLogger("multi_agents_assistant").error(f"{agent_id} 返回了非 JSON 数据. Output: {result.stdout}\nErrors: {result.stderr}")
+                logging.getLogger("across_agents_assistant").error(f"{agent_id} 返回了非 JSON 数据. Output: {result.stdout}\nErrors: {result.stderr}")
                 return OpenClawReply(text="抱歉，大脑返回了无法解析的信息。", session_id=session_id, elapsed_sec=elapsed)
                 
             try:
@@ -124,7 +124,7 @@ class UniversalAgentClient:
                 return OpenClawReply(text=reply_text, session_id=returned_session, elapsed_sec=elapsed)
             except json.JSONDecodeError as e:
                 import logging
-                logging.getLogger("multi_agents_assistant").error(f"Failed to parse JSON: {e}")
+                logging.getLogger("across_agents_assistant").error(f"Failed to parse JSON: {e}")
                 return OpenClawReply(text="抱歉，大脑返回了格式错误的信息。", session_id=session_id, elapsed_sec=elapsed)
         else:
             # Raw output parsing (like Hermes or Claude)

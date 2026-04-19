@@ -1,4 +1,4 @@
-# Multi-Agents Assistant 🤖
+# Across-Agents Assistant 🤖
 
 一款为 macOS 打造的多智能体语音助手，常驻菜单栏，支持全局快捷键唤醒、离线语音识别 (ASR)、云端语音合成 (TTS) 以及动态切换多个 AI 核心（Agents）。
 
@@ -13,8 +13,8 @@
 ## 📦 安装与使用 (普通用户)
 
 1. 前往本仓库的 [Releases](#) 页面。
-2. 下载最新版本的 `MultiAgentsAssistant.dmg` 文件。
-3. 双击打开 `.dmg`，将 `Multi-Agents Assistant.app` 拖入 `Applications`（应用程序）文件夹。
+2. 下载最新版本的 `AcrossAgentsAssistant.dmg` 文件。
+3. 双击打开 `.dmg`，将 `Across-Agents Assistant.app` 拖入 `Applications`（应用程序）文件夹。
 4. 启动应用。首次运行时请在系统设置中授予**麦克风权限**和**辅助功能权限**（用于全局快捷键）。
 
 ## 🛠 开发与构建 (开发者)
@@ -28,7 +28,7 @@
 ```bash
 # 克隆仓库
 git clone <your_github_repo_url>
-cd tiny-project/multi-agents-assistant
+cd tiny-project/across-agents-assistant
 
 # 安装依赖
 pip install -r requirements.txt
@@ -58,14 +58,14 @@ python3 main.py ui
 
 ```bash
 # 清理并开始构建
-rm -rf build dist MultiAgentsAssistant.spec
+rm -rf build dist AcrossAgentsAssistant.spec
 python3 build.py
 
 # 构建完成后，打包 DMG
 mkdir -p dist/dmg
-cp -r dist/MultiAgentsAssistant.app dist/dmg/
+cp -r dist/AcrossAgentsAssistant.app dist/dmg/
 ln -s /Applications dist/dmg/Applications
-hdiutil create -volname "MultiAgentsAssistant" -srcfolder dist/dmg -ov -format UDZO dist/MultiAgentsAssistant.dmg
+hdiutil create -volname "AcrossAgentsAssistant" -srcfolder dist/dmg -ov -format UDZO dist/AcrossAgentsAssistant.dmg
 ```
 打包成功后，你可以在 `dist/` 目录下找到 `.app` 和 `.dmg` 文件。
 

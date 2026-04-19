@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .app import MultiAgentsAssistantApp
+from .app import AcrossAgentsAssistantApp
 from .config import load_config
 from .menubar import run_menubar
 
@@ -11,7 +11,7 @@ from .menubar import run_menubar
 def main():
     import os
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    parser = argparse.ArgumentParser(prog="multi-agents-assistant")
+    parser = argparse.ArgumentParser(prog="across-agents-assistant")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("run")
@@ -27,14 +27,14 @@ def main():
     from .logging_setup import setup_logger
     # Use a stable log directory for bundled app
     if getattr(sys, 'frozen', False):
-        log_dir = Path(os.path.expanduser("~/Library/Logs/MultiAgentsAssistant"))
+        log_dir = Path(os.path.expanduser("~/Library/Logs/AcrossAgentsAssistant"))
     else:
         log_dir = project_root / config.log_dir
         
     logger = setup_logger(log_dir, config.log_file, debug=True)
 
     if args.command == "run":
-        app = MultiAgentsAssistantApp(project_root=project_root, config=config)
+        app = AcrossAgentsAssistantApp(project_root=project_root, config=config)
         
         # Start backend worker in background
         app.start_background()
@@ -71,8 +71,8 @@ def main():
                 if not manager.is_agent_ready(manager.get_active_agent()):
                     logger.warning("用户未配置有效的智能体，继续在待配置模式下运行。")
 
-            app = MultiAgentsAssistantApp(project_root=project_root, config=config)
-            logger.info("MultiAgentsAssistantApp initialized")
+            app = AcrossAgentsAssistantApp(project_root=project_root, config=config)
+            logger.info("AcrossAgentsAssistantApp initialized")
             run_menubar(app)
         except Exception as e:
             logger.error(f"Failed to start Menubar App: {e}", exc_info=True)

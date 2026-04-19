@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-AGENTS_CONFIG_FILE = Path(os.path.expanduser("~/Library/Application Support/MultiAgentsAssistant/agents.json"))
+AGENTS_CONFIG_FILE = Path(os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/agents.json"))
 
 DEFAULT_CONFIG = {
     "active_agent": "openclaw",
