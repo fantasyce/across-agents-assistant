@@ -44,6 +44,10 @@ HTML_CONTENT = """
             }
         }
 
+        html {
+            background: transparent;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-color);
@@ -54,6 +58,7 @@ HTML_CONTENT = """
             height: 100vh;
             overflow: hidden;
             -webkit-font-smoothing: antialiased;
+            border-radius: 10px;
         }
 
         /* File Explorer (Left) */
@@ -95,6 +100,31 @@ HTML_CONTENT = """
             flex-shrink: 0;
             -webkit-app-region: drag;
         }
+        
+        .mac-buttons {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-right: 6px;
+            -webkit-app-region: no-drag;
+        }
+
+        .mac-btn {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .mac-btn.close { background-color: #FF5F56; }
+        .mac-btn.close:hover { background-color: #E0443E; }
+        
+        .mac-btn.minimize { background-color: #FFBD2E; }
+        .mac-btn.minimize:hover { background-color: #DEA125; }
+        
+        .mac-btn.maximize { background-color: #27C93F; }
+        .mac-btn.maximize:hover { background-color: #1AAB29; }
 
         .explorer-header .btn-icon {
             font-size: 16px;
@@ -501,6 +531,11 @@ HTML_CONTENT = """
 
     <div class="file-explorer" id="file-explorer">
         <div class="explorer-header">
+            <div class="mac-buttons">
+                <div class="mac-btn close" onclick="closeWindow()" title="关闭"></div>
+                <div class="mac-btn minimize" onclick="minimizeWindow()" title="最小化"></div>
+                <div class="mac-btn maximize" onclick="maximizeWindow()" title="最大化"></div>
+            </div>
             <button class="btn-icon" onclick="collapseAllExplorer()" title="收起全部" id="btn-collapse">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
             </button>
@@ -516,7 +551,7 @@ HTML_CONTENT = """
 
     <div class="main-area">
         <div class="header">
-            <span id="current-agent-name">Across-Agents Assistant</span>
+            <span id="current-agent-name"></span>
             <div class="header-actions">
                 <button class="btn-icon" id="btn-continuous" onclick="toggleContinuous()" title="开启持续对话">
                     <svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>
@@ -1341,6 +1376,18 @@ HTML_CONTENT = """
             pywebview.api.open_settings_window();
         }
 
+        function closeWindow() {
+            pywebview.api.close_window();
+        }
+
+        function minimizeWindow() {
+            pywebview.api.minimize_window();
+        }
+
+        function maximizeWindow() {
+            pywebview.api.maximize_window();
+        }
+
         async function toggleSilentMode() {
             const isSilent = await pywebview.api.toggle_silent_mode();
             const btn = document.getElementById('btn-silent');
@@ -1549,6 +1596,15 @@ class MainApi:
             main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
             subprocess.Popen([sys.executable, main_py, "ui"])
             
+    def close_window(self):
+        self.window.destroy()
+
+    def minimize_window(self):
+        self.window.minimize()
+
+    def maximize_window(self):
+        self.window.toggle_fullscreen()
+
     def toggle_silent_mode(self):
         if self.app._silent_mode.is_set():
             self.app._silent_mode.clear()
@@ -1801,10 +1857,10 @@ def create_tray(window):
         logging.getLogger("across_agents_assistant").error(f"Failed to initialize tray: {e}")
 
 def start_main_ui(app):
-    window = webview.create_window('Across-Agents Assistant', html=HTML_CONTENT, width=1200, height=800, text_select=True)
+    window = webview.create_window('', html=HTML_CONTENT, width=1200, height=800, text_select=True, frameless=True, transparent=True)
     window.voice_app = app  # Attach to window for tray access
     api = MainApi(app, window)
-    window.expose(api.get_config, api.get_ui_state, api.set_active, api.detect_or_config, api.send_text_message, api.send_structured_message, api.open_settings_window, api.toggle_silent_mode, api.toggle_continuous, api.trigger_single_turn, api.list_directory, api.reveal_in_finder, api.rename_file, api.delete_file)
+    window.expose(api.get_config, api.get_ui_state, api.set_active, api.detect_or_config, api.send_text_message, api.send_structured_message, api.open_settings_window, api.close_window, api.minimize_window, api.maximize_window, api.toggle_silent_mode, api.toggle_continuous, api.trigger_single_turn, api.list_directory, api.reveal_in_finder, api.rename_file, api.delete_file)
     
     def on_closing():
         if getattr(app, 'is_quitting', False):
