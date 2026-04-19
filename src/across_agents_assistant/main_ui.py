@@ -116,22 +116,18 @@ HTML_CONTENT = """
             height: 12px;
             border-radius: 50%;
             cursor: pointer;
-            transition: background 0.2s, filter 0.2s;
-            filter: saturate(50%);
+            transition: background-color 0.2s;
         }
 
-        .mac-btn:hover {
-            filter: saturate(100%);
-        }
+        /* 默认状态加入 50% 白色，让颜色变得粉嫩柔和 */
+        .mac-btn.close { background-color: #FFAFAA; }
+        .mac-btn.minimize { background-color: #FFDE96; }
+        .mac-btn.maximize { background-color: #93E49F; }
 
-        .mac-btn.close { background-color: #FF5F56; }
-        .mac-btn.close:hover { background-color: #E0443E; }
-        
-        .mac-btn.minimize { background-color: #FFBD2E; }
-        .mac-btn.minimize:hover { background-color: #DEA125; }
-        
-        .mac-btn.maximize { background-color: #27C93F; }
-        .mac-btn.maximize:hover { background-color: #1AAB29; }
+        /* hover 时恢复原本鲜艳的颜色 */
+        .mac-btn.close:hover { background-color: #FF5F56; }
+        .mac-btn.minimize:hover { background-color: #FFBD2E; }
+        .mac-btn.maximize:hover { background-color: #27C93F; }
 
         .explorer-header .btn-icon {
             font-size: 16px;
@@ -1616,6 +1612,23 @@ class MainApi:
         self.window.minimize()
 
     def maximize_window(self):
+        import sys
+        if sys.platform == 'darwin':
+            try:
+                import AppKit
+                from PyObjCTools import AppHelper
+                import webview.platforms.cocoa as cocoa
+                
+                i = cocoa.BrowserView.instances.get(self.window.uid)
+                if i and i.window:
+                    # Native zoom toggles between maximize and restore automatically
+                    AppHelper.callAfter(i.window.zoom_, None)
+                    return
+            except Exception as e:
+                import logging
+                logging.getLogger("across_agents_assistant").error(f"Native zoom failed: {e}")
+                
+        # Fallback for non-macOS or if native fails
         try:
             if self.is_maximized:
                 self.window.restore()
