@@ -71,16 +71,19 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
-        # Handle generic session mapping for Claude/DCC and OpenClaw fallback
+        # Handle generic session mapping for OpenClaw fallback
         if session_id and use_current:
-            # We assume custom agents like claude or dcc or hermes may accept session IDs via a standard pattern
-            # For openclaw, we append --session-id.
-            # Claude Code actually supports `--session-id <uuid>` as well!
-            if agent_id in ["openclaw", "claude", "dcc", "hermes"]:
+            if agent_id in ["openclaw", "hermes"]:
                 args.extend(["--session-id", session_id])
+            elif agent_id == "claude":
+                args.extend(["--resume", session_id])
+            # dcc's wrapper script hardcodes a new DCC_SESSION_ID every time,
+            # and passing --session-id or --resume crashes or ignores it, so we skip it.
             pass
-        elif agent_id in ["openclaw", "claude", "dcc", "hermes"] and session_id and not use_current:
+        elif agent_id in ["openclaw", "hermes"] and session_id and not use_current:
             args.extend(["--session-id", session_id])
+        elif agent_id == "claude" and session_id and not use_current:
+            args.extend(["--resume", session_id])
 
         try:
             # Check if there is a file path in the message, if so, use its directory as cwd
