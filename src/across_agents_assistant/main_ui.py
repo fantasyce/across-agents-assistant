@@ -1593,6 +1593,7 @@ class MainApi:
         path = shutil.which(agent_id)
         if not path:
             try:
+<<<<<<< HEAD
                 result = subprocess.run(
                     ["/bin/zsh", "-l", "-c", "npm config get prefix"],
                     capture_output=True, text=True
@@ -1602,6 +1603,12 @@ class MainApi:
                     potential_path = os.path.join(npm_prefix, "bin", agent_id)
                     if os.path.exists(potential_path) and os.access(potential_path, os.X_OK):
                         path = potential_path
+=======
+                result = subprocess.run(["/bin/zsh", "-l", "-c", f"which {agent_id}"], capture_output=True, text=True)
+                output = result.stdout.strip()
+                if output and "not found" not in output.lower() and os.path.exists(output):
+                    path = output
+>>>>>>> origin/main
             except Exception:
                 pass
         if not path:
@@ -1610,9 +1617,12 @@ class MainApi:
                 os.path.expanduser(f"~/.cargo/bin/{agent_id}"),
                 f"/opt/homebrew/bin/{agent_id}",
                 f"/usr/local/bin/{agent_id}",
+<<<<<<< HEAD
                 f"/usr/bin/{agent_id}",
                 f"/bin/{agent_id}",
                 f"/opt/homebrew/lib/node_modules/@didi/{agent_id}/dist/cli.mjs",
+=======
+>>>>>>> origin/main
             ]
             for cp in common_paths:
                 if os.path.exists(cp) and os.access(cp, os.X_OK):

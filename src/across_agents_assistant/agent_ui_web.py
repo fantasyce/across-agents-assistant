@@ -592,10 +592,26 @@ class Api:
         return None
 
     def detect_or_config(self, agent_id):
+        # Auto detection logic
         import shutil
         
+        # Try `which` first, which checks system PATH
         path = shutil.which(agent_id)
         
+        # If not found, try a common zsh execution to capture user aliases
+        if not path:
+            try:
+                result = subprocess.run(
+                    ["/bin/zsh", "-l", "-c", f"which {agent_id}"],
+                    capture_output=True, text=True
+                )
+                output = result.stdout.strip()
+                if output and "not found" not in output.lower() and os.path.exists(output):
+                    path = output
+            except Exception:
+                pass
+                
+        # Try npm global paths
         if not path:
             try:
                 result = subprocess.run(
@@ -610,6 +626,7 @@ class Api:
             except Exception:
                 pass
                 
+        # Also manually check common paths
         if not path:
             common_paths = [
                 os.path.expanduser(f"~/.local/bin/{agent_id}"),
@@ -631,6 +648,7 @@ class Api:
             self.manager.update_agent(agent_id, config)
             return {"success": True, "msg": f"成功检测到 {agent_id}！\n路径: {path}"}
             
+        # If auto detection fails, open file dialog manually
         self.window.evaluate_js(f"showToast('未能在环境变量中自动找到 {agent_id}。请手动选择可执行文件。')")
         file_path = self.browse_file()
         
