@@ -391,10 +391,10 @@ class AcrossAgentsAssistantApp:
 
             # 只有当前激活的 agent 的回复才会触发语音播报，避免多后台回复抢占 TTS
             if target_agent == self._agent_manager.get_active_agent():
-                if not self._silent_mode.is_set() and self._voice_mode_enabled.is_set():
+                if not self._silent_mode.is_set():
                     self._speak(reply.text)
                 else:
-                    self._logger.debug("🔇 静音模式或语音已关闭，跳过语音播报")
+                    self._logger.debug("🔇 静音模式已开启，跳过语音播报")
                     # Clear any pending TTS interrupt when skipping playback
                     self._tts_interrupt.clear()
 
@@ -405,7 +405,7 @@ class AcrossAgentsAssistantApp:
                 self.on_message_callback("agent", f"抱歉，发生了内部错误: {e}", target_agent)
             
             if target_agent == self._agent_manager.get_active_agent():
-                if not self._silent_mode.is_set() and self._voice_mode_enabled.is_set():
+                if not self._silent_mode.is_set():
                     self._speak("抱歉，我刚刚脑子卡壳了，请再说一遍。")
 
     def _speak(self, text: str):
