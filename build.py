@@ -15,6 +15,8 @@ PyInstaller.__main__.run([
     '--copy-metadata=faster_whisper',
     '--collect-data=faster_whisper',
     '--collect-all=webview',
+    '--collect-all=torchcodec',
+    '--collect-all=torchaudio',
     '--hidden-import=pynput.keyboard._darwin',
     '--hidden-import=pynput.mouse._darwin',
     '--hidden-import=ctranslate2',
