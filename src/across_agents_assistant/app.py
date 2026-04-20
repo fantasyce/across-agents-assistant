@@ -369,29 +369,14 @@ class AcrossAgentsAssistantApp:
             self._logger.debug(f"🧠 {target_agent} 请求中...")
             t0 = time.time()
             
-            client = UniversalAgentClient()
-            agent_config = self._agent_manager.get_active_agent_config() if target_agent == self._agent_manager.get_active_agent() else self._agent_manager.get_agent_config(target_agent)
-            exec_path = agent_config.get("executable_path")
-            args_tpl = agent_config.get("args_template", [])
-            out_fmt = agent_config.get("output_format", "json")
-            
-            if not exec_path or not os.path.exists(exec_path):
-                reply_text = f"[{target_agent}] 配置的执行路径无效，请在设置中检查。"
-                # Clear UI lock
-                if self.on_message_callback:
-                    self.on_message_callback("agent", reply_text, target_agent)
-                return
-            
             session_id = self._state.active_session_ids.get(target_agent)
-            reply = client.send(
-                agent_id=target_agent,
-                executable_path=exec_path,
-                args_template=args_tpl,
+            reply = self._openclaw.send(
                 message=text,
-                use_current=True,
                 session_id=session_id,
-                output_format=out_fmt
+                use_current=True,
+                target_agent=target_agent
             )
+            
             elapsed_sec = time.time() - t0
             if reply.session_id:
                 self._state.active_session_ids[target_agent] = reply.session_id
@@ -415,8 +400,13 @@ class AcrossAgentsAssistantApp:
 
         except Exception as e:
             self._logger.error(f"处理 {target_agent} 输入异常: {e}")
+            # Ensure UI lock is cleared on error
+            if self.on_message_callback:
+                self.on_message_callback("agent", f"抱歉，发生了内部错误: {e}", target_agent)
+            
             if target_agent == self._agent_manager.get_active_agent():
-                self._speak("抱歉，我刚刚脑子卡壳了，请再说一遍。")
+                if not self._silent_mode.is_set() and self._voice_mode_enabled.is_set():
+                    self._speak("抱歉，我刚刚脑子卡壳了，请再说一遍。")
 
     def _speak(self, text: str):
         # 清空之前的缓存
