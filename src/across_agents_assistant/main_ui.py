@@ -100,7 +100,6 @@ HTML_CONTENT = """
             font-weight: normal;
             border-bottom: none;
             flex-shrink: 0;
-            -webkit-app-region: drag;
             -webkit-user-select: none;
             user-select: none;
         }
@@ -110,7 +109,6 @@ HTML_CONTENT = """
             gap: 8px;
             align-items: center;
             margin-right: 6px;
-            -webkit-app-region: no-drag;
         }
 
         .mac-btn {
@@ -165,7 +163,6 @@ HTML_CONTENT = """
             font-size: 16px;
             opacity: 1;
             background: transparent;
-            -webkit-app-region: no-drag;
         }
         
         .explorer-header .btn-icon:hover {
@@ -287,7 +284,6 @@ HTML_CONTENT = """
             -webkit-backdrop-filter: blur(10px);
             z-index: 5;
             justify-content: space-between;
-            -webkit-app-region: drag;
             -webkit-user-select: none;
             user-select: none;
         }
@@ -296,7 +292,6 @@ HTML_CONTENT = """
             display: flex;
             gap: 12px;
             align-items: center;
-            -webkit-app-region: no-drag;
         }
 
         .btn-icon {
@@ -311,7 +306,6 @@ HTML_CONTENT = """
             width: 32px;
             height: 32px;
             border-radius: 6px;
-            -webkit-app-region: no-drag;
         }
         
         .btn-icon svg {
