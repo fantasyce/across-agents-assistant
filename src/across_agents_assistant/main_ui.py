@@ -943,6 +943,10 @@ HTML_CONTENT = """
         let savedRange = null;
         
         inputArea.addEventListener('keydown', (e) => {
+            // Ignore Enter key if user is typing with an IME (Input Method Editor)
+            if (e.isComposing || e.keyCode === 229) {
+                return;
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendManualMessage();
