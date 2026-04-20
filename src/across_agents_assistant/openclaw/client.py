@@ -92,14 +92,12 @@ class UniversalAgentClient:
             args.extend(["--resume", session_id])
 
         try:
-            # Check if there is a file path in the message, if so, use its directory as cwd
+            # Check if there is a file path in the message, if so, we handle it
             import os
             import re
             
             workspace_dir = os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/Workspace")
-            
-            # Very basic heuristic: if the message contains an absolute path to a file or directory
-            # try to use its directory as the workspace so the agent can access it
+            os.makedirs(workspace_dir, exist_ok=True)
             
             # First expand any ~ in the message
             # e.g., ~/Documents/service -> /Users/didi/Documents/service
@@ -108,21 +106,29 @@ class UniversalAgentClient:
             path_match = re.search(r'(/Users/[^ "\'\n]+)', expanded_message)
             if path_match:
                 potential_path = path_match.group(1).strip()
+                target_dir = None
+                
                 if os.path.exists(potential_path):
                     if os.path.isdir(potential_path):
-                        workspace_dir = potential_path
+                        target_dir = potential_path
                     else:
-                        workspace_dir = os.path.dirname(potential_path)
+                        target_dir = os.path.dirname(potential_path)
                 else:
                     # sometimes the match includes a trailing punctuation mark, try stripping it
                     potential_path = potential_path.rstrip('.,:;!?')
                     if os.path.exists(potential_path):
                         if os.path.isdir(potential_path):
-                            workspace_dir = potential_path
+                            target_dir = potential_path
                         else:
-                            workspace_dir = os.path.dirname(potential_path)
-            
-            os.makedirs(workspace_dir, exist_ok=True)
+                            target_dir = os.path.dirname(potential_path)
+                            
+                if target_dir:
+                    # For claude/dcc, changing cwd breaks their session because they scope sessions by project dir!
+                    # Instead, we must use the --add-dir flag to bypass the sandbox while keeping the session stable.
+                    if agent_id in ["claude", "dcc"]:
+                        args.extend(["--add-dir", target_dir])
+                    else:
+                        workspace_dir = target_dir
             
             result = subprocess.run(args, env=self.base_env, capture_output=True, text=True, cwd=workspace_dir)
             elapsed = time.time() - t0
