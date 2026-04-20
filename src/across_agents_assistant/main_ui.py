@@ -610,7 +610,7 @@ HTML_CONTENT = """
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                 </button>
                 <button class="btn-icon" id="btn-settings" onclick="openSettings()" title="配置智能体">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1h-.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1h.09a1.65 1.65 0 0 0 1.51-1z"></path></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                 </button>
             </div>
         </div>
@@ -662,7 +662,7 @@ HTML_CONTENT = """
             chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
             continuous: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 4 2, 10 2, 12 6 C 14 2, 20 2, 22 12"></path><path d="M 2 12 C 6 23, 18 23, 22 12"></path><path d="M 2 12 Q 12 7 22 12"></path><path d="M 2 12 Q 12 17 22 12"></path></svg>',
             continuousOff: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>',
-            settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1h-.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1h.09a1.65 1.65 0 0 0 1.51-1z"></path></svg>',
+            settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
             refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>',
             collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>',
             chatGlobal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 12 12 17 22 12"></polyline><polyline points="2 17 12 22 22 17"></polyline></svg>'
@@ -694,7 +694,18 @@ HTML_CONTENT = """
                 document.getElementById('btn-collapse').innerHTML = ICONS.collapse;
             document.getElementById('btn-refresh').innerHTML = ICONS.refresh;
             document.getElementById('btn-speak').innerHTML = ICONS.mic;
-            document.getElementById('btn-chatmode').innerHTML = ICONS.chat;
+            
+            const btnChatMode = document.getElementById('btn-chatmode');
+            if (chatMode === 'merged') {
+                btnChatMode.innerHTML = ICONS.chatGlobal;
+                btnChatMode.title = "当前: 全局对话模式 (显示所有历史)";
+                btnChatMode.classList.remove('active');
+            } else {
+                btnChatMode.innerHTML = ICONS.chat;
+                btnChatMode.title = "当前: 隔离对话模式 (仅当前智能体历史)";
+                btnChatMode.classList.add('active');
+            }
+            
             document.getElementById('btn-settings').innerHTML = ICONS.settings;
             
             const btnCont = document.getElementById('btn-continuous');
@@ -941,6 +952,21 @@ HTML_CONTENT = """
         
         // Track last saved cursor position
         let savedRange = null;
+        let messageHistory = [];
+        let historyIndex = 0;
+        let tempInput = '';
+
+        function placeCaretAtEnd(el) {
+            el.focus();
+            if (typeof window.getSelection !== "undefined" && typeof document.createRange !== "undefined") {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
         
         inputArea.addEventListener('keydown', (e) => {
             // Ignore Enter key if user is typing with an IME (Input Method Editor)
@@ -950,6 +976,35 @@ HTML_CONTENT = """
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendManualMessage();
+                return;
+            }
+            
+            if (e.key === 'ArrowUp') {
+                const isBrowsing = messageHistory.length > 0 && historyIndex < messageHistory.length && inputArea.innerHTML === messageHistory[historyIndex];
+                if (inputArea.innerText.trim() === '' || isBrowsing) {
+                    if (historyIndex > 0) {
+                        if (!isBrowsing) tempInput = inputArea.innerHTML;
+                        e.preventDefault();
+                        historyIndex--;
+                        inputArea.innerHTML = messageHistory[historyIndex];
+                        placeCaretAtEnd(inputArea);
+                    }
+                }
+            } else if (e.key === 'ArrowDown') {
+                const isBrowsing = messageHistory.length > 0 && historyIndex < messageHistory.length && inputArea.innerHTML === messageHistory[historyIndex];
+                if (isBrowsing) {
+                    if (historyIndex < messageHistory.length - 1) {
+                        e.preventDefault();
+                        historyIndex++;
+                        inputArea.innerHTML = messageHistory[historyIndex];
+                        placeCaretAtEnd(inputArea);
+                    } else if (historyIndex === messageHistory.length - 1) {
+                        e.preventDefault();
+                        historyIndex++;
+                        inputArea.innerHTML = tempInput;
+                        placeCaretAtEnd(inputArea);
+                    }
+                }
             }
         });
         
@@ -1374,6 +1429,16 @@ HTML_CONTENT = """
             // Extract the text structure to maintain the order of text and file references
             let structuredContent = [];
             
+            // Save to history
+            const htmlToSave = input.innerHTML;
+            const textToSave = input.innerText.trim();
+            if (textToSave !== '' || htmlToSave.includes('inline-file-tag')) {
+                if (messageHistory.length === 0 || messageHistory[messageHistory.length - 1] !== htmlToSave) {
+                    messageHistory.push(htmlToSave);
+                }
+                historyIndex = messageHistory.length;
+            }
+            
             // Iterate over child nodes to preserve order
             for (let node of input.childNodes) {
                 if (node.nodeType === Node.TEXT_NODE) {
@@ -1414,6 +1479,7 @@ HTML_CONTENT = """
             
             // Clear input
             input.innerHTML = '';
+            tempInput = '';
             savedRange = null;
             
             // Call Python backend with the structured content
