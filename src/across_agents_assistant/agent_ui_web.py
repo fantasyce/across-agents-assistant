@@ -349,11 +349,19 @@ HTML_CONTENT = """
             pointer-events: auto;
             border: none;
             cursor: pointer;
-            transition: transform 0.2s;
+            transition: transform 0.2s, background-color 0.2s;
         }
         
         .btn-finish:hover {
             transform: scale(1.02);
+            background-color: #CBA6F0;
+            color: white;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .btn-finish:hover {
+                background-color: #B58AE3;
+            }
         }
     </style>
 </head>
