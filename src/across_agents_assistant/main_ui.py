@@ -925,10 +925,10 @@ HTML_CONTENT = """
                 btn.title = "当前: 不显示隐藏文件";
                 btn.classList.remove('active');
             }
-            if (currentRootPath) {
-                // Refresh the whole tree to apply changes
-                refreshExplorer();
-            }
+            // Force refresh from root to apply changes globally
+            let targetContainer = document.getElementById('tree-container');
+            targetContainer.innerHTML = '';
+            loadDirectory(currentRootPath || '', targetContainer);
         }
 
         async function refreshExplorer() {
@@ -1928,8 +1928,10 @@ class MainApi:
         import os
         import logging
         logger = logging.getLogger("across_agents_assistant")
-        if not path:
+        if not path or path == "" or path == "~":
             path = os.path.expanduser("~")
+        else:
+            path = os.path.expanduser(path)
             
         logger.info(f"list_directory called for path: {path}, show_hidden: {show_hidden}")
         try:
