@@ -71,18 +71,24 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
-        # Handle generic session mapping for OpenClaw fallback
+        # Generate our own session UUID if starting a new continuous session
+        import uuid
+        is_new_session = not session_id
+        if is_new_session and use_current:
+            session_id = str(uuid.uuid4())
+
+        # Handle generic session mapping for OpenClaw/Hermes/Claude/DCC
         if session_id and use_current:
             if agent_id in ["openclaw", "hermes"]:
                 args.extend(["--session-id", session_id])
-            elif agent_id == "claude":
-                args.extend(["--resume", session_id])
-            # dcc's wrapper script hardcodes a new DCC_SESSION_ID every time,
-            # and passing --session-id or --resume crashes or ignores it, so we skip it.
-            pass
+            elif agent_id in ["claude", "dcc"]:
+                if is_new_session:
+                    args.extend(["--session-id", session_id])
+                else:
+                    args.extend(["--resume", session_id])
         elif agent_id in ["openclaw", "hermes"] and session_id and not use_current:
             args.extend(["--session-id", session_id])
-        elif agent_id == "claude" and session_id and not use_current:
+        elif agent_id in ["claude", "dcc"] and session_id and not use_current:
             args.extend(["--resume", session_id])
 
         try:
@@ -181,19 +187,15 @@ class UniversalAgentClient:
             text = clean.strip()
             
             # Clean up DCC / Claude Code verbose headers if present
-            # Also extract the session ID so it can be passed to the next turn!
             header_end_marker = "----------------------------------------"
             if "DCC by DiDi" in text or "Claude Code" in text:
                 parts = text.split(header_end_marker)
                 if len(parts) >= 3:
-                    # Try to extract the session ID from the header block BEFORE we strip it
-                    # Even if we don't strip the header from the text, we NEED to extract the session ID
-                    # so the app can cache it for the next request.
-                    session_match = re.search(r'Session:\s+([a-f0-9\-]+)', parts[1])
-                    if session_match:
-                        session_id = session_match.group(1).strip()
-                        
-                    # Now strip the header out so the UI looks clean
+                    # We do NOT extract the Session ID from the text!
+                    # DCC's wrapper generates a fake UUID that is printed here, 
+                    # but the actual Claude session is saved under the UUID we generated and passed via --session-id.
+                    
+                    # Strip the header out so the UI looks clean
                     text = header_end_marker.join(parts[2:]).strip()
 
             # Remove any prefix like "Hermes: " if needed, or just return raw
