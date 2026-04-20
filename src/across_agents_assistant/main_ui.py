@@ -355,6 +355,8 @@ HTML_CONTENT = """
             border-bottom-right-radius: 4px;
             width: auto; /* 让内容自适应宽度，不超过 100% */
             max-width: 85%;
+            margin-top: 20px;
+            margin-bottom: 20px;
         }
 
         .msg-agent {
