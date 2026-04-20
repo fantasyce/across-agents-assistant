@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -12,6 +13,16 @@ import edge_tts
 import requests
 
 from .playback import NSSoundPlayback
+
+# Ensure MOSS-TTS-Nano is accessible
+MOSS_TTS_PATH = "/Users/fanhcy/Documents/moss_tts_test/MOSS-TTS-Nano"
+if MOSS_TTS_PATH not in sys.path:
+    sys.path.insert(0, MOSS_TTS_PATH)
+
+try:
+    from onnx_tts_runtime import OnnxTtsRuntime
+except ImportError:
+    OnnxTtsRuntime = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +37,21 @@ class TTSService:
         self._temp_dir = temp_dir
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self._fallback_to_edge = False
+        
+        self._moss_runtime = None
+        if OnnxTtsRuntime is not None:
+            try:
+                self._moss_runtime = OnnxTtsRuntime(
+                    model_dir="/Users/fanhcy/Documents/moss_tts_test/models",
+                    thread_count=4,
+                    max_new_frames=500,
+                    do_sample=True,
+                    sample_mode="fixed",
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger("across_agents_assistant").error(f"Failed to initialize MOSS-TTS-Nano: {e}")
+                self._moss_runtime = None
 
     def speak_interruptible(
         self,
@@ -90,68 +116,38 @@ class TTSService:
         return SpeakResult(interrupted=interrupted, cached_text=cached, elapsed_sec=generate_elapsed)
 
     def _generate_mp3(self, text: str, mp3_path: Path, voice_edge: str):
-        if not self._fallback_to_edge:
-            api_key = self._get_minimax_api_key()
-            if api_key:
-                try:
-                    self._generate_mp3_minimax(text, mp3_path, api_key=api_key)
-                    return
-                except Exception:
-                    self._fallback_to_edge = True
-            else:
+        if not self._fallback_to_edge and self._moss_runtime is not None:
+            try:
+                self._generate_wav_moss(text, mp3_path)
+                return
+            except Exception as e:
+                import logging
+                logging.getLogger("across_agents_assistant").error(f"MOSS-TTS-Nano failed: {e}. Falling back to edge_tts.")
                 self._fallback_to_edge = True
 
         asyncio.run(self._generate_mp3_edge(text, mp3_path, voice=voice_edge))
 
-    def _get_minimax_api_key(self) -> str:
-        api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
-        if api_key:
-            return api_key
-        try:
-            import subprocess
-
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", "openclaw.minimax.api", "-w"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            key = result.stdout.strip()
-            if key:
-                return key
-        except Exception:
-            pass
-            
-        return ""
-
-    def _generate_mp3_minimax(self, text: str, mp3_path: Path, api_key: str):
-        # Update to the correct new endpoint url
-        url = "https://api.minimax.chat/v1/t2a_v2"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": "speech-2.8-hd",
-            "text": text,
-            "voice_setting": {"voice_id": "female-shaonv", "speed": 1.0, "vol": 1.0, "pitch": 0},
-            "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
-            "stream": False,
-            "output_format": "hex",
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+    def _generate_wav_moss(self, text: str, output_path: Path):
+        # We use zh_6.wav as the default voice for Nano
+        voice_path = os.path.join(MOSS_TTS_PATH, "assets", "audio", "zh_6.wav")
         
-        if response.status_code != 200:
-            raise RuntimeError(f"Minimax API Error: {response.text}")
-            
-        result_data = response.json()
-        if result_data.get("base_resp", {}).get("status_code", 0) != 0:
-            raise RuntimeError(f"Minimax Error: {result_data.get('base_resp')}")
-            
-        audio_hex = result_data.get("data", {}).get("audio", "")
-        if not audio_hex:
-            raise RuntimeError("No audio data returned")
-            
-        import binascii
-        audio_data = binascii.unhexlify(audio_hex)
-        mp3_path.write_bytes(audio_data)
+        prepared = self._moss_runtime.prepare_synthesis_text(
+            text=text,
+            voice="",
+            enable_wetext=False, # Because pynini might fail
+            enable_normalize_tts_text=True,
+        )
+        
+        self._moss_runtime.synthesize(
+            text=prepared["text"],
+            prompt_audio_path=voice_path,
+            output_audio_path=str(output_path),
+            sample_mode="fixed",
+            do_sample=True,
+            streaming=False,
+            voice_clone_max_text_tokens=75,
+            enable_wetext=False,
+        )
 
     async def _generate_mp3_edge(self, text: str, mp3_path: Path, voice: str):
         communicate = edge_tts.Communicate(text, voice)
