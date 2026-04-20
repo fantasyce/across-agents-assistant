@@ -373,6 +373,10 @@ class AcrossAgentsAssistantApp:
             elapsed_sec = time.time() - t0
             if reply.session_id:
                 self._state.active_session_ids[target_agent] = reply.session_id
+            else:
+                # If the agent explicitly returned None for session_id (e.g. session deleted), clear it!
+                if target_agent in self._state.active_session_ids:
+                    del self._state.active_session_ids[target_agent]
             self._logger.info(f"💬 {target_agent} 回复 (耗时: {elapsed_sec:.2f}s): {reply.text[:120]}".replace("\n", " "))
 
             if self.on_message_callback:

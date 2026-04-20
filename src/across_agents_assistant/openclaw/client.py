@@ -139,11 +139,26 @@ class UniversalAgentClient:
         ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
         clean = ansi_pattern.sub("", result.stdout)
         clean_err = ansi_pattern.sub("", result.stderr or "").strip()
-        if result.returncode != 0:
+        
+        # dcc sometimes returns non-zero code even when it replies correctly,
+        # but if the output is just an error, we should return it.
+        # We'll first check if there is a valid output payload.
+        is_error = result.returncode != 0
+        if is_error:
+            # Special case for claude/dcc: "No conversation found" usually goes to stdout or stderr
             msg = clean.strip() or clean_err
+            if "No conversation found" in msg:
+                # If the session was deleted or invalid, we should clear it so next time we start fresh
+                return OpenClawReply(
+                    text=f"会话已失效或未找到。请发送新消息，我将为你开启一个新的会话。\n\n(底层报错: {msg})", 
+                    session_id=None, # Clear the session ID!
+                    elapsed_sec=time.time() - t0
+                )
+            
             if not msg:
                 msg = f"{agent_id} 执行失败 (exit code: {result.returncode})"
             return OpenClawReply(text=msg, session_id=session_id, elapsed_sec=elapsed)
+        
         if (not clean or not clean.strip()) and clean_err:
             clean = clean_err
         
