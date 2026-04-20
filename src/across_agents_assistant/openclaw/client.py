@@ -100,7 +100,12 @@ class UniversalAgentClient:
             
             # Very basic heuristic: if the message contains an absolute path to a file or directory
             # try to use its directory as the workspace so the agent can access it
-            path_match = re.search(r'(/Users/[^ "\'\n]+)', message)
+            
+            # First expand any ~ in the message
+            # e.g., ~/Documents/service -> /Users/didi/Documents/service
+            expanded_message = re.sub(r'(~/[^ "\'\n]*)', lambda m: os.path.expanduser(m.group(1)), message)
+            
+            path_match = re.search(r'(/Users/[^ "\'\n]+)', expanded_message)
             if path_match:
                 potential_path = path_match.group(1).strip()
                 if os.path.exists(potential_path):
