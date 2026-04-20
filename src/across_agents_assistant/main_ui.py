@@ -606,7 +606,7 @@ HTML_CONTENT = """
                 <button class="btn-icon" id="btn-silent" onclick="toggleSilentMode()" title="静音模式">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
                 </button>
-                <button class="btn-icon active" id="btn-chatmode" onclick="toggleChatMode()" title="当前: 隔离对话模式">
+                <button class="btn-icon" id="btn-chatmode" onclick="toggleChatMode()" title="当前: 隔离对话模式">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                 </button>
                 <button class="btn-icon" id="btn-settings" onclick="openSettings()" title="配置智能体">
@@ -699,11 +699,11 @@ HTML_CONTENT = """
             if (chatMode === 'merged') {
                 btnChatMode.innerHTML = ICONS.chatGlobal;
                 btnChatMode.title = "当前: 全局对话模式 (显示所有历史)";
-                btnChatMode.classList.remove('active');
+                btnChatMode.classList.add('active');
             } else {
                 btnChatMode.innerHTML = ICONS.chat;
                 btnChatMode.title = "当前: 隔离对话模式 (仅当前智能体历史)";
-                btnChatMode.classList.add('active');
+                btnChatMode.classList.remove('active');
             }
             
             document.getElementById('btn-settings').innerHTML = ICONS.settings;
@@ -1233,12 +1233,12 @@ HTML_CONTENT = """
                 chatMode = 'isolated';
                 btn.innerHTML = ICONS.chat;
                 btn.title = "当前: 隔离对话模式 (仅当前智能体历史)";
-                btn.classList.add('active');
+                btn.classList.remove('active');
             } else {
                 chatMode = 'merged';
                 btn.innerHTML = ICONS.chatGlobal;
                 btn.title = "当前: 全局对话模式 (显示所有历史)";
-                btn.classList.remove('active');
+                btn.classList.add('active');
             }
             renderChat();
         }
