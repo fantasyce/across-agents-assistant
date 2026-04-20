@@ -71,8 +71,15 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
-        # Add session id logic only for openclaw as fallback
-        if agent_id == "openclaw" and session_id and not use_current:
+        # Handle generic session mapping for Claude/DCC and OpenClaw fallback
+        if session_id and use_current:
+            # We assume custom agents like claude or dcc or hermes may accept session IDs via a standard pattern
+            # For openclaw, we append --session-id.
+            # Claude Code actually supports `--session-id <uuid>` as well!
+            if agent_id in ["openclaw", "claude", "dcc"]:
+                args.extend(["--session-id", session_id])
+            pass
+        elif agent_id in ["openclaw", "claude", "dcc"] and session_id and not use_current:
             args.extend(["--session-id", session_id])
 
         try:
@@ -84,7 +91,7 @@ class UniversalAgentClient:
             
             # Very basic heuristic: if the message contains an absolute path to a file or directory
             # try to use its directory as the workspace so the agent can access it
-            path_match = re.search(r'(/Users/[^ \n]+)', message)
+            path_match = re.search(r'(/Users/[^ "\'\n]+)', message)
             if path_match:
                 potential_path = path_match.group(1).strip()
                 if os.path.exists(potential_path):
@@ -92,6 +99,14 @@ class UniversalAgentClient:
                         workspace_dir = potential_path
                     else:
                         workspace_dir = os.path.dirname(potential_path)
+                else:
+                    # sometimes the match includes a trailing punctuation mark, try stripping it
+                    potential_path = potential_path.rstrip('.,:;!?')
+                    if os.path.exists(potential_path):
+                        if os.path.isdir(potential_path):
+                            workspace_dir = potential_path
+                        else:
+                            workspace_dir = os.path.dirname(potential_path)
             
             os.makedirs(workspace_dir, exist_ok=True)
             
@@ -162,6 +177,23 @@ class UniversalAgentClient:
             # Raw output parsing (like Hermes or Claude)
             text = clean.strip()
             
+            # Clean up DCC / Claude Code verbose headers if present
+            # They usually start with something like "DCC by DiDi\n  ----------------------------------------\n"
+            # and end with "\n  ----------------------------------------\n\n"
+            header_end_marker = "----------------------------------------"
+            if "DCC by DiDi" in text or "Claude Code" in text:
+                parts = text.split(header_end_marker)
+                if len(parts) >= 3:
+                    # parts[0] is before the first marker, parts[1] is inside, parts[2] is after the second marker
+                    # The actual response is everything after the second marker
+                    text = header_end_marker.join(parts[2:]).strip()
+                    
+                    # Also try to extract the session ID from the header block if we don't have one
+                    if not session_id:
+                        session_match = re.search(r'Session:\s+([a-f0-9\-]+)', parts[1])
+                        if session_match:
+                            session_id = session_match.group(1).strip()
+
             # Remove any prefix like "Hermes: " if needed, or just return raw
             # For hermes, strip the trailing session_id string
             session_id_idx = text.rfind("session_id:")
