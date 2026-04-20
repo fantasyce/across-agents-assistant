@@ -368,8 +368,30 @@ class AcrossAgentsAssistantApp:
         try:
             self._logger.debug(f"🧠 {target_agent} 请求中...")
             t0 = time.time()
+            
+            client = UniversalAgentClient()
+            agent_config = self._agent_manager.get_active_agent_config() if target_agent == self._agent_manager.get_active_agent() else self._agent_manager.get_agent_config(target_agent)
+            exec_path = agent_config.get("executable_path")
+            args_tpl = agent_config.get("args_template", [])
+            out_fmt = agent_config.get("output_format", "json")
+            
+            if not exec_path or not os.path.exists(exec_path):
+                reply_text = f"[{target_agent}] 配置的执行路径无效，请在设置中检查。"
+                # Clear UI lock
+                if self.on_message_callback:
+                    self.on_message_callback("agent", reply_text, target_agent)
+                return
+            
             session_id = self._state.active_session_ids.get(target_agent)
-            reply = self._openclaw.send(text, session_id=session_id, use_current=True, target_agent=target_agent)
+            reply = client.send(
+                agent_id=target_agent,
+                executable_path=exec_path,
+                args_template=args_tpl,
+                message=text,
+                use_current=True,
+                session_id=session_id,
+                output_format=out_fmt
+            )
             elapsed_sec = time.time() - t0
             if reply.session_id:
                 self._state.active_session_ids[target_agent] = reply.session_id
