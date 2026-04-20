@@ -177,6 +177,22 @@ class UniversalAgentClient:
             # Raw output parsing (like Hermes or Claude)
             text = clean.strip()
             
+            # Clean up DCC / Claude Code verbose headers if present
+            # Also extract the session ID so it can be passed to the next turn!
+            header_end_marker = "----------------------------------------"
+            if "DCC by DiDi" in text or "Claude Code" in text:
+                parts = text.split(header_end_marker)
+                if len(parts) >= 3:
+                    # Try to extract the session ID from the header block BEFORE we strip it
+                    # Even if we don't strip the header from the text, we NEED to extract the session ID
+                    # so the app can cache it for the next request.
+                    session_match = re.search(r'Session:\s+([a-f0-9\-]+)', parts[1])
+                    if session_match:
+                        session_id = session_match.group(1).strip()
+                        
+                    # Now strip the header out so the UI looks clean
+                    text = header_end_marker.join(parts[2:]).strip()
+
             # Remove any prefix like "Hermes: " if needed, or just return raw
             # For hermes, strip the trailing session_id string
             session_id_idx = text.rfind("session_id:")
