@@ -925,33 +925,74 @@ HTML_CONTENT = """
                 btn.title = "当前: 不显示隐藏文件";
                 btn.classList.remove('active');
             }
-            // Force refresh from root to apply changes globally
-            let targetContainer = document.getElementById('tree-container');
-            targetContainer.innerHTML = '';
-            loadDirectory(currentRootPath || '', targetContainer);
+            // Force globally refresh tree while preserving expanded state
+            refreshExplorer();
+        }
+
+        async function restoreExpanded(container, expandedPaths) {
+            const wrappers = container.children;
+            for (let i = 0; i < wrappers.length; i++) {
+                const wrapper = wrappers[i];
+                if (!wrapper.classList.contains('tree-item-wrapper')) continue;
+                
+                const item = wrapper.querySelector('.tree-item');
+                if (!item) continue;
+                
+                const nameSpan = item.querySelector('.tree-item-name');
+                if (nameSpan && expandedPaths.has(nameSpan.title)) {
+                    const icon = item.querySelector('.folder-icon');
+                    const childrenContainer = wrapper.querySelector('.tree-children');
+                    
+                    if (childrenContainer && item.dataset.loaded === "false") {
+                        icon.innerHTML = ICONS.folderOpen;
+                        try {
+                            await loadDirectory(nameSpan.title, childrenContainer);
+                            item.dataset.loaded = "true";
+                            item.dataset.open = "true";
+                            childrenContainer.classList.add('open');
+                            
+                            // Recursively restore
+                            await restoreExpanded(childrenContainer, expandedPaths);
+                        } catch (err) {
+                            console.error(err);
+                            icon.innerHTML = ICONS.folder;
+                        }
+                    }
+                }
+            }
         }
 
         async function refreshExplorer() {
             const activeItem = document.querySelector('.tree-item.active-item');
-            let targetContainer = document.getElementById('tree-container');
-            let targetPath = currentRootPath;
-            
+            let activePath = null;
             if (activeItem) {
-                const isDir = activeItem.querySelector('.folder-icon') !== null;
-                if (isDir) {
-                    targetContainer = activeItem.nextElementSibling;
-                    targetPath = activeItem.querySelector('.tree-item-name').title;
-                    if (activeItem.dataset.loaded === "true") {
-                        targetContainer.innerHTML = '';
-                        await loadDirectory(targetPath, targetContainer);
+                const nameSpan = activeItem.querySelector('.tree-item-name');
+                if (nameSpan) activePath = nameSpan.title;
+            }
+
+            const expandedPaths = new Set();
+            document.querySelectorAll('#tree-container .tree-item[data-open="true"]').forEach(item => {
+                const nameSpan = item.querySelector('.tree-item-name');
+                if (nameSpan && nameSpan.title) {
+                    expandedPaths.add(nameSpan.title);
+                }
+            });
+
+            let targetContainer = document.getElementById('tree-container');
+            targetContainer.innerHTML = '';
+            
+            await loadDirectory(currentRootPath || '', targetContainer);
+            await restoreExpanded(targetContainer, expandedPaths);
+
+            if (activePath) {
+                const items = document.querySelectorAll('.tree-item-name');
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].title === activePath) {
+                        setActiveItem(items[i].parentElement);
+                        break;
                     }
-                    return;
                 }
             }
-            
-            // Fallback to refresh root
-            targetContainer.innerHTML = '';
-            await loadDirectory(targetPath, targetContainer);
         }
 
         function collapseAllExplorer() {
