@@ -76,9 +76,23 @@ class UniversalAgentClient:
             args.extend(["--session-id", session_id])
 
         try:
-            # Set a safe cwd to avoid Claude Code triggering macOS TCC prompts for Desktop/Documents
+            # Check if there is a file path in the message, if so, use its directory as cwd
             import os
+            import re
+            
             workspace_dir = os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/Workspace")
+            
+            # Very basic heuristic: if the message contains an absolute path to a file or directory
+            # try to use its directory as the workspace so the agent can access it
+            path_match = re.search(r'(/Users/[^ \n]+)', message)
+            if path_match:
+                potential_path = path_match.group(1).strip()
+                if os.path.exists(potential_path):
+                    if os.path.isdir(potential_path):
+                        workspace_dir = potential_path
+                    else:
+                        workspace_dir = os.path.dirname(potential_path)
+            
             os.makedirs(workspace_dir, exist_ok=True)
             
             result = subprocess.run(args, env=self.base_env, capture_output=True, text=True, cwd=workspace_dir)
