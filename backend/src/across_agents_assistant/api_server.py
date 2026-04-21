@@ -107,12 +107,16 @@ JSON 格式必须严格如下：
     else:
         prompt = f"{schema_str}\n\n【用户指令】\n{req.text}"
 
+    print(f"\n========== [DEBUG] 发送给大模型的 PROMPT ==========\n{prompt}\n==================================================\n")
+
     # 2. Call Agent (Real LLM Execution)
     reply = agent_client.send(
         message=prompt,
         session_id=req.session_id,
         target_agent=req.agent_id
     )
+    
+    print(f"\n========== [DEBUG] 大模型返回的 RAW TEXT ==========\n{reply.text}\n==================================================\n")
     
     # 3. Parse Intent & Trigger Real Approval Flow
     intent = ToolIntentParser.parse_intent(reply.text)
