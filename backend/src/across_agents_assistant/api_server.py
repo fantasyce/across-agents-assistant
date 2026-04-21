@@ -52,6 +52,8 @@ async def approve_tool_execution(req: ApprovalDecision):
         tool_def = registry.get_tool(req.tool_name)
         if tool_def:
             try:
+                # The tool_args coming from the Swift client will be a dict of {key: value}
+                # But since we use AnyCodableValue in Swift, simple types like Int/String should map correctly
                 result = tool_def.handler(**req.tool_args)
                 return ChatResponse(
                     text=f"✅ 工具 {req.tool_name} 执行成功！结果：\n{result}",
