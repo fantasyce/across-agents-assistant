@@ -30,9 +30,15 @@ env/
 
 # Large model files (should not be checked into Git directly)
 # Suggest users to download them manually or use Git LFS
-models/whisper-small/*.bin
-models/whisper-small/*.json
-models/whisper-small/*.txt
-models/whisper-small/.cache/
+backend/models/whisper-small/*.bin
+backend/models/whisper-small/*.json
+backend/models/whisper-small/*.txt
+backend/models/whisper-small/.cache/
 
 .trae/
+# Swift / macOS
+macOS-Client/.build/
+macOS-Client/build/
+macOS-Client/DerivedData/
+macOS-Client/*.xcodeproj/xcuserdata/
+macOS-Client/*.xcworkspace/xcuserdata/
