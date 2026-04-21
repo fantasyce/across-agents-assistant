@@ -10,46 +10,35 @@ struct ContextPack: Codable {
 class ContextEngine {
     static let shared = ContextEngine()
     
-    private var lastActiveApp: NSRunningApplication?
-    private let myBundleId = Bundle.main.bundleIdentifier ?? "com.example.AcrossAgentsAssistantClient"
+    var explicitlySavedPreviousApp: NSRunningApplication?
     
     private init() {
-        // Start listening to app deactivation events to keep track of what was active before us
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didDeactivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let self = self else { return }
-            if let deactivatedApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-                if deactivatedApp.bundleIdentifier != self.myBundleId {
-                    self.lastActiveApp = deactivatedApp
-                }
-            }
-        }
+        // We no longer rely on NSWorkspace deactivation notifications because they are asynchronous
+        // and can cause race conditions. We also don't rely on bundleIdentifier which can be nil in SPM builds.
     }
     
     func collectTier1Context() -> ContextPack {
         var pack = ContextPack()
         
-        // 1. Get Frontmost App
         let workspace = NSWorkspace.shared
         var activeApp: NSRunningApplication? = nil
         
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        
         if let frontApp = workspace.frontmostApplication {
-            if frontApp.bundleIdentifier != myBundleId {
+            if frontApp.processIdentifier != myPID {
                 activeApp = frontApp
             } else {
-                // If we are frontmost, use the app that was active right before us
-                activeApp = lastActiveApp
+                // If we are frontmost, use the app that was active right before we were summoned
+                activeApp = explicitlySavedPreviousApp
             }
         }
         
-        if let frontApp = activeApp {
-            pack.frontmost_app = frontApp.localizedName
+        if let targetApp = activeApp {
+            pack.frontmost_app = targetApp.localizedName
             
             // Get window title (Optional Tier 1)
-            pack.window_title = getWindowTitle(for: frontApp)
+            pack.window_title = getWindowTitle(for: targetApp)
         }
         
         // 3. Get Clipboard Text

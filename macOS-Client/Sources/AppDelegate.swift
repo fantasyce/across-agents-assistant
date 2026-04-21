@@ -58,6 +58,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.isVisible {
             panel.orderOut(nil)
         } else {
+            // SNAPSHOT: Before we activate and steal focus, record who the current frontmost app is
+            let myPID = ProcessInfo.processInfo.processIdentifier
+            if let currentApp = NSWorkspace.shared.frontmostApplication,
+               currentApp.processIdentifier != myPID {
+                ContextEngine.shared.explicitlySavedPreviousApp = currentApp
+            }
+            
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
