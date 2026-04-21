@@ -44,7 +44,7 @@ class TTSService:
                 self._moss_runtime = OnnxTtsRuntime(
                     model_dir="/Users/fanhcy/Documents/moss_tts_test/models",
                     thread_count=4,
-                    max_new_frames=500,
+                    max_new_frames=1000,
                     do_sample=True,
                     sample_mode="fixed",
                 )
@@ -147,7 +147,7 @@ class TTSService:
             sample_mode="fixed",
             do_sample=True,
             streaming=False,
-            voice_clone_max_text_tokens=75,
+            voice_clone_max_text_tokens=150,
             enable_wetext=False,
         )
 
