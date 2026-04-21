@@ -17,6 +17,7 @@ PyInstaller.__main__.run([
     '--collect-all=webview',
     '--collect-all=torchcodec',
     '--collect-all=torchaudio',
+    '--collect-all=soundfile',
     '--hidden-import=pynput.keyboard._darwin',
     '--hidden-import=pynput.mouse._darwin',
     '--hidden-import=ctranslate2',
