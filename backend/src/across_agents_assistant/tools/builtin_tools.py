@@ -85,3 +85,107 @@ registry.register(ToolDefinition(
     risk_level="medium",
     handler=create_note_draft
 ))
+
+def get_active_browser_url() -> str:
+    # AppleScript to get URL and Title from Google Chrome or Safari
+    applescript = '''
+    tell application "System Events"
+        set frontApp to name of first application process whose frontmost is true
+    end tell
+    
+    if frontApp is "Google Chrome" then
+        tell application "Google Chrome"
+            if (count of windows) > 0 then
+                set currentURL to URL of active tab of front window
+                set currentTitle to title of active tab of front window
+                return "Chrome | " & currentTitle & " | " & currentURL
+            else
+                return "Chrome 没有任何打开的窗口"
+            end if
+        end tell
+    else if frontApp is "Safari" then
+        tell application "Safari"
+            if (count of windows) > 0 then
+                set currentURL to URL of front document
+                set currentTitle to name of front document
+                return "Safari | " & currentTitle & " | " & currentURL
+            else
+                return "Safari 没有任何打开的窗口"
+            end if
+        end tell
+    else
+        return "当前前台应用不是 Chrome 或 Safari (" & frontApp & ")。无法获取网页URL。"
+    end if
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return f"Failed to get browser URL: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="get_active_browser_url",
+    description="Get the URL and Title of the currently active tab in Chrome or Safari. Useful for summarizing or reading web pages.",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": []
+    },
+    risk_level="low",
+    handler=get_active_browser_url
+))
+
+def toggle_system_dark_mode() -> str:
+    applescript = '''
+    tell application "System Events"
+        tell appearance preferences
+            set dark mode to not dark mode
+            return dark mode
+        end tell
+    end tell
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        is_dark = result.stdout.strip().lower() == 'true'
+        return f"系统外观已切换为: {'深色模式 (Dark Mode)' if is_dark else '浅色模式 (Light Mode)'}"
+    except subprocess.CalledProcessError as e:
+        return f"Failed to toggle dark mode: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="toggle_system_dark_mode",
+    description="Toggle the macOS system appearance between Light and Dark mode.",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": []
+    },
+    risk_level="low",
+    handler=toggle_system_dark_mode
+))
+
+def set_system_volume(level: int) -> str:
+    # Ensure level is between 0 and 100
+    level = max(0, min(100, level))
+    applescript = f'''
+    set volume output volume {level}
+    return output volume of (get volume settings)
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        return f"系统音量已成功设置为 {result.stdout.strip()}%"
+    except subprocess.CalledProcessError as e:
+        return f"Failed to set volume: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="set_system_volume",
+    description="Set the macOS system audio volume to a specific percentage (0 to 100).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "level": {"type": "integer", "description": "Volume level from 0 (mute) to 100 (max)"}
+        },
+        "required": ["level"]
+    },
+    risk_level="low",
+    handler=set_system_volume
+))

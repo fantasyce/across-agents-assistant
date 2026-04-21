@@ -120,6 +120,46 @@ async def chat_endpoint(req: ChatRequest):
                 "description": "在 macOS 备忘录中创建一条名为“会议纪要”的新笔记"
             }
         )
+        
+    # --- New Advanced Mac Tools Mocks ---
+    if "浏览器" in prompt or "网页" in prompt or "网址" in prompt:
+        return ChatResponse(
+            text="好的，我将读取你当前浏览器的活动标签页信息：",
+            session_id=req.session_id,
+            requires_approval=True,
+            approval_request={
+                "tool_name": "get_active_browser_url",
+                "risk_level": "low",
+                "tool_args": {},
+                "description": "获取当前 Chrome 或 Safari 的活动标签页网址和标题"
+            }
+        )
+        
+    if "暗" in prompt or "深色" in prompt or "浅色" in prompt or "亮" in prompt or "模式" in prompt:
+        return ChatResponse(
+            text="我将为你切换系统的外观模式：",
+            session_id=req.session_id,
+            requires_approval=True,
+            approval_request={
+                "tool_name": "toggle_system_dark_mode",
+                "risk_level": "low",
+                "tool_args": {},
+                "description": "切换 macOS 的深色/浅色外观模式"
+            }
+        )
+        
+    if "音量" in prompt or "大点声" in prompt or "小点声" in prompt:
+        return ChatResponse(
+            text="好的，我将调整系统音量：",
+            session_id=req.session_id,
+            requires_approval=True,
+            approval_request={
+                "tool_name": "set_system_volume",
+                "risk_level": "low",
+                "tool_args": {"level": 50},
+                "description": "将系统主音量设置为 50%"
+            }
+        )
 
     # 2. Call Agent
     reply = agent_client.send(
