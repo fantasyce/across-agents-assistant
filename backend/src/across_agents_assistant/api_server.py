@@ -81,8 +81,10 @@ async def chat_endpoint(req: ChatRequest):
         if ctx_parts:
             prompt = f"【系统上下文】\n" + "\n".join(ctx_parts) + f"\n\n【用户指令】\n{req.text}"
 
-    # Mock Phase 3 behavior: if the prompt asks to create an email or list directory
-    if "list_directory" in prompt or "看" in prompt and "目录" in prompt:
+    # Mock Phase 3 behavior based ONLY on the user's explicit command (req.text), not the whole context
+    command = req.text.lower()
+    
+    if "list_directory" in command or "看" in command and "目录" in command:
         return ChatResponse(
             text="我将为你列出目录内容。该操作风险较低，但在执行前请您确认：",
             session_id=req.session_id,
@@ -95,7 +97,7 @@ async def chat_endpoint(req: ChatRequest):
             }
         )
         
-    if "email" in prompt.lower() or "邮件" in prompt:
+    if "email" in command or "邮件" in command:
         return ChatResponse(
             text="好的，我将为你创建一封邮件草稿。这是一个中风险操作，请在弹窗中确认信息：",
             session_id=req.session_id,
@@ -108,7 +110,7 @@ async def chat_endpoint(req: ChatRequest):
             }
         )
         
-    if "备忘录" in prompt or "笔记" in prompt or "note" in prompt.lower():
+    if "备忘录" in command or "笔记" in command or "note" in command:
         return ChatResponse(
             text="没问题，我将为你创建一条备忘录。请确认内容：",
             session_id=req.session_id,
@@ -122,7 +124,7 @@ async def chat_endpoint(req: ChatRequest):
         )
         
     # --- New Advanced Mac Tools Mocks ---
-    if "浏览器" in prompt or "网页" in prompt or "网址" in prompt:
+    if "浏览器" in command or "网页" in command or "网址" in command:
         return ChatResponse(
             text="好的，我将读取你当前浏览器的活动标签页信息：",
             session_id=req.session_id,
@@ -135,7 +137,7 @@ async def chat_endpoint(req: ChatRequest):
             }
         )
         
-    if "暗" in prompt or "深色" in prompt or "浅色" in prompt or "亮" in prompt or "模式" in prompt:
+    if "暗" in command or "深色" in command or "浅色" in command or "亮" in command or "模式" in command:
         return ChatResponse(
             text="我将为你切换系统的外观模式：",
             session_id=req.session_id,
@@ -148,7 +150,7 @@ async def chat_endpoint(req: ChatRequest):
             }
         )
         
-    if "音量" in prompt or "大点声" in prompt or "小点声" in prompt:
+    if "音量" in command or "大点声" in command or "小点声" in command:
         return ChatResponse(
             text="好的，我将调整系统音量：",
             session_id=req.session_id,
