@@ -86,24 +86,10 @@ registry.register(ToolDefinition(
     handler=create_note_draft
 ))
 
-def get_active_browser_url() -> str:
-    # AppleScript to get URL and Title from Google Chrome or Safari
-    applescript = '''
-    tell application "System Events"
-        set frontApp to name of first application process whose frontmost is true
-    end tell
-    
-    if frontApp is "Google Chrome" then
-        tell application "Google Chrome"
-            if (count of windows) > 0 then
-                set currentURL to URL of active tab of front window
-                set currentTitle to title of active tab of front window
-                return "Chrome | " & currentTitle & " | " & currentURL
-            else
-                return "Chrome 没有任何打开的窗口"
-            end if
-        end tell
-    else if frontApp is "Safari" then
+def get_active_browser_url(browser: str = "Chrome") -> str:
+    # AppleScript to get URL and Title from Google Chrome or Safari regardless of if they are frontmost
+    if browser.lower() == "safari":
+        applescript = '''
         tell application "Safari"
             if (count of windows) > 0 then
                 set currentURL to URL of front document
@@ -113,10 +99,20 @@ def get_active_browser_url() -> str:
                 return "Safari 没有任何打开的窗口"
             end if
         end tell
-    else
-        return "当前前台应用不是 Chrome 或 Safari (" & frontApp & ")。无法获取网页URL。"
-    end if
-    '''
+        '''
+    else:
+        applescript = '''
+        tell application "Google Chrome"
+            if (count of windows) > 0 then
+                set currentURL to URL of active tab of front window
+                set currentTitle to title of active tab of front window
+                return "Chrome | " & currentTitle & " | " & currentURL
+            else
+                return "Chrome 没有任何打开的窗口"
+            end if
+        end tell
+        '''
+        
     try:
         result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
         return result.stdout.strip()
@@ -125,10 +121,16 @@ def get_active_browser_url() -> str:
 
 registry.register(ToolDefinition(
     name="get_active_browser_url",
-    description="Get the URL and Title of the currently active tab in Chrome or Safari. Useful for summarizing or reading web pages.",
+    description="Get the URL and Title of the currently active tab in Chrome or Safari. Useful for summarizing or reading web pages even if the browser is in the background.",
     parameters={
         "type": "object",
-        "properties": {},
+        "properties": {
+            "browser": {
+                "type": "string",
+                "description": "The browser to check, either 'Chrome' or 'Safari'. Defaults to 'Chrome'.",
+                "enum": ["Chrome", "Safari"]
+            }
+        },
         "required": []
     },
     risk_level="low",
