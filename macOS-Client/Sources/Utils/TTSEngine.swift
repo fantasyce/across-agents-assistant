@@ -6,6 +6,10 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     private let synthesizer = AVSpeechSynthesizer()
     private var preferredVoice: AVSpeechSynthesisVoice?
     
+    var hasHighQualityVoice: Bool {
+        return preferredVoice?.quality == .premium || preferredVoice?.quality == .enhanced
+    }
+    
     private override init() {
         super.init()
         synthesizer.delegate = self

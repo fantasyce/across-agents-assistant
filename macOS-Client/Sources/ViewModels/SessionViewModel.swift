@@ -89,6 +89,12 @@ class SessionViewModel: ObservableObject {
                     // Trigger Native TTS
                     TTSEngine.shared.speak(chatResp.text)
                     
+                    // If the user only has default voices, show a gentle tip in the UI once
+                    if !TTSEngine.shared.hasHighQualityVoice && self.messages.filter({ !$0.isUser }).count == 2 {
+                        let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
+                        self.messages.append(tipMsg)
+                    }
+                    
                 } catch {
                     self.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
                 }
