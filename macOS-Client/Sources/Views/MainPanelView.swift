@@ -109,6 +109,7 @@ struct MessageBubble: View {
             }
             
             Text(message.content)
+                .textSelection(.enabled) // Allow text selection and copying
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(message.isUser ? Color.blue.opacity(0.8) : Color.gray.opacity(0.2))

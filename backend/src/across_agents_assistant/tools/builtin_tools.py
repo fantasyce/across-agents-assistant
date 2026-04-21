@@ -166,15 +166,24 @@ registry.register(ToolDefinition(
 def set_system_volume(level: int) -> str:
     # Ensure level is between 0 and 100
     level = max(0, min(100, level))
-    applescript = f'''
-    set volume output volume {level}
-    return output volume of (get volume settings)
-    '''
+    
+    # We must use a single-line AppleScript or multiple -e flags to ensure it runs correctly via subprocess
     try:
-        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        # First, check if the output device is muted and unmute it if necessary
+        subprocess.run(['osascript', '-e', 'set volume output muted false'], capture_output=True, check=True)
+        
+        # Then set the actual volume
+        script = f'set volume output volume {level}'
+        subprocess.run(['osascript', '-e', script], capture_output=True, text=True, check=True)
+        
+        # Verify the volume
+        verify_script = 'output volume of (get volume settings)'
+        result = subprocess.run(['osascript', '-e', verify_script], capture_output=True, text=True, check=True)
+        
         return f"系统音量已成功设置为 {result.stdout.strip()}%"
     except subprocess.CalledProcessError as e:
-        return f"Failed to set volume: {str(e)}"
+        error_msg = e.stderr.strip() if e.stderr else str(e)
+        return f"无法设置音量。原因可能是：1) 你外接了显示器或扩展坞音频（这类设备硬件锁定音量，无法通过软件调节）；2) 系统权限拦截。底层报错: {error_msg}"
 
 registry.register(ToolDefinition(
     name="set_system_volume",
