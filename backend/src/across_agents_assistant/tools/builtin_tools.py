@@ -167,23 +167,30 @@ def set_system_volume(level: int) -> str:
     # Ensure level is between 0 and 100
     level = max(0, min(100, level))
     
-    # We must use a single-line AppleScript or multiple -e flags to ensure it runs correctly via subprocess
     try:
-        # First, check if the output device is muted and unmute it if necessary
+        # Check if the current audio device supports volume control
+        # External displays (HDMI/DP/TV) return "missing value" because macOS passes raw digital audio to them
+        check_script = 'output volume of (get volume settings)'
+        check_result = subprocess.run(['osascript', '-e', check_script], capture_output=True, text=True, check=True)
+        
+        if "missing value" in check_result.stdout:
+            return "❌ 操作失败：你当前使用的是外接显示器或电视（HDMI/DisplayPort）输出音频。macOS 无法通过软件控制此类数字音频设备的音量，请使用电视遥控器调节。"
+            
+        # If supported, unmute first
         subprocess.run(['osascript', '-e', 'set volume output muted false'], capture_output=True, check=True)
         
         # Then set the actual volume
         script = f'set volume output volume {level}'
         subprocess.run(['osascript', '-e', script], capture_output=True, text=True, check=True)
         
-        # Verify the volume
-        verify_script = 'output volume of (get volume settings)'
-        result = subprocess.run(['osascript', '-e', verify_script], capture_output=True, text=True, check=True)
+        # Verify the new volume
+        verify_result = subprocess.run(['osascript', '-e', check_script], capture_output=True, text=True, check=True)
+        new_vol = verify_result.stdout.strip()
         
-        return f"系统音量已成功设置为 {result.stdout.strip()}%"
+        return f"系统音量已成功设置为 {new_vol}%"
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.strip() if e.stderr else str(e)
-        return f"无法设置音量。原因可能是：1) 你外接了显示器或扩展坞音频（这类设备硬件锁定音量，无法通过软件调节）；2) 系统权限拦截。底层报错: {error_msg}"
+        return f"无法设置音量。系统权限拦截或底层报错: {error_msg}"
 
 registry.register(ToolDefinition(
     name="set_system_volume",
