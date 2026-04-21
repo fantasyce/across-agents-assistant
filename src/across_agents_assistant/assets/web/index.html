@@ -1,5 +1,684 @@
-# Auto-extracted Trae Solo file icons
-FILE_ICONS = {
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Across-Agents Assistant</title>
+    <style>
+        :root {
+            --bg-color: #f9f9f9;
+            --sidebar-bg: #ffffff;
+            --text-color: #1d1d1f;
+            --secondary-text: #86868b;
+            --accent-color: #CBA6F0; /* 饱和度50%的淡紫色 */
+            --border-color: rgba(0,0,0,0.08);
+            --msg-user-bg: #EBE3F5; /* 亮度合适，饱和度降低（变淡）的浅紫色 */
+            --msg-user-text: #000000;
+            --msg-agent-bg: transparent; /* 取消Agent背景色 */
+            --msg-agent-text: #000000;
+            --tree-active-bg: rgba(203, 166, 240, 0.25); /* 左侧目录选中颜色 */
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #1c1c1e;
+                --sidebar-bg: #1c1c1e;
+                --text-color: #f5f5f7;
+                --secondary-text: #98989d;
+                --accent-color: #B58AE3; /* 暗色下的淡紫色 */
+                --border-color: rgba(255,255,255,0.1);
+                --msg-user-bg: #9B82C6; /* 亮度合适，饱和度降低（变淡）的浅紫色 */
+                --msg-user-text: #ffffff;
+                --msg-agent-bg: transparent; 
+                --msg-agent-text: #ffffff;
+                --tree-active-bg: rgba(181, 138, 227, 0.25);
+            }
+        }
+
+        html {
+            background: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            border-radius: 10px;
+        }
+
+        /* File Explorer (Left) */
+        .file-explorer {
+            width: 250px;
+            min-width: 150px;
+            max-width: 50%;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            position: relative;
+        }
+        
+        .resizer {
+            width: 5px;
+            cursor: col-resize;
+            position: absolute;
+            right: -2px;
+            top: 0;
+            bottom: 0;
+            z-index: 20;
+        }
+        .resizer:hover {
+            background-color: var(--accent-color);
+            opacity: 0.5;
+        }
+        .explorer-header {
+            height: 56px;
+            padding-top: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+            padding-left: 16px;
+            padding-right: 16px;
+            font-size: 14px;
+            font-weight: normal;
+            border-bottom: none;
+            flex-shrink: 0;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        .mac-buttons {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-right: 6px;
+        }
+
+        .mac-btn {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: transparent;
+            font-size: 8px;
+            font-weight: 800;
+            line-height: 1;
+        }
+        
+        .mac-btn svg {
+            width: 8px;
+            height: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            stroke: rgba(0, 0, 0, 0.55);
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            fill: none;
+        }
+
+        .mac-btn.maximize svg {
+            fill: rgba(0, 0, 0, 0.55);
+            stroke: none;
+            width: 7px;
+            height: 7px;
+        }
+
+        .mac-buttons:hover .mac-btn svg {
+            opacity: 1;
+        }
+
+        /* 默认状态加入 60% 白色，让颜色变得更粉嫩柔和 */
+        .mac-btn.close { background-color: #FFBFBB; }
+        .mac-btn.minimize { background-color: #FFE4AB; }
+        .mac-btn.maximize { background-color: #A8E9B2; }
+
+        /* hover 时恢复原本鲜艳的颜色 */
+        .mac-btn.close:hover { background-color: #FF5F56; }
+        .mac-btn.minimize:hover { background-color: #FFBD2E; }
+        .mac-btn.maximize:hover { background-color: #27C93F; }
+
+        .explorer-header .btn-icon {
+            font-size: 16px;
+            opacity: 1;
+            background: transparent;
+            width: 28px;
+            height: 28px;
+        }
+        
+        .explorer-header .btn-icon svg {
+            width: 18px;
+            height: 18px;
+        }
+        
+        .explorer-header .btn-icon:hover {
+            background: transparent;
+            opacity: 1;
+            color: var(--accent-color);
+        }
+        .tree-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 0 10px 0;
+        }
+        .tree-item-wrapper {
+            display: flex;
+            flex-direction: column;
+        }
+        .tree-item {
+            padding: 4px 16px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .tree-item:hover {
+            background-color: var(--border-color);
+        }
+        .tree-item.active-item {
+            background-color: var(--tree-active-bg);
+            color: var(--accent-color);
+        }
+
+        .tree-item-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .tree-children {
+            padding-left: 15px;
+            display: none;
+        }
+        .tree-children.open {
+            display: block;
+        }
+
+        /* Sidebar (Right) */
+        .sidebar {
+            width: 80px;
+            background-color: var(--sidebar-bg);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 20px; /* 减小上边距以对齐功能图标 */
+            gap: 20px;
+            z-index: 10;
+        }
+
+        .agent-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+            opacity: 0.6;
+            background: var(--bg-color);
+            overflow: hidden;
+        }
+
+        .agent-icon img, .agent-icon svg {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .agent-icon:hover {
+            opacity: 1;
+            transform: scale(1.05);
+        }
+
+        .agent-icon.active {
+            opacity: 1;
+            border-color: var(--accent-color);
+            box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2);
+        }
+
+        .agent-icon.unready {
+            filter: grayscale(1);
+            opacity: 0.3;
+        }
+
+        /* Main Chat Area */
+        .main-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            min-width: 0; /* Important for flex child */
+        }
+
+        .header {
+            height: 56px;
+            padding-top: 8px;
+            border-bottom: none;
+            display: flex;
+            align-items: center;
+            padding-left: 20px;
+            padding-right: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            background: var(--bg-color);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 5;
+            justify-content: space-between;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .btn-icon {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: var(--secondary-text);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+        }
+        
+        .btn-icon svg {
+            width: 20px;
+            height: 20px;
+            pointer-events: none;
+        }
+        .btn-icon:hover {
+            color: var(--text-color);
+            background: var(--border-color);
+        }
+        
+        .btn-icon.active {
+            color: var(--accent-color);
+            background: rgba(0, 113, 227, 0.1);
+        }
+
+        .chat-container {
+            flex: 1;
+            padding: 8px 24px 24px 24px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center; /* 使内容居中 */
+        }
+        
+        .message {
+            max-width: 900px;
+            width: 100%;
+            font-size: 13px;
+            line-height: 1.7; /* 增加行距 */
+            animation: fadeIn 0.3s ease;
+            word-wrap: break-word;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .msg-user {
+            align-self: flex-end;
+            background-color: var(--msg-user-bg);
+            color: var(--msg-user-text);
+            padding: 8px 12px;
+            border-radius: 12px;
+            border-bottom-right-radius: 4px;
+            width: auto; /* 让内容自适应宽度，不超过 100% */
+            max-width: 85%;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .msg-agent {
+            align-self: center; /* 铺满居中 */
+            width: 100%;
+            background-color: transparent;
+            color: var(--msg-agent-text);
+            padding: 4px 0; /* 没有背景色，直接平铺不需要太多 padding */
+            border-radius: 0;
+            white-space: pre-wrap; /* 允许换行，但由于容器宽，只有长句自然折行 */
+        }
+        
+        .msg-system {
+            align-self: center;
+            background-color: transparent;
+            color: var(--secondary-text);
+            font-size: 11px;
+            text-align: center;
+            padding: 4px;
+        }
+
+                .input-area {
+            padding: 12px 24px 16px 24px; /* 底部间距 16px */
+            background: var(--bg-color);
+            border-top: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: background 0.2s;
+            align-items: center;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 12px;
+            align-items: center; /* 解决高低差问题 */
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .chat-input-wrapper {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 4px 10px;
+            background: var(--sidebar-bg);
+            transition: border-color 0.2s, background-color 0.2s;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            min-height: 28px;
+            box-sizing: border-box;
+            cursor: text;
+        }
+
+        .chat-input-wrapper:focus-within {
+            border-color: var(--accent-color);
+        }
+
+        .chat-input-wrapper.drag-over {
+            background-color: rgba(0, 113, 227, 0.05);
+            border: 2px dashed var(--accent-color);
+        }
+
+        .chat-input-inner {
+            border: none;
+            background: transparent;
+            font-size: 13px;
+            line-height: 18px; /* 固定行高，防止插入标签时撑开 */
+            color: var(--text-color);
+            outline: none;
+            flex: 1;
+            min-width: 100px;
+            padding: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .inline-file-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(0, 113, 227, 0.1);
+            border: 1px solid var(--accent-color);
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 12px; 
+            color: var(--text-color); /* Use general text color for readability with colored icons */
+            vertical-align: baseline; 
+            user-select: none; /* 设置为 none 避免光标卡在内部 */
+            -webkit-user-select: none;
+            cursor: default;
+            line-height: 1; /* 防止撑开外部行高 */
+        }
+        
+        .inline-file-tag-icon {
+            font-size: 12px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            transition: all 0.2s;
+            color: var(--accent-color); /* Default color for folder/default icons */
+        }
+
+        .inline-file-tag-icon svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .folder-icon svg, .file-icon svg {
+            width: 12px;
+            height: 12px;
+        }
+        
+        .inline-file-tag-icon:hover::before {
+            content: "×";
+            color: red;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        
+        .inline-file-tag-icon.dir-icon:hover {
+            color: transparent;
+        }
+        .inline-file-tag-icon.file-icon:hover {
+            color: transparent;
+        }
+
+        .btn-send {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px; /* 圆角方块 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+            /* 移除了导致高低差的 margin-bottom */
+        }
+
+        .btn-send:hover {
+            transform: scale(1.05);
+        }
+
+        /* Context Menu */
+        .context-menu {
+            position: fixed;
+            z-index: 10000;
+            background: var(--sidebar-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            padding: 4px 0;
+            min-width: 140px;
+            display: none;
+            font-size: 13px;
+        }
+        .context-menu.show {
+            display: block;
+        }
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            color: var(--text-color);
+        }
+        .context-menu-item:hover {
+            background-color: var(--accent-color);
+            color: white;
+        }
+
+        /* Toast */
+        .toast {
+            visibility: hidden;
+            background-color: var(--text-color);
+            color: var(--bg-color);
+            text-align: center;
+            border-radius: 20px;
+            padding: 10px 20px;
+            position: fixed;
+            z-index: 1000;
+            left: 50%;
+            top: 20px;
+            transform: translateX(-50%) translateY(-10px);
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+
+        .toast.show {
+            visibility: visible;
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="file-explorer" id="file-explorer">
+        <div class="explorer-header pywebview-drag-region" ondblclick="maximizeWindow()">
+            <div class="mac-buttons">
+                <div class="mac-btn close" onclick="closeWindow(event)" title="关闭">
+                    <svg viewBox="0 0 10 10"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+                </div>
+                <div class="mac-btn minimize" onclick="minimizeWindow(event)" title="最小化">
+                    <svg viewBox="0 0 10 10"><line x1="1.5" y1="5" x2="8.5" y2="5"/></svg>
+                </div>
+                <div class="mac-btn maximize" onclick="maximizeWindow(event)" title="最大化">
+                    <svg viewBox="0 0 10 10">
+                        <polygon points="2.5,4.5 2.5,2.5 4.5,2.5"/>
+                        <polygon points="7.5,5.5 7.5,7.5 5.5,7.5"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="explorer-actions" style="margin-left: auto; display: flex; gap: 4px; padding-right: 4px;">
+                <button class="btn-icon" onclick="collapseAllExplorer()" title="收起全部" id="btn-collapse">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+                </button>
+                <button class="btn-icon" onclick="refreshExplorer()" title="刷新" id="btn-refresh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                </button>
+                <button class="btn-icon" onclick="toggleHiddenFiles()" title="当前: 不显示隐藏文件" id="btn-toggle-hidden">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                </button>
+            </div>
+        </div>
+        <div class="tree-container" id="tree-container">
+            <!-- Rendered by JS -->
+        </div>
+        <div class="resizer" id="resizer"></div>
+    </div>
+
+    <div class="main-area">
+        <div class="header pywebview-drag-region" ondblclick="maximizeWindow()">
+            <span id="current-agent-name"></span>
+            <div class="header-actions">
+                <button class="btn-icon" id="btn-continuous" onclick="toggleContinuous()" title="开启持续对话">
+                    <svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>
+                </button>
+                <button class="btn-icon" id="btn-speak" onclick="triggerSingleTurn()" title="单次对话 (点击说话)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                </button>
+                <button class="btn-icon" id="btn-silent" onclick="toggleSilentMode()" title="静音模式">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                </button>
+                <button class="btn-icon" id="btn-chatmode" onclick="toggleChatMode()" title="当前: 隔离对话模式">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                </button>
+                <button class="btn-icon" id="btn-settings" onclick="openSettings()" title="配置智能体">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+            </div>
+        </div>
+        
+        <div class="chat-container" id="chat-container">
+            <!-- Messages rendered by JS -->
+        </div>
+
+        <div class="input-area" id="input-area">
+            <div class="input-row">
+                <div class="chat-input-wrapper" id="chat-input-wrapper">
+                    <div class="chat-input-inner" id="chat-input" contenteditable="true" placeholder="输入消息或拖拽文件到此处 (回车发送)..."></div>
+                </div>
+                <button class="btn-send" onclick="sendManualMessage()">↑</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <!-- Rendered by JS -->
+    </div>
+    <div id="toast" class="toast"></div>
+
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-item" id="cm-reveal">在 Finder 中显示</div>
+        <div class="context-menu-item" id="cm-add">添加到对话</div>
+        <div class="context-menu-item" id="cm-copy">复制路径</div>
+        <div class="context-menu-item" id="cm-rename">重命名</div>
+        <div class="context-menu-item" id="cm-delete">删除</div>
+    </div>
+
+
+    <script>
+        let config = {};
+        let toastTimeout;
+        let chatMode = 'isolated'; // 'merged' or 'isolated'
+        let showHiddenFiles = false; // toggle for showing hidden files/dirs
+        let chatHistory = {
+            merged: [],
+        };
+        
+        const ICONS = {
+            folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
+            folderOpen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><polyline points="14 10 18 14 22 10"></polyline></svg>',
+            file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>',
+            mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>',
+            micOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 1.88M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>',
+            vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
+            volOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>',
+            chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+            continuous: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 4 2, 10 2, 12 6 C 14 2, 20 2, 22 12"></path><path d="M 2 12 C 6 23, 18 23, 22 12"></path><path d="M 2 12 Q 12 7 22 12"></path><path d="M 2 12 Q 12 17 22 12"></path></svg>',
+            continuousOff: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>',
+            settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+            refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>',
+            collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>',
+            hiddenSolid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>',
+            hiddenDashed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke-dasharray="3 3" d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline stroke-dasharray="3 3" points="13 2 13 9 20 9"></polyline></svg>',
+            eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+            eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>',
+            chatGlobal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 12 12 17 22 12"></polyline><polyline points="2 17 12 22 22 17"></polyline></svg>'
+        };
+
+        // File icon map generated from Trae Solo
+        const FILE_ICONS = {
     'authorization': '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" > <path d="M12.1914 3.15625V7.58301C12.1914 10.4502 9.86713 12.7742 7 12.7744C4.1329 12.7742 1.80762 10.4502 1.80762 7.58301V3.15625L6.78906 0.976562L7 0.884766L12.1914 3.15625ZM2.8584 3.8418V7.58301C2.8584 9.87025 4.7128 11.7244 7 11.7246C9.28723 11.7244 11.1416 9.87028 11.1416 7.58301V3.84277L6.99902 2.03125L2.8584 3.8418ZM9.47656 5.68359L7 9.45703L4.52344 5.68359L5.40039 5.10742L7 7.54395L8.59961 5.10742L9.47656 5.68359Z" fill="#747E94"/> </svg>',
     'bash': '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" > <path d="M6.33534 11.6469C5.55176 11.5078 4.85355 11.1272 4.3871 10.5678L4.27284 10.4204L3.88319 9.88228L4.96132 9.10298L5.35097 9.64107L5.47499 9.78951C5.79717 10.1247 6.34039 10.3764 7.00038 10.3764H7.18398C8.25601 10.3764 8.86058 9.70494 8.86073 9.16841C8.86073 8.84126 8.65378 8.46152 8.19569 8.20943L7.98476 8.10982L5.52187 7.12447C4.54116 6.73218 3.80898 5.87692 3.80898 4.8315V4.75435C3.80917 3.39546 5.01484 2.47041 6.33534 2.31783V0.777788H7.66542V2.35201C8.44897 2.49123 9.14635 2.87364 9.61269 3.43306L9.72694 3.57955L10.1166 4.11763L9.03847 4.89693L8.64882 4.35884L8.5248 4.21041C8.20266 3.87534 7.6601 3.62359 7.00038 3.62349H6.71913C5.70055 3.62358 5.1393 4.26046 5.13905 4.75435V4.8315C5.13905 5.20518 5.40929 5.64768 6.01503 5.89009L8.4789 6.87544L8.65956 6.95455C9.54785 7.37562 10.1908 8.18846 10.1908 9.16841C10.1907 10.5377 8.99931 11.4838 7.66542 11.6704V13.2221H6.33534V11.6469Z" fill="#00B983"/> </svg>',
     'bat': '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" > <path d="M12.3379 12.9072L1.66211 10.4814V3.51855L12.3379 1.09277V12.9072ZM7.52539 7.52539V10.7363L11.2871 11.5918V7.52539H7.52539ZM2.71289 9.64355L6.47461 10.498V7.52539H2.71289V9.64355ZM7.52539 3.26172V6.47461H11.2871V2.40723L7.52539 3.26172ZM2.71289 4.35547V6.47461H6.47461V3.5L2.71289 4.35547Z" fill="#3F85FF"/> </svg>',
@@ -56,4 +735,1079 @@ FILE_ICONS = {
     'ppt': '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M13.334 2.83301H12.166V9.91602C12.166 10.1922 11.9422 10.416 11.666 10.416H8.20605L10.041 12.25L9.33398 12.957L7 10.623L4.66699 12.957L3.95996 12.25L5.79395 10.416H2.33301C2.05703 10.4158 1.83301 10.192 1.83301 9.91602V2.83301H0.666992V1.83301H13.334V2.83301ZM2.83301 9.41602H11.166V2.83301H2.83301V9.41602ZM5.66504 5.25L4.79004 6.125L5.66504 7L4.95801 7.70703L3.72949 6.47852C3.53445 6.28329 3.53445 5.9667 3.72949 5.77148L4.95801 4.54297L5.66504 5.25ZM10.2705 5.77148C10.4655 5.9667 10.4655 6.2833 10.2705 6.47852L9.04199 7.70703L8.33496 7L9.20996 6.125L8.33496 5.25L9.04199 4.54297L10.2705 5.77148Z" fill="#D46A00" /> </svg>',
     'pptx': '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none"> <path d="M9.12109 1.96191L11.4551 4.29492L11.6084 4.44922V6.94141H10.5586V5.77539H7.6416V2.8584H3.44238V6.94141H2.39062V1.80762H8.96777L9.12109 1.96191ZM8.69238 4.72559H10.4014L8.69238 3.0166V4.72559Z" fill="#D95A16"/> <path d="M2.48828 9.58105C2.48825 9.48496 2.46718 9.42736 2.44629 9.3916C2.42458 9.35448 2.39053 9.32013 2.33984 9.28906C2.22905 9.22129 2.06487 9.18757 1.91309 9.1875H1.61328V9.97461H1.91309C2.06495 9.97454 2.22905 9.94089 2.33984 9.87305C2.39053 9.84198 2.42458 9.80763 2.44629 9.77051C2.46714 9.73471 2.48828 9.677 2.48828 9.58105ZM3.36328 9.58105C3.36328 10.0779 3.12001 10.4215 2.79785 10.6191C2.50215 10.8004 2.1601 10.8495 1.91309 10.8496H1.61328V11.958H0.738281V8.3125H1.91309C2.1601 8.31256 2.50215 8.3617 2.79785 8.54297C3.12005 8.74053 3.36322 9.08421 3.36328 9.58105Z" fill="#D95A16"/> <path d="M5.5415 9.58105C5.54147 9.48496 5.5204 9.42736 5.49951 9.3916C5.4778 9.35448 5.44375 9.32013 5.39307 9.28906C5.28227 9.22129 5.11809 9.18757 4.96631 9.1875H4.6665V9.97461H4.96631C5.11817 9.97454 5.28227 9.94089 5.39307 9.87305C5.44375 9.84198 5.4778 9.80763 5.49951 9.77051C5.52036 9.73471 5.5415 9.677 5.5415 9.58105ZM6.4165 9.58105C6.4165 10.0779 6.17323 10.4215 5.85107 10.6191C5.55537 10.8004 5.21332 10.8495 4.96631 10.8496H4.6665V11.958H3.7915V8.3125H4.96631C5.21332 8.31256 5.55537 8.3617 5.85107 8.54297C6.17327 8.74053 6.41644 9.08421 6.4165 9.58105Z" fill="#D95A16"/> <path d="M7.80225 9.26038H6.63525V8.38538H9.84326V9.26038H8.67725V12.0309H7.80225V9.26038Z" fill="#D95A16"/> <path d="M12.1528 10.2084L13.1929 12.0316H12.2192L11.6665 11.0619L11.1138 12.0316H10.1401L11.1792 10.2084L10.1401 8.38513H11.1138L11.6665 9.35486L12.2202 8.38513H13.1929L12.1528 10.2084Z" fill="#D95A16"/> </svg>',
     'xlsx': '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none"> <path d="M11.6084 4.44922V6.94141H10.5586V5.77539H7.6416V2.8584H3.44141V6.94141H2.3916V1.80859H8.9668L11.6084 4.44922ZM8.69141 4.72461H10.3994L8.69141 3.0166V4.72461Z" fill="#008040"/> <path d="M4.229 8.38538H5.104V11.1562H6.56234V12.0312H4.229V8.38538Z" fill="#008040"/> <path d="M2.81934 10.208L3.85938 12.0312H2.88574L2.33301 11.0615L1.78027 12.0312H0.806641L1.8457 10.208L0.807617 8.38574H1.78125L2.33301 9.35352L2.88477 8.38574H3.85938L2.81934 10.208Z" fill="#008040"/> <path d="M11.8608 10.208L12.9009 12.0312H11.9272L11.3745 11.0615L10.8218 12.0312H9.84912L10.8882 10.208L9.84912 8.38574H10.8218L11.3745 9.35449L11.9272 8.38574H12.9009L11.8608 10.208Z" fill="#008040"/> <path d="M7.81323 11.0654C7.94214 11.1713 8.10385 11.2292 8.27067 11.2292H8.52559C8.64952 11.2291 8.74996 11.1286 8.75004 11.0047C8.75004 10.8995 8.67699 10.8083 8.5743 10.7854L7.86279 10.6273C7.33564 10.5102 6.96051 10.0425 6.96045 9.50252C6.96045 8.84536 7.49331 8.3125 8.15047 8.3125H8.30684C8.98779 8.3125 9.53988 8.86459 9.53988 9.54553H8.66488C8.66488 9.34784 8.50454 9.1875 8.30684 9.1875H8.15047C7.97656 9.1875 7.83545 9.32861 7.83545 9.50252C7.83551 9.6324 7.92572 9.74489 8.05249 9.77311L8.764 9.93119C9.26709 10.043 9.62504 10.4894 9.62504 11.0047C9.62496 11.6119 9.13277 12.1041 8.52559 12.1042H8.27067C7.90128 12.1042 7.54325 11.976 7.25781 11.7416L6.86816 11.4214L7.42358 10.7452L7.81323 11.0654Z" fill="#008040"/> </svg>'
-}
+};
+
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const name = filename.toLowerCase();
+            
+            // Full filename matches (e.g. hidden files, config files)
+            if (name.includes('dockerfile') || name === '.dockerignore' || name === 'docker-compose.yml') return FILE_ICONS['docker'] || ICONS.file;
+            if (name === '.gitignore' || name === '.gitattributes' || name === '.gitmodules') return FILE_ICONS['git'] || ICONS.file;
+            if (name === 'package.json' || name === 'package-lock.json' || name === 'yarn.lock' || name === 'pnpm-lock.yaml' || name === '.npmrc') return FILE_ICONS['npm'] || ICONS.file;
+            if (name === '.eslintignore') return FILE_ICONS['eslintignore'] || ICONS.file;
+            if (name === '.gitlab-ci.yml') return FILE_ICONS['gitlab'] || ICONS.file;
+            if (name === '.eslintrc' || name.startsWith('.eslintrc.') || name === 'eslint.config.js' || name === 'eslint.config.mjs' || name === 'eslint.config.cjs') return FILE_ICONS['eslint'] || ICONS.file;
+            if (name.startsWith('readme')) return FILE_ICONS['readme'] || ICONS.file;
+            if (name.startsWith('license')) return FILE_ICONS['license'] || ICONS.file;
+            if (name === '.env' || name === 'makefile' || name === 'cmakelists.txt') return FILE_ICONS['settings'] || FILE_ICONS['command'] || ICONS.file;
+            if (name.endsWith('.config') || name.endsWith('.ini') || name.endsWith('.toml') || name === '.editorconfig' || name.startsWith('.prettierrc')) return FILE_ICONS['settings'] || ICONS.file;
+            if (name === 'next.config.js' || name === 'next.config.mjs') return FILE_ICONS['next'] || ICONS.file;
+            if (name === 'webpack.config.js' || name === 'vite.config.js' || name === 'vite.config.ts' || name === 'tsconfig.json') return FILE_ICONS['settings'] || ICONS.file;
+            if (name.includes('.workspace')) return FILE_ICONS['workspace'] || ICONS.file;
+            if (name === '.bashrc' || name === '.zshrc' || name === '.bash_profile') return FILE_ICONS['bash'] || ICONS.file;
+            
+            // Extensions
+            if (ext === 'c#' || ext === 'cs') return FILE_ICONS['csharp'] || ICONS.file;
+            if (ext === 'c++' || ext === 'cpp' || ext === 'cc' || ext === 'cxx') return FILE_ICONS['cpp'] || ICONS.file;
+            if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return FILE_ICONS['js'] || ICONS.file;
+            if (ext === 'jsx' || ext === 'tsx') return FILE_ICONS['react'] || ICONS.file;
+            if (ext === 'ts') return FILE_ICONS['ts'] || ICONS.file;
+            if (ext === 'vue') return FILE_ICONS['vue'] || ICONS.file;
+            if (ext === 'py' || ext === 'pyc' || ext === 'pyd') return FILE_ICONS['python'] || ICONS.file;
+            if (ext === 'md' || ext === 'markdown') return FILE_ICONS['markdown'] || ICONS.file;
+            if (ext === 'json') return FILE_ICONS['json'] || ICONS.file;
+            if (ext === 'html' || ext === 'htm') return FILE_ICONS['html'] || ICONS.file;
+            if (ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') return FILE_ICONS['css'] || ICONS.file;
+            if (ext === 'sh' || ext === 'bash' || ext === 'zsh') return FILE_ICONS['bash'] || ICONS.file;
+            if (ext === 'rs') return FILE_ICONS['rs'] || ICONS.file;
+            if (ext === 'go') return FILE_ICONS['go'] || ICONS.file;
+            if (ext === 'yaml' || ext === 'yml') return FILE_ICONS['yaml'] || ICONS.file;
+            if (ext === 'xml') return FILE_ICONS['xml'] || ICONS.file;
+            if (ext === 'txt' || ext === 'log') return FILE_ICONS['txt'] || ICONS.file;
+            if (ext === 'svg') return FILE_ICONS['svg'] || ICONS.file;
+            if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp') return FILE_ICONS['image'] || ICONS.file;
+            if (ext === 'ico') return FILE_ICONS['ico'] || ICONS.file;
+            if (ext === 'pdf') return FILE_ICONS['pdf'] || ICONS.file;
+            if (ext === 'docx') return FILE_ICONS['docx'] || FILE_ICONS['doc'] || ICONS.file;
+            if (ext === 'doc' || ext === 'rtf' || ext === 'odt') return FILE_ICONS['doc'] || ICONS.file;
+            if (ext === 'ppt') return FILE_ICONS['ppt'] || ICONS.file;
+            if (ext === 'pptx') return FILE_ICONS['pptx'] || FILE_ICONS['ppt'] || ICONS.file;
+            if (ext === 'xls' || ext === 'ods') return FILE_ICONS['doc'] || ICONS.file;
+            if (ext === 'xlsx') return FILE_ICONS['xlsx'] || ICONS.file;
+            if (ext === 'key') return FILE_ICONS['key'] || ICONS.file;
+            if (ext === 'numbers') return FILE_ICONS['numbers'] || ICONS.file;
+            if (ext === 'pages') return FILE_ICONS['pages'] || ICONS.file;
+            if (ext === 'zip' || ext === 'tar' || ext === 'gz' || ext === 'tgz' || ext === '7z' || ext === 'rar' || ext === 'xz' || ext === 'bz2') return FILE_ICONS['command'] || ICONS.file;
+            if (ext === 'sql' || ext === 'sqlite' || ext === 'db' || ext === 'prisma') return FILE_ICONS['settings'] || ICONS.file;
+            if (ext === 'java') return FILE_ICONS['java'] || ICONS.file;
+            if (ext === 'class') return FILE_ICONS['class'] || ICONS.file;
+            if (ext === 'c') return FILE_ICONS['c'] || ICONS.file;
+            if (ext === 'h' || ext === 'hpp') return FILE_ICONS['h'] || ICONS.file;
+            if (ext === 'm' || ext === 'mm') return FILE_ICONS['m'] || ICONS.file;
+            if (ext === 'bat' || ext === 'cmd') return FILE_ICONS['bat'] || ICONS.file;
+            if (ext === 'v') return FILE_ICONS['v'] || ICONS.file;
+            if (ext === 'dts' || ext === 'dtsi') return FILE_ICONS['dts'] || ICONS.file;
+            if (ext === 'pem' || ext === 'crt' || ext === 'key') return FILE_ICONS['authorization'] || ICONS.file;
+            
+            // Try exact match first
+            if (FILE_ICONS[ext]) return FILE_ICONS[ext];
+            
+            return ICONS.file;
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.className = "toast show";
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 2500);
+        }
+
+        let isExplorerLoaded = false;
+        let currentRootPath = null;
+
+        async function loadData() {
+            try {
+                config = await pywebview.api.get_config();
+                if (!chatHistory[config.active_agent]) {
+                    chatHistory[config.active_agent] = [];
+                }
+                renderSidebar();
+                updateHeader();
+                renderChat();
+                
+                const state = await pywebview.api.get_ui_state();
+                
+                document.getElementById('btn-collapse').innerHTML = ICONS.collapse;
+            document.getElementById('btn-refresh').innerHTML = ICONS.refresh;
+            document.getElementById('btn-speak').innerHTML = ICONS.mic;
+            
+            const btnChatMode = document.getElementById('btn-chatmode');
+            if (chatMode === 'merged') {
+                btnChatMode.innerHTML = ICONS.chatGlobal;
+                btnChatMode.title = "当前: 全局对话模式 (显示所有历史)";
+                btnChatMode.classList.add('active');
+            } else {
+                btnChatMode.innerHTML = ICONS.chat;
+                btnChatMode.title = "当前: 隔离对话模式 (仅当前智能体历史)";
+                btnChatMode.classList.remove('active');
+            }
+            
+            document.getElementById('btn-settings').innerHTML = ICONS.settings;
+            
+            const btnCont = document.getElementById('btn-continuous');
+            if (state.continuous_on) {
+                btnCont.innerHTML = ICONS.continuous;
+                btnCont.title = "关闭持续对话";
+                btnCont.classList.add('active');
+            } else {
+                btnCont.innerHTML = ICONS.continuousOff;
+                btnCont.title = "开启持续对话";
+                btnCont.classList.remove('active');
+            }
+            
+            const btnSilent = document.getElementById('btn-silent');
+            if (state.silent_on) {
+                btnSilent.innerHTML = ICONS.volOff;
+                btnSilent.title = "关闭静音模式";
+                btnSilent.classList.add('active');
+            } else {
+                btnSilent.innerHTML = ICONS.vol;
+                btnSilent.title = "开启静音模式";
+                btnSilent.classList.remove('active');
+            }
+                
+                // Initialize File Explorer
+                if (!isExplorerLoaded) {
+                    await loadDirectory(null, document.getElementById('tree-container'));
+                    isExplorerLoaded = true;
+                }
+            } catch (err) {
+                console.error("Error in loadData:", err);
+                document.body.innerHTML = `<div style="color:red;padding:20px;font-size:20px;">JS Error: ${err.message}<br><pre>${err.stack}</pre></div>`;
+            }
+        }
+        
+        
+        // Context Menu Logic
+        let cmTargetEntry = null;
+        let cmTargetElement = null;
+        const contextMenu = document.getElementById('context-menu');
+
+        document.addEventListener('click', () => {
+            contextMenu.classList.remove('show');
+        });
+
+        document.getElementById('cm-reveal').onclick = async () => {
+            if (!cmTargetEntry) return;
+            await pywebview.api.reveal_in_finder(cmTargetEntry.absolute_path);
+        };
+
+        document.getElementById('cm-add').onclick = () => {
+            if (!cmTargetEntry) return;
+            insertInlineFileTag(cmTargetEntry.name, cmTargetEntry.absolute_path, cmTargetEntry.is_dir);
+        };
+
+        document.getElementById('cm-copy').onclick = () => {
+            if (!cmTargetEntry) return;
+            navigator.clipboard.writeText(cmTargetEntry.absolute_path);
+            showToast("已复制路径");
+        };
+
+        document.getElementById('cm-rename').onclick = async () => {
+            if (!cmTargetEntry) return;
+            const newName = prompt("请输入新名称:", cmTargetEntry.name);
+            if (newName && newName !== cmTargetEntry.name) {
+                const res = await pywebview.api.rename_file(cmTargetEntry.absolute_path, newName);
+                if (res.success) {
+                    showToast("重命名成功");
+                    refreshExplorer();
+                } else {
+                    showToast("重命名失败: " + res.error);
+                }
+            }
+        };
+
+        document.getElementById('cm-delete').onclick = async () => {
+            if (!cmTargetEntry) return;
+            if (confirm(`确定要删除 ${cmTargetEntry.name} 吗？
+注意：该操作不可恢复！`)) {
+                const res = await pywebview.api.delete_file(cmTargetEntry.absolute_path);
+                if (res.success) {
+                    showToast("删除成功");
+                    refreshExplorer();
+                } else {
+                    showToast("删除失败: " + res.error);
+                }
+            }
+        };
+
+        function showContextMenu(e, entry, itemElement) {
+            e.preventDefault();
+            cmTargetEntry = entry;
+            cmTargetElement = itemElement;
+            setActiveItem(itemElement);
+            
+            contextMenu.style.left = e.clientX + 'px';
+            contextMenu.style.top = e.clientY + 'px';
+            contextMenu.classList.add('show');
+            
+            // Adjust position if it goes off screen
+            const rect = contextMenu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                contextMenu.style.left = (window.innerWidth - rect.width) + 'px';
+            }
+            if (rect.bottom > window.innerHeight) {
+                contextMenu.style.top = (window.innerHeight - rect.height) + 'px';
+            }
+        }
+
+        function setActiveItem(item) {
+            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active-item'));
+            item.classList.add('active-item');
+        }
+
+        function toggleHiddenFiles() {
+            showHiddenFiles = !showHiddenFiles;
+            const btn = document.getElementById('btn-toggle-hidden');
+            if (showHiddenFiles) {
+                btn.innerHTML = ICONS.hiddenDashed;
+                btn.title = "当前: 显示隐藏文件";
+                btn.classList.add('active');
+            } else {
+                btn.innerHTML = ICONS.hiddenSolid;
+                btn.title = "当前: 不显示隐藏文件";
+                btn.classList.remove('active');
+            }
+            // Force globally refresh tree while preserving expanded state
+            refreshExplorer();
+        }
+
+        async function restoreExpanded(container, expandedPaths) {
+            const wrappers = container.children;
+            for (let i = 0; i < wrappers.length; i++) {
+                const wrapper = wrappers[i];
+                if (!wrapper.classList.contains('tree-item-wrapper')) continue;
+                
+                const item = wrapper.querySelector('.tree-item');
+                if (!item) continue;
+                
+                const nameSpan = item.querySelector('.tree-item-name');
+                if (nameSpan && expandedPaths.has(nameSpan.title)) {
+                    const icon = item.querySelector('.folder-icon');
+                    const childrenContainer = wrapper.querySelector('.tree-children');
+                    
+                    if (childrenContainer && item.dataset.loaded === "false") {
+                        icon.innerHTML = ICONS.folderOpen;
+                        try {
+                            await loadDirectory(nameSpan.title, childrenContainer);
+                            item.dataset.loaded = "true";
+                            item.dataset.open = "true";
+                            childrenContainer.classList.add('open');
+                            
+                            // Recursively restore
+                            await restoreExpanded(childrenContainer, expandedPaths);
+                        } catch (err) {
+                            console.error(err);
+                            icon.innerHTML = ICONS.folder;
+                        }
+                    }
+                }
+            }
+        }
+
+        async function refreshExplorer() {
+            const activeItem = document.querySelector('.tree-item.active-item');
+            let activePath = null;
+            if (activeItem) {
+                const nameSpan = activeItem.querySelector('.tree-item-name');
+                if (nameSpan) activePath = nameSpan.title;
+            }
+
+            const expandedPaths = new Set();
+            document.querySelectorAll('#tree-container .tree-item[data-open="true"]').forEach(item => {
+                const nameSpan = item.querySelector('.tree-item-name');
+                if (nameSpan && nameSpan.title) {
+                    expandedPaths.add(nameSpan.title);
+                }
+            });
+
+            let targetContainer = document.getElementById('tree-container');
+            targetContainer.innerHTML = '';
+            
+            await loadDirectory(currentRootPath || '', targetContainer);
+            await restoreExpanded(targetContainer, expandedPaths);
+
+            if (activePath) {
+                const items = document.querySelectorAll('.tree-item-name');
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].title === activePath) {
+                        setActiveItem(items[i].parentElement);
+                        break;
+                    }
+                }
+            }
+        }
+
+        function collapseAllExplorer() {
+            const items = document.querySelectorAll('#tree-container .tree-item[data-open="true"]');
+            items.forEach(item => {
+                item.dataset.open = "false";
+                const icon = item.querySelector('.folder-icon');
+                if (icon) icon.innerHTML = ICONS.folder;
+                const children = item.nextElementSibling;
+                if (children && children.classList.contains('tree-children')) {
+                    children.classList.remove('open');
+                }
+            });
+        }
+        
+        async function loadDirectory(path, containerElement) {
+            if (containerElement.id === 'tree-container') {
+                currentRootPath = path;
+            }
+            const res = await pywebview.api.list_directory(path, showHiddenFiles);
+            if (!res.success) {
+                showToast("无法读取目录: " + res.error);
+                throw new Error("Failed to load directory: " + res.error);
+            }
+            
+            console.log("Loaded directory:", path, "entries:", res.entries.length);
+            
+            containerElement.innerHTML = '';
+            
+            res.entries.forEach(entry => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'tree-item-wrapper';
+                
+                const item = document.createElement('div');
+                item.className = 'tree-item';
+                item.draggable = true;
+                
+                // Drag start event
+                item.addEventListener('contextmenu', (e) => {
+                    e.stopPropagation();
+                    showContextMenu(e, entry, item);
+                });
+
+                item.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/plain', entry.absolute_path);
+                    e.dataTransfer.setData('application/json', JSON.stringify(entry));
+                    e.dataTransfer.effectAllowed = 'copy';
+                });
+                
+                const icon = document.createElement('span');
+                icon.className = entry.is_dir ? 'folder-icon' : 'file-icon';
+                
+                if (!entry.is_dir) {
+                    icon.innerHTML = getFileIcon(entry.name);
+                    icon.style.display = 'inline-flex';
+                    icon.style.alignItems = 'center';
+                } else {
+                    icon.innerHTML = ICONS.folder;
+                }
+                
+                const name = document.createElement('span');
+                name.className = 'tree-item-name';
+                name.innerText = entry.name;
+                name.title = entry.absolute_path;
+                
+                item.appendChild(icon);
+                item.appendChild(name);
+                wrapper.appendChild(item);
+                
+                if (entry.is_dir) {
+                    const childrenContainer = document.createElement('div');
+                    childrenContainer.className = 'tree-children';
+                    wrapper.appendChild(childrenContainer);
+                    
+                    item.dataset.loaded = "false";
+                    item.dataset.open = "false";
+                    
+                    item.onclick = async (e) => {
+                        e.stopPropagation();
+                        setActiveItem(item);
+                        
+                        if (item.dataset.loaded === "false") {
+                            icon.innerHTML = ICONS.folderOpen;
+                            try {
+                                await loadDirectory(entry.absolute_path, childrenContainer);
+                                item.dataset.loaded = "true";
+                            } catch (err) {
+                                console.error("Error loading directory:", err);
+                                icon.innerHTML = ICONS.folder;
+                                return;
+                            }
+                        } else {
+                            icon.innerHTML = item.dataset.open === "true" ? ICONS.folder : ICONS.folderOpen;
+                        }
+                        item.dataset.open = item.dataset.open === "true" ? "false" : "true";
+                        if (item.dataset.open === "true") {
+                            childrenContainer.classList.add('open');
+                        } else {
+                            childrenContainer.classList.remove('open');
+                        }
+                    };
+                } else {
+                    item.onclick = (e) => {
+                        e.stopPropagation();
+                        setActiveItem(item);
+                    };
+                }
+                
+                containerElement.appendChild(wrapper);
+            });
+        }
+
+        // Setup Drag and Drop for Input Area
+        const inputWrapper = document.getElementById('chat-input-wrapper');
+        const inputArea = document.getElementById('chat-input');
+        
+        // Track last saved cursor position
+        let savedRange = null;
+        let messageHistory = [];
+        let historyIndex = 0;
+        let tempInput = '';
+
+        function placeCaretAtEnd(el) {
+            el.focus();
+            if (typeof window.getSelection !== "undefined" && typeof document.createRange !== "undefined") {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
+        
+        inputArea.addEventListener('keydown', (e) => {
+            // Ignore Enter key if user is typing with an IME (Input Method Editor)
+            if (e.isComposing || e.keyCode === 229) {
+                return;
+            }
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendManualMessage();
+                return;
+            }
+            
+            if (e.key === 'ArrowUp') {
+                const isBrowsing = messageHistory.length > 0 && historyIndex < messageHistory.length && inputArea.innerHTML === messageHistory[historyIndex];
+                if (inputArea.innerText.trim() === '' || isBrowsing) {
+                    if (historyIndex > 0) {
+                        if (!isBrowsing) tempInput = inputArea.innerHTML;
+                        e.preventDefault();
+                        historyIndex--;
+                        inputArea.innerHTML = messageHistory[historyIndex];
+                        placeCaretAtEnd(inputArea);
+                    }
+                }
+            } else if (e.key === 'ArrowDown') {
+                const isBrowsing = messageHistory.length > 0 && historyIndex < messageHistory.length && inputArea.innerHTML === messageHistory[historyIndex];
+                if (isBrowsing) {
+                    if (historyIndex < messageHistory.length - 1) {
+                        e.preventDefault();
+                        historyIndex++;
+                        inputArea.innerHTML = messageHistory[historyIndex];
+                        placeCaretAtEnd(inputArea);
+                    } else if (historyIndex === messageHistory.length - 1) {
+                        e.preventDefault();
+                        historyIndex++;
+                        inputArea.innerHTML = tempInput;
+                        placeCaretAtEnd(inputArea);
+                    }
+                }
+            }
+        });
+        
+        // Save cursor position on blur
+        inputArea.addEventListener('blur', () => {
+            const sel = window.getSelection();
+            if (sel.rangeCount > 0 && inputArea.contains(sel.anchorNode)) {
+                savedRange = sel.getRangeAt(0).cloneRange();
+            }
+        });
+        
+        // Restore cursor position on focus
+        inputArea.addEventListener('focus', () => {
+            if (savedRange && inputArea.contains(savedRange.startContainer)) {
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(savedRange);
+            }
+        });
+        
+        // Click on wrapper focuses input
+        inputWrapper.addEventListener('click', (e) => {
+            if (e.target === inputWrapper) {
+                inputArea.focus();
+            }
+        });
+        
+        // CRITICAL: Do NOT call preventDefault() in dragover
+        // This allows the browser to show the caret position automatically
+        inputWrapper.addEventListener('dragover', (e) => {
+            e.dataTransfer.dropEffect = 'copy';
+            inputWrapper.classList.add('drag-over');
+        });
+        
+        inputWrapper.addEventListener('dragleave', (e) => {
+            inputWrapper.classList.remove('drag-over');
+        });
+        
+        inputWrapper.addEventListener('drop', (e) => {
+            e.preventDefault();
+            inputWrapper.classList.remove('drag-over');
+            
+            const path = e.dataTransfer.getData('text/plain');
+            let entryData = null;
+            try {
+                entryData = JSON.parse(e.dataTransfer.getData('application/json'));
+            } catch (err) {}
+            
+            if (path) {
+                const name = entryData ? entryData.name : path.split('/').pop();
+                const is_dir = entryData ? entryData.is_dir : !path.includes('.');
+                
+                // Get drop position immediately using caretRangeFromPoint
+                let insertRange = null;
+                if (document.caretRangeFromPoint) {
+                    insertRange = document.caretRangeFromPoint(e.clientX, e.clientY);
+                }
+                
+                // Create inline file tag
+                const tag = document.createElement('span');
+                tag.className = 'inline-file-tag';
+                tag.setAttribute('data-path', path);
+                tag.setAttribute('data-name', name);
+                tag.setAttribute('data-is-dir', is_dir);
+                tag.contentEditable = false;
+                
+                const iconWrapper = document.createElement('span');
+                iconWrapper.className = `inline-file-tag-icon ${is_dir ? 'dir-icon' : 'file-icon'}`;
+                const iconText = document.createElement('span');
+                
+                // Use Trae icon for files
+                if (!is_dir) {
+                    iconText.innerHTML = getFileIcon(name);
+                    iconText.style.display = 'inline-flex';
+                    iconText.style.alignItems = 'center';
+                } else {
+                    iconText.innerHTML = ICONS.folder;
+                }
+                
+                iconText.className = 'icon-emoji';
+                iconWrapper.appendChild(iconText);
+                
+                iconWrapper.onclick = (e) => {
+                    e.stopPropagation();
+                    tag.remove();
+                };
+                iconWrapper.onmouseenter = () => { iconText.style.display = 'none'; };
+                iconWrapper.onmouseleave = () => { iconText.style.display = 'inline'; };
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.innerText = name;
+                
+                tag.appendChild(iconWrapper);
+                tag.appendChild(nameSpan);
+                
+                // Determine where to insert
+                let range;
+                const sel = window.getSelection();
+                
+                if (insertRange && inputArea.contains(insertRange.startContainer)) {
+                    // Check if it's pointing to the container itself (WebKit bug)
+                    if (insertRange.startContainer === inputArea && insertRange.startOffset === 0) {
+                        // Try to find a better position by checking if there's text
+                        if (inputArea.firstChild && inputArea.firstChild.nodeType === Node.TEXT_NODE) {
+                            range = document.createRange();
+                            range.setStart(inputArea.firstChild, 0);
+                            range.setEnd(inputArea.firstChild, 0);
+                        } else {
+                            range = insertRange;
+                        }
+                    } else {
+                        range = insertRange;
+                    }
+                } else if (sel.rangeCount > 0 && inputArea.contains(sel.anchorNode)) {
+                    range = sel.getRangeAt(0);
+                } else if (savedRange && inputArea.contains(savedRange.startContainer)) {
+                    range = savedRange;
+                } else {
+                    range = document.createRange();
+                    range.selectNodeContents(inputArea);
+                    range.collapse(false);
+                }
+                
+                // Insert the tag
+                range.insertNode(tag);
+                
+                // 为了避免光标卡在无法编辑的元素旁边，在元素前后插入真实的空格或零宽空格
+                const spaceAfter = document.createTextNode('\u200B ');
+                const spaceBefore = document.createTextNode(' \u200B');
+                
+                // 将它们插入到DOM中
+                range.setStartAfter(tag);
+                range.collapse(true);
+                range.insertNode(spaceAfter);
+                
+                range.setStartBefore(tag);
+                range.collapse(true);
+                range.insertNode(spaceBefore);
+                
+                // 将光标移动到标签后的空格之后
+                range.setStartAfter(spaceAfter);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                
+                // Save the new position
+                savedRange = range.cloneRange();
+                
+                // Focus the input
+                inputArea.focus();
+            }
+        });
+        
+        function insertInlineFileTag(name, path, is_dir) {
+            const tag = document.createElement('span');
+            tag.className = 'inline-file-tag';
+            tag.setAttribute('data-path', path);
+            tag.setAttribute('data-name', name);
+            tag.setAttribute('data-is-dir', is_dir);
+            tag.contentEditable = false;
+            
+            const iconWrapper = document.createElement('span');
+            iconWrapper.className = `inline-file-tag-icon ${is_dir ? 'dir-icon' : 'file-icon'}`;
+            // 使用 span 内部包裹真正的图标文字，方便在 CSS 中隐藏
+            const iconText = document.createElement('span');
+            
+            if (!is_dir) {
+                iconText.innerHTML = getFileIcon(name);
+                iconText.style.display = 'inline-flex';
+                iconText.style.alignItems = 'center';
+            } else {
+                iconText.innerHTML = ICONS.folder;
+            }
+            
+            iconText.className = 'icon-emoji';
+            iconWrapper.appendChild(iconText);
+            
+            iconWrapper.onclick = (e) => {
+                e.stopPropagation();
+                tag.remove();
+            };
+            
+            // 悬停时隐藏原始表情
+            iconWrapper.onmouseenter = () => { iconText.style.display = 'none'; };
+            iconWrapper.onmouseleave = () => { iconText.style.display = 'inline'; };
+            
+            const nameSpan = document.createElement('span');
+            nameSpan.innerText = name;
+            
+            tag.appendChild(iconWrapper);
+            tag.appendChild(nameSpan);
+            
+            let range;
+            const sel = window.getSelection();
+            if (sel.rangeCount > 0 && inputArea.contains(sel.anchorNode)) {
+                range = sel.getRangeAt(0);
+            } else if (savedRange && inputArea.contains(savedRange.startContainer)) {
+                range = savedRange;
+            } else {
+                range = document.createRange();
+                range.selectNodeContents(inputArea);
+                range.collapse(false);
+            }
+            
+            range.insertNode(tag);
+            
+            const spaceAfter = document.createTextNode('\u200B ');
+            const spaceBefore = document.createTextNode(' \u200B');
+            
+            range.setStartAfter(tag);
+            range.collapse(true);
+            range.insertNode(spaceAfter);
+            
+            range.setStartBefore(tag);
+            range.collapse(true);
+            range.insertNode(spaceBefore);
+            
+            range.setStartAfter(spaceAfter);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            savedRange = range.cloneRange();
+            inputArea.focus();
+        }
+        
+        function getInlineFileTags() {
+            const tags = inputArea.querySelectorAll('.inline-file-tag');
+            return Array.from(tags).map(tag => ({
+                name: tag.getAttribute('data-name'),
+                path: tag.getAttribute('data-path'),
+                is_dir: tag.getAttribute('data-is-dir') === 'true'
+            }));
+        }
+        
+        function clearInlineFileTags() {
+            const tags = inputArea.querySelectorAll('.inline-file-tag');
+            tags.forEach(tag => tag.remove());
+        }
+
+        function toggleChatMode() {
+            const btn = document.getElementById('btn-chatmode');
+            if (chatMode === 'merged') {
+                chatMode = 'isolated';
+                btn.innerHTML = ICONS.chat;
+                btn.title = "当前: 隔离对话模式 (仅当前智能体历史)";
+                btn.classList.remove('active');
+            } else {
+                chatMode = 'merged';
+                btn.innerHTML = ICONS.chatGlobal;
+                btn.title = "当前: 全局对话模式 (显示所有历史)";
+                btn.classList.add('active');
+            }
+            renderChat();
+        }
+
+        let lastRenderedAgents = "";
+        
+        function renderSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const agentsStr = JSON.stringify(config.agents) + config.active_agent;
+            if (lastRenderedAgents === agentsStr) {
+                return;
+            }
+            lastRenderedAgents = agentsStr;
+            
+            sidebar.innerHTML = '';
+
+            const agents = config.agents || {};
+            const active = config.active_agent;
+
+            for (const [id, agent] of Object.entries(agents)) {
+                const isReady = agent.executable_path && agent.executable_path.trim() !== '';
+                const isActive = id === active;
+                
+                let iconHtml = '';
+                if (config.icons && config.icons[id]) {
+                    iconHtml = `<img src="${config.icons[id]}" alt="${getDisplayName(id)}">`;
+                } else {
+                    let iconText = id.substring(0, 2).toUpperCase();
+                    iconHtml = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#e5e5ea;color:#000;font-size:16px;">${iconText}</div>`;
+                }
+
+                const div = document.createElement('div');
+                div.className = `agent-icon ${isActive ? 'active' : ''} ${isReady ? '' : 'unready'}`;
+                div.title = getDisplayName(id) + (isReady ? '' : ' (未配置)');
+                div.onclick = () => handleIconClick(id, isReady);
+                div.innerHTML = iconHtml;
+                
+                sidebar.appendChild(div);
+            }
+        }
+
+        const AGENT_DISPLAY_NAMES = {
+            'openclaw': 'Openclaw',
+            'hermes': 'Hermes',
+            'claude': 'Claude Code'
+        };
+
+        function getDisplayName(id) {
+            return AGENT_DISPLAY_NAMES[id] || id;
+        }
+
+        function updateHeader() {
+            document.getElementById('current-agent-name').innerText = getDisplayName(config.active_agent);
+        }
+
+        async function handleIconClick(id, isReady) {
+            if (id === config.active_agent) return;
+            
+            if (isReady) {
+                const success = await pywebview.api.set_active(id);
+                if (success) {
+                    config.active_agent = id;
+                    renderSidebar();
+                    updateHeader();
+                    renderChat();
+                }
+            } else {
+                showToast("该智能体未配置，正在尝试自动检测...");
+                const result = await pywebview.api.detect_or_config(id);
+                if (result.success) {
+                    config = await pywebview.api.get_config();
+                    await pywebview.api.set_active(id);
+                    config.active_agent = id;
+                    renderSidebar();
+                    updateHeader();
+                    renderChat();
+                } else {
+                    showToast(result.msg || "检测失败，请点击右上角⚙️手动配置");
+                }
+            }
+        }
+
+        function addMessage(role, text, agentId) {
+            if (role === 'system') {
+                if (text === 'Continuous_Off') {
+                    const btn = document.getElementById('btn-continuous');
+                    btn.innerHTML = ICONS.continuousOff;
+                    btn.title = "开启持续对话";
+                    btn.classList.remove('active');
+                    return;
+                }
+                if (text === 'Continuous_On') {
+                    const btn = document.getElementById('btn-continuous');
+                    btn.innerHTML = ICONS.continuous;
+                    btn.title = "关闭持续对话";
+                    btn.classList.add('active');
+                    return;
+                }
+            }
+
+            const msg = { role, text };
+            chatHistory.merged.push(msg);
+            
+            const targetAgent = agentId || config.active_agent;
+            if (targetAgent) {
+                if (!chatHistory[targetAgent]) chatHistory[targetAgent] = [];
+                chatHistory[targetAgent].push(msg);
+            }
+            renderChat();
+        }
+
+        let renderTimeout = null;
+        let lastRenderState = { agent: null, mode: null, length: 0 };
+        
+        function renderChat() {
+            if (renderTimeout) clearTimeout(renderTimeout);
+            renderTimeout = setTimeout(() => {
+                const container = document.getElementById('chat-container');
+                let history = [];
+                if (chatMode === 'merged') {
+                    history = chatHistory.merged;
+                } else {
+                    history = chatHistory[config.active_agent] || [];
+                }
+                
+                if (lastRenderState.agent === config.active_agent && 
+                    lastRenderState.mode === chatMode && 
+                    lastRenderState.length === history.length) {
+                    return;
+                }
+                
+                if (lastRenderState.agent !== config.active_agent || lastRenderState.mode !== chatMode) {
+                    container.innerHTML = '';
+                    const fragment = document.createDocumentFragment();
+                    
+                    if (history.length === 0) {
+                        const div = document.createElement('div');
+                        div.className = 'message msg-system';
+                        div.innerText = '💡 提示: 点击 开启持续对话 或 单次对话 进行语音输入';
+                        fragment.appendChild(div);
+                    }
+                    
+                    history.forEach(msg => {
+                        const div = document.createElement('div');
+                        div.className = `message msg-${msg.role}`;
+                        div.innerText = msg.text;
+                        fragment.appendChild(div);
+                    });
+                    
+                    container.appendChild(fragment);
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    const newMessages = history.slice(lastRenderState.length);
+                    const fragment = document.createDocumentFragment();
+                    
+                    if (lastRenderState.length === 0 && container.firstChild && container.firstChild.classList.contains('msg-system')) {
+                        container.innerHTML = '';
+                    }
+                    
+                    newMessages.forEach(msg => {
+                        const div = document.createElement('div');
+                        div.className = `message msg-${msg.role}`;
+                        div.innerText = msg.text;
+                        fragment.appendChild(div);
+                    });
+                    
+                    const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+                    container.appendChild(fragment);
+                    if (wasAtBottom) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                
+                lastRenderState = { agent: config.active_agent, mode: chatMode, length: history.length };
+            }, 10);
+        }
+
+        function addSystemMessage(text) {
+            addMessage('system', text);
+        }
+
+        async function sendManualMessage() {
+            const input = document.getElementById('chat-input');
+            
+            // Get text content and inline file tags
+            const inlineTags = getInlineFileTags();
+            
+            // Extract the text structure to maintain the order of text and file references
+            let structuredContent = [];
+            
+            // Save to history
+            const htmlToSave = input.innerHTML;
+            const textToSave = input.innerText.trim();
+            if (textToSave !== '' || htmlToSave.includes('inline-file-tag')) {
+                if (messageHistory.length === 0 || messageHistory[messageHistory.length - 1] !== htmlToSave) {
+                    messageHistory.push(htmlToSave);
+                }
+                historyIndex = messageHistory.length;
+            }
+            
+            // Iterate over child nodes to preserve order
+            for (let node of input.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent.replace(/[\u200B]/g, '');
+                    if (text) {
+                        structuredContent.push({ type: 'text', content: text });
+                    }
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    if (node.classList.contains('inline-file-tag')) {
+                        structuredContent.push({
+                            type: 'file',
+                            name: node.getAttribute('data-name'),
+                            path: node.getAttribute('data-path'),
+                            is_dir: node.getAttribute('data-is-dir') === 'true'
+                        });
+                    } else if (node.tagName === 'BR') {
+                        structuredContent.push({ type: 'text', content: '\\n' });
+                    } else if (node.tagName === 'DIV') {
+                        structuredContent.push({ type: 'text', content: '\\n' + node.innerText });
+                    }
+                }
+            }
+            
+            // Ensure we have some content
+            let rawText = input.innerText || "";
+            rawText = rawText.replace(/[\u200B]/g, '').trim();
+            if (structuredContent.length === 0 && rawText) {
+                structuredContent.push({ type: 'text', content: rawText });
+            }
+            
+            // If completely empty, do nothing
+            const hasContent = structuredContent.some(item => 
+                (item.type === 'text' && item.content.trim() !== '') || 
+                item.type === 'file'
+            );
+            
+            if (!hasContent) return;
+            
+            // Clear input
+            input.innerHTML = '';
+            tempInput = '';
+            savedRange = null;
+            
+            // Call Python backend with the structured content
+            await pywebview.api.send_structured_message(structuredContent, config.active_agent);
+        }
+        
+        function openSettings() {
+            pywebview.api.open_settings_window();
+        }
+
+        function closeWindow(event) {
+            if (event) event.stopPropagation();
+            pywebview.api.close_window();
+        }
+
+        function minimizeWindow(event) {
+            if (event) event.stopPropagation();
+            pywebview.api.minimize_window();
+        }
+
+        function maximizeWindow(event) {
+            if (event) event.stopPropagation();
+            pywebview.api.maximize_window();
+        }
+
+        async function toggleSilentMode() {
+            const isSilent = await pywebview.api.toggle_silent_mode();
+            const btn = document.getElementById('btn-silent');
+            if (isSilent) {
+                btn.innerHTML = ICONS.volOff;
+                btn.title = "关闭静音模式";
+                btn.classList.add('active');
+                addSystemMessage("静音模式已开启");
+            } else {
+                btn.innerHTML = ICONS.vol;
+                btn.title = "开启静音模式";
+                btn.classList.remove('active');
+                addSystemMessage("已恢复语音播报");
+            }
+        }
+        
+        async function toggleContinuous() {
+            const isContinuous = await pywebview.api.toggle_continuous();
+            const btn = document.getElementById('btn-continuous');
+            if (isContinuous) {
+                btn.innerHTML = ICONS.continuous;
+                btn.title = "关闭持续对话";
+                btn.classList.add('active');
+                addSystemMessage("已开启持续对话模式");
+            } else {
+                btn.innerHTML = ICONS.continuousOff;
+                btn.title = "开启持续对话";
+                btn.classList.remove('active');
+                addSystemMessage("已关闭持续对话模式");
+            }
+        }
+        
+        async function triggerSingleTurn() {
+            addSystemMessage("🎙️ 正在听您说话...");
+            await pywebview.api.trigger_single_turn();
+        }
+
+        window.addEventListener('pywebviewready', function() {
+            loadData();
+            
+            const resizer = document.getElementById('resizer');
+            const fileExplorer = document.getElementById('file-explorer');
+            let isResizing = false;
+            
+            resizer.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                document.body.style.cursor = 'col-resize';
+                e.preventDefault();
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                // Calculate new width, min 150px, max 50% of window width
+                const newWidth = e.clientX;
+                const maxWidth = window.innerWidth * 0.5;
+                if (newWidth >= 150 && newWidth <= maxWidth) {
+                    fileExplorer.style.width = newWidth + 'px';
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.cursor = 'default';
+                }
+            });
+        });
+        // Global shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Command + 1..0 to switch agents
+            if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+                const key = e.key;
+                if (key >= '0' && key <= '9') {
+                    const index = key === '0' ? 9 : parseInt(key) - 1;
+                    const icons = document.querySelectorAll('.agent-icon');
+                    if (index < icons.length) {
+                        e.preventDefault();
+                        icons[index].click();
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
