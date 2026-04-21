@@ -1,9 +1,69 @@
 import SwiftUI
 
+// Create a custom AnyCodable type to handle mixed values in JSON dictionaries
+enum AnyCodableValue: Codable, Equatable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case null
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let x = try? container.decode(Int.self) {
+            self = .int(x)
+            return
+        }
+        if let x = try? container.decode(Double.self) {
+            self = .double(x)
+            return
+        }
+        if let x = try? container.decode(String.self) {
+            self = .string(x)
+            return
+        }
+        if let x = try? container.decode(Bool.self) {
+            self = .bool(x)
+            return
+        }
+        if container.decodeNil() {
+            self = .null
+            return
+        }
+        throw DecodingError.typeMismatch(AnyCodableValue.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Wrong type for AnyCodableValue"))
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .int(let x):
+            try container.encode(x)
+        case .double(let x):
+            try container.encode(x)
+        case .string(let x):
+            try container.encode(x)
+        case .bool(let x):
+            try container.encode(x)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+    
+    var stringValue: String {
+        switch self {
+        case .string(let s): return s
+        case .int(let i): return String(i)
+        case .double(let d): return String(d)
+        case .bool(let b): return String(b)
+        case .null: return "null"
+        }
+    }
+}
+
 struct ApprovalRequest: Codable, Equatable {
     var tool_name: String
     var risk_level: String
-    var tool_args: [String: String]?
+    var tool_args: [String: AnyCodableValue]?
     var description: String
 }
 
@@ -51,7 +111,7 @@ struct ApprovalDialogView: View {
                             HStack(alignment: .top) {
                                 Text("\(key):")
                                     .foregroundColor(.secondary)
-                                Text(args[key] ?? "")
+                                Text(args[key]?.stringValue ?? "")
                                     .font(.system(.body, design: .monospaced))
                             }
                         }

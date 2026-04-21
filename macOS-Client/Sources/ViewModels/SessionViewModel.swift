@@ -26,7 +26,7 @@ struct ApprovalDecisionRequest: Codable {
     var session_id: String
     var decision: String
     var tool_name: String
-    var tool_args: [String: String]?
+    var tool_args: [String: AnyCodableValue]?
 }
 
 class SessionViewModel: ObservableObject {
