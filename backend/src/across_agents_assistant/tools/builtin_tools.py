@@ -56,3 +56,32 @@ registry.register(ToolDefinition(
     risk_level="medium",
     handler=create_email_draft
 ))
+
+def create_note_draft(title: str, body: str) -> str:
+    # Use AppleScript to create a new note in Apple Notes app
+    applescript = f'''
+    tell application "Notes"
+        set newNote to make new note with properties {{name:"{title}", body:"<h1>{title}</h1><p>{body}</p>"}}
+        show newNote
+    end tell
+    '''
+    try:
+        subprocess.run(['osascript', '-e', applescript], check=True)
+        return "Successfully created note draft in Notes.app."
+    except subprocess.CalledProcessError as e:
+        return f"Failed to create note: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="create_note_draft",
+    description="Create a new note in the macOS Notes app.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Title of the note"},
+            "body": {"type": "string", "description": "Body content of the note"}
+        },
+        "required": ["title", "body"]
+    },
+    risk_level="medium",
+    handler=create_note_draft
+))

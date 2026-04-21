@@ -107,6 +107,19 @@ async def chat_endpoint(req: ChatRequest):
                 "description": "在 Mail.app 中创建一封发给 boss@company.com 的邮件草稿"
             }
         )
+        
+    if "备忘录" in prompt or "笔记" in prompt or "note" in prompt.lower():
+        return ChatResponse(
+            text="没问题，我将为你创建一条备忘录。请确认内容：",
+            session_id=req.session_id,
+            requires_approval=True,
+            approval_request={
+                "tool_name": "create_note_draft",
+                "risk_level": "medium",
+                "tool_args": {"title": "会议纪要", "body": "1. 确定下季度OKR\n2. 优化APP性能"},
+                "description": "在 macOS 备忘录中创建一条名为“会议纪要”的新笔记"
+            }
+        )
 
     # 2. Call Agent
     reply = agent_client.send(
