@@ -33,14 +33,21 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     }
     
     private func setupVoice() {
-        // Try to find a high quality Chinese voice
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let chineseVoices = voices.filter { $0.language.starts(with: "zh") }
         
-        // Prefer Premium > Enhanced > Standard
-        preferredVoice = chineseVoices.first(where: { $0.quality == .premium })
-            ?? chineseVoices.first(where: { $0.quality == .enhanced })
-            ?? chineseVoices.first
+        // Find user requested voice "Lilian" (or Lilian Premium)
+        let lilianVoice = chineseVoices.filter { $0.name.contains("Lilian") }
+            .max { $0.quality.rawValue < $1.quality.rawValue }
+            
+        if let lilian = lilianVoice {
+            preferredVoice = lilian
+        } else {
+            // Fallback
+            preferredVoice = chineseVoices.first(where: { $0.quality == .premium })
+                ?? chineseVoices.first(where: { $0.quality == .enhanced })
+                ?? chineseVoices.first
+        }
             
         print("Selected voice: \(preferredVoice?.name ?? "None") (Quality: \(preferredVoice?.quality.rawValue ?? -1))")
     }
