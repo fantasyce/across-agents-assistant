@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 
 from .agent_manager import AgentManager
 from .openclaw.client import UniversalAgentClient
+from .openclaw.intent_parser import ToolIntentParser
 
 # Ensure builtin tools are registered
 from .tools import builtin_tools
@@ -67,8 +68,31 @@ async def approve_tool_execution(req: ApprovalDecision):
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
-    # 1. Build prompt with context
+    # 1. Build prompt with context and inject Tool Schema (M4 Integration)
     prompt = req.text
+    
+    # Generate Tool Schema instructions
+    tool_schemas = registry.get_all_tools_schema()
+    schema_str = "【系统可用工具列表 (Tools)】\n"
+    for ts in tool_schemas:
+        import json
+        schema_str += f"- {ts['name']}: {ts['description']}\n  参数: {json.dumps(ts['parameters'], ensure_ascii=False)}\n"
+        
+    schema_str += """
+【执行规则】
+如果用户要求你执行上述工具列表中的动作，请你**必须且只能**输出一个 JSON 代码块，不要包含任何其他文字解释。
+JSON 格式必须严格如下：
+```json
+{
+  "plan_summary": "向用户解释你要干什么，比如：我将为你创建邮件草稿",
+  "tool_calls": [
+    {"name": "工具名称", "args": {"参数1": "值"}}
+  ]
+}
+```
+如果你不需要调用工具，直接回复普通文本即可，不要输出 JSON。
+"""
+
     if req.context:
         ctx_parts = []
         if req.context.frontmost_app:
@@ -79,97 +103,43 @@ async def chat_endpoint(req: ChatRequest):
             ctx_parts.append(f"剪贴板内容: {req.context.clipboard_text}")
             
         if ctx_parts:
-            prompt = f"【系统上下文】\n" + "\n".join(ctx_parts) + f"\n\n【用户指令】\n{req.text}"
+            prompt = f"{schema_str}\n\n【系统上下文】\n" + "\n".join(ctx_parts) + f"\n\n【用户指令】\n{req.text}"
+    else:
+        prompt = f"{schema_str}\n\n【用户指令】\n{req.text}"
 
-    # Mock Phase 3 behavior based ONLY on the user's explicit command (req.text), not the whole context
-    command = req.text.lower()
-    
-    if "list_directory" in command or "看" in command and "目录" in command:
-        return ChatResponse(
-            text="我将为你列出目录内容。该操作风险较低，但在执行前请您确认：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "list_directory",
-                "risk_level": "low",
-                "tool_args": {"path": "~/Documents"},
-                "description": "列出 ~/Documents 目录的内容"
-            }
-        )
-        
-    if "email" in command or "邮件" in command:
-        return ChatResponse(
-            text="好的，我将为你创建一封邮件草稿。这是一个中风险操作，请在弹窗中确认信息：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "create_email_draft",
-                "risk_level": "medium",
-                "tool_args": {"recipient": "boss@company.com", "subject": "本周工作汇报", "body": "这是正文..."},
-                "description": "在 Mail.app 中创建一封发给 boss@company.com 的邮件草稿"
-            }
-        )
-        
-    if "备忘录" in command or "笔记" in command or "note" in command:
-        return ChatResponse(
-            text="没问题，我将为你创建一条备忘录。请确认内容：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "create_note_draft",
-                "risk_level": "medium",
-                "tool_args": {"title": "会议纪要", "body": "1. 确定下季度OKR\n2. 优化APP性能"},
-                "description": "在 macOS 备忘录中创建一条名为“会议纪要”的新笔记"
-            }
-        )
-        
-    # --- New Advanced Mac Tools Mocks ---
-    if "浏览器" in command or "网页" in command or "网址" in command:
-        return ChatResponse(
-            text="好的，我将读取你当前浏览器的活动标签页信息：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "get_active_browser_url",
-                "risk_level": "low",
-                "tool_args": {},
-                "description": "获取当前 Chrome 或 Safari 的活动标签页网址和标题"
-            }
-        )
-        
-    if "暗" in command or "深色" in command or "浅色" in command or "亮" in command or "模式" in command:
-        return ChatResponse(
-            text="我将为你切换系统的外观模式：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "toggle_system_dark_mode",
-                "risk_level": "low",
-                "tool_args": {},
-                "description": "切换 macOS 的深色/浅色外观模式"
-            }
-        )
-        
-    if "音量" in command or "大点声" in command or "小点声" in command:
-        return ChatResponse(
-            text="好的，我将调整系统音量：",
-            session_id=req.session_id,
-            requires_approval=True,
-            approval_request={
-                "tool_name": "set_system_volume",
-                "risk_level": "low",
-                "tool_args": {"level": 50},
-                "description": "将系统主音量设置为 50%"
-            }
-        )
-
-    # 2. Call Agent
+    # 2. Call Agent (Real LLM Execution)
     reply = agent_client.send(
         message=prompt,
         session_id=req.session_id,
         target_agent=req.agent_id
     )
     
+    # 3. Parse Intent & Trigger Real Approval Flow
+    intent = ToolIntentParser.parse_intent(reply.text)
+    
+    if intent and "tool_calls" in intent and len(intent["tool_calls"]) > 0:
+        # We got a valid tool call from the LLM!
+        tool_call = intent["tool_calls"][0]
+        tool_name = tool_call.get("name")
+        tool_args = tool_call.get("args", {})
+        
+        # Verify tool exists in registry
+        tool_def = registry.get_tool(tool_name)
+        if tool_def:
+            plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
+            
+            return ChatResponse(
+                text=plan_summary,
+                session_id=reply.session_id,
+                requires_approval=True,
+                approval_request={
+                    "tool_name": tool_name,
+                    "risk_level": tool_def.risk_level,
+                    "tool_args": tool_args,
+                    "description": tool_def.description
+                }
+            )
+            
     # We no longer generate or play audio in Python.
     # The Swift client will handle TTS natively.
 

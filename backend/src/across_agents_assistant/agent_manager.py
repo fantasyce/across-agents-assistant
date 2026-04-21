@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
         "openclaw": {
             "type": "builtin",
             "executable_path": "",
-            "args_template": ["agent", "--agent", "main", "--message", "用户说: {message}", "--json"],
+            "args_template": ["agent", "--agent", "main", "--message", "{message}", "--json"],
             "output_format": "json"
         },
         "hermes": {
