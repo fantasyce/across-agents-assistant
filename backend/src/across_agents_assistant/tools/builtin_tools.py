@@ -86,6 +86,89 @@ registry.register(ToolDefinition(
     handler=create_note_draft
 ))
 
+def get_finder_context() -> str:
+    # AppleScript to get the current directory and selected files in Finder
+    applescript = '''
+    tell application "Finder"
+        set currentDir to ""
+        set selectedFiles to ""
+        
+        -- Get current directory
+        if exists Finder window 1 then
+            try
+                set currentDir to POSIX path of (target of Finder window 1 as alias)
+            on error
+                set currentDir to POSIX path of (desktop as alias)
+            end try
+        else
+            set currentDir to POSIX path of (desktop as alias)
+        end if
+        
+        -- Get selected files
+        set theSelection to selection
+        if (count of theSelection) > 0 then
+            set pathList to {}
+            repeat with anItem in theSelection
+                set end of pathList to POSIX path of (anItem as text)
+            end repeat
+            
+            set AppleScript's text item delimiters to ", "
+            set selectedFiles to pathList as text
+            set AppleScript's text item delimiters to ""
+        else
+            set selectedFiles to "未选中任何文件"
+        end if
+        
+        return "【当前目录】 " & currentDir & "\\n【选中的文件】 " & selectedFiles
+    end tell
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return f"Failed to get Finder context: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="get_finder_context",
+    description="Get the current directory path and the paths of any selected files in the macOS Finder. Useful when the user asks to operate on 'these files' or 'this folder'.",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": []
+    },
+    risk_level="low",
+    handler=get_finder_context
+))
+
+def get_xcode_context() -> str:
+    # AppleScript to get the active document path in Xcode
+    applescript = '''
+    tell application "Xcode"
+        if (count of documents) > 0 then
+            set docPath to path of document 1
+            return "【Xcode 当前文件】 " & docPath
+        else
+            return "Xcode 中没有打开的文件"
+        end if
+    end tell
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return f"Failed to get Xcode context: {str(e)}"
+
+registry.register(ToolDefinition(
+    name="get_xcode_context",
+    description="Get the absolute file path of the currently active document in Xcode.",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": []
+    },
+    risk_level="low",
+    handler=get_xcode_context
+))
 def get_active_browser_url(browser: str = "Chrome") -> str:
     # AppleScript to get URL and Title from Google Chrome or Safari regardless of if they are frontmost
     if browser.lower() == "safari":
