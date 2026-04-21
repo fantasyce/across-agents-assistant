@@ -42,3 +42,4 @@ macOS-Client/build/
 macOS-Client/DerivedData/
 macOS-Client/*.xcodeproj/xcuserdata/
 macOS-Client/*.xcworkspace/xcuserdata/
+backend/models/
