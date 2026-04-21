@@ -61,9 +61,8 @@ class TTSService:
         voice_edge: str = "zh-CN-XiaoxiaoNeural",
     ) -> SpeakResult:
         t0 = time.time()
-        mp3_path = self._temp_dir / "voice_reply.mp3"
 
-        self._generate_mp3(text, mp3_path, voice_edge=voice_edge)
+        audio_path = self._generate_audio(text, voice_edge=voice_edge)
         generate_elapsed = time.time() - t0
 
         stop_playback = threading.Event()
@@ -78,7 +77,7 @@ class TTSService:
         playback = NSSoundPlayback()
 
         def playback_worker():
-            ok = playback.play_mp3(mp3_path)
+            ok = playback.play_mp3(audio_path)
             stop_all()
             return ok
 
@@ -115,17 +114,20 @@ class TTSService:
         # return the time taken to generate the audio, not including playback time
         return SpeakResult(interrupted=interrupted, cached_text=cached, elapsed_sec=generate_elapsed)
 
-    def _generate_mp3(self, text: str, mp3_path: Path, voice_edge: str):
+    def _generate_audio(self, text: str, voice_edge: str) -> Path:
         if not self._fallback_to_edge and self._moss_runtime is not None:
+            audio_path = self._temp_dir / "voice_reply.wav"
             try:
-                self._generate_wav_moss(text, mp3_path)
-                return
+                self._generate_wav_moss(text, audio_path)
+                return audio_path
             except Exception as e:
                 import logging
                 logging.getLogger("across_agents_assistant").error(f"MOSS-TTS-Nano failed: {e}. Falling back to edge_tts.")
                 self._fallback_to_edge = True
 
-        asyncio.run(self._generate_mp3_edge(text, mp3_path, voice=voice_edge))
+        audio_path = self._temp_dir / "voice_reply.mp3"
+        asyncio.run(self._generate_mp3_edge(text, audio_path, voice=voice_edge))
+        return audio_path
 
     def _generate_wav_moss(self, text: str, output_path: Path):
         # We use zh_6.wav as the default voice for Nano
