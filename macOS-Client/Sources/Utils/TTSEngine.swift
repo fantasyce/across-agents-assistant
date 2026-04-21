@@ -1,75 +1,23 @@
 import AVFoundation
+import AppKit
 
 class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     static let shared = TTSEngine()
     
     private let synthesizer = AVSpeechSynthesizer()
-    private var preferredVoice: AVSpeechSynthesisVoice?
+    
+    // We no longer need to cache a preferredVoice, we will fetch the system default on the fly.
     
     var hasHighQualityVoice: Bool {
-        return preferredVoice?.quality == .premium || preferredVoice?.quality == .enhanced
+        // Just check if the current system default is premium/enhanced
+        let systemVoiceId = NSSpeechSynthesizer.defaultVoice.rawValue
+        let voice = AVSpeechSynthesisVoice(identifier: systemVoiceId)
+        return voice?.quality == .premium || voice?.quality == .enhanced
     }
     
     private override init() {
         super.init()
         synthesizer.delegate = self
-        
-        setupVoice()
-        
-        // Listen for system voice changes (e.g., user downloaded a new voice in System Settings)
-        if #available(macOS 14.0, *) {
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(voicesDidChange),
-                name: AVSpeechSynthesizer.availableVoicesDidChangeNotification,
-                object: nil
-            )
-        }
-    }
-    
-    @objc private func voicesDidChange() {
-        print("Detected system voice changes. Reloading voices...")
-        setupVoice()
-    }
-    
-    private func setupVoice() {
-        let voices = AVSpeechSynthesisVoice.speechVoices()
-        let chineseVoices = voices.filter { $0.language.starts(with: "zh") }
-        
-        // Define a flexible voice selection hierarchy
-        // Priority 1: Specific high-quality voices we love (Lilian, Tingting)
-        let preferredNames = ["Lilian", "Tingting", "Lili", "Siri"]
-        
-        for name in preferredNames {
-            if let matchedVoice = chineseVoices.filter({ $0.name.contains(name) })
-                .max(by: { $0.quality.rawValue < $1.quality.rawValue }) {
-                
-                // Only accept it if it's at least Enhanced quality
-                if matchedVoice.quality == .premium || matchedVoice.quality == .enhanced {
-                    preferredVoice = matchedVoice
-                    print("Selected preferred voice: \(matchedVoice.name) (Quality: \(matchedVoice.quality.rawValue))")
-                    return
-                }
-            }
-        }
-        
-        // Priority 2: Any Premium Chinese voice
-        if let premiumVoice = chineseVoices.first(where: { $0.quality == .premium }) {
-            preferredVoice = premiumVoice
-            print("Selected fallback Premium voice: \(premiumVoice.name)")
-            return
-        }
-        
-        // Priority 3: Any Enhanced Chinese voice
-        if let enhancedVoice = chineseVoices.first(where: { $0.quality == .enhanced }) {
-            preferredVoice = enhancedVoice
-            print("Selected fallback Enhanced voice: \(enhancedVoice.name)")
-            return
-        }
-        
-        // Priority 4: The absolute default basic voice (Robotic fallback)
-        preferredVoice = chineseVoices.first
-        print("Selected basic fallback voice: \(preferredVoice?.name ?? "None")")
     }
     
     func speak(_ text: String) {
@@ -79,7 +27,17 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         }
         
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = preferredVoice
+        
+        // --- THE MAGIC: Read the user's actual selection from macOS System Settings ---
+        let systemVoiceId = NSSpeechSynthesizer.defaultVoice.rawValue
+        if let userSelectedVoice = AVSpeechSynthesisVoice(identifier: systemVoiceId) {
+            utterance.voice = userSelectedVoice
+            print("Using user's exact macOS System Voice: \(userSelectedVoice.name) (Quality: \(userSelectedVoice.quality.rawValue))")
+        } else {
+            // Absolute fallback if the system API fails
+            utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+            print("Fallback to generic zh-CN voice")
+        }
         
         // Tune parameters to make it sound less robotic ("生硬")
         utterance.rate = 0.48 // Slightly slower than default 0.5 for better articulation
