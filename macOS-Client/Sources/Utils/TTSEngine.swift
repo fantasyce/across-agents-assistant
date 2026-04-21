@@ -14,6 +14,25 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         super.init()
         synthesizer.delegate = self
         
+        setupVoice()
+        
+        // Listen for system voice changes (e.g., user downloaded a new voice in System Settings)
+        if #available(macOS 14.0, *) {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(voicesDidChange),
+                name: AVSpeechSynthesizer.availableVoicesDidChangeNotification,
+                object: nil
+            )
+        }
+    }
+    
+    @objc private func voicesDidChange() {
+        print("Detected system voice changes. Reloading voices...")
+        setupVoice()
+    }
+    
+    private func setupVoice() {
         // Try to find a high quality Chinese voice
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let chineseVoices = voices.filter { $0.language.starts(with: "zh") }
@@ -22,6 +41,8 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         preferredVoice = chineseVoices.first(where: { $0.quality == .premium })
             ?? chineseVoices.first(where: { $0.quality == .enhanced })
             ?? chineseVoices.first
+            
+        print("Selected voice: \(preferredVoice?.name ?? "None") (Quality: \(preferredVoice?.quality.rawValue ?? -1))")
     }
     
     func speak(_ text: String) {
