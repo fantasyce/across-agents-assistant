@@ -15,6 +15,9 @@ class ToolIntentParser:
     """
     @staticmethod
     def parse_intent(llm_output: str) -> Optional[Dict[str, Any]]:
+        if not llm_output:
+            return None
+            
         # Find JSON blocks in the output
         json_pattern = re.compile(r'```json\s*(\{.*?\})\s*```', re.DOTALL)
         match = json_pattern.search(llm_output)

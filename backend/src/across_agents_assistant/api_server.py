@@ -119,7 +119,9 @@ JSON 格式必须严格如下：
     print(f"\n========== [DEBUG] 大模型返回的 RAW TEXT ==========\n{reply.text}\n==================================================\n")
     
     # 3. Parse Intent & Trigger Real Approval Flow
-    intent = ToolIntentParser.parse_intent(reply.text)
+    # Add defensive checking for reply.text being None
+    reply_text = reply.text if reply.text else ""
+    intent = ToolIntentParser.parse_intent(reply_text)
     
     if intent and "tool_calls" in intent and len(intent["tool_calls"]) > 0:
         # We got a valid tool call from the LLM!
