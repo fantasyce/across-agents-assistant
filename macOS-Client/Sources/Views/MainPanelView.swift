@@ -54,25 +54,40 @@ struct MainPanelView: View {
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(8)
                     .lineLimit(1...5)
+                    .disabled(viewModel.pendingApproval != nil)
                     .onSubmit {
-                        submit()
+                        if viewModel.pendingApproval == nil {
+                            submit()
+                        }
                     }
                 
                 Button(action: submit) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(inputText.isEmpty ? .gray : .blue)
+                        .foregroundColor(inputText.isEmpty || viewModel.pendingApproval != nil ? .gray : .blue)
                         .padding(10)
                         .background(Color.gray.opacity(0.1))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(inputText.isEmpty)
+                .disabled(inputText.isEmpty || viewModel.pendingApproval != nil)
             }
             .padding()
         }
         .frame(width: 420, height: 650)
         .background(VisualEffectView().ignoresSafeArea())
+        .overlay(
+            Group {
+                if let request = viewModel.pendingApproval {
+                    ZStack {
+                        Color.black.opacity(0.4).ignoresSafeArea()
+                        ApprovalDialogView(request: request) { approved in
+                            viewModel.submitDecision(approved: approved)
+                        }
+                    }
+                }
+            }
+        )
     }
     
     private func submit() {

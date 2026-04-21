@@ -18,11 +18,22 @@ struct ChatResponse: Codable {
     var text: String
     var session_id: String?
     var audio_path: String?
+    var requires_approval: Bool?
+    var approval_request: ApprovalRequest?
+}
+
+struct ApprovalDecisionRequest: Codable {
+    var session_id: String
+    var decision: String
+    var tool_name: String
+    var tool_args: [String: String]?
 }
 
 class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
+    @Published var pendingApproval: ApprovalRequest? = nil
+    
     private var currentSessionId: String? = nil
     
     init() {
@@ -89,14 +100,74 @@ class SessionViewModel: ObservableObject {
                     // Trigger Native TTS
                     TTSEngine.shared.speak(chatResp.text)
                     
-                    // If the user only has default voices, show a gentle tip in the UI once
-                    if !TTSEngine.shared.hasHighQualityVoice && self.messages.filter({ !$0.isUser }).count == 2 {
-                        let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
-                        self.messages.append(tipMsg)
+                    // Handle Phase 3: Security Approval Flow
+                    if chatResp.requires_approval == true, let request = chatResp.approval_request {
+                        self.pendingApproval = request
+                    } else {
+                        // If the user only has default voices, show a gentle tip in the UI once
+                        if !TTSEngine.shared.hasHighQualityVoice && self.messages.filter({ !$0.isUser }).count == 2 {
+                            let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
+                            self.messages.append(tipMsg)
+                        }
                     }
                     
                 } catch {
                     self.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
+                }
+            }
+        }.resume()
+    }
+    
+    func submitDecision(approved: Bool) {
+        guard let request = pendingApproval else { return }
+        
+        self.pendingApproval = nil
+        isProcessing = true
+        
+        let decisionReq = ApprovalDecisionRequest(
+            session_id: currentSessionId ?? "",
+            decision: approved ? "approve" : "reject",
+            tool_name: request.tool_name,
+            tool_args: request.tool_args
+        )
+        
+        guard let url = URL(string: "http://127.0.0.1:8000/api/approve") else {
+            self.addError("API URL Invalid")
+            return
+        }
+        
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            urlRequest.httpBody = try JSONEncoder().encode(decisionReq)
+        } catch {
+            self.addError("Failed to encode decision")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: urlRequest) { data, response, error in
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                
+                if let error = error {
+                    self.addError("网络错误: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let data = data else {
+                    self.addError("未收到数据")
+                    return
+                }
+                
+                do {
+                    let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                    let botMsg = Message(content: chatResp.text, isUser: false)
+                    self.messages.append(botMsg)
+                    TTSEngine.shared.speak(chatResp.text)
+                } catch {
+                    self.addError("解析失败: \(error.localizedDescription)")
                 }
             }
         }.resume()
