@@ -16,10 +16,10 @@ struct AcrossAgentsAssistantApp: App {
         }
         
         MenuBarExtra("Across Agents", systemImage: "sparkles") {
-            Button("Toggle Panel") {
+            Button("Toggle Panel (Cmd+Option+Space)") {
                 appDelegate.togglePanel()
             }
-            .keyboardShortcut("P", modifiers: [.command, .shift])
+            .keyboardShortcut(.space, modifiers: [.command, .option])
             
             Divider()
             
