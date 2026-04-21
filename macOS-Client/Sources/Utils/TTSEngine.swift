@@ -36,20 +36,40 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let chineseVoices = voices.filter { $0.language.starts(with: "zh") }
         
-        // Find user requested voice "Lilian" (or Lilian Premium)
-        let lilianVoice = chineseVoices.filter { $0.name.contains("Lilian") }
-            .max { $0.quality.rawValue < $1.quality.rawValue }
-            
-        if let lilian = lilianVoice {
-            preferredVoice = lilian
-        } else {
-            // Fallback
-            preferredVoice = chineseVoices.first(where: { $0.quality == .premium })
-                ?? chineseVoices.first(where: { $0.quality == .enhanced })
-                ?? chineseVoices.first
+        // Define a flexible voice selection hierarchy
+        // Priority 1: Specific high-quality voices we love (Lilian, Tingting)
+        let preferredNames = ["Lilian", "Tingting", "Lili", "Siri"]
+        
+        for name in preferredNames {
+            if let matchedVoice = chineseVoices.filter({ $0.name.contains(name) })
+                .max(by: { $0.quality.rawValue < $1.quality.rawValue }) {
+                
+                // Only accept it if it's at least Enhanced quality
+                if matchedVoice.quality == .premium || matchedVoice.quality == .enhanced {
+                    preferredVoice = matchedVoice
+                    print("Selected preferred voice: \(matchedVoice.name) (Quality: \(matchedVoice.quality.rawValue))")
+                    return
+                }
+            }
         }
-            
-        print("Selected voice: \(preferredVoice?.name ?? "None") (Quality: \(preferredVoice?.quality.rawValue ?? -1))")
+        
+        // Priority 2: Any Premium Chinese voice
+        if let premiumVoice = chineseVoices.first(where: { $0.quality == .premium }) {
+            preferredVoice = premiumVoice
+            print("Selected fallback Premium voice: \(premiumVoice.name)")
+            return
+        }
+        
+        // Priority 3: Any Enhanced Chinese voice
+        if let enhancedVoice = chineseVoices.first(where: { $0.quality == .enhanced }) {
+            preferredVoice = enhancedVoice
+            print("Selected fallback Enhanced voice: \(enhancedVoice.name)")
+            return
+        }
+        
+        // Priority 4: The absolute default basic voice (Robotic fallback)
+        preferredVoice = chineseVoices.first
+        print("Selected basic fallback voice: \(preferredVoice?.name ?? "None")")
     }
     
     func speak(_ text: String) {
