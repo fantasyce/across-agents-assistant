@@ -85,6 +85,10 @@ class SessionViewModel: ObservableObject {
                     self.currentSessionId = chatResp.session_id
                     let botMsg = Message(content: chatResp.text, isUser: false)
                     self.messages.append(botMsg)
+                    
+                    // Trigger Native TTS
+                    TTSEngine.shared.speak(chatResp.text)
+                    
                 } catch {
                     self.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
                 }

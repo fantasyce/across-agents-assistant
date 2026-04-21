@@ -1,13 +1,10 @@
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from pathlib import Path
+from typing import Optional
 
 from .agent_manager import AgentManager
 from .openclaw.client import UniversalAgentClient
-from .tts.tts_service import TTSService
-from .tts.playback import NSSoundPlayback
 
 app = FastAPI(title="Across Agents Assistant API")
 
@@ -30,11 +27,9 @@ class ChatResponse(BaseModel):
 # Global instances
 agent_manager = AgentManager()
 agent_client = UniversalAgentClient(agent_manager)
-tts_service = TTSService(Path("./temp_tts"))
-playback = NSSoundPlayback()
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest, background_tasks: BackgroundTasks):
+async def chat_endpoint(req: ChatRequest):
     # 1. Build prompt with context
     prompt = req.text
     if req.context:
@@ -56,28 +51,13 @@ async def chat_endpoint(req: ChatRequest, background_tasks: BackgroundTasks):
         target_agent=req.agent_id
     )
     
-    # 3. Generate Audio
-    # Generate audio in background to not block the text response if needed?
-    # No, for M2 we want to wait for audio or return path and play it.
-    # Actually, let's just generate it synchronously and return the path, or play it directly.
-    try:
-        audio_path = tts_service._generate_audio(reply.text, voice_edge="zh-CN-XiaoxiaoNeural")
-        
-        # Schedule playback
-        def play_audio(path):
-            playback.play_mp3(path)
-            
-        background_tasks.add_task(play_audio, audio_path)
-        audio_path_str = str(audio_path)
-    except Exception as e:
-        import logging
-        logging.getLogger("across_agents_assistant").error(f"TTS failed: {e}")
-        audio_path_str = None
+    # We no longer generate or play audio in Python.
+    # The Swift client will handle TTS natively.
 
     return ChatResponse(
         text=reply.text,
         session_id=reply.session_id,
-        audio_path=audio_path_str
+        audio_path=None
     )
 
 def start_api_server(host="127.0.0.1", port=8000):
