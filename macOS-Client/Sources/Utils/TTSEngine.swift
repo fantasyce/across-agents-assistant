@@ -1,23 +1,27 @@
 import AVFoundation
 
-class TTSEngine: NSObject, AVSpeechSynthesizerDelegate {
+class TTSEngine: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     static let shared = TTSEngine()
     
     private let synthesizer = AVSpeechSynthesizer()
     private var preferredVoice: AVSpeechSynthesisVoice?
     
-    override init() {
+    private override init() {
         super.init()
         synthesizer.delegate = self
         
-        // Try to find a high quality Chinese voice, prefer TingTing or Siri
+        // Try to find a high quality Chinese voice
         let voices = AVSpeechSynthesisVoice.speechVoices()
-        preferredVoice = voices.first(where: { $0.language == "zh-CN" && $0.quality == .enhanced }) 
-            ?? voices.first(where: { $0.language == "zh-CN" })
+        let chineseVoices = voices.filter { $0.language.starts(with: "zh") }
+        
+        // Prefer Premium > Enhanced > Standard
+        preferredVoice = chineseVoices.first(where: { $0.quality == .premium })
+            ?? chineseVoices.first(where: { $0.quality == .enhanced })
+            ?? chineseVoices.first
     }
     
     func speak(_ text: String) {
-        // Stop currently playing speech
+        // Stop immediately to prevent overlapping/echoing ("重音")
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
@@ -25,13 +29,14 @@ class TTSEngine: NSObject, AVSpeechSynthesizerDelegate {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = preferredVoice
         
-        // Make it sound more natural
-        utterance.rate = 0.52 
-        utterance.pitchMultiplier = 1.0
+        // Tune parameters to make it sound less robotic ("生硬")
+        utterance.rate = 0.48 // Slightly slower than default 0.5 for better articulation
+        utterance.pitchMultiplier = 1.05 // Slight pitch variation for more natural tone
         utterance.volume = 1.0
         
-        // Slight pause before punctuation for better phrasing
+        // Add natural breathing pauses
         utterance.preUtteranceDelay = 0.05
+        utterance.postUtteranceDelay = 0.1
         
         synthesizer.speak(utterance)
     }
