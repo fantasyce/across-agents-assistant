@@ -736,24 +736,50 @@ HTML_CONTENT = """
 
         function getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
+            const name = filename.toLowerCase();
+            
+            // Full filename matches (e.g. hidden files, config files)
+            if (name.includes('dockerfile') || name === '.dockerignore' || name === 'docker-compose.yml') return FILE_ICONS['docker'] || ICONS.file;
+            if (name === '.gitignore' || name === '.gitattributes' || name === '.gitmodules') return FILE_ICONS['git'] || ICONS.file;
+            if (name.startsWith('readme')) return FILE_ICONS['readme'] || ICONS.file;
+            if (name.startsWith('license')) return FILE_ICONS['license'] || ICONS.file;
+            if (name === '.env' || name === 'makefile' || name === 'cmakelists.txt') return FILE_ICONS['settings'] || FILE_ICONS['command'] || ICONS.file;
+            if (name.endsWith('.config') || name.endsWith('.ini') || name.endsWith('.toml') || name === '.editorconfig') return FILE_ICONS['settings'] || ICONS.file;
+            if (name === 'next.config.js' || name === 'next.config.mjs') return FILE_ICONS['next'] || ICONS.file;
+            if (name.includes('.workspace')) return FILE_ICONS['workspace'] || ICONS.file;
+            if (name === '.bashrc' || name === '.zshrc' || name === '.bash_profile') return FILE_ICONS['bash'] || ICONS.file;
+            
+            // Extensions
             if (ext === 'c#' || ext === 'cs') return FILE_ICONS['csharp'] || ICONS.file;
             if (ext === 'c++' || ext === 'cpp' || ext === 'cc' || ext === 'cxx') return FILE_ICONS['cpp'] || ICONS.file;
             if (ext === 'js' || ext === 'mjs' || ext === 'cjs') return FILE_ICONS['js'] || ICONS.file;
-            if (ext === 'ts' || ext === 'tsx') return FILE_ICONS['ts'] || ICONS.file;
+            if (ext === 'jsx' || ext === 'tsx') return FILE_ICONS['react'] || ICONS.file;
+            if (ext === 'ts') return FILE_ICONS['ts'] || ICONS.file;
+            if (ext === 'vue') return FILE_ICONS['vue'] || ICONS.file;
             if (ext === 'py' || ext === 'pyc' || ext === 'pyd') return FILE_ICONS['python'] || ICONS.file;
             if (ext === 'md' || ext === 'markdown') return FILE_ICONS['markdown'] || ICONS.file;
             if (ext === 'json') return FILE_ICONS['json'] || ICONS.file;
             if (ext === 'html' || ext === 'htm') return FILE_ICONS['html'] || ICONS.file;
-            if (ext === 'css') return FILE_ICONS['css'] || ICONS.file;
+            if (ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') return FILE_ICONS['css'] || ICONS.file;
             if (ext === 'sh' || ext === 'bash' || ext === 'zsh') return FILE_ICONS['bash'] || ICONS.file;
             if (ext === 'rs') return FILE_ICONS['rs'] || ICONS.file;
             if (ext === 'go') return FILE_ICONS['go'] || ICONS.file;
             if (ext === 'yaml' || ext === 'yml') return FILE_ICONS['yaml'] || ICONS.file;
             if (ext === 'xml') return FILE_ICONS['xml'] || ICONS.file;
-            if (ext === 'txt') return FILE_ICONS['txt'] || ICONS.file;
+            if (ext === 'txt' || ext === 'log') return FILE_ICONS['txt'] || ICONS.file;
             if (ext === 'svg') return FILE_ICONS['svg'] || ICONS.file;
             if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp') return FILE_ICONS['image'] || ICONS.file;
+            if (ext === 'ico') return FILE_ICONS['ico'] || ICONS.file;
             if (ext === 'pdf') return FILE_ICONS['pdf'] || ICONS.file;
+            if (ext === 'java') return FILE_ICONS['java'] || ICONS.file;
+            if (ext === 'class') return FILE_ICONS['class'] || ICONS.file;
+            if (ext === 'c') return FILE_ICONS['c'] || ICONS.file;
+            if (ext === 'h' || ext === 'hpp') return FILE_ICONS['h'] || ICONS.file;
+            if (ext === 'm' || ext === 'mm') return FILE_ICONS['m'] || ICONS.file;
+            if (ext === 'bat' || ext === 'cmd') return FILE_ICONS['bat'] || ICONS.file;
+            if (ext === 'v') return FILE_ICONS['v'] || ICONS.file;
+            if (ext === 'dts' || ext === 'dtsi') return FILE_ICONS['dts'] || ICONS.file;
+            if (ext === 'pem' || ext === 'crt' || ext === 'key') return FILE_ICONS['authorization'] || ICONS.file;
             
             // Try exact match first
             if (FILE_ICONS[ext]) return FILE_ICONS[ext];
