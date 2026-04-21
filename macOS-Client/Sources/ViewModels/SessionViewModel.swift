@@ -7,13 +7,27 @@ struct Message: Identifiable {
     let timestamp: Date = Date()
 }
 
+struct ChatRequest: Codable {
+    var text: String
+    var context: ContextPack?
+    var session_id: String?
+    var agent_id: String?
+}
+
+struct ChatResponse: Codable {
+    var text: String
+    var session_id: String?
+    var audio_path: String?
+}
+
 class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
+    private var currentSessionId: String? = nil
     
     init() {
         // Initial greeting
-        messages.append(Message(content: "你好！我是 Across Agents Assistant 桌面副驾。按 Option+Space 随时唤醒我。", isUser: false))
+        messages.append(Message(content: "你好！我是 Across Agents Assistant 桌面副驾。\n\n后端大脑已接入，我现在能看到你的剪贴板和正在用的软件了。请下达指令！", isUser: false))
     }
     
     func submitMessage(_ text: String) {
@@ -24,12 +38,62 @@ class SessionViewModel: ObservableObject {
         
         isProcessing = true
         
-        // TODO: In Phase 2, this will send an HTTP request to the Python backend
-        // For Phase 1, we just mock the response
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.isProcessing = false
-            let botMsg = Message(content: "这是 Swift 原生壳层收到的消息: \"\(text)\"\n\n在接下来的阶段，我会将这条消息发给 Python 后端，并带上你当前的屏幕上下文！", isUser: false)
-            self.messages.append(botMsg)
+        // 1. Collect Tier 1 Context
+        let context = ContextEngine.shared.collectTier1Context()
+        
+        // 2. Build Request
+        let req = ChatRequest(
+            text: text,
+            context: context,
+            session_id: currentSessionId,
+            agent_id: "openclaw" // Default agent
+        )
+        
+        guard let url = URL(string: "http://127.0.0.1:8000/api/chat") else {
+            self.addError("API URL Invalid")
+            return
         }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            request.httpBody = try JSONEncoder().encode(req)
+        } catch {
+            self.addError("Failed to encode request")
+            return
+        }
+        
+        // 3. Send HTTP Request
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                
+                if let error = error {
+                    self.addError("网络错误: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let data = data else {
+                    self.addError("未收到数据")
+                    return
+                }
+                
+                do {
+                    let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                    self.currentSessionId = chatResp.session_id
+                    let botMsg = Message(content: chatResp.text, isUser: false)
+                    self.messages.append(botMsg)
+                } catch {
+                    self.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
+                }
+            }
+        }.resume()
+    }
+    
+    private func addError(_ text: String) {
+        isProcessing = false
+        messages.append(Message(content: "⚠️ " + text, isUser: false))
     }
 }
