@@ -13,7 +13,7 @@ class SessionViewModel: ObservableObject {
     
     init() {
         // Initial greeting
-        messages.append(Message(content: "你好！我是 Across Agents Assistant 桌面副驾。按 Cmd+Option+Space 随时唤醒我。", isUser: false))
+        messages.append(Message(content: "你好！我是 Across Agents Assistant 桌面副驾。按 Option+Space 随时唤醒我。", isUser: false))
     }
     
     func submitMessage(_ text: String) {

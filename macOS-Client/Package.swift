@@ -9,11 +9,13 @@ let package = Package(
     products: [
         .executable(name: "AcrossAgentsAssistantClient", targets: ["AcrossAgentsAssistantClient"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/soffes/HotKey", from: "0.2.0")
+    ],
     targets: [
         .executableTarget(
             name: "AcrossAgentsAssistantClient",
-            dependencies: [],
+            dependencies: ["HotKey"],
             path: "Sources"
         )
     ]

@@ -1,9 +1,11 @@
 import Cocoa
 import SwiftUI
+import HotKey
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
     var sessionViewModel = SessionViewModel()
+    private var hotKey: HotKey?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set to accessory to hide from dock but allow menu bar
@@ -15,6 +17,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         setupPanel()
+        setupGlobalHotkey()
+    }
+    
+    func setupGlobalHotkey() {
+        // Register Option + Space as the global hotkey
+        hotKey = HotKey(key: .space, modifiers: [.option])
+        
+        hotKey?.keyDownHandler = { [weak self] in
+            DispatchQueue.main.async {
+                self?.togglePanel()
+            }
+        }
     }
     
     func setupPanel() {
