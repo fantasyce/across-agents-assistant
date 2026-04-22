@@ -4,7 +4,14 @@ import HotKey
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
-    var sessionViewModel = SessionViewModel()
+    lazy var sessionViewModel: SessionViewModel = {
+        let vm = SessionViewModel()
+        // Bind UI callbacks
+        vm.onHidePanel = { [weak self] in self?.hidePanel() }
+        vm.onShowPanel = { [weak self] in self?.showPanel() }
+        return vm
+    }()
+    
     private var hotKey: HotKey?
     
     func applicationDidFinishLaunching(_ notification: Notification) {

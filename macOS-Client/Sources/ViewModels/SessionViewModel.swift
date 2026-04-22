@@ -38,12 +38,14 @@ class SessionViewModel: ObservableObject {
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
     
+    // Callbacks to decouple UI operations from the ViewModel
+    var onHidePanel: (() -> Void)?
+    var onShowPanel: (() -> Void)?
+    
     private var currentSessionId: String? = nil
     
     func requestManualScreenshot() {
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.hidePanel()
-        }
+        onHidePanel?()
         
         // We MUST yield the main thread to allow the RunLoop to actually process the window hide event
         // before we launch the screencapture process. A slight delay ensures the window shadow and fade-out complete.
@@ -51,9 +53,7 @@ class SessionViewModel: ObservableObject {
             ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
                 guard let self = self else { return }
                 
-                if let appDelegate = NSApp.delegate as? AppDelegate {
-                    appDelegate.showPanel()
-                }
+                self.onShowPanel?()
                 
                 if let text = extractedText {
                     if !self.inputText.isEmpty {
@@ -114,9 +114,7 @@ class SessionViewModel: ObservableObject {
                 if let decisionStr = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["decision"] as? String),
                    let toolName = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["tool_name"] as? String) {
                     if decisionStr == "approve" && toolName == "take_screenshot_and_ocr" {
-                        if let appDelegate = NSApp.delegate as? AppDelegate {
-                            appDelegate.showPanel()
-                        }
+                        self.onShowPanel?()
                     }
                 }
                 
@@ -163,9 +161,7 @@ class SessionViewModel: ObservableObject {
         // Hide panel temporarily if the tool requires UI interaction (like screencapture)
         if approved && request.tool_name == "take_screenshot_and_ocr" {
             DispatchQueue.main.async {
-                if let appDelegate = NSApp.delegate as? AppDelegate {
-                    appDelegate.hidePanel()
-                }
+                self.onHidePanel?()
             }
         }
         
