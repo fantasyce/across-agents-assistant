@@ -200,11 +200,11 @@ class SessionViewModel: ObservableObject {
         }.resume()
     }
     
-    func submitDecision(approved: Bool) {
+    func submitDecision(decision: String) {
         guard let request = pendingApproval else { return }
         
         // Hide panel temporarily if the tool requires UI interaction (like screencapture)
-        if approved && request.tool_name == "take_screenshot_and_ocr" {
+        if (decision == "approve" || decision == "always_allow") && request.tool_name == "take_screenshot_and_ocr" {
             DispatchQueue.main.async {
                 self.onHidePanel?()
             }
@@ -214,7 +214,7 @@ class SessionViewModel: ObservableObject {
         
         let decisionReq = ApprovalDecisionRequest(
             session_id: currentSessionId,
-            decision: approved ? "approve" : "reject",
+            decision: decision,
             tool_name: request.tool_name,
             tool_args: request.tool_args
         )

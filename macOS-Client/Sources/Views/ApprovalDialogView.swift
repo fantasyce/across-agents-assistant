@@ -68,87 +68,122 @@ struct ApprovalRequest: Codable, Equatable {
 }
 
 struct ApprovalDialogView: View {
-    var request: ApprovalRequest
-    var onDecision: (Bool) -> Void
+    let request: ApprovalRequest
+    let onDecision: (String) -> Void
+    
+    private var riskColor: Color {
+        switch request.risk_level.lowercased() {
+        case "high": return .red
+        case "medium": return .orange
+        case "low": return .green
+        default: return .blue
+        }
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(spacing: 20) {
+            // Header
             HStack {
-                Image(systemName: request.risk_level == "high" ? "exclamationmark.triangle.fill" : "shield.checkerboard")
-                    .foregroundColor(request.risk_level == "high" ? .red : (request.risk_level == "medium" ? .orange : .green))
+                Image(systemName: "exclamationmark.shield.fill")
+                    .foregroundColor(riskColor)
                     .font(.title2)
-                
-                Text("需要您的授权")
+                Text("Action Requires Approval")
                     .font(.headline)
+                Spacer()
             }
             
-            Text("助手申请执行以下操作：")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
+            // Tool Info
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("动作:")
-                        .bold()
-                        .frame(width: 50, alignment: .leading)
+                    Text("Tool:")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                     Text(request.tool_name)
                         .font(.system(.body, design: .monospaced))
                 }
-                HStack {
-                    Text("说明:")
-                        .bold()
-                        .frame(width: 50, alignment: .leading)
-                    Text(request.description)
-                }
                 
-                if let args = request.tool_args, !args.isEmpty {
-                    Text("参数:")
-                        .bold()
-                        .padding(.top, 4)
+                Text(request.description)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.gray.opacity(0.1))
+            .cornerRadius(8)
+            
+            // Arguments
+            if let args = request.tool_args, !args.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Parameters:")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                     
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(args.keys.sorted()), id: \.self) { key in
                             HStack(alignment: .top) {
                                 Text("\(key):")
+                                    .fontWeight(.medium)
                                     .foregroundColor(.secondary)
-                                Text(args[key]?.stringValue ?? "")
-                                    .font(.system(.body, design: .monospaced))
+                                Text(args[key]?.stringValue ?? "null")
                             }
+                            .font(.system(.caption, design: .monospaced))
                         }
                     }
                     .padding(8)
-                    .background(Color.gray.opacity(0.1))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.05))
                     .cornerRadius(6)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding()
-            .background(Color(NSColor.windowBackgroundColor))
-            .cornerRadius(8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-            )
             
+            // Buttons
             HStack(spacing: 12) {
-                Spacer()
-                Button("拒绝") {
-                    onDecision(false)
+                Button(action: {
+                    onDecision("reject")
+                }) {
+                    Text("Deny")
+                        .fontWeight(.medium)
+                        .foregroundColor(.red)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(6)
                 }
-                .keyboardShortcut(.cancelAction)
+                .buttonStyle(.plain)
                 
-                Button("允许执行") {
-                    onDecision(true)
+                Button(action: {
+                    onDecision("approve")
+                }) {
+                    Text("Allow Once")
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(riskColor)
+                        .cornerRadius(6)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(request.risk_level == "high" ? .red : .blue)
-                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    onDecision("always_allow")
+                }) {
+                    Text("Always Allow")
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.top, 8)
         }
-        .padding()
-        .frame(width: 380)
-        .background(VisualEffectView().ignoresSafeArea())
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 4)
+        .padding(24)
+        .frame(width: 400)
+        .background(VisualEffectView())
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
     }
 }

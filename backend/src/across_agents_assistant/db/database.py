@@ -56,9 +56,19 @@ class DatabaseManager:
                 tool_name TEXT NOT NULL,
                 tool_args TEXT NOT NULL, -- JSON string
                 risk_level TEXT NOT NULL,
-                decision TEXT NOT NULL, -- 'approve' or 'reject'
+                decision TEXT NOT NULL, -- 'approve', 'reject', or 'auto_approve'
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (session_id) REFERENCES sessions (id)
+            )
+        ''')
+        
+        # Create Tool Authorizations Table for "Always Allow" feature
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tool_authorizations (
+                tool_name TEXT PRIMARY KEY,
+                is_always_allowed BOOLEAN NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -127,6 +137,40 @@ class DatabaseManager:
         )
         conn.commit()
         conn.close()
+
+    # --- Tool Authorizations ---
+    
+    def get_tool_authorization(self, tool_name: str) -> bool:
+        """Check if a tool is 'Always Allowed'"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT is_always_allowed FROM tool_authorizations WHERE tool_name = ?', (tool_name,))
+        row = cursor.fetchone()
+        conn.close()
+        return bool(row['is_always_allowed']) if row else False
+
+    def set_tool_authorization(self, tool_name: str, is_always_allowed: bool):
+        """Set or update the 'Always Allow' status for a tool"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO tool_authorizations (tool_name, is_always_allowed) 
+            VALUES (?, ?)
+            ON CONFLICT(tool_name) DO UPDATE SET 
+                is_always_allowed = excluded.is_always_allowed,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (tool_name, int(is_always_allowed)))
+        conn.commit()
+        conn.close()
+        
+    def get_all_authorizations(self) -> List[Dict[str, Any]]:
+        """Get all explicitly authorized tools"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT tool_name, is_always_allowed, updated_at FROM tool_authorizations')
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return rows
 
 # Global database instance
 db = DatabaseManager()

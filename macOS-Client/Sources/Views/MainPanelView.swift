@@ -94,8 +94,8 @@ struct MainPanelView: View {
                 if let request = viewModel.pendingApproval {
                     ZStack {
                         Color.black.opacity(0.4).ignoresSafeArea()
-                        ApprovalDialogView(request: request) { approved in
-                            viewModel.submitDecision(approved: approved)
+                        ApprovalDialogView(request: request) { decision in
+                            viewModel.submitDecision(decision: decision)
                         }
                     }
                 }

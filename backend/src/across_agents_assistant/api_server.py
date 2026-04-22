@@ -34,7 +34,7 @@ class ChatResponse(BaseModel):
 
 class ApprovalDecision(BaseModel):
     session_id: str
-    decision: str # "approve", "reject"
+    decision: str # "approve", "reject", "always_allow"
     tool_name: str
     tool_args: Dict[str, Any]
 
@@ -69,7 +69,10 @@ async def approve_tool_execution(req: ApprovalDecision):
         decision=req.decision
     )
     
-    if req.decision == "approve":
+    if req.decision == "always_allow":
+        db.set_tool_authorization(req.tool_name, True)
+    
+    if req.decision in ["approve", "always_allow"]:
         # Execute tool
         if tool_def:
             try:
@@ -166,6 +169,35 @@ JSON 格式必须严格如下：
         if tool_def:
             plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
             
+            # Check if tool is "always allowed"
+            is_always_allowed = db.get_tool_authorization(tool_name)
+            
+            if is_always_allowed:
+                # Auto-approve and execute
+                db.add_audit_log(
+                    session_id=reply.session_id,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    risk_level=tool_def.risk_level,
+                    decision="auto_approve"
+                )
+                
+                try:
+                    result = tool_def.handler(**tool_args)
+                    result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
+                    db.add_message(session_id=req.session_id, role="tool", content=result_text)
+                    return ChatResponse(
+                        text=result_text,
+                        session_id=reply.session_id
+                    )
+                except Exception as e:
+                    error_text = f"❌ 工具 (自动授权) 执行失败: {str(e)}"
+                    db.add_message(session_id=req.session_id, role="tool", content=error_text)
+                    return ChatResponse(
+                        text=error_text,
+                        session_id=reply.session_id
+                    )
+            
             return ChatResponse(
                 text=plan_summary,
                 session_id=reply.session_id,
@@ -190,6 +222,27 @@ JSON 格式必须严格如下：
 
 def start_api_server(host="127.0.0.1", port=8000):
     uvicorn.run(app, host=host, port=port)
+
+@app.get("/api/tools/authorizations")
+async def get_tool_authorizations():
+    """Retrieve the list of all tools that are 'Always Allowed'"""
+    try:
+        auths = db.get_all_authorizations()
+        return {"authorizations": auths}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RevokeRequest(BaseModel):
+    tool_name: str
+
+@app.post("/api/tools/authorizations/revoke")
+async def revoke_tool_authorization(req: RevokeRequest):
+    """Revoke the 'Always Allow' authorization for a specific tool"""
+    try:
+        db.set_tool_authorization(req.tool_name, False)
+        return {"status": "success", "tool_name": req.tool_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     start_api_server()
