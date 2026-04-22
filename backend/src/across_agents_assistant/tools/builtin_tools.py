@@ -1,6 +1,85 @@
 import os
 import subprocess
+import os
+import tempfile
+try:
+    import Foundation
+    import Vision
+    VISION_AVAILABLE = True
+except ImportError:
+    VISION_AVAILABLE = False
+
 from .tool_registry import registry, ToolDefinition
+
+def take_screenshot_and_ocr() -> str:
+    if not VISION_AVAILABLE:
+        return "❌ 无法执行：系统缺少 pyobjc-framework-Vision 依赖。请在终端运行: pip3 install pyobjc-framework-Vision --break-system-packages"
+        
+    # 1. Create a temporary file for the screenshot
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+        temp_path = temp_file.name
+        
+    try:
+        # 2. Invoke macOS native interactive screencapture (-i for interactive, -x for no sound)
+        # This will pause the python script until the user selects an area
+        subprocess.run(['screencapture', '-i', '-x', temp_path], check=True)
+        
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            return "截图被取消或未成功保存。"
+            
+        # 3. Perform OCR using macOS Vision Framework
+        file_url = Foundation.NSURL.fileURLWithPath_(temp_path)
+        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(file_url, None)
+        
+        results_text = []
+        
+        def completion_handler(request, error):
+            if error:
+                results_text.append(f"OCR Error: {error}")
+                return
+            
+            for observation in request.results() or []:
+                candidate = observation.topCandidates_(1).firstObject()
+                if candidate:
+                    results_text.append(candidate.string())
+                    
+        request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(completion_handler)
+        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request.setRecognitionLanguages_(["zh-Hans", "en-US"])
+        request.setUsesLanguageCorrection_(True)
+        
+        success, error = handler.performRequests_error_([request], None)
+        
+        if not success:
+            return f"执行 OCR 请求失败: {error}"
+            
+        final_text = "\n".join(results_text).strip()
+        
+        if not final_text:
+            return "截图中未识别到任何文本内容。"
+            
+        return f"【屏幕截图内容识别结果】\n{final_text}"
+        
+    except subprocess.CalledProcessError:
+        return "截图操作被取消或发生系统错误。"
+    except Exception as e:
+        return f"OCR 处理发生异常: {str(e)}"
+    finally:
+        # 4. Clean up the temporary image file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+registry.register(ToolDefinition(
+    name="take_screenshot_and_ocr",
+    description="Take an interactive screenshot of a specific area on the user's screen and extract the text using OCR. This tool will pause and wait for the user to draw a box on their screen. Useful when the user asks to 'read this image', 'extract text from the screen', or when normal text selection fails.",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": []
+    },
+    risk_level="low",
+    handler=take_screenshot_and_ocr
+))
 
 def list_directory(path: str) -> str:
     expanded_path = os.path.expanduser(path)
