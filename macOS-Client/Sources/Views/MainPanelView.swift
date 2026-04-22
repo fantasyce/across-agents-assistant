@@ -2,7 +2,6 @@ import SwiftUI
 
 struct MainPanelView: View {
     @ObservedObject var viewModel: SessionViewModel
-    @State private var inputText: String = ""
     
     var body: some View {
         VStack(spacing: 0) {
@@ -48,7 +47,21 @@ struct MainPanelView: View {
             
             // Input Area
             HStack(alignment: .bottom, spacing: 12) {
-                TextField("Ask anything...", text: $inputText, axis: .vertical)
+                // Screenshot Button
+                Button(action: {
+                    viewModel.requestManualScreenshot()
+                }) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 16))
+                        .foregroundColor(.primary)
+                        .frame(width: 32, height: 32)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(16)
+                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                }
+                .buttonStyle(.plain)
+                
+                TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .padding(10)
                     .background(Color.gray.opacity(0.1))
@@ -64,13 +77,13 @@ struct MainPanelView: View {
                 Button(action: submit) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(inputText.isEmpty || viewModel.pendingApproval != nil ? .gray : .blue)
+                        .foregroundColor(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil ? .gray : .blue)
                         .padding(10)
                         .background(Color.gray.opacity(0.1))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(inputText.isEmpty || viewModel.pendingApproval != nil)
+                .disabled(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil)
             }
             .padding()
         }
@@ -91,10 +104,10 @@ struct MainPanelView: View {
     }
     
     private func submit() {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
             viewModel.submitMessage(text)
-            inputText = ""
+            viewModel.inputText = ""
         }
     }
 }

@@ -36,8 +36,30 @@ class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
     @Published var pendingApproval: ApprovalRequest? = nil
+    @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
     
     private var currentSessionId: String? = nil
+    
+    func requestManualScreenshot() {
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.hidePanel()
+        }
+        
+        ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
+            guard let self = self else { return }
+            
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.showPanel()
+            }
+            
+            if let text = extractedText {
+                if !self.inputText.isEmpty {
+                    self.inputText += "\n"
+                }
+                self.inputText += "【截图内容】:\n" + text + "\n"
+            }
+        }
+    }
     
     init() {
         // Initial greeting
