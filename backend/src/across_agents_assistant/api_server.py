@@ -10,6 +10,7 @@ from .openclaw.intent_parser import ToolIntentParser
 # Ensure builtin tools are registered
 from .tools import builtin_tools
 from .tools.tool_registry import registry
+from .db.database import db
 
 app = FastAPI(title="Across Agents Assistant API")
 
@@ -41,35 +42,64 @@ class ApprovalDecision(BaseModel):
 agent_manager = AgentManager()
 agent_client = UniversalAgentClient(agent_manager)
 
+@app.get("/api/history/{session_id}")
+async def get_chat_history(session_id: str):
+    """Retrieve chat history for a specific session"""
+    try:
+        messages = db.get_messages(session_id)
+        return {"session_id": session_id, "messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tools", response_model=List[Dict[str, Any]])
 async def get_tools():
     return registry.get_all_tools_schema()
 
 @app.post("/api/approve", response_model=ChatResponse)
 async def approve_tool_execution(req: ApprovalDecision):
+    tool_def = registry.get_tool(req.tool_name)
+    risk_level = tool_def.risk_level if tool_def else "unknown"
+    
+    # DB: Log the audit decision
+    db.add_audit_log(
+        session_id=req.session_id,
+        tool_name=req.tool_name,
+        tool_args=req.tool_args,
+        risk_level=risk_level,
+        decision=req.decision
+    )
+    
     if req.decision == "approve":
         # Execute tool
-        tool_def = registry.get_tool(req.tool_name)
         if tool_def:
             try:
                 # The tool_args coming from the Swift client will be a dict of {key: value}
                 # But since we use AnyCodableValue in Swift, simple types like Int/String should map correctly
                 result = tool_def.handler(**req.tool_args)
+                result_text = f"✅ 工具 {req.tool_name} 执行成功！结果：\n{result}"
+                db.add_message(session_id=req.session_id, role="tool", content=result_text)
                 return ChatResponse(
-                    text=f"✅ 工具 {req.tool_name} 执行成功！结果：\n{result}",
+                    text=result_text,
                     session_id=req.session_id
                 )
             except Exception as e:
+                error_text = f"❌ 工具执行失败: {str(e)}"
+                db.add_message(session_id=req.session_id, role="tool", content=error_text)
                 return ChatResponse(
-                    text=f"❌ 工具执行失败: {str(e)}",
+                    text=error_text,
                     session_id=req.session_id
                 )
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
     else:
-        return ChatResponse(text="已取消执行", session_id=req.session_id)
+        cancel_text = "已取消执行"
+        db.add_message(session_id=req.session_id, role="tool", content=cancel_text)
+        return ChatResponse(text=cancel_text, session_id=req.session_id)
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
+    # DB: Record the user's message
+    db.add_message(session_id=req.session_id, role="user", content=req.text)
+    
     # 1. Build prompt with context and inject Tool Schema (M4 Integration)
     prompt = req.text
     
@@ -151,6 +181,7 @@ JSON 格式必须严格如下：
     # We no longer generate or play audio in Python.
     # The Swift client will handle TTS natively.
 
+    db.add_message(session_id=req.session_id, role="assistant", content=reply.text)
     return ChatResponse(
         text=reply.text,
         session_id=reply.session_id,

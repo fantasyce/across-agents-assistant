@@ -42,7 +42,7 @@ class SessionViewModel: ObservableObject {
     var onHidePanel: (() -> Void)?
     var onShowPanel: (() -> Void)?
     
-    private var currentSessionId: String? = nil
+    private var currentSessionId: String = "default-session"
     
     func requestManualScreenshot() {
         onHidePanel?()
@@ -66,8 +66,51 @@ class SessionViewModel: ObservableObject {
     }
     
     init() {
-        // Initial greeting
-        messages.append(Message(content: "你好！我是 Across Agents Assistant 桌面副驾。\n\n后端大脑已接入，我现在能看到你的剪贴板和正在用的软件了。请下达指令！", isUser: false))
+        // Load history or greet
+        loadChatHistory()
+    }
+    
+    private func loadChatHistory() {
+        guard let url = URL(string: "http://127.0.0.1:8000/api/history/\(currentSessionId)") else { return }
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            guard let self = self, let data = data, error == nil else {
+                self?.addGreeting()
+                return
+            }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let msgs = json["messages"] as? [[String: Any]], !msgs.isEmpty {
+                    
+                    var loadedMessages: [Message] = []
+                    for m in msgs {
+                        if let role = m["role"] as? String, let content = m["content"] as? String {
+                            // "user", "assistant", "tool"
+                            let isUser = (role == "user")
+                            loadedMessages.append(Message(content: content, isUser: isUser))
+                        }
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self.messages = loadedMessages
+                    }
+                } else {
+                    self.addGreeting()
+                }
+            } catch {
+                self.addGreeting()
+            }
+        }.resume()
+    }
+    
+    private func addGreeting() {
+        DispatchQueue.main.async {
+            self.messages.append(Message(
+                content: "Hello! I'm your Across Agents Copilot. Press Cmd+Option+Space anytime to chat with me.",
+                isUser: false
+            ))
+        }
     }
     
     func submitMessage(_ text: String) {
@@ -86,7 +129,7 @@ class SessionViewModel: ObservableObject {
             text: text,
             context: context,
             session_id: currentSessionId,
-            agent_id: "openclaw" // Default agent
+            agent_id: "openclaw" // Using default
         )
         
         guard let url = URL(string: "http://127.0.0.1:8000/api/chat") else {
@@ -130,7 +173,9 @@ class SessionViewModel: ObservableObject {
                 
                 do {
                     let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
-                    self.currentSessionId = chatResp.session_id
+                    if let sessionId = chatResp.session_id {
+                        self.currentSessionId = sessionId
+                    }
                     let botMsg = Message(content: chatResp.text, isUser: false)
                     self.messages.append(botMsg)
                     
@@ -168,7 +213,7 @@ class SessionViewModel: ObservableObject {
         self.pendingApproval = nil
         
         let decisionReq = ApprovalDecisionRequest(
-            session_id: currentSessionId ?? "",
+            session_id: currentSessionId,
             decision: approved ? "approve" : "reject",
             tool_name: request.tool_name,
             tool_args: request.tool_args
