@@ -1,4 +1,7 @@
 import Foundation
+import Combine
+import AVFoundation
+import AppKit
 
 struct Message: Identifiable {
     let id = UUID()
@@ -81,6 +84,16 @@ class SessionViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.isProcessing = false
                 
+                // Show the panel again if we hid it for screenshot
+                if let decisionStr = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["decision"] as? String),
+                   let toolName = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["tool_name"] as? String) {
+                    if decisionStr == "approve" && toolName == "take_screenshot_and_ocr" {
+                        if let appDelegate = NSApp.delegate as? AppDelegate {
+                            appDelegate.showPanel()
+                        }
+                    }
+                }
+                
                 if let error = error {
                     self.addError("网络错误: \(error.localizedDescription)")
                     return
@@ -121,8 +134,16 @@ class SessionViewModel: ObservableObject {
     func submitDecision(approved: Bool) {
         guard let request = pendingApproval else { return }
         
+        // Hide panel temporarily if the tool requires UI interaction (like screencapture)
+        if approved && request.tool_name == "take_screenshot_and_ocr" {
+            DispatchQueue.main.async {
+                if let appDelegate = NSApp.delegate as? AppDelegate {
+                    appDelegate.hidePanel()
+                }
+            }
+        }
+        
         self.pendingApproval = nil
-        isProcessing = true
         
         let decisionReq = ApprovalDecisionRequest(
             session_id: currentSessionId ?? "",
@@ -130,6 +151,8 @@ class SessionViewModel: ObservableObject {
             tool_name: request.tool_name,
             tool_args: request.tool_args
         )
+        
+        isProcessing = true
         
         guard let url = URL(string: "http://127.0.0.1:8000/api/approve") else {
             self.addError("API URL Invalid")

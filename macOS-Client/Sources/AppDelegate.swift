@@ -69,4 +69,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
     }
+    
+    // Add a public method to manually hide the panel from other parts of the app
+    func hidePanel() {
+        if panel.isVisible {
+            panel.orderOut(nil)
+        }
+    }
+    
+    // Add a public method to manually show the panel
+    func showPanel() {
+        if !panel.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
 }
