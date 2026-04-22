@@ -45,18 +45,22 @@ class SessionViewModel: ObservableObject {
             appDelegate.hidePanel()
         }
         
-        ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
-            guard let self = self else { return }
-            
-            if let appDelegate = NSApp.delegate as? AppDelegate {
-                appDelegate.showPanel()
-            }
-            
-            if let text = extractedText {
-                if !self.inputText.isEmpty {
-                    self.inputText += "\n"
+        // We MUST yield the main thread to allow the RunLoop to actually process the window hide event
+        // before we launch the screencapture process. A slight delay ensures the window shadow and fade-out complete.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
+                guard let self = self else { return }
+                
+                if let appDelegate = NSApp.delegate as? AppDelegate {
+                    appDelegate.showPanel()
                 }
-                self.inputText += "【截图内容】:\n" + text + "\n"
+                
+                if let text = extractedText {
+                    if !self.inputText.isEmpty {
+                        self.inputText += "\n"
+                    }
+                    self.inputText += "【截图内容】:\n" + text + "\n"
+                }
             }
         }
     }
