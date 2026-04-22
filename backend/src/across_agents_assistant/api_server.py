@@ -81,22 +81,40 @@ async def approve_tool_execution(req: ApprovalDecision):
                 result = tool_def.handler(**req.tool_args)
                 result_text = f"✅ 工具 {req.tool_name} 执行成功！结果：\n{result}"
                 db.add_message(session_id=req.session_id, role="tool", content=result_text)
-                return ChatResponse(
-                    text=result_text,
-                    session_id=req.session_id
+                
+                # --- AUTO CONTINUATION ---
+                # Instead of returning the result directly, we wrap it in a ChatRequest
+                # and call chat_with_agent recursively so the LLM can see the result and continue.
+                continuation_req = ChatRequest(
+                    text=f"工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
+                    context={}, # We don't need to resend tier1 context for the continuation
+                    session_id=req.session_id,
+                    agent_id="openclaw" # Default
                 )
+                return await chat_with_agent(continuation_req)
+                
             except Exception as e:
                 error_text = f"❌ 工具执行失败: {str(e)}"
                 db.add_message(session_id=req.session_id, role="tool", content=error_text)
-                return ChatResponse(
-                    text=error_text,
-                    session_id=req.session_id
+                
+                continuation_req = ChatRequest(
+                    text=f"工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
+                    context={},
+                    session_id=req.session_id,
+                    agent_id="openclaw"
                 )
+                return await chat_with_agent(continuation_req)
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
     else:
-        cancel_text = "已取消执行"
+        cancel_text = "用户已取消执行工具操作。"
         db.add_message(session_id=req.session_id, role="tool", content=cancel_text)
-        return ChatResponse(text=cancel_text, session_id=req.session_id)
+        continuation_req = ChatRequest(
+            text="用户拒绝了你的工具调用请求。请告知用户已取消，或者提供其他建议。",
+            context={},
+            session_id=req.session_id,
+            agent_id="openclaw"
+        )
+        return await chat_with_agent(continuation_req)
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
@@ -144,81 +162,81 @@ JSON 格式必须严格如下：
 
     print(f"\n========== [DEBUG] 发送给大模型的 PROMPT ==========\n{prompt}\n==================================================\n")
 
-    # 2. Call Agent (Real LLM Execution)
-    reply = agent_client.send(
-        message=prompt,
-        session_id=req.session_id,
-        target_agent=req.agent_id
-    )
-    
-    print(f"\n========== [DEBUG] 大模型返回的 RAW TEXT ==========\n{reply.text}\n==================================================\n")
-    
-    # 3. Parse Intent & Trigger Real Approval Flow
-    # Add defensive checking for reply.text being None
-    reply_text = reply.text if reply.text else ""
-    intent = ToolIntentParser.parse_intent(reply_text)
-    
-    if intent and "tool_calls" in intent and len(intent["tool_calls"]) > 0:
-        # We got a valid tool call from the LLM!
-        tool_call = intent["tool_calls"][0]
-        tool_name = tool_call.get("name")
-        tool_args = tool_call.get("args", {})
+    while True:
+        # 2. Call Agent (Real LLM Execution)
+        reply = agent_client.send(
+            message=prompt,
+            session_id=req.session_id,
+            target_agent=req.agent_id
+        )
         
-        # Verify tool exists in registry
-        tool_def = registry.get_tool(tool_name)
-        if tool_def:
-            plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
+        print(f"\n========== [DEBUG] 大模型返回的 RAW TEXT ==========\n{reply.text}\n==================================================\n")
+        
+        # 3. Parse Intent & Trigger Real Approval Flow
+        # Add defensive checking for reply.text being None
+        reply_text = reply.text if reply.text else ""
+        intent = ToolIntentParser.parse_intent(reply_text)
+        
+        if intent and "tool_calls" in intent and len(intent["tool_calls"]) > 0:
+            # We got a valid tool call from the LLM!
+            tool_call = intent["tool_calls"][0]
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("args", {})
             
-            # Check if tool is "always allowed"
-            is_always_allowed = db.get_tool_authorization(tool_name)
-            
-            if is_always_allowed:
-                # Auto-approve and execute
-                db.add_audit_log(
+            # Verify tool exists in registry
+            tool_def = registry.get_tool(tool_name)
+            if tool_def:
+                plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
+                
+                # Check if tool is "always allowed"
+                is_always_allowed = db.get_tool_authorization(tool_name)
+                
+                if is_always_allowed:
+                    # Auto-approve and execute
+                    db.add_audit_log(
+                        session_id=reply.session_id,
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        risk_level=tool_def.risk_level,
+                        decision="auto_approve"
+                    )
+                    
+                    try:
+                        result = tool_def.handler(**tool_args)
+                        result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
+                        db.add_message(session_id=req.session_id, role="tool", content=result_text)
+                        
+                        prompt = f"工具 {tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。"
+                        continue
+                        
+                    except Exception as e:
+                        error_text = f"❌ 工具 (自动授权) 执行失败: {str(e)}"
+                        db.add_message(session_id=req.session_id, role="tool", content=error_text)
+                        
+                        prompt = f"工具 {tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。"
+                        continue
+                
+                return ChatResponse(
+                    text=plan_summary,
                     session_id=reply.session_id,
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                    risk_level=tool_def.risk_level,
-                    decision="auto_approve"
+                    requires_approval=True,
+                    approval_request={
+                        "tool_name": tool_name,
+                        "risk_level": tool_def.risk_level,
+                        "tool_args": tool_args,
+                        "description": tool_def.description
+                    }
                 )
                 
-                try:
-                    result = tool_def.handler(**tool_args)
-                    result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
-                    db.add_message(session_id=req.session_id, role="tool", content=result_text)
-                    return ChatResponse(
-                        text=result_text,
-                        session_id=reply.session_id
-                    )
-                except Exception as e:
-                    error_text = f"❌ 工具 (自动授权) 执行失败: {str(e)}"
-                    db.add_message(session_id=req.session_id, role="tool", content=error_text)
-                    return ChatResponse(
-                        text=error_text,
-                        session_id=reply.session_id
-                    )
-            
-            return ChatResponse(
-                text=plan_summary,
-                session_id=reply.session_id,
-                requires_approval=True,
-                approval_request={
-                    "tool_name": tool_name,
-                    "risk_level": tool_def.risk_level,
-                    "tool_args": tool_args,
-                    "description": tool_def.description
-                }
-            )
-            
-    # We no longer generate or play audio in Python.
-    # The Swift client will handle TTS natively.
+        # We no longer generate or play audio in Python.
+        # The Swift client will handle TTS natively.
 
-    db.add_message(session_id=req.session_id, role="assistant", content=reply.text)
-    return ChatResponse(
-        text=reply.text,
-        session_id=reply.session_id,
-        audio_path=None
-    )
+        db.add_message(session_id=req.session_id, role="assistant", content=reply.text)
+        return ChatResponse(
+            text=reply.text,
+            session_id=reply.session_id,
+            audio_path=None
+        )
 
 def start_api_server(host="127.0.0.1", port=8000):
     uvicorn.run(app, host=host, port=port)

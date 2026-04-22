@@ -149,74 +149,69 @@ class SessionViewModel: ObservableObject {
         }
         
         // 3. Send HTTP Request
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                self.isProcessing = false
-                
-                // Show the panel again if we hid it for screenshot
-                if let decisionStr = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["decision"] as? String),
-                   let toolName = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["tool_name"] as? String) {
-                    if decisionStr == "approve" && toolName == "take_screenshot_and_ocr" {
-                        self.onShowPanel?()
-                    }
-                }
+                self?.isProcessing = false
                 
                 if let error = error {
-                    self.addError("网络错误: \(error.localizedDescription)")
+                    self?.addError("网络错误: \(error.localizedDescription)")
                     return
                 }
                 
                 guard let data = data else {
-                    self.addError("未收到数据")
+                    self?.addError("未收到数据")
                     return
                 }
                 
                 do {
-                    let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
-                    if let sessionId = chatResp.session_id {
-                        self.currentSessionId = sessionId
-                    }
-                    let botMsg = Message(content: chatResp.text, isUser: false)
-                    self.messages.append(botMsg)
-                    
-                    // Trigger Native TTS
-                    TTSEngine.shared.speak(chatResp.text)
+                        let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                        if let sessionId = chatResp.session_id {
+                            self?.currentSessionId = sessionId
+                        }
+                        
+                        // Use the correct text property from chatResp
+                        let botMsg = Message(content: chatResp.text, isUser: false)
+                        self?.messages.append(botMsg)
+                        
+                        // Trigger Native TTS
+                        TTSEngine.shared.speak(chatResp.text)
                     
                     // Handle Phase 3: Security Approval Flow
                     if chatResp.requires_approval == true, let request = chatResp.approval_request {
-                        self.pendingApproval = request
+                        self?.pendingApproval = request
                     } else {
                         // If the user only has default voices, show a gentle tip in the UI once
-                        if !TTSEngine.shared.hasHighQualityVoice && self.messages.filter({ !$0.isUser }).count == 2 {
+                        if !TTSEngine.shared.hasHighQualityVoice && self?.messages.filter({ !$0.isUser }).count == 2 {
                             let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
-                            self.messages.append(tipMsg)
+                            self?.messages.append(tipMsg)
                         }
                     }
                     
                 } catch {
-                    self.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
+                    self?.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
                 }
             }
         }.resume()
     }
     
     func submitDecision(decision: String) {
-        guard let request = pendingApproval else { return }
+        guard let requestObj = pendingApproval else { return }
         
         // Hide panel temporarily if the tool requires UI interaction (like screencapture)
-        if (decision == "approve" || decision == "always_allow") && request.tool_name == "take_screenshot_and_ocr" {
+        if (decision == "approve" || decision == "always_allow") && requestObj.tool_name == "take_screenshot_and_ocr" {
             DispatchQueue.main.async {
                 self.onHidePanel?()
             }
         }
         
         self.pendingApproval = nil
+        self.isProcessing = true // Keep processing true while we wait for the LLM's continuation response
         
         let decisionReq = ApprovalDecisionRequest(
             session_id: currentSessionId,
             decision: decision,
-            tool_name: request.tool_name,
-            tool_args: request.tool_args
+            tool_name: requestObj.tool_name,
+            tool_args: requestObj.tool_args
         )
         
         isProcessing = true
@@ -253,6 +248,11 @@ class SessionViewModel: ObservableObject {
                 
                 do {
                     let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                    
+                    if (decisionReq.decision == "approve" || decisionReq.decision == "always_allow") && decisionReq.tool_name == "take_screenshot_and_ocr" {
+                        self.onShowPanel?()
+                    }
+                    
                     let botMsg = Message(content: chatResp.text, isUser: false)
                     self.messages.append(botMsg)
                     TTSEngine.shared.speak(chatResp.text)
