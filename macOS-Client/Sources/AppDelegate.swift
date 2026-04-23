@@ -60,6 +60,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         
+        // Hide standard window buttons so we can draw our own custom traffic lights
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        
         // 3. Make the background draggable
         panel.isMovableByWindowBackground = true
         

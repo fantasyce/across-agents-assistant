@@ -1,5 +1,26 @@
 import SwiftUI
 
+// Helper to create Color from hex
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 0, 0, 0)
+        }
+        self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue:  Double(b) / 255, opacity: Double(a) / 255)
+    }
+}
+
 // Define custom colors to match the legacy UI
 extension Color {
     static let legacyBgLight = Color(red: 249/255, green: 249/255, blue: 249/255)
@@ -18,6 +39,97 @@ extension Color {
     static let legacyUserMsgBgDark = Color(red: 155/255, green: 130/255, blue: 198/255) // #9B82C6
 }
 
+struct CustomTrafficLights: View {
+    @State private var isHovered = false
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color(hex: isHovered ? "#FF5F56" : "#FFBFBB"))
+                .frame(width: 12, height: 12)
+                .onTapGesture {
+                    NSApplication.shared.keyWindow?.close()
+                }
+            
+            Circle()
+                .fill(Color(hex: isHovered ? "#FFBD2E" : "#FFE4AB"))
+                .frame(width: 12, height: 12)
+                .onTapGesture {
+                    NSApplication.shared.keyWindow?.miniaturize(nil)
+                }
+            
+            Circle()
+                .fill(Color(hex: isHovered ? "#27C93F" : "#A8E9B2"))
+                .frame(width: 12, height: 12)
+                .onTapGesture {
+                    NSApplication.shared.keyWindow?.zoom(nil)
+                }
+        }
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+struct FileTreeView: View {
+    let item: FileItemModel
+    let depth: Int
+    @State private var isExpanded: Bool
+    
+    init(item: FileItemModel, depth: Int = 0) {
+        self.item = item
+        self.depth = depth
+        _isExpanded = State(initialValue: item.isExpanded)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Spacer().frame(width: CGFloat(depth * 15))
+                
+                if item.isFolder {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .frame(width: 12)
+                    
+                    Image(systemName: "folder.fill")
+                        .foregroundColor(Color(hex: "#5AC8FA"))
+                        .font(.system(size: 12))
+                } else {
+                    Spacer().frame(width: 12)
+                    
+                    Image(systemName: "doc.text")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                }
+                
+                Text(item.name)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color.primary.opacity(0.8))
+                
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if item.isFolder {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                }
+            }
+            
+            if item.isFolder && isExpanded, let children = item.children {
+                ForEach(children) { child in
+                    FileTreeView(item: child, depth: depth + 1)
+                }
+            }
+        }
+    }
+}
+
 struct MainPanelView: View {
     @ObservedObject var viewModel: SessionViewModel
     @Environment(\.colorScheme) var colorScheme
@@ -31,18 +143,36 @@ struct MainPanelView: View {
     private var userMsgTextColor: Color { colorScheme == .dark ? .white : .black }
     private var agentMsgTextColor: Color { colorScheme == .dark ? .white : .black }
     
+    // State for interactive buttons
+    @State private var isContinuousMode = false
+    @State private var isMuted = false
+    
     var body: some View {
         HStack(spacing: 0) {
             // LEFT SIDEBAR: File Explorer Placeholder
             VStack(spacing: 0) {
                 // Explorer Header (matches 56px height)
                 HStack {
-                    // Traffic lights go here natively, we just need space
+                    // Custom Traffic Lights
+                    CustomTrafficLights()
+                    
                     Spacer()
+                    
                     HStack(spacing: 12) {
-                        Image(systemName: "arrow.up.right.and.arrow.down.left.rectangle")
-                        Image(systemName: "arrow.clockwise")
-                        Image(systemName: "eye.slash")
+                        Button(action: {}) {
+                            Image(systemName: "arrow.up.right.and.arrow.down.left.rectangle")
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {}) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {}) {
+                            Image(systemName: "eye.slash")
+                        }
+                        .buttonStyle(.plain)
                     }
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
@@ -53,13 +183,13 @@ struct MainPanelView: View {
                 Divider().opacity(0.5)
                 
                 // Explorer Content
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("📁 Workspace")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(textColor)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 16)
-                    Spacer()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(viewModel.fileTree) { node in
+                            FileTreeView(item: node)
+                        }
+                    }
+                    .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -73,20 +203,40 @@ struct MainPanelView: View {
             VStack(spacing: 0) {
                 // Header
                 HStack {
-                    Text("🤖 Across Agents Copilot")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(textColor)
+                    // Show currently selected agent name
+                    if let agent = viewModel.agents.first(where: { $0.id == viewModel.selectedAgentId }) {
+                        Text(agent.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(textColor)
+                    }
+                    
                     Spacer()
                     
                     // Header Actions
-                    HStack(spacing: 12) {
-                        Image(systemName: "mic")
-                        Image(systemName: "waveform")
-                        Image(systemName: "speaker.wave.2")
-                        Image(systemName: "gearshape")
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            isContinuousMode.toggle()
+                        }) {
+                            Image(systemName: isContinuousMode ? "waveform.circle.fill" : "waveform")
+                                .foregroundColor(isContinuousMode ? .blue : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            isMuted.toggle()
+                        }) {
+                            Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2")
+                                .foregroundColor(isMuted ? .red : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {}) {
+                            Image(systemName: "gearshape")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .font(.system(size: 14))
-                    .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 56)
@@ -194,18 +344,30 @@ struct MainPanelView: View {
             
             // RIGHT SIDEBAR: Agent Icons Placeholder
             VStack(spacing: 20) {
-                // Active Agent
-                Circle()
-                    .fill(accentColor)
-                    .frame(width: 40, height: 40)
-                    .overlay(Text("O").font(.system(size: 16, weight: .bold)).foregroundColor(.white))
-                    .overlay(Circle().stroke(accentColor.opacity(0.5), lineWidth: 3).scaleEffect(1.1))
-                
-                // Inactive Agent
-                Circle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 40, height: 40)
-                    .overlay(Text("C").font(.system(size: 16, weight: .bold)).foregroundColor(.gray))
+                ForEach(viewModel.agents) { agent in
+                    let isActive = agent.id == viewModel.selectedAgentId
+                    
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            viewModel.selectedAgentId = agent.id
+                        }
+                    }) {
+                        Circle()
+                            .fill(isActive ? Color(hex: agent.color) : Color.gray.opacity(0.2))
+                            .frame(width: 40, height: 40)
+                            .overlay(
+                                Text(agent.initial)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(isActive ? .white : .gray)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(isActive ? Color(hex: agent.color).opacity(0.5) : Color.clear, lineWidth: 3)
+                                    .scaleEffect(isActive ? 1.15 : 1.0)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
                 
                 Spacer()
             }

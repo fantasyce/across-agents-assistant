@@ -32,12 +32,46 @@ struct ApprovalDecisionRequest: Codable {
     var tool_args: [String: AnyCodableValue]?
 }
 
+struct AgentModel: Identifiable {
+    let id: String
+    let name: String
+    let initial: String
+    let color: String
+}
+
+struct FileItemModel: Identifiable {
+    let id = UUID()
+    let name: String
+    let isFolder: Bool
+    let children: [FileItemModel]?
+    var isExpanded: Bool = false
+}
+
 class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var showPermissionAlert: Bool = false
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
+    
+    @Published var selectedAgentId: String = "openclaw"
+    let agents: [AgentModel] = [
+        AgentModel(id: "openclaw", name: "OpenClaw", initial: "O", color: "#CBA6F0"),
+        AgentModel(id: "hermes", name: "Hermes", initial: "H", color: "#FF9F0A"),
+        AgentModel(id: "copilot", name: "Copilot", initial: "C", color: "#30D158")
+    ]
+    
+    @Published var fileTree: [FileItemModel] = [
+        FileItemModel(name: "src", isFolder: true, children: [
+            FileItemModel(name: "main.py", isFolder: false, children: nil),
+            FileItemModel(name: "utils.py", isFolder: false, children: nil)
+        ], isExpanded: true),
+        FileItemModel(name: "assets", isFolder: true, children: [
+            FileItemModel(name: "icon.png", isFolder: false, children: nil)
+        ], isExpanded: false),
+        FileItemModel(name: "README.md", isFolder: false, children: nil),
+        FileItemModel(name: "requirements.txt", isFolder: false, children: nil)
+    ]
     
     // Callbacks to decouple UI operations from the ViewModel
     var onHidePanel: (() -> Void)?
