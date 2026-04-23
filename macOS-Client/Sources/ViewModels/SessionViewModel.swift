@@ -41,7 +41,7 @@ struct AgentModel: Identifiable {
 }
 
 struct FileItemModel: Identifiable, Equatable {
-    let id = UUID()
+    var id: String { path }
     let name: String
     let path: String
     let isFolder: Bool
@@ -72,7 +72,7 @@ class SessionViewModel: ObservableObject {
     ]
     
     @Published var fileTree: [FileItemModel] = []
-    @Published var selectedFileId: UUID? = nil
+    @Published var selectedFileId: String? = nil
     
     // Callbacks to decouple UI operations from the ViewModel
     var onHidePanel: (() -> Void)?
@@ -118,7 +118,7 @@ class SessionViewModel: ObservableObject {
         fileTree = updatedTree
     }
     
-    private func updateTreeExpansion(_ nodes: inout [FileItemModel], targetId: UUID) -> Bool {
+    private func updateTreeExpansion(_ nodes: inout [FileItemModel], targetId: String) -> Bool {
         for i in 0..<nodes.count {
             if nodes[i].id == targetId {
                 nodes[i].isExpanded.toggle()
@@ -215,7 +215,7 @@ class SessionViewModel: ObservableObject {
         loadHomeDirectory()
     }
     
-    private func refreshNode(_ nodes: inout [FileItemModel], targetId: UUID) -> Bool {
+    private func refreshNode(_ nodes: inout [FileItemModel], targetId: String) -> Bool {
         for i in 0..<nodes.count {
             if nodes[i].id == targetId {
                 if nodes[i].isFolder {

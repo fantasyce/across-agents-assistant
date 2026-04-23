@@ -160,6 +160,7 @@ struct FileTreeView: View {
                 }
             }
         }
+        .id(item.id)
         .onDrag {
             // Provide the actual file URL for dragging.
             return NSItemProvider(object: NSURL(fileURLWithPath: item.path))
@@ -342,14 +343,25 @@ struct MainPanelView: View {
                 
                 // Explorer Content
                 GeometryReader { geo in
-                    ScrollView([.vertical, .horizontal], showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(viewModel.fileTree) { node in
-                                FileTreeView(item: node, viewModel: viewModel)
+                    ScrollViewReader { scrollProxy in
+                        ScrollView([.vertical, .horizontal], showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(viewModel.fileTree) { node in
+                                    FileTreeView(item: node, viewModel: viewModel)
+                                }
+                            }
+                            .padding(.top, 8)
+                            .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
+                        }
+                        .onChange(of: viewModel.showHiddenFiles) { _ in
+                            if let selected = viewModel.selectedFileId {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        scrollProxy.scrollTo(selected, anchor: .center)
+                                    }
+                                }
                             }
                         }
-                        .padding(.top, 8)
-                        .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -375,7 +387,7 @@ struct MainPanelView: View {
                             }
                         }
                         .gesture(
-                            DragGesture()
+                            DragGesture(coordinateSpace: .global)
                                 .onChanged { value in
                                     if dragStartWidth == 0 { dragStartWidth = sidebarWidth }
                                     let newWidth = dragStartWidth + Double(value.translation.width)
@@ -693,6 +705,7 @@ struct LegacyMessageBubble: View {
                     // The row for the copy button always exists to prevent layout shifts
                     copyButton
                         .opacity(isHovered ? 1 : 0)
+                        .offset(x: 2)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -701,6 +714,7 @@ struct LegacyMessageBubble: View {
                     // The row for the copy button always exists to prevent layout shifts
                     copyButton
                         .opacity(isHovered ? 1 : 0)
+                        .offset(x: -2)
                 }
                 Spacer(minLength: 40)
             }
