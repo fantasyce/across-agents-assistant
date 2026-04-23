@@ -356,8 +356,10 @@ struct MainPanelView: View {
                         }
                         .onChange(of: viewModel.showHiddenFiles) { _ in
                             if let selected = viewModel.selectedFileId {
-                                DispatchQueue.main.async {
-                                    scrollProxy.scrollTo(selected, anchor: nil)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        scrollProxy.scrollTo(selected, anchor: .center)
+                                    }
                                 }
                             }
                         }
@@ -535,32 +537,34 @@ struct MainPanelView: View {
                     
                     // Input Wrapper
                     HStack {
-                        TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                            .foregroundColor(textColor)
-                            .lineLimit(1...5)
-                            .disabled(viewModel.pendingApproval != nil)
-                            .onSubmit {
-                                if viewModel.pendingApproval == nil {
-                                    submit()
+                        ScrollView(.vertical, showsIndicators: false) {
+                            TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13))
+                                .foregroundColor(textColor)
+                                .disabled(viewModel.pendingApproval != nil)
+                                .onSubmit {
+                                    if viewModel.pendingApproval == nil {
+                                        submit()
+                                    }
                                 }
-                            }
-                            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                                for provider in providers {
-                                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                                        if let url = url {
-                                            DispatchQueue.main.async {
-                                                if !viewModel.inputText.isEmpty {
-                                                    viewModel.inputText += " "
+                                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                                    for provider in providers {
+                                        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                            if let url = url {
+                                                DispatchQueue.main.async {
+                                                    if !viewModel.inputText.isEmpty {
+                                                        viewModel.inputText += " "
+                                                    }
+                                                    viewModel.inputText += url.path
                                                 }
-                                                viewModel.inputText += url.path
                                             }
                                         }
                                     }
+                                    return true
                                 }
-                                return true
-                            }
+                        }
+                        .frame(maxHeight: 120)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
