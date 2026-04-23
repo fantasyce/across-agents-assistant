@@ -344,25 +344,14 @@ struct MainPanelView: View {
                 
                 // Explorer Content
                 GeometryReader { geo in
-                    ScrollViewReader { scrollProxy in
-                        ScrollView([.vertical, .horizontal], showsIndicators: false) {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(viewModel.fileTree) { node in
-                                    FileTreeView(item: node, viewModel: viewModel)
-                                }
-                            }
-                            .padding(.top, 8)
-                            .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
-                        }
-                        .onChange(of: viewModel.showHiddenFiles) { _ in
-                            if let selected = viewModel.selectedFileId {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        scrollProxy.scrollTo(selected, anchor: .center)
-                                    }
-                                }
+                    ScrollView([.vertical, .horizontal], showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(viewModel.fileTree) { node in
+                                FileTreeView(item: node, viewModel: viewModel)
                             }
                         }
+                        .padding(.top, 8)
+                        .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -537,37 +526,46 @@ struct MainPanelView: View {
                     
                     // Input Wrapper
                     HStack {
-                        ScrollView(.vertical, showsIndicators: false) {
-                            TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
-                                .textFieldStyle(.plain)
+                        ZStack(alignment: .topLeading) {
+                            // Hidden text to force height expansion up to 5 lines
+                            Text(viewModel.inputText.isEmpty ? " " : viewModel.inputText)
                                 .font(.system(size: 13))
-                                .foregroundColor(textColor)
-                                .disabled(viewModel.pendingApproval != nil)
-                                .onSubmit {
-                                    if viewModel.pendingApproval == nil {
-                                        submit()
+                                .lineLimit(5)
+                                .padding(.vertical, 8)
+                                .opacity(0)
+                                .layoutPriority(1)
+                            
+                            ScrollView(.vertical, showsIndicators: false) {
+                                TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(textColor)
+                                    .padding(.vertical, 8)
+                                    .disabled(viewModel.pendingApproval != nil)
+                                    .onSubmit {
+                                        if viewModel.pendingApproval == nil {
+                                            submit()
+                                        }
                                     }
-                                }
-                                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                                    for provider in providers {
-                                        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                                            if let url = url {
-                                                DispatchQueue.main.async {
-                                                    if !viewModel.inputText.isEmpty {
-                                                        viewModel.inputText += " "
+                                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                                        for provider in providers {
+                                            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                                if let url = url {
+                                                    DispatchQueue.main.async {
+                                                        if !viewModel.inputText.isEmpty {
+                                                            viewModel.inputText += " "
+                                                        }
+                                                        viewModel.inputText += url.path
                                                     }
-                                                    viewModel.inputText += url.path
                                                 }
                                             }
                                         }
+                                        return true
                                     }
-                                    return true
-                                }
+                            }
                         }
-                        .frame(maxHeight: 120)
                     }
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
                     
