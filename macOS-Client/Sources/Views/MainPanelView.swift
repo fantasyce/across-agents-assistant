@@ -177,7 +177,9 @@ struct WindowDragView: NSViewRepresentable {
 }
 
 class DraggableNSView: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        self.window?.performDrag(with: event)
+    }
 }
 
 struct SVGIconView: View {
@@ -308,12 +310,12 @@ struct MainPanelView: View {
                         .help("Refresh")
                         
                         Button(action: {
-                            // TODO: Hide/Show hidden files placeholder
+                            viewModel.toggleHiddenFiles()
                         }) {
-                            Image(systemName: "eye.slash")
+                            Image(systemName: viewModel.showHiddenFiles ? "eye" : "eye.slash")
                         }
                         .buttonStyle(.plain)
-                        .help("Toggle Hidden Files")
+                        .help(viewModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files")
                     }
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
@@ -536,6 +538,12 @@ struct MainPanelView: View {
                     .padding(.vertical, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
+                    // Make the entire wrapper clickable to focus the text field
+                    .onTapGesture {
+                        // Normally we'd use FocusState here, but since this is a simple port, 
+                        // just preventing the tap from falling through is enough, 
+                        // macOS automatically focuses the text field when clicking its padding area.
+                    }
                     
                     Button(action: submit) {
                         Image(systemName: "paperplane.fill")
@@ -650,10 +658,10 @@ struct MainPanelView: View {
     
     private func submit() {
         let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            viewModel.submitMessage(text)
-            viewModel.inputText = ""
-        }
+        guard !text.isEmpty else { return }
+        
+        viewModel.sendMessage(text)
+        viewModel.inputText = ""
     }
 }
 

@@ -59,6 +59,7 @@ class SessionViewModel: ObservableObject {
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var showPermissionAlert: Bool = false
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
+    @Published var showHiddenFiles: Bool = false
     @Published var isMuted: Bool = false {
         didSet {
             if isMuted {
@@ -112,7 +113,7 @@ class SessionViewModel: ObservableObject {
     
     func loadHomeDirectory() {
         let homeUrl = FileManager.default.homeDirectoryForCurrentUser
-        fileTree = [FileItemModel(name: homeUrl.lastPathComponent, path: homeUrl.path, isFolder: true, children: [], isExpanded: false)]
+        fileTree = [FileItemModel(name: homeUrl.lastPathComponent, path: homeUrl.path, isFolder: true, children: loadContents(of: homeUrl.path), isExpanded: true)]
     }
     
     func toggleFolderExpansion(for item: FileItemModel) {
@@ -140,13 +141,16 @@ class SessionViewModel: ObservableObject {
     }
     
     private func loadContents(of path: String) -> [FileItemModel] {
-        guard let urls = try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+        let options: FileManager.DirectoryEnumerationOptions = showHiddenFiles ? [] : [.skipsHiddenFiles]
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.isDirectoryKey], options: options) else {
             return []
         }
         
         var items: [FileItemModel] = []
         for url in urls {
             let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            // Don't add .DS_Store
+            if url.lastPathComponent == ".DS_Store" { continue }
             items.append(FileItemModel(name: url.lastPathComponent, path: url.path, isFolder: isDir, children: isDir ? [] : nil, isExpanded: false))
         }
         
@@ -176,6 +180,33 @@ class SessionViewModel: ObservableObject {
         }
     }
     
+    func toggleHiddenFiles() {
+        showHiddenFiles.toggle()
+        // Force an immediate root reload, then re-apply expansions
+        let currentTree = fileTree
+        loadHomeDirectory()
+        if var newTree = fileTree.first, let oldRoot = currentTree.first {
+            newTree.isExpanded = oldRoot.isExpanded
+            if oldRoot.isExpanded {
+                newTree.children = mergeChildren(old: oldRoot.children ?? [], new: loadContents(of: newTree.path))
+            }
+            fileTree = [newTree]
+        }
+    }
+    
+    private func rebuildNodeWithHiddenFiles(_ nodes: inout [FileItemModel]) {
+        for i in 0..<nodes.count {
+            if nodes[i].isFolder {
+                if nodes[i].isExpanded {
+                    let newContents = loadContents(of: nodes[i].path)
+                    nodes[i].children = mergeChildren(old: nodes[i].children ?? [], new: newContents)
+                } else if nodes[i].children != nil {
+                    // Even if not expanded, rebuild children if they exist to keep data fresh
+                    rebuildNodeWithHiddenFiles(&nodes[i].children!)
+                }
+            }
+        }
+    }
     func refreshFileTree() {
         if let selectedId = selectedFileId {
             var updatedTree = fileTree
@@ -263,7 +294,7 @@ class SessionViewModel: ObservableObject {
         }
     }
     
-    func submitMessage(_ text: String) {
+    func sendMessage(_ text: String) {
         guard !text.isEmpty else { return }
         
         let userMsg = Message(content: text, isUser: true)

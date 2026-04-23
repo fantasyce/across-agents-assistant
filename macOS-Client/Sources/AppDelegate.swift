@@ -2,8 +2,14 @@ import Cocoa
 import SwiftUI
 import HotKey
 
+class CustomPanel: NSPanel {
+    override var canBecomeKey: Bool {
+        return true
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var panel: NSPanel!
+    var panel: CustomPanel!
     lazy var sessionViewModel: SessionViewModel = {
         let vm = SessionViewModel()
         // Bind UI callbacks
@@ -42,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = MainPanelView(viewModel: sessionViewModel)
         
         // 1. Create a borderless panel
-        panel = NSPanel(
+        panel = CustomPanel(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), // Wider for 3 columns
             styleMask: [
                 .borderless,          // Completely frameless, no native title bar at all
