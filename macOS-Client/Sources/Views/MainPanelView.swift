@@ -44,30 +44,55 @@ struct CustomTrafficLights: View {
     
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(Color(hex: isHovered ? "#FF5F56" : "#FFBFBB"))
-                .frame(width: 12, height: 12)
-                .onTapGesture {
-                    NSApplication.shared.keyWindow?.close()
-                }
-            
-            Circle()
-                .fill(Color(hex: isHovered ? "#FFBD2E" : "#FFE4AB"))
-                .frame(width: 12, height: 12)
-                .onTapGesture {
-                    NSApplication.shared.keyWindow?.miniaturize(nil)
-                }
-            
-            Circle()
-                .fill(Color(hex: isHovered ? "#27C93F" : "#A8E9B2"))
-                .frame(width: 12, height: 12)
-                .onTapGesture {
-                    NSApplication.shared.keyWindow?.zoom(nil)
-                }
+            TrafficLightButton(colorHex: "#FF5F56", defaultHex: "#FFBFBB", iconName: "xmark", isGroupHovered: isHovered) {
+                NSApplication.shared.keyWindow?.close()
+            }
+            TrafficLightButton(colorHex: "#FFBD2E", defaultHex: "#FFE4AB", iconName: "minus", isGroupHovered: isHovered) {
+                NSApplication.shared.keyWindow?.miniaturize(nil)
+            }
+            TrafficLightButton(colorHex: "#27C93F", defaultHex: "#A8E9B2", iconName: "arrow.up.left.and.arrow.down.right", isGroupHovered: isHovered) {
+                NSApplication.shared.keyWindow?.zoom(nil)
+            }
         }
         .onHover { hovering in
-            isHovered = hovering
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
+            }
         }
+    }
+}
+
+struct TrafficLightButton: View {
+    let colorHex: String
+    let defaultHex: String
+    let iconName: String
+    let isGroupHovered: Bool
+    let action: () -> Void
+    
+    @State private var isPressed = false
+    @State private var isSelfHovered = false
+    
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(Color(hex: isSelfHovered ? colorHex : defaultHex))
+            .frame(width: 12, height: 12)
+            .overlay(
+                Image(systemName: iconName)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.black.opacity(isGroupHovered ? 0.5 : 0))
+            )
+            .scaleEffect(isPressed ? 0.9 : 1.0)
+            .onHover { hovering in
+                isSelfHovered = hovering
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in isPressed = true }
+                    .onEnded { _ in 
+                        isPressed = false
+                        action()
+                    }
+            )
     }
 }
 
@@ -93,15 +118,11 @@ struct FileTreeView: View {
                         .foregroundColor(.secondary)
                         .frame(width: 12)
                     
-                    Image(systemName: "folder.fill")
-                        .foregroundColor(Color(hex: "#5AC8FA"))
-                        .font(.system(size: 12))
+                    SVGIconView(name: isExpanded ? "icon.14.explorer.folder.open" : "icon.14.explorer.folder.closed", size: 14)
                 } else {
                     Spacer().frame(width: 12)
                     
-                    Image(systemName: "doc.text")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
+                    SVGIconView(name: getFileIconName(fileName: item.name), size: 14)
                 }
                 
                 Text(item.name)
@@ -127,6 +148,96 @@ struct FileTreeView: View {
                 }
             }
         }
+        .onDrag {
+            // Provide a basic NSItemProvider for dragging.
+            // In a real app, this would provide the actual file URL.
+            return NSItemProvider(object: item.name as NSString)
+        }
+    }
+}
+
+struct WindowDragView: NSViewRepresentable {
+    func makeNSView(context: Context) -> DraggableNSView {
+        let view = DraggableNSView()
+        return view
+    }
+    
+    func updateNSView(_ nsView: DraggableNSView, context: Context) {}
+}
+
+class DraggableNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
+struct SVGIconView: View {
+    let name: String
+    var size: CGFloat = 14
+    
+    @State private var nsImage: NSImage?
+    
+    var body: some View {
+        Group {
+            if let img = nsImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: "doc")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .onAppear(perform: loadImage)
+    }
+    
+    private func loadImage() {
+        if let url = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "Assets") {
+            if let data = try? Data(contentsOf: url) {
+                self.nsImage = NSImage(data: data)
+            }
+        }
+    }
+}
+
+func getFileIconName(fileName: String) -> String {
+    let lowerName = fileName.lowercased()
+    
+    // Check specific file names
+    if lowerName == "readme.md" || lowerName == "readme" { return "icon.14.explorer.file.readme" }
+    if lowerName == "package.json" { return "icon.14.explorer.npm" }
+    if lowerName == "dockerfile" { return "icon.14.explorer.type.docker" }
+    
+    // Check extensions
+    let ext = URL(fileURLWithPath: fileName).pathExtension.lowercased()
+    switch ext {
+    case "js": return "icon.14.explorer.lang.js"
+    case "ts": return "icon.14.explorer.lang.ts"
+    case "py": return "icon.14.explorer.lang.python"
+    case "json": return "icon.14.explorer.lang.json"
+    case "md": return "icon.14.explorer.type.markdown"
+    case "swift": return "icon.14.explorer.type.class"
+    case "cpp", "cc", "cxx": return "icon.14.explorer.lang.c++"
+    case "c": return "icon.14.explorer.lang.c"
+    case "h", "hpp": return "icon.14.explorer.type.h"
+    case "go": return "icon.14.explorer.lang.go"
+    case "rs": return "icon.14.explorer.lang.rs"
+    case "html", "htm": return "icon.14.explorer.lang.html"
+    case "css": return "icon.14.explorer.lang.css"
+    case "vue": return "icon.14.explorer.lang.vue"
+    case "txt": return "icon.14.explorer.type.txt"
+    case "png", "jpg", "jpeg", "gif", "ico": return "icon.14.explorer.type.image"
+    case "svg": return "icon.14.explorer.type.svg"
+    case "sh", "bash", "zsh": return "icon.14.explorer.type.bash"
+    case "pdf": return "icon.14.explorer.type.pdf"
+    case "docx", "doc": return "icon.14.explorer.type.docx"
+    case "xlsx", "xls", "csv": return "icon.14.explorer.type.xlsx"
+    case "yaml", "yml": return "icon.14.explorer.lang.yaml"
+    case "xml": return "icon.14.explorer.lang.xml"
+    case "java": return "icon.14.explorer.lang.java"
+    default: return "icon.14.explorer.file"
     }
 }
 
@@ -146,6 +257,7 @@ struct MainPanelView: View {
     // State for interactive buttons
     @State private var isContinuousMode = false
     @State private var isMuted = false
+    @State private var showSettings = false
     
     var body: some View {
         HStack(spacing: 0) {
@@ -179,6 +291,7 @@ struct MainPanelView: View {
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 56)
+                .background(WindowDragView()) // Make this header draggable
                 
                 Divider().opacity(0.5)
                 
@@ -215,6 +328,14 @@ struct MainPanelView: View {
                     // Header Actions
                     HStack(spacing: 16) {
                         Button(action: {
+                            // Single turn voice input placeholder
+                        }) {
+                            Image(systemName: "mic")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
                             isContinuousMode.toggle()
                         }) {
                             Image(systemName: isContinuousMode ? "waveform.circle.fill" : "waveform")
@@ -230,17 +351,35 @@ struct MainPanelView: View {
                         }
                         .buttonStyle(.plain)
                         
-                        Button(action: {}) {
+                        Button(action: {
+                            showSettings.toggle()
+                        }) {
                             Image(systemName: "gearshape")
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .popover(isPresented: $showSettings, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Settings")
+                                    .font(.headline)
+                                Text("This feature requires backend integration in Phase 6.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
+                            .frame(width: 250)
+                        }
                     }
                     .font(.system(size: 14))
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 56)
-                .background(bgColor.opacity(0.8)) // For blur effect later
+                .background(
+                    ZStack {
+                        bgColor.opacity(0.8) // For blur effect later
+                        WindowDragView()
+                    }
+                )
                 
                 Divider().opacity(0.5)
                 
@@ -356,9 +495,7 @@ struct MainPanelView: View {
                             .fill(isActive ? Color(hex: agent.color) : Color.gray.opacity(0.2))
                             .frame(width: 40, height: 40)
                             .overlay(
-                                Text(agent.initial)
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(isActive ? .white : .gray)
+                                SVGIconView(name: agent.iconName, size: 24)
                             )
                             .overlay(
                                 Circle()

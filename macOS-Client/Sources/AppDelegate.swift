@@ -65,8 +65,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         
-        // 3. Make the background draggable
-        panel.isMovableByWindowBackground = true
+        // 3. Make the background draggable ONLY via designated areas (SwiftUI WindowDragView)
+        panel.isMovableByWindowBackground = false
         
         // 4. Custom visual appearance
         panel.isOpaque = false

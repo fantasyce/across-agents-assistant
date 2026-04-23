@@ -37,6 +37,7 @@ class ApprovalDecision(BaseModel):
     decision: str # "approve", "reject", "always_allow"
     tool_name: str
     tool_args: Dict[str, Any]
+    agent_id: str = "openclaw"
 
 # Global instances
 agent_manager = AgentManager()
@@ -83,13 +84,11 @@ async def approve_tool_execution(req: ApprovalDecision):
                 db.add_message(session_id=req.session_id, role="tool", content=result_text)
                 
                 # --- AUTO CONTINUATION ---
-                # Instead of returning the result directly, we wrap it in a ChatRequest
-                # and call chat_with_agent recursively so the LLM can see the result and continue.
                 continuation_req = ChatRequest(
                     text=f"工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
                     context={}, # We don't need to resend tier1 context for the continuation
                     session_id=req.session_id,
-                    agent_id="openclaw" # Default
+                    agent_id=req.agent_id # Pass through the original agent
                 )
                 return await chat_with_agent(continuation_req)
                 
@@ -101,7 +100,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     text=f"工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
                     context={},
                     session_id=req.session_id,
-                    agent_id="openclaw"
+                    agent_id=req.agent_id # Pass through the original agent
                 )
                 return await chat_with_agent(continuation_req)
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
@@ -112,7 +111,7 @@ async def approve_tool_execution(req: ApprovalDecision):
             text="用户拒绝了你的工具调用请求。请告知用户已取消，或者提供其他建议。",
             context={},
             session_id=req.session_id,
-            agent_id="openclaw"
+            agent_id=req.agent_id
         )
         return await chat_with_agent(continuation_req)
 

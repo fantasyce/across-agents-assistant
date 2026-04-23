@@ -16,7 +16,8 @@ let package = Package(
         .executableTarget(
             name: "AcrossAgentsAssistantClient",
             dependencies: ["HotKey"],
-            path: "Sources"
+            path: "Sources",
+            resources: [.copy("Assets")]
         )
     ]
 )

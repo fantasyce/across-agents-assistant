@@ -26,16 +26,17 @@ struct ChatResponse: Codable {
 }
 
 struct ApprovalDecisionRequest: Codable {
-    var session_id: String
-    var decision: String
-    var tool_name: String
-    var tool_args: [String: AnyCodableValue]?
+    let session_id: String
+    let decision: String
+    let tool_name: String
+    let tool_args: [String: AnyCodableValue]?
+    let agent_id: String
 }
 
 struct AgentModel: Identifiable {
     let id: String
     let name: String
-    let initial: String
+    let iconName: String
     let color: String
 }
 
@@ -56,9 +57,9 @@ class SessionViewModel: ObservableObject {
     
     @Published var selectedAgentId: String = "openclaw"
     let agents: [AgentModel] = [
-        AgentModel(id: "openclaw", name: "OpenClaw", initial: "O", color: "#CBA6F0"),
-        AgentModel(id: "hermes", name: "Hermes", initial: "H", color: "#FF9F0A"),
-        AgentModel(id: "copilot", name: "Copilot", initial: "C", color: "#30D158")
+        AgentModel(id: "openclaw", name: "OpenClaw", iconName: "agent.openclaw", color: "#CBA6F0"),
+        AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#FF9F0A"),
+        AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#30D158")
     ]
     
     @Published var fileTree: [FileItemModel] = [
@@ -164,7 +165,7 @@ class SessionViewModel: ObservableObject {
             text: text,
             context: context,
             session_id: currentSessionId,
-            agent_id: "openclaw" // Using default
+            agent_id: selectedAgentId // Dynamically use the selected agent
         )
         
         guard let url = URL(string: "http://127.0.0.1:8000/api/chat") else {
@@ -261,7 +262,8 @@ class SessionViewModel: ObservableObject {
             session_id: currentSessionId,
             decision: decision,
             tool_name: requestObj.tool_name,
-            tool_args: requestObj.tool_args
+            tool_args: requestObj.tool_args,
+            agent_id: selectedAgentId
         )
         
         isProcessing = true
