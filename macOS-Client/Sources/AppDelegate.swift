@@ -41,24 +41,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupPanel() {
         let contentView = MainPanelView(viewModel: sessionViewModel)
         
+        // 1. Create a borderless panel but keep .titled so traffic lights appear
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 650),
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), // Wider for 3 columns
+            styleMask: [
+                .titled,              // Required for traffic lights
+                .closable,            // Enables the red close button
+                .miniaturizable,      // Enables the yellow minimize button
+                .resizable,           // Enables resizing and the green button
+                .fullSizeContentView, // Extends content into the title bar area
+                .nonactivatingPanel   // Won't steal focus from other apps
+            ],
             backing: .buffered,
             defer: false
         )
         
-        panel.center()
+        // 2. Hide the title and make the titlebar transparent
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        
+        // 3. Make the background draggable
         panel.isMovableByWindowBackground = true
+        
+        // 4. Custom visual appearance
+        panel.isOpaque = false
+        panel.backgroundColor = .clear // Let SwiftUI handle the blur
+        panel.hasShadow = true
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = .floating // Keep on top
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        
+        // 5. Set Content View
         panel.contentView = NSHostingView(rootView: contentView)
         
-        // Custom visual effect background
-        panel.backgroundColor = .clear
+        // 6. Center and Show
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
     }
     
     @objc func togglePanel() {

@@ -4,91 +4,144 @@ struct MainPanelView: View {
     @ObservedObject var viewModel: SessionViewModel
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Across Agents Copilot")
-                    .font(.headline)
+        HStack(spacing: 0) {
+            // LEFT SIDEBAR: File Explorer Placeholder
+            VStack {
+                Text("📁 File Explorer")
                     .foregroundColor(.secondary)
-                Spacer()
-                if viewModel.isProcessing {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 16, height: 16)
-                }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .background(Color.black.opacity(0.05))
+            .frame(width: 250)
+            .frame(maxHeight: .infinity)
+            .background(Color.black.opacity(0.1))
             
             Divider()
             
-            // Messages List
-            ScrollView {
-                ScrollViewReader { proxy in
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(viewModel.messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
+            // CENTER: Main Chat Area
+            VStack(spacing: 0) {
+                // Header (Top bar with traffic lights spacing)
+                HStack {
+                    Spacer()
+                    Text("🤖 copilot")
+                        .font(.headline)
+                        .padding(.vertical, 12)
+                    Spacer()
+                }
+                .background(Color.gray.opacity(0.1))
+                
+                Divider()
+                
+                // Messages List
+                ScrollView {
+                    ScrollViewReader { proxy in
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            ForEach(viewModel.messages) { message in
+                                MessageBubble(message: message)
+                                    .id(message.id)
+                            }
+                            
+                            if viewModel.isProcessing {
+                                HStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("思考中...")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal)
+                                .id("processing")
+                            }
                         }
-                    }
-                    .padding()
-                    .onChange(of: viewModel.messages.count) { _ in
-                        if let lastId = viewModel.messages.last?.id {
-                            withAnimation {
-                                proxy.scrollTo(lastId, anchor: .bottom)
+                        .padding()
+                        .onChange(of: viewModel.messages.count) { _ in
+                            if let lastId = viewModel.messages.last?.id {
+                                withAnimation {
+                                    proxy.scrollTo(lastId, anchor: .bottom)
+                                }
+                            }
+                        }
+                        .onChange(of: viewModel.isProcessing) { processing in
+                            if processing {
+                                withAnimation {
+                                    proxy.scrollTo("processing", anchor: .bottom)
+                                }
                             }
                         }
                     }
                 }
+                
+                Divider()
+                
+                // Input Area
+                HStack(alignment: .bottom, spacing: 12) {
+                    // Screenshot Button
+                    Button(action: {
+                        viewModel.requestManualScreenshot()
+                    }) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 16))
+                            .foregroundColor(.primary)
+                            .frame(width: 32, height: 32)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(16)
+                            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .padding(10)
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(8)
+                        .lineLimit(1...5)
+                        .disabled(viewModel.pendingApproval != nil)
+                        .onSubmit {
+                            if viewModel.pendingApproval == nil {
+                                submit()
+                            }
+                        }
+                    
+                    Button(action: submit) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil ? .gray : .blue)
+                            .padding(10)
+                            .background(Color.gray.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil)
+                }
+                .padding()
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             
             Divider()
             
-            // Input Area
-            HStack(alignment: .bottom, spacing: 12) {
-                // Screenshot Button
-                Button(action: {
-                    viewModel.requestManualScreenshot()
-                }) {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 16))
-                        .foregroundColor(.primary)
-                        .frame(width: 32, height: 32)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .cornerRadius(16)
-                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-                }
-                .buttonStyle(.plain)
+            // RIGHT SIDEBAR: Agent Icons Placeholder
+            VStack(spacing: 20) {
+                // Agent 1
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 40, height: 40)
+                    .overlay(Text("O").foregroundColor(.white))
                 
-                TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(10)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
-                    .lineLimit(1...5)
-                    .disabled(viewModel.pendingApproval != nil)
-                    .onSubmit {
-                        if viewModel.pendingApproval == nil {
-                            submit()
-                        }
-                    }
+                // Agent 2
+                Circle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 40, height: 40)
+                    .overlay(Text("C").foregroundColor(.gray))
                 
-                Button(action: submit) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil ? .gray : .blue)
-                        .padding(10)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil)
+                Spacer()
             }
-            .padding()
+            .padding(.top, 40) // Spacing for traffic lights
+            .frame(width: 80)
+            .frame(maxHeight: .infinity)
+            .background(Color.black.opacity(0.05))
         }
-        .frame(width: 420, height: 650)
+        .frame(width: 900, height: 650)
         .background(VisualEffectView().ignoresSafeArea())
+        .cornerRadius(12) // Round corners for the borderless window
         .overlay(
             Group {
                 if let request = viewModel.pendingApproval {
