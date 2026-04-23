@@ -36,6 +36,7 @@ class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
     @Published var pendingApproval: ApprovalRequest? = nil
+    @Published var showPermissionAlert: Bool = false
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
     
     // Callbacks to decouple UI operations from the ViewModel
@@ -197,6 +198,21 @@ class SessionViewModel: ObservableObject {
     func submitDecision(decision: String) {
         guard let requestObj = pendingApproval else { return }
         
+        // Check permissions for high-risk tools before submitting decision
+        if (decision == "approve" || decision == "always_allow") {
+            let toolName = requestObj.tool_name
+            // Tools that require Accessibility/Automation permissions
+            if ["get_active_browser_url", "get_finder_context"].contains(toolName) {
+                if !ContextEngine.shared.hasAccessibilityPermission() {
+                    // Show our beautiful permission alert instead of submitting
+                    DispatchQueue.main.async {
+                        self.showPermissionAlert = true
+                    }
+                    return
+                }
+            }
+        }
+        
         // Hide panel temporarily if the tool requires UI interaction (like screencapture)
         if (decision == "approve" || decision == "always_allow") && requestObj.tool_name == "take_screenshot_and_ocr" {
             DispatchQueue.main.async {
@@ -266,5 +282,18 @@ class SessionViewModel: ObservableObject {
     private func addError(_ text: String) {
         isProcessing = false
         messages.append(Message(content: "⚠️ " + text, isUser: false))
+    }
+    
+    func openAccessibilitySettings() {
+        ContextEngine.shared.promptForAccessibilityPermission()
+        
+        let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+        
+        // After opening settings, cancel the pending request to avoid blocking
+        self.submitDecision(decision: "reject")
+        self.showPermissionAlert = false
     }
 }

@@ -72,6 +72,17 @@ class ContextEngine {
         process.launch()
     }
     
+    // Check if we have Accessibility permissions (needed for advanced tools like browser/finder automation)
+    func hasAccessibilityPermission() -> Bool {
+        return AXIsProcessTrusted()
+    }
+    
+    // Prompt the user to grant Accessibility permissions
+    func promptForAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let _ = AXIsProcessTrustedWithOptions(options)
+    }
+    
     func collectTier1Context() -> ContextPack {
         var pack = ContextPack()
         

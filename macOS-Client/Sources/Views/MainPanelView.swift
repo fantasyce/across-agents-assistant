@@ -99,6 +99,52 @@ struct MainPanelView: View {
                         }
                     }
                 }
+                
+                if viewModel.showPermissionAlert {
+                    ZStack {
+                        Color.black.opacity(0.4).ignoresSafeArea()
+                        VStack(spacing: 20) {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.orange)
+                            
+                            Text("需要辅助功能权限")
+                                .font(.headline)
+                            
+                            Text("小助手需要“辅助功能”权限才能读取您的屏幕内容（如浏览器网址或 Finder 选中的文件）。\n\n请在“系统设置”中勾选本应用，然后重试。")
+                                .font(.subheadline)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            HStack(spacing: 16) {
+                                Button("取消") {
+                                    viewModel.showPermissionAlert = false
+                                    viewModel.submitDecision(decision: "reject")
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(Color.gray.opacity(0.2))
+                                .cornerRadius(8)
+                                
+                                Button("前往系统设置") {
+                                    viewModel.openAccessibilitySettings()
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                        }
+                        .padding(30)
+                        .frame(width: 350)
+                        .background(VisualEffectView())
+                        .cornerRadius(16)
+                        .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+                    }
+                }
             }
         )
     }
