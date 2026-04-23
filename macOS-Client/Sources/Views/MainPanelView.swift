@@ -135,8 +135,7 @@ struct FileTreeView: View {
                 Text(item.name)
                     .font(.system(size: 12))
                     .foregroundColor(Color.primary.opacity(0.8))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize(horizontal: true, vertical: false)
                 
                 Spacer()
             }
@@ -272,9 +271,9 @@ struct MainPanelView: View {
     
     // State for interactive buttons
     @State private var isContinuousMode = false
-    @State private var isMuted = false
     @State private var showSettings = false
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 250
+    @State private var dragStartWidth: Double = 0
     
     var body: some View {
         HStack(spacing: 0) {
@@ -333,9 +332,9 @@ struct MainPanelView: View {
                         }
                     }
                     .padding(.top, 8)
-                    .frame(minWidth: CGFloat(sidebarWidth), alignment: .leading)
+                    .frame(minWidth: CGFloat(sidebarWidth), maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .frame(width: CGFloat(sidebarWidth))
             .frame(maxHeight: .infinity)
@@ -359,10 +358,12 @@ struct MainPanelView: View {
                         .gesture(
                             DragGesture()
                                 .onChanged { value in
-                                    let newWidth = sidebarWidth + Double(value.translation.width)
+                                    if dragStartWidth == 0 { dragStartWidth = sidebarWidth }
+                                    let newWidth = dragStartWidth + Double(value.translation.width)
                                     sidebarWidth = max(150, min(newWidth, 600))
                                 }
                                 .onEnded { _ in
+                                    dragStartWidth = 0
                                     NSCursor.pop()
                                 }
                         )
@@ -401,10 +402,10 @@ struct MainPanelView: View {
                         .buttonStyle(.plain)
                         
                         Button(action: {
-                            isMuted.toggle()
+                            viewModel.isMuted.toggle()
                         }) {
-                            Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2")
-                                .foregroundColor(isMuted ? .red : .secondary)
+                            Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.wave.2")
+                                .foregroundColor(viewModel.isMuted ? .red : .secondary)
                         }
                         .buttonStyle(.plain)
                         
@@ -563,16 +564,12 @@ struct MainPanelView: View {
                             viewModel.selectedAgentId = agent.id
                         }
                     }) {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(isActive ? Color(hex: agent.color) : Color.gray.opacity(0.2))
-                            .frame(width: 40, height: 40)
-                            .overlay(
-                                SVGIconView(name: agent.iconName, size: 24)
-                            )
+                        SVGIconView(name: agent.iconName, size: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(isActive ? Color(hex: agent.color).opacity(0.5) : Color.clear, lineWidth: 3)
-                                    .scaleEffect(isActive ? 1.15 : 1.0)
+                                    .stroke(isActive ? Color(hex: agent.color) : Color.clear, lineWidth: 2)
+                                    .scaleEffect(isActive ? 1.05 : 1.0)
                             )
                     }
                     .buttonStyle(.plain)
@@ -587,6 +584,7 @@ struct MainPanelView: View {
         }
         .frame(width: 900, height: 650)
         .background(VisualEffectView().ignoresSafeArea())
+        .ignoresSafeArea(.all, edges: .top)
         .cornerRadius(10) // Match legacy global border radius
         .overlay(
             Group {
@@ -673,17 +671,19 @@ struct LegacyMessageBubble: View {
                     bubbleContent
                 } else {
                     bubbleContent
-                    Spacer(minLength: 20) // Push copy button to the far right
-                    if isHovered {
-                        copyButton
-                    }
+                    Spacer(minLength: 40)
                 }
             }
             
-            if message.isUser && isHovered {
+            if isHovered {
                 HStack {
-                    Spacer()
-                    copyButton
+                    if message.isUser {
+                        Spacer()
+                        copyButton
+                    } else {
+                        copyButton
+                        Spacer()
+                    }
                 }
             }
         }

@@ -55,12 +55,19 @@ class SessionViewModel: ObservableObject {
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var showPermissionAlert: Bool = false
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
+    @Published var isMuted: Bool = false {
+        didSet {
+            if isMuted {
+                TTSEngine.shared.stop()
+            }
+        }
+    }
     
     @Published var selectedAgentId: String = "openclaw"
     let agents: [AgentModel] = [
         AgentModel(id: "openclaw", name: "OpenClaw", iconName: "agent.openclaw", color: "#CBA6F0"),
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#FF9F0A"),
-        AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#30D158")
+        AgentModel(id: "claude", name: "Trae Solo", iconName: "agent.claude", color: "#D9775A")
     ]
     
     @Published var fileTree: [FileItemModel] = []
@@ -300,7 +307,9 @@ class SessionViewModel: ObservableObject {
                 }
                 
                 do {
-                        let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                    let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
+                    
+                    DispatchQueue.main.async {
                         if let sessionId = chatResp.session_id {
                             self?.currentSessionId = sessionId
                         }
@@ -310,21 +319,25 @@ class SessionViewModel: ObservableObject {
                         self?.messages.append(botMsg)
                         
                         // Trigger Native TTS
-                        TTSEngine.shared.speak(chatResp.text)
-                    
-                    // Handle Phase 3: Security Approval Flow
-                    if chatResp.requires_approval == true, let request = chatResp.approval_request {
-                        self?.pendingApproval = request
-                    } else {
-                        // If the user only has default voices, show a gentle tip in the UI once
-                        if !TTSEngine.shared.hasHighQualityVoice && self?.messages.filter({ !$0.isUser }).count == 2 {
-                            let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
-                            self?.messages.append(tipMsg)
+                        if self?.isMuted == false {
+                            TTSEngine.shared.speak(chatResp.text)
+                        }
+                        
+                        // Handle Phase 3: Security Approval Flow
+                        if chatResp.requires_approval == true, let request = chatResp.approval_request {
+                            self?.pendingApproval = request
+                        } else {
+                            // If the user only has default voices, show a gentle tip in the UI once
+                            if !TTSEngine.shared.hasHighQualityVoice && self?.messages.filter({ !$0.isUser }).count == 2 {
+                                let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
+                                self?.messages.append(tipMsg)
+                            }
                         }
                     }
-                    
                 } catch {
-                    self?.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
+                    DispatchQueue.main.async {
+                        self?.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
+                    }
                 }
             }
         }.resume()
@@ -401,15 +414,21 @@ class SessionViewModel: ObservableObject {
                 do {
                     let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
                     
-                    if (decisionReq.decision == "approve" || decisionReq.decision == "always_allow") && decisionReq.tool_name == "take_screenshot_and_ocr" {
-                        self.onShowPanel?()
+                    DispatchQueue.main.async {
+                        if (decisionReq.decision == "approve" || decisionReq.decision == "always_allow") && decisionReq.tool_name == "take_screenshot_and_ocr" {
+                            self.onShowPanel?()
+                        }
+                        
+                        let botMsg = Message(content: chatResp.text, isUser: false)
+                        self.messages.append(botMsg)
+                        if !self.isMuted {
+                            TTSEngine.shared.speak(chatResp.text)
+                        }
                     }
-                    
-                    let botMsg = Message(content: chatResp.text, isUser: false)
-                    self.messages.append(botMsg)
-                    TTSEngine.shared.speak(chatResp.text)
                 } catch {
-                    self.addError("解析失败: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.addError("解析失败: \(error.localizedDescription)")
+                    }
                 }
             }
         }.resume()
