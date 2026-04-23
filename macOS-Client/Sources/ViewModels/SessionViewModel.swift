@@ -71,8 +71,24 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: "claude", name: "Trae Solo", iconName: "agent.claude", color: "#D9775A")
     ]
     
-    @Published var fileTree: [FileItemModel] = []
+    @Published var fileTree: [FileItemModel] = [] {
+        didSet {
+            flatFileTree = flatten(nodes: fileTree, depth: 0)
+        }
+    }
+    @Published var flatFileTree: [(node: FileItemModel, depth: Int)] = []
     @Published var selectedFileId: String? = nil
+    
+    private func flatten(nodes: [FileItemModel], depth: Int) -> [(node: FileItemModel, depth: Int)] {
+        var flat: [(node: FileItemModel, depth: Int)] = []
+        for node in nodes {
+            flat.append((node, depth))
+            if node.isFolder && node.isExpanded, let children = node.children {
+                flat.append(contentsOf: flatten(nodes: children, depth: depth + 1))
+            }
+        }
+        return flat
+    }
     
     // Callbacks to decouple UI operations from the ViewModel
     var onHidePanel: (() -> Void)?

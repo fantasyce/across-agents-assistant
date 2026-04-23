@@ -106,58 +106,44 @@ struct FileTreeView: View {
     @ObservedObject var viewModel: SessionViewModel
     @Environment(\.colorScheme) var colorScheme
     
-    init(item: FileItemModel, depth: Int = 0, viewModel: SessionViewModel) {
-        self.item = item
-        self.depth = depth
-        self.viewModel = viewModel
-    }
-    
     var body: some View {
         let isSelected = item.id == viewModel.selectedFileId
         let highlightColor = colorScheme == .dark ? Color.legacyTreeSelectedDark : Color.legacyTreeSelectedLight
         
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Spacer().frame(width: CGFloat(depth * 8))
+        HStack(spacing: 6) {
+            Spacer().frame(width: CGFloat(depth * 8))
+            
+            if item.isFolder {
+                Image(systemName: item.isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(width: 12)
                 
-                if item.isFolder {
-                    Image(systemName: item.isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .frame(width: 12)
-                    
-                    SVGIconView(name: item.isExpanded ? "icon.14.explorer.folder.open" : "icon.14.explorer.folder.closed", size: 14)
-                } else {
-                    Spacer().frame(width: 12)
-                    
-                    SVGIconView(name: getFileIconName(fileName: item.name), size: 14)
-                }
+                SVGIconView(name: item.isExpanded ? "icon.14.explorer.folder.open" : "icon.14.explorer.folder.closed", size: 14)
+            } else {
+                Spacer().frame(width: 12)
                 
-                Text(item.name)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color.primary.opacity(0.8))
-                    .fixedSize(horizontal: true, vertical: false)
-                
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 8)
-            .background(isSelected ? highlightColor : Color.clear)
-            .cornerRadius(4)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.selectedFileId = item.id
-                if item.isFolder {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        viewModel.toggleFolderExpansion(for: item)
-                    }
-                }
+                SVGIconView(name: getFileIconName(fileName: item.name), size: 14)
             }
             
-            if item.isFolder && item.isExpanded, let children = item.children {
-                ForEach(children) { child in
-                    FileTreeView(item: child, depth: depth + 1, viewModel: viewModel)
+            Text(item.name)
+                .font(.system(size: 12))
+                .foregroundColor(Color.primary.opacity(0.8))
+                .fixedSize(horizontal: true, vertical: false)
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(isSelected ? highlightColor : Color.clear)
+        .cornerRadius(4)
+        .padding(.horizontal, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewModel.selectedFileId = item.id
+            if item.isFolder {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.toggleFolderExpansion(for: item)
                 }
             }
         }
@@ -345,14 +331,16 @@ struct MainPanelView: View {
                 // Explorer Content
                 GeometryReader { geo in
                     ScrollView([.vertical, .horizontal], showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(viewModel.fileTree) { node in
-                                FileTreeView(item: node, viewModel: viewModel)
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(viewModel.flatFileTree, id: \.node.id) { element in
+                                FileTreeView(item: element.node, depth: element.depth, viewModel: viewModel)
                             }
                         }
+                        .scrollTargetLayout()
                         .padding(.top, 8)
                         .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
                     }
+                    .scrollPosition(id: $viewModel.selectedFileId)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
