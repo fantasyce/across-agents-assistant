@@ -51,12 +51,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel = CustomPanel(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), // Wider for 3 columns
             styleMask: [
-                .borderless,          // Completely frameless, no native title bar at all
+                .titled,              // Required to enable standard resizing and zooming
+                .closable,            // Required for standard window behaviors
+                .miniaturizable,      // Required for standard window behaviors
+                .resizable,           // Enables dragging edges to resize
+                .fullSizeContentView, // Extends content into the title bar area
                 .nonactivatingPanel   // Won't steal focus from other apps
             ],
             backing: .buffered,
             defer: false
         )
+        
+        // 2. Hide the title and make the titlebar transparent
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        
+        // Hide standard window buttons so we can draw our own custom traffic lights
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         
         // 3. Make the background draggable ONLY via designated areas (SwiftUI WindowDragView)
         panel.isMovableByWindowBackground = false

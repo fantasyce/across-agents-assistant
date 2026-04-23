@@ -178,7 +178,11 @@ struct WindowDragView: NSViewRepresentable {
 
 class DraggableNSView: NSView {
     override func mouseDown(with event: NSEvent) {
-        self.window?.performDrag(with: event)
+        if event.clickCount == 2 {
+            self.window?.zoom(nil)
+        } else {
+            self.window?.performDrag(with: event)
+        }
     }
 }
 
@@ -460,15 +464,15 @@ struct MainPanelView: View {
                             }
                             
                             if viewModel.isProcessing {
-                                HStack {
+                                HStack(spacing: 6) {
                                     ProgressView()
-                                        .scaleEffect(0.6)
+                                        .controlSize(.small)
                                     Text("Thinking...")
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
                                     Spacer()
                                 }
-                                .padding(.horizontal, 24)
+                                .padding(.vertical, 4)
                                 .id("processing")
                             }
                         }
@@ -592,10 +596,9 @@ struct MainPanelView: View {
             .frame(maxHeight: .infinity)
             .background(sidebarBgColor)
         }
-        .frame(width: 900, height: 650)
+        .frame(minWidth: 700, idealWidth: 900, minHeight: 500, idealHeight: 650)
         .background(VisualEffectView().ignoresSafeArea())
         .ignoresSafeArea(.all, edges: .top)
-        .cornerRadius(10) // Match legacy global border radius
         .overlay(
             Group {
                 if let request = viewModel.pendingApproval {
@@ -674,28 +677,25 @@ struct LegacyMessageBubble: View {
     @State private var isHovered = false
     
     var body: some View {
-        VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
-            HStack(alignment: .bottom) {
-                if message.isUser {
-                    Spacer(minLength: 40)
+        HStack(alignment: .bottom) {
+            if message.isUser {
+                Spacer(minLength: 40)
+                VStack(alignment: .trailing, spacing: 4) {
                     bubbleContent
-                } else {
-                    bubbleContent
-                    Spacer(minLength: 40)
-                }
-            }
-            
-            // The row for the copy button always exists to prevent layout shifts
-            HStack {
-                if message.isUser {
-                    Spacer()
+                    
+                    // The row for the copy button always exists to prevent layout shifts
                     copyButton
                         .opacity(isHovered ? 1 : 0)
-                } else {
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    bubbleContent
+                    
+                    // The row for the copy button always exists to prevent layout shifts
                     copyButton
                         .opacity(isHovered ? 1 : 0)
-                    Spacer()
                 }
+                Spacer(minLength: 40)
             }
         }
         .onHover { hovering in
