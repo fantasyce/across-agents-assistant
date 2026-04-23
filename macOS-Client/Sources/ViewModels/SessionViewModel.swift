@@ -178,6 +178,31 @@ class SessionViewModel: ObservableObject {
     
     func toggleHiddenFiles() {
         showHiddenFiles.toggle()
+        
+        // If we are hiding files, ensure the selected file falls back to a visible ancestor
+        if !showHiddenFiles, let selected = selectedFileId {
+            let url = URL(fileURLWithPath: selected)
+            let components = url.pathComponents
+            var visiblePath = ""
+            
+            for component in components {
+                if component.hasPrefix(".") && component != "." && component != ".." {
+                    break
+                }
+                if visiblePath.isEmpty {
+                    visiblePath = component
+                } else if visiblePath == "/" {
+                    visiblePath += component
+                } else {
+                    visiblePath += "/" + component
+                }
+            }
+            
+            if visiblePath != selected {
+                selectedFileId = visiblePath
+            }
+        }
+        
         // Force an immediate root reload, then re-apply expansions
         let currentTree = fileTree
         loadHomeDirectory()

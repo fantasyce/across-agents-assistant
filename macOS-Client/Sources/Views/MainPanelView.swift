@@ -57,6 +57,7 @@ struct CustomTrafficLights: View {
                 NSApplication.shared.keyWindow?.zoom(nil)
             }
         }
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.1)) {
                 isHovered = hovering
@@ -355,10 +356,8 @@ struct MainPanelView: View {
                         }
                         .onChange(of: viewModel.showHiddenFiles) { _ in
                             if let selected = viewModel.selectedFileId {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        scrollProxy.scrollTo(selected, anchor: .center)
-                                    }
+                                DispatchQueue.main.async {
+                                    scrollProxy.scrollTo(selected, anchor: nil)
                                 }
                             }
                         }
@@ -476,7 +475,7 @@ struct MainPanelView: View {
                 // Messages List
                 ScrollView {
                     ScrollViewReader { proxy in
-                        LazyVStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 16) {
                             ForEach(viewModel.messages) { message in
                                 LegacyMessageBubble(
                                     message: message,
@@ -719,6 +718,7 @@ struct LegacyMessageBubble: View {
                 Spacer(minLength: 40)
             }
         }
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.1)) {
                 isHovered = hovering
