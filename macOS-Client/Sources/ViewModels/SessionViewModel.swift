@@ -64,6 +64,7 @@ class SessionViewModel: ObservableObject {
     ]
     
     @Published var fileTree: [FileItemModel] = []
+    @Published var selectedFileId: UUID? = nil
     
     // Callbacks to decouple UI operations from the ViewModel
     var onHidePanel: (() -> Void)?
@@ -162,7 +163,47 @@ class SessionViewModel: ObservableObject {
     }
     
     func refreshFileTree() {
+        if let selectedId = selectedFileId {
+            var updatedTree = fileTree
+            if refreshNode(&updatedTree, targetId: selectedId) {
+                fileTree = updatedTree
+                return
+            }
+        }
+        // Fallback to refresh root if nothing selected or not found
         loadHomeDirectory()
+    }
+    
+    private func refreshNode(_ nodes: inout [FileItemModel], targetId: UUID) -> Bool {
+        for i in 0..<nodes.count {
+            if nodes[i].id == targetId {
+                if nodes[i].isFolder {
+                    let newContents = loadContents(of: nodes[i].path)
+                    // Merge new contents with old to preserve expanded states
+                    nodes[i].children = mergeChildren(old: nodes[i].children ?? [], new: newContents)
+                }
+                return true
+            }
+            if nodes[i].children != nil {
+                if refreshNode(&nodes[i].children!, targetId: targetId) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    private func mergeChildren(old: [FileItemModel], new: [FileItemModel]) -> [FileItemModel] {
+        var merged = new
+        for i in 0..<merged.count {
+            if let oldMatch = old.first(where: { $0.path == merged[i].path }) {
+                merged[i].isExpanded = oldMatch.isExpanded
+                if oldMatch.isExpanded && oldMatch.children != nil {
+                    merged[i].children = mergeChildren(old: oldMatch.children!, new: loadContents(of: merged[i].path))
+                }
+            }
+        }
+        return merged
     }
     
     private func loadChatHistory() {

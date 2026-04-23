@@ -37,6 +37,9 @@ extension Color {
     
     static let legacyUserMsgBgLight = Color(red: 235/255, green: 227/255, blue: 245/255) // #EBE3F5
     static let legacyUserMsgBgDark = Color(red: 155/255, green: 130/255, blue: 198/255) // #9B82C6
+    
+    static let legacyTreeSelectedLight = Color(red: 203/255, green: 166/255, blue: 240/255, opacity: 0.25)
+    static let legacyTreeSelectedDark = Color(red: 181/255, green: 138/255, blue: 227/255, opacity: 0.25)
 }
 
 struct CustomTrafficLights: View {
@@ -100,6 +103,7 @@ struct FileTreeView: View {
     let item: FileItemModel
     let depth: Int
     @ObservedObject var viewModel: SessionViewModel
+    @Environment(\.colorScheme) var colorScheme
     
     init(item: FileItemModel, depth: Int = 0, viewModel: SessionViewModel) {
         self.item = item
@@ -108,9 +112,12 @@ struct FileTreeView: View {
     }
     
     var body: some View {
+        let isSelected = item.id == viewModel.selectedFileId
+        let highlightColor = colorScheme == .dark ? Color.legacyTreeSelectedDark : Color.legacyTreeSelectedLight
+        
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Spacer().frame(width: CGFloat(depth * 15))
+                Spacer().frame(width: CGFloat(depth * 8))
                 
                 if item.isFolder {
                     Image(systemName: item.isExpanded ? "chevron.down" : "chevron.right")
@@ -128,13 +135,19 @@ struct FileTreeView: View {
                 Text(item.name)
                     .font(.system(size: 12))
                     .foregroundColor(Color.primary.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 
                 Spacer()
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(isSelected ? highlightColor : Color.clear)
+            .cornerRadius(4)
+            .padding(.horizontal, 8)
             .contentShape(Rectangle())
             .onTapGesture {
+                viewModel.selectedFileId = item.id
                 if item.isFolder {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.toggleFolderExpansion(for: item)
@@ -261,6 +274,7 @@ struct MainPanelView: View {
     @State private var isContinuousMode = false
     @State private var isMuted = false
     @State private var showSettings = false
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 250
     
     var body: some View {
         HStack(spacing: 0) {
@@ -295,7 +309,7 @@ struct MainPanelView: View {
                         .help("Refresh")
                         
                         Button(action: {
-                            // Hide/Show hidden files placeholder
+                            // TODO: Hide/Show hidden files placeholder
                         }) {
                             Image(systemName: "eye.slash")
                         }
@@ -307,26 +321,53 @@ struct MainPanelView: View {
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 56)
-                .background(WindowDragView()) // Make this header draggable
+                .background(WindowDragView())
                 
                 Divider().opacity(0.5)
                 
                 // Explorer Content
-                ScrollView {
+                ScrollView([.vertical, .horizontal], showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(viewModel.fileTree) { node in
                             FileTreeView(item: node, viewModel: viewModel)
                         }
                     }
                     .padding(.top, 8)
+                    .frame(minWidth: CGFloat(sidebarWidth), alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(width: 250)
+            .frame(width: CGFloat(sidebarWidth))
             .frame(maxHeight: .infinity)
             .background(sidebarBgColor)
             
-            Divider().opacity(0.5)
+            // Draggable Resizer
+            Rectangle()
+                .fill(Color.gray.opacity(0.1))
+                .frame(width: 1)
+                .overlay(
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 10)
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.resizeLeftRight.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    let newWidth = sidebarWidth + Double(value.translation.width)
+                                    sidebarWidth = max(150, min(newWidth, 600))
+                                }
+                                .onEnded { _ in
+                                    NSCursor.pop()
+                                }
+                        )
+                )
+                .zIndex(1)
             
             // CENTER: Main Chat Area
             VStack(spacing: 0) {
@@ -522,14 +563,14 @@ struct MainPanelView: View {
                             viewModel.selectedAgentId = agent.id
                         }
                     }) {
-                        Circle()
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(isActive ? Color(hex: agent.color) : Color.gray.opacity(0.2))
                             .frame(width: 40, height: 40)
                             .overlay(
                                 SVGIconView(name: agent.iconName, size: 24)
                             )
                             .overlay(
-                                Circle()
+                                RoundedRectangle(cornerRadius: 12)
                                     .stroke(isActive ? Color(hex: agent.color).opacity(0.5) : Color.clear, lineWidth: 3)
                                     .scaleEffect(isActive ? 1.15 : 1.0)
                             )
@@ -625,57 +666,68 @@ struct LegacyMessageBubble: View {
     @State private var isHovered = false
     
     var body: some View {
-        HStack {
-            if message.isUser {
-                Spacer(minLength: 40)
-            }
-            
-            ZStack(alignment: message.isUser ? .bottomTrailing : .bottomTrailing) {
-                Text(message.content)
-                    .textSelection(.enabled)
-                    .font(.system(size: 13))
-                    .lineSpacing(4)
-                    .padding(.horizontal, message.isUser ? 12 : 0)
-                    .padding(.vertical, message.isUser ? 8 : 4)
-                    .background(message.isUser ? userBgColor : Color.clear)
-                    .foregroundColor(message.isUser ? userTextColor : agentTextColor)
-                    .clipShape(
-                        CustomRoundedCorners(
-                            topLeading: message.isUser ? 12 : 0,
-                            topTrailing: message.isUser ? 12 : 0,
-                            bottomLeading: message.isUser ? 12 : 0,
-                            bottomTrailing: 0
-                        )
-                    )
-                
-                if isHovered {
-                    Button(action: {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(message.content, forType: .string)
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .padding(4)
-                            .background(Color.black.opacity(0.1))
-                            .cornerRadius(4)
+        VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
+            HStack(alignment: .bottom) {
+                if message.isUser {
+                    Spacer(minLength: 40)
+                    bubbleContent
+                } else {
+                    bubbleContent
+                    Spacer(minLength: 20) // Push copy button to the far right
+                    if isHovered {
+                        copyButton
                     }
-                    .buttonStyle(.plain)
-                    .padding(4)
-                    .offset(x: message.isUser ? -5 : 25, y: 5)
-                }
-            }
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.1)) {
-                    isHovered = hovering
                 }
             }
             
-            if !message.isUser {
-                Spacer(minLength: 40)
+            if message.isUser && isHovered {
+                HStack {
+                    Spacer()
+                    copyButton
+                }
             }
         }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
+    }
+    
+    private var bubbleContent: some View {
+        Text(message.content)
+            .textSelection(.enabled)
+            .font(.system(size: 13))
+            .lineSpacing(4)
+            .padding(.horizontal, message.isUser ? 12 : 0)
+            .padding(.vertical, message.isUser ? 8 : 4)
+            .background(message.isUser ? userBgColor : Color.clear)
+            .foregroundColor(message.isUser ? userTextColor : agentTextColor)
+            .clipShape(
+                CustomRoundedCorners(
+                    topLeading: message.isUser ? 12 : 0,
+                    topTrailing: message.isUser ? 12 : 0,
+                    bottomLeading: message.isUser ? 12 : 0,
+                    bottomTrailing: 0
+                )
+            )
+    }
+    
+    private var copyButton: some View {
+        Button(action: {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(message.content, forType: .string)
+        }) {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(4)
+                .background(Color.black.opacity(0.1))
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
     }
 }
 
