@@ -71,25 +71,9 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
-        # Generate our own session UUID if starting a new continuous session
-        import uuid
-        is_new_session = not session_id
-        if is_new_session and use_current:
-            session_id = str(uuid.uuid4())
-
-        # Handle generic session mapping for OpenClaw/Hermes/Claude/DCC
-        if session_id and use_current:
-            if agent_id in ["openclaw", "hermes"]:
-                args.extend(["--session-id", session_id])
-            elif agent_id in ["claude", "dcc"]:
-                if is_new_session:
-                    args.extend(["--session-id", session_id])
-                else:
-                    args.extend(["--resume", session_id])
-        elif agent_id in ["openclaw", "hermes"] and session_id and not use_current:
+        # Add session id logic only for openclaw
+        if agent_id == "openclaw" and session_id and not use_current:
             args.extend(["--session-id", session_id])
-        elif agent_id in ["claude", "dcc"] and session_id and not use_current:
-            args.extend(["--resume", session_id])
 
         try:
             # Check if there is a file path in the message, if so, we handle it

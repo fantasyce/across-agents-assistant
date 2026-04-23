@@ -43,8 +43,9 @@ struct AgentModel: Identifiable {
 struct FileItemModel: Identifiable {
     let id = UUID()
     let name: String
+    let path: String
     let isFolder: Bool
-    let children: [FileItemModel]?
+    var children: [FileItemModel]?
     var isExpanded: Bool = false
 }
 
@@ -62,17 +63,7 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#30D158")
     ]
     
-    @Published var fileTree: [FileItemModel] = [
-        FileItemModel(name: "src", isFolder: true, children: [
-            FileItemModel(name: "main.py", isFolder: false, children: nil),
-            FileItemModel(name: "utils.py", isFolder: false, children: nil)
-        ], isExpanded: true),
-        FileItemModel(name: "assets", isFolder: true, children: [
-            FileItemModel(name: "icon.png", isFolder: false, children: nil)
-        ], isExpanded: false),
-        FileItemModel(name: "README.md", isFolder: false, children: nil),
-        FileItemModel(name: "requirements.txt", isFolder: false, children: nil)
-    ]
+    @Published var fileTree: [FileItemModel] = []
     
     // Callbacks to decouple UI operations from the ViewModel
     var onHidePanel: (() -> Void)?
@@ -104,6 +95,74 @@ class SessionViewModel: ObservableObject {
     init() {
         // Load history or greet
         loadChatHistory()
+        loadHomeDirectory()
+    }
+    
+    func loadHomeDirectory() {
+        let homeUrl = FileManager.default.homeDirectoryForCurrentUser
+        fileTree = [FileItemModel(name: homeUrl.lastPathComponent, path: homeUrl.path, isFolder: true, children: [], isExpanded: false)]
+    }
+    
+    func toggleFolderExpansion(for item: FileItemModel) {
+        var updatedTree = fileTree
+        updateTreeExpansion(&updatedTree, targetId: item.id)
+        fileTree = updatedTree
+    }
+    
+    private func updateTreeExpansion(_ nodes: inout [FileItemModel], targetId: UUID) {
+        for i in 0..<nodes.count {
+            if nodes[i].id == targetId {
+                nodes[i].isExpanded.toggle()
+                if nodes[i].isExpanded && (nodes[i].children == nil || nodes[i].children!.isEmpty) {
+                    nodes[i].children = loadContents(of: nodes[i].path)
+                }
+                return
+            }
+            if nodes[i].children != nil {
+                updateTreeExpansion(&nodes[i].children!, targetId: targetId)
+            }
+        }
+    }
+    
+    private func loadContents(of path: String) -> [FileItemModel] {
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        
+        var items: [FileItemModel] = []
+        for url in urls {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            items.append(FileItemModel(name: url.lastPathComponent, path: url.path, isFolder: isDir, children: isDir ? [] : nil, isExpanded: false))
+        }
+        
+        // Sort: folders first, then alphabetically
+        items.sort { a, b in
+            if a.isFolder == b.isFolder {
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+            return a.isFolder && !b.isFolder
+        }
+        
+        return items
+    }
+    
+    func collapseAllFolders() {
+        var updatedTree = fileTree
+        collapseNodes(&updatedTree)
+        fileTree = updatedTree
+    }
+    
+    private func collapseNodes(_ nodes: inout [FileItemModel]) {
+        for i in 0..<nodes.count {
+            nodes[i].isExpanded = false
+            if nodes[i].children != nil {
+                collapseNodes(&nodes[i].children!)
+            }
+        }
+    }
+    
+    func refreshFileTree() {
+        loadHomeDirectory()
     }
     
     private func loadChatHistory() {

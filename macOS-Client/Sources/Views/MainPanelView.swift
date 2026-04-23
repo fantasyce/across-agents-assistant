@@ -99,12 +99,12 @@ struct TrafficLightButton: View {
 struct FileTreeView: View {
     let item: FileItemModel
     let depth: Int
-    @State private var isExpanded: Bool
+    @ObservedObject var viewModel: SessionViewModel
     
-    init(item: FileItemModel, depth: Int = 0) {
+    init(item: FileItemModel, depth: Int = 0, viewModel: SessionViewModel) {
         self.item = item
         self.depth = depth
-        _isExpanded = State(initialValue: item.isExpanded)
+        self.viewModel = viewModel
     }
     
     var body: some View {
@@ -113,12 +113,12 @@ struct FileTreeView: View {
                 Spacer().frame(width: CGFloat(depth * 15))
                 
                 if item.isFolder {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: item.isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .frame(width: 12)
                     
-                    SVGIconView(name: isExpanded ? "icon.14.explorer.folder.open" : "icon.14.explorer.folder.closed", size: 14)
+                    SVGIconView(name: item.isExpanded ? "icon.14.explorer.folder.open" : "icon.14.explorer.folder.closed", size: 14)
                 } else {
                     Spacer().frame(width: 12)
                     
@@ -137,21 +137,20 @@ struct FileTreeView: View {
             .onTapGesture {
                 if item.isFolder {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        isExpanded.toggle()
+                        viewModel.toggleFolderExpansion(for: item)
                     }
                 }
             }
             
-            if item.isFolder && isExpanded, let children = item.children {
+            if item.isFolder && item.isExpanded, let children = item.children {
                 ForEach(children) { child in
-                    FileTreeView(item: child, depth: depth + 1)
+                    FileTreeView(item: child, depth: depth + 1, viewModel: viewModel)
                 }
             }
         }
         .onDrag {
-            // Provide a basic NSItemProvider for dragging.
-            // In a real app, this would provide the actual file URL.
-            return NSItemProvider(object: item.name as NSString)
+            // Provide the actual file URL for dragging.
+            return NSItemProvider(object: NSURL(fileURLWithPath: item.path))
         }
     }
 }
@@ -194,7 +193,11 @@ struct SVGIconView: View {
     }
     
     private func loadImage() {
-        if let url = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "Assets") {
+        if let url = Bundle.module.url(forResource: name, withExtension: "svg", subdirectory: "Assets/icons") {
+            if let data = try? Data(contentsOf: url) {
+                self.nsImage = NSImage(data: data)
+            }
+        } else if let url = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "Assets/icons") {
             if let data = try? Data(contentsOf: url) {
                 self.nsImage = NSImage(data: data)
             }
@@ -271,20 +274,33 @@ struct MainPanelView: View {
                     Spacer()
                     
                     HStack(spacing: 12) {
-                        Button(action: {}) {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.collapseAllFolders()
+                            }
+                        }) {
                             Image(systemName: "arrow.up.right.and.arrow.down.left.rectangle")
                         }
                         .buttonStyle(.plain)
+                        .help("Collapse All")
                         
-                        Button(action: {}) {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.refreshFileTree()
+                            }
+                        }) {
                             Image(systemName: "arrow.clockwise")
                         }
                         .buttonStyle(.plain)
+                        .help("Refresh")
                         
-                        Button(action: {}) {
+                        Button(action: {
+                            // Hide/Show hidden files placeholder
+                        }) {
                             Image(systemName: "eye.slash")
                         }
                         .buttonStyle(.plain)
+                        .help("Toggle Hidden Files")
                     }
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
@@ -299,7 +315,7 @@ struct MainPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(viewModel.fileTree) { node in
-                            FileTreeView(item: node)
+                            FileTreeView(item: node, viewModel: viewModel)
                         }
                     }
                     .padding(.top, 8)
@@ -401,7 +417,7 @@ struct MainPanelView: View {
                                 HStack {
                                     ProgressView()
                                         .scaleEffect(0.6)
-                                    Text("思考中...")
+                                    Text("Thinking...")
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
                                     Spacer()
@@ -455,6 +471,21 @@ struct MainPanelView: View {
                                 if viewModel.pendingApproval == nil {
                                     submit()
                                 }
+                            }
+                            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                                for provider in providers {
+                                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                        if let url = url {
+                                            DispatchQueue.main.async {
+                                                if !viewModel.inputText.isEmpty {
+                                                    viewModel.inputText += " "
+                                                }
+                                                viewModel.inputText += url.path
+                                            }
+                                        }
+                                    }
+                                }
+                                return true
                             }
                     }
                     .padding(.horizontal, 10)
@@ -591,29 +622,55 @@ struct LegacyMessageBubble: View {
     let userTextColor: Color
     let agentTextColor: Color
     
+    @State private var isHovered = false
+    
     var body: some View {
         HStack {
             if message.isUser {
                 Spacer(minLength: 40)
             }
             
-            Text(message.content)
-                .textSelection(.enabled)
-                .font(.system(size: 13))
-                .lineSpacing(4)
-                .padding(.horizontal, message.isUser ? 12 : 0)
-                .padding(.vertical, message.isUser ? 8 : 4)
-                .background(message.isUser ? userBgColor : Color.clear)
-                .foregroundColor(message.isUser ? userTextColor : agentTextColor)
-                // Match the 12px border radius, with bottom-right square for user messages
-                .clipShape(
-                    CustomRoundedCorners(
-                        topLeading: message.isUser ? 12 : 0,
-                        topTrailing: message.isUser ? 12 : 0,
-                        bottomLeading: message.isUser ? 12 : 0,
-                        bottomTrailing: 0
+            ZStack(alignment: message.isUser ? .bottomTrailing : .bottomTrailing) {
+                Text(message.content)
+                    .textSelection(.enabled)
+                    .font(.system(size: 13))
+                    .lineSpacing(4)
+                    .padding(.horizontal, message.isUser ? 12 : 0)
+                    .padding(.vertical, message.isUser ? 8 : 4)
+                    .background(message.isUser ? userBgColor : Color.clear)
+                    .foregroundColor(message.isUser ? userTextColor : agentTextColor)
+                    .clipShape(
+                        CustomRoundedCorners(
+                            topLeading: message.isUser ? 12 : 0,
+                            topTrailing: message.isUser ? 12 : 0,
+                            bottomLeading: message.isUser ? 12 : 0,
+                            bottomTrailing: 0
+                        )
                     )
-                )
+                
+                if isHovered {
+                    Button(action: {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(message.content, forType: .string)
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .padding(4)
+                            .background(Color.black.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(4)
+                    .offset(x: message.isUser ? -5 : 25, y: 5)
+                }
+            }
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.1)) {
+                    isHovered = hovering
+                }
+            }
             
             if !message.isUser {
                 Spacer(minLength: 40)
