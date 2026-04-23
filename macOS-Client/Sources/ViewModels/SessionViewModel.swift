@@ -40,13 +40,17 @@ struct AgentModel: Identifiable {
     let color: String
 }
 
-struct FileItemModel: Identifiable {
+struct FileItemModel: Identifiable, Equatable {
     let id = UUID()
     let name: String
     let path: String
     let isFolder: Bool
     var children: [FileItemModel]?
     var isExpanded: Bool = false
+    
+    static func == (lhs: FileItemModel, rhs: FileItemModel) -> Bool {
+        return lhs.id == rhs.id && lhs.isExpanded == rhs.isExpanded && lhs.children?.count == rhs.children?.count
+    }
 }
 
 class SessionViewModel: ObservableObject {
@@ -113,23 +117,26 @@ class SessionViewModel: ObservableObject {
     
     func toggleFolderExpansion(for item: FileItemModel) {
         var updatedTree = fileTree
-        updateTreeExpansion(&updatedTree, targetId: item.id)
+        _ = updateTreeExpansion(&updatedTree, targetId: item.id)
         fileTree = updatedTree
     }
     
-    private func updateTreeExpansion(_ nodes: inout [FileItemModel], targetId: UUID) {
+    private func updateTreeExpansion(_ nodes: inout [FileItemModel], targetId: UUID) -> Bool {
         for i in 0..<nodes.count {
             if nodes[i].id == targetId {
                 nodes[i].isExpanded.toggle()
                 if nodes[i].isExpanded && (nodes[i].children == nil || nodes[i].children!.isEmpty) {
                     nodes[i].children = loadContents(of: nodes[i].path)
                 }
-                return
+                return true
             }
             if nodes[i].children != nil {
-                updateTreeExpansion(&nodes[i].children!, targetId: targetId)
+                if updateTreeExpansion(&nodes[i].children!, targetId: targetId) {
+                    return true
+                }
             }
         }
+        return false
     }
     
     private func loadContents(of path: String) -> [FileItemModel] {

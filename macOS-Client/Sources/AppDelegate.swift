@@ -41,29 +41,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupPanel() {
         let contentView = MainPanelView(viewModel: sessionViewModel)
         
-        // 1. Create a borderless panel but keep .titled so traffic lights appear
+        // 1. Create a borderless panel
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), // Wider for 3 columns
             styleMask: [
-                .titled,              // Required for traffic lights
-                .closable,            // Enables the red close button
-                .miniaturizable,      // Enables the yellow minimize button
-                .resizable,           // Enables resizing and the green button
-                .fullSizeContentView, // Extends content into the title bar area
+                .borderless,          // Completely frameless, no native title bar at all
                 .nonactivatingPanel   // Won't steal focus from other apps
             ],
             backing: .buffered,
             defer: false
         )
-        
-        // 2. Hide the title and make the titlebar transparent
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        
-        // Hide standard window buttons so we can draw our own custom traffic lights
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
         
         // 3. Make the background draggable ONLY via designated areas (SwiftUI WindowDragView)
         panel.isMovableByWindowBackground = false

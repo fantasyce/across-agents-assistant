@@ -325,16 +325,18 @@ struct MainPanelView: View {
                 Divider().opacity(0.5)
                 
                 // Explorer Content
-                ScrollView([.vertical, .horizontal], showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(viewModel.fileTree) { node in
-                            FileTreeView(item: node, viewModel: viewModel)
+                GeometryReader { geo in
+                    ScrollView([.vertical, .horizontal], showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(viewModel.fileTree) { node in
+                                FileTreeView(item: node, viewModel: viewModel)
+                            }
                         }
+                        .padding(.top, 8)
+                        .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
                     }
-                    .padding(.top, 8)
-                    .frame(minWidth: CGFloat(sidebarWidth), maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(width: CGFloat(sidebarWidth))
             .frame(maxHeight: .infinity)
@@ -675,15 +677,16 @@ struct LegacyMessageBubble: View {
                 }
             }
             
-            if isHovered {
-                HStack {
-                    if message.isUser {
-                        Spacer()
-                        copyButton
-                    } else {
-                        copyButton
-                        Spacer()
-                    }
+            // The row for the copy button always exists to prevent layout shifts
+            HStack {
+                if message.isUser {
+                    Spacer()
+                    copyButton
+                        .opacity(isHovered ? 1 : 0)
+                } else {
+                    copyButton
+                        .opacity(isHovered ? 1 : 0)
+                    Spacer()
                 }
             }
         }
