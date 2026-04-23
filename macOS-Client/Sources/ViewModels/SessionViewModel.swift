@@ -47,10 +47,6 @@ struct FileItemModel: Identifiable, Equatable {
     let isFolder: Bool
     var children: [FileItemModel]?
     var isExpanded: Bool = false
-    
-    static func == (lhs: FileItemModel, rhs: FileItemModel) -> Bool {
-        return lhs.id == rhs.id && lhs.isExpanded == rhs.isExpanded && lhs.children?.count == rhs.children?.count
-    }
 }
 
 class SessionViewModel: ObservableObject {

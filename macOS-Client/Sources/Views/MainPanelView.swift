@@ -170,6 +170,9 @@ struct FileTreeView: View {
 struct WindowDragView: NSViewRepresentable {
     func makeNSView(context: Context) -> DraggableNSView {
         let view = DraggableNSView()
+        // Ensure the view registers hits in AppKit
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(white: 0, alpha: 0.001).cgColor
         return view
     }
     
@@ -177,6 +180,10 @@ struct WindowDragView: NSViewRepresentable {
 }
 
 class DraggableNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool {
+        return false
+    }
+    
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 {
             self.window?.zoom(nil)
@@ -326,7 +333,10 @@ struct MainPanelView: View {
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 56)
-                .background(WindowDragView())
+                .background(
+                    WindowDragView()
+                        .contentShape(Rectangle())
+                )
                 
                 Divider().opacity(0.5)
                 
@@ -354,8 +364,9 @@ struct MainPanelView: View {
                 .frame(width: 1)
                 .overlay(
                     Rectangle()
-                        .fill(Color.clear)
-                        .frame(width: 10)
+                        .fill(Color.black.opacity(0.001)) // Must not be completely clear to receive touches
+                        .frame(width: 16)
+                        .contentShape(Rectangle())
                         .onHover { hovering in
                             if hovering {
                                 NSCursor.resizeLeftRight.push()
@@ -376,7 +387,7 @@ struct MainPanelView: View {
                                 }
                         )
                 )
-                .zIndex(1)
+                .zIndex(100)
             
             // CENTER: Main Chat Area
             VStack(spacing: 0) {
@@ -444,6 +455,7 @@ struct MainPanelView: View {
                     ZStack {
                         bgColor.opacity(0.8) // For blur effect later
                         WindowDragView()
+                            .contentShape(Rectangle())
                     }
                 )
                 
@@ -472,6 +484,7 @@ struct MainPanelView: View {
                                         .foregroundColor(.secondary)
                                     Spacer()
                                 }
+                                .offset(x: -2) // Compensate for ProgressView's intrinsic margin
                                 .padding(.vertical, 4)
                                 .id("processing")
                             }
@@ -542,12 +555,6 @@ struct MainPanelView: View {
                     .padding(.vertical, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
-                    // Make the entire wrapper clickable to focus the text field
-                    .onTapGesture {
-                        // Normally we'd use FocusState here, but since this is a simple port, 
-                        // just preventing the tap from falling through is enough, 
-                        // macOS automatically focuses the text field when clicking its padding area.
-                    }
                     
                     Button(action: submit) {
                         Image(systemName: "paperplane.fill")
@@ -738,7 +745,6 @@ struct LegacyMessageBubble: View {
                 .cornerRadius(4)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 4)
     }
 }
 
