@@ -531,6 +531,7 @@ struct MainPanelView: View {
                             })
                             .disabled(viewModel.pendingApproval != nil)
                         }
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 4)
                         .onDrop(of: [.fileURL], isTargeted: nil) { providers in

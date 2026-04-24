@@ -72,9 +72,16 @@ class CustomTextView: NSTextView {
     }
     
     override func keyDown(with event: NSEvent) {
-        // Enter key without shift submits
-        if event.keyCode == 36 && !event.modifierFlags.contains(.shift) {
-            onSubmit?()
+        // Enter key (36)
+        if event.keyCode == 36 {
+            if event.modifierFlags.contains(.shift) {
+                // Shift+Enter -> Insert newline
+                self.insertText("\n", replacementRange: self.selectedRange())
+                self.invalidateIntrinsicContentSize()
+            } else {
+                // Enter without shift -> Submit
+                onSubmit?()
+            }
         } else {
             super.keyDown(with: event)
             self.invalidateIntrinsicContentSize()
