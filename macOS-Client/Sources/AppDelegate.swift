@@ -175,8 +175,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear // Let SwiftUI handle the blur
         panel.hasShadow = true
-        panel.isFloatingPanel = true
-        panel.level = .floating // Keep on top
+        panel.isFloatingPanel = false // Don't force it to float above all other windows, so system dialogs can be seen
+        panel.level = .normal // Normal window level, not floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self // Observe window events for auto-hiding
         
