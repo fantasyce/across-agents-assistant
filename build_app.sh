@@ -4,7 +4,8 @@
 set -e
 
 PROJECT_ROOT=$(cd "$(dirname "$0")" && pwd)
-APP_NAME="AcrossAgentsAssistant"
+APP_NAME="Across Agents Assistant"
+EXECUTABLE_NAME="AcrossAgentsAssistant"
 BUILD_DIR="$PROJECT_ROOT/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 DMG_DIR="$BUILD_DIR/dmg"
@@ -35,7 +36,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 echo "=== 5. Copying Executables and Resources ==="
 # Copy Swift executable
-cp "$PROJECT_ROOT/macOS-Client/.build/release/AcrossAgentsAssistantClient" "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp "$PROJECT_ROOT/macOS-Client/.build/release/AcrossAgentsAssistantClient" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 
 # Copy Backend executable
 cp "$PROJECT_ROOT/backend/dist/backend" "$APP_DIR/Contents/Resources/backend"
@@ -57,11 +58,11 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>$APP_NAME</string>
+    <string>$EXECUTABLE_NAME</string>
     <key>CFBundleIconFile</key>
     <string>app_icon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.fantasyce.$APP_NAME</string>
+    <string>com.fantasyce.AcrossAgentsAssistant</string>
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleVersion</key>
@@ -91,6 +92,6 @@ cp -R "$APP_DIR" "$DMG_DIR/"
 ln -s /Applications "$DMG_DIR/Applications"
 
 echo "Attempting to create DMG (this may fail in some sandboxed environments)..."
-hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_DIR" -ov -format UDZO "$BUILD_DIR/$APP_NAME.dmg" || echo "DMG creation skipped/failed due to environment restrictions. You can find the .app bundle at $APP_DIR"
+hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_DIR" -ov -format UDZO "$BUILD_DIR/AcrossAgentsAssistant.dmg" || echo "DMG creation skipped/failed due to environment restrictions. You can find the .app bundle at $APP_DIR"
 
 echo "=== Done! App is ready at $APP_DIR ==="
