@@ -21,6 +21,11 @@ class ContextEngine {
     func performScreenshotAndOCR(completion: @escaping (String?) -> Void) {
         let tempPath = NSTemporaryDirectory() + "temp_screenshot.png"
         
+        // Ensure old screenshot is deleted so we don't process it if user cancels
+        if FileManager.default.fileExists(atPath: tempPath) {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        
         let process = Process()
         process.launchPath = "/usr/sbin/screencapture"
         process.arguments = ["-i", "-x", tempPath]
@@ -37,12 +42,12 @@ class ContextEngine {
             let request = VNRecognizeTextRequest { request, error in
                 if let error = error {
                     print("OCR Error: \(error)")
-                    DispatchQueue.main.async { completion(nil) }
+                    DispatchQueue.main.async { completion("[OCR识别错误: \(error.localizedDescription)]") }
                     return
                 }
                 
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    DispatchQueue.main.async { completion(nil) }
+                    DispatchQueue.main.async { completion("[未识别到文字]") }
                     return
                 }
                 
@@ -52,7 +57,7 @@ class ContextEngine {
                 try? FileManager.default.removeItem(at: fileURL)
                 
                 DispatchQueue.main.async {
-                    completion(text.isEmpty ? nil : text)
+                    completion(text.isEmpty ? "[未识别到文字]" : text)
                 }
             }
             
@@ -65,7 +70,7 @@ class ContextEngine {
                 try handler.perform([request])
             } catch {
                 print("Failed to perform OCR: \(error)")
-                DispatchQueue.main.async { completion(nil) }
+                DispatchQueue.main.async { completion("[OCR执行失败: \(error.localizedDescription)]") }
             }
         }
         
@@ -81,6 +86,22 @@ class ContextEngine {
     func promptForAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let _ = AXIsProcessTrustedWithOptions(options)
+    }
+    
+    // Check if we have Screen Recording permissions
+    func hasScreenRecordingPermission() -> Bool {
+        if #available(macOS 10.15, *) {
+            return CGPreflightScreenCaptureAccess()
+        }
+        return true
+    }
+    
+    // Request Screen Recording permissions
+    func requestScreenRecordingPermission() -> Bool {
+        if #available(macOS 10.15, *) {
+            return CGRequestScreenCaptureAccess()
+        }
+        return true
     }
     
     func collectTier1Context() -> ContextPack {

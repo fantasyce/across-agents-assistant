@@ -115,22 +115,51 @@ class SessionViewModel: ObservableObject {
     private var currentSessionId: String = "default-session"
     
     func requestManualScreenshot() {
-        onHidePanel?()
-        
-        // We MUST yield the main thread to allow the RunLoop to actually process the window hide event
-        // before we launch the screencapture process. A slight delay ensures the window shadow and fade-out complete.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
-                guard let self = self else { return }
-                
-                self.onShowPanel?()
-                
-                if let text = extractedText {
-                    if !self.inputText.isEmpty {
-                        self.inputText += "\n"
+        // 1. First check if we have screen recording permission
+        if !ContextEngine.shared.hasScreenRecordingPermission() {
+            // No permission yet. We need to hide the panel so the system prompt is visible
+            onHidePanel?()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // Requesting permission will trigger the macOS system prompt
+                let granted = ContextEngine.shared.requestScreenRecordingPermission()
+                if !granted {
+                    // The user denied it or it requires a restart.
+                    // We can show the panel again and optionally add an error message.
+                    DispatchQueue.main.async {
+                        self.onShowPanel?()
+                        if !self.inputText.isEmpty {
+                            self.inputText += "\n"
+                        }
+                        self.inputText += "[提示：请在系统设置中允许屏幕录制权限并重启应用]"
                     }
-                    self.inputText += "【截图内容】:\n" + text + "\n"
+                } else {
+                    // It was granted instantly? (Rare, usually requires restart)
+                    // Just in case, try screenshot.
+                    self.executeScreenshot()
                 }
+            }
+            return
+        }
+        
+        // 2. We already have permission, hide panel and capture
+        onHidePanel?()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.executeScreenshot()
+        }
+    }
+    
+    private func executeScreenshot() {
+        ContextEngine.shared.performScreenshotAndOCR { [weak self] extractedText in
+            guard let self = self else { return }
+            
+            self.onShowPanel?()
+            
+            if let text = extractedText {
+                if !self.inputText.isEmpty {
+                    self.inputText += "\n"
+                }
+                self.inputText += "【截图内容】:\n" + text + "\n"
             }
         }
     }
