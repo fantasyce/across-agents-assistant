@@ -314,9 +314,12 @@ JSON 格式必须严格如下：
                     matched = next((t for t in schemas if t["name"] == tool_name), None)
                     desc = matched["description"] if matched else "MCP 外部工具"
                     risk = matched["risk_level"] if matched else "medium"
+                    
+                # Hide JSON payload from user if possible
+                display_text = plan_summary
                 
                 return ChatResponse(
-                    text=plan_summary,
+                    text=display_text,
                     session_id=reply.session_id,
                     requires_approval=True,
                     approval_request={
