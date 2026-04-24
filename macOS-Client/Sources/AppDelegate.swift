@@ -162,11 +162,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         
-        // Let standard window buttons show, or hide them if you prefer a fully custom UI
-        // We will keep them shown so it acts like a normal window
-        // panel.standardWindowButton(.closeButton)?.isHidden = true
-        // panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        // panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // Hide standard window buttons so we can draw our own custom traffic lights
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         
         // 3. Make the background draggable ONLY via designated areas (SwiftUI WindowDragView)
         panel.isMovableByWindowBackground = false
