@@ -2,14 +2,14 @@ import Cocoa
 import SwiftUI
 import HotKey
 
-class CustomPanel: NSPanel {
+class CustomWindow: NSWindow {
     override var canBecomeKey: Bool {
         return true
     }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    var panel: CustomPanel!
+    var panel: CustomWindow!
     lazy var sessionViewModel: SessionViewModel = {
         let vm = SessionViewModel()
         // Bind UI callbacks
@@ -24,8 +24,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set to accessory to hide from dock but allow menu bar
-        NSApp.setActivationPolicy(.accessory)
+        // Set to regular to show in dock and act as a standard app
+        NSApp.setActivationPolicy(.regular)
         
         // Close ALL default windows that SwiftUI spawns (this fixes the blank "dirty" window issue)
         for window in NSApp.windows {
@@ -144,16 +144,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func setupPanel() {
         let contentView = MainPanelView(viewModel: sessionViewModel)
         
-        // 1. Create a borderless panel
-        panel = CustomPanel(
+        // 1. Create a borderless window
+        panel = CustomWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), // Wider for 3 columns
             styleMask: [
                 .titled,              // Required to enable standard resizing and zooming
                 .closable,            // Required for standard window behaviors
                 .miniaturizable,      // Required for standard window behaviors
                 .resizable,           // Enables dragging edges to resize
-                .fullSizeContentView, // Extends content into the title bar area
-                .nonactivatingPanel   // Won't steal focus from other apps
+                .fullSizeContentView  // Extends content into the title bar area
             ],
             backing: .buffered,
             defer: false
@@ -163,10 +162,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         
-        // Hide standard window buttons so we can draw our own custom traffic lights
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // Let standard window buttons show, or hide them if you prefer a fully custom UI
+        // We will keep them shown so it acts like a normal window
+        // panel.standardWindowButton(.closeButton)?.isHidden = true
+        // panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        // panel.standardWindowButton(.zoomButton)?.isHidden = true
         
         // 3. Make the background draggable ONLY via designated areas (SwiftUI WindowDragView)
         panel.isMovableByWindowBackground = false
@@ -175,10 +175,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear // Let SwiftUI handle the blur
         panel.hasShadow = true
-        panel.isFloatingPanel = false // Don't force it to float above all other windows, so system dialogs can be seen
         panel.level = .normal // Normal window level, not floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.delegate = self // Observe window events for auto-hiding
+        panel.delegate = self // Observe window events
         
         // 5. Set Content View
         panel.contentView = NSHostingView(rootView: contentView)
@@ -220,10 +219,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     // Auto-hide when the user clicks away (window loses focus)
-    func windowDidResignKey(_ notification: Notification) {
-        // Only hide the main panel if it's the one losing focus
-        if let window = notification.object as? NSWindow, window == panel {
-            hidePanel()
+    // Removed because we want the window to be persistent and act like a normal app
+    // func windowDidResignKey(_ notification: Notification) {
+    //     if let window = notification.object as? NSWindow, window == panel {
+    //         hidePanel()
+    //     }
+    // }
+    
+    // Re-open window when clicking dock icon
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showPanel()
         }
+        return true
     }
 }

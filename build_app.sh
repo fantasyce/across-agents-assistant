@@ -72,8 +72,6 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
     <key>NSScreenCaptureUsageDescription</key>
     <string>AcrossAgentsAssistant 需要截屏权限以获取屏幕内容，从而允许 AI 理解您的当前屏幕信息。</string>
     <key>NSMicrophoneUsageDescription</key>
