@@ -1,5 +1,6 @@
 import json
 from typing import Dict, Any, Callable, List
+from .mcp_client import mcp_manager
 
 class ToolDefinition:
     def __init__(self, name: str, description: str, parameters: Dict[str, Any], risk_level: str, handler: Callable):
@@ -21,6 +22,7 @@ class ToolRegistry:
 
     def get_all_tools_schema(self) -> List[Dict[str, Any]]:
         schemas = []
+        # Add local tools
         for tool in self.tools.values():
             schemas.append({
                 "name": tool.name,
@@ -28,6 +30,9 @@ class ToolRegistry:
                 "parameters": tool.parameters,
                 "risk_level": tool.risk_level
             })
+        
+        # Add dynamic MCP tools
+        schemas.extend(mcp_manager.get_all_tools_schema())
         return schemas
 
 registry = ToolRegistry()

@@ -1,7 +1,8 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import asyncio
 
 from .agent_manager import AgentManager
 from .openclaw.client import UniversalAgentClient
@@ -10,9 +11,41 @@ from .openclaw.intent_parser import ToolIntentParser
 # Ensure builtin tools are registered
 from .tools import builtin_tools
 from .tools.tool_registry import registry
+from .tools.mcp_client import mcp_manager
 from .db.database import db
 
 app = FastAPI(title="Across Agents Assistant API")
+
+class MCPConnectRequest(BaseModel):
+    server_id: str
+    command: str
+    args: List[str]
+    env: Optional[Dict[str, str]] = None
+
+@app.post("/api/mcp/connect")
+async def connect_mcp_server(req: MCPConnectRequest):
+    """Register and connect to an MCP server dynamically."""
+    try:
+        mcp_manager.register_server(req.server_id, req.command, req.args, req.env)
+        success = await mcp_manager.connect_server(req.server_id)
+        if success:
+            return {"status": "success", "message": f"Connected to MCP server: {req.server_id}"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to connect to MCP server: {req.server_id}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class MCPDisconnectRequest(BaseModel):
+    server_id: str
+
+@app.post("/api/mcp/disconnect")
+async def disconnect_mcp_server(req: MCPDisconnectRequest):
+    """Disconnect an MCP server."""
+    try:
+        await mcp_manager.disconnect_server(req.server_id)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ContextPack(BaseModel):
     frontmost_app: Optional[str] = None
@@ -74,8 +107,47 @@ async def approve_tool_execution(req: ApprovalDecision):
         db.set_tool_authorization(req.tool_name, True)
     
     if req.decision in ["approve", "always_allow"]:
-        # Execute tool
-        if tool_def:
+        # Check if it's an MCP tool or a local tool
+        is_mcp = False
+        tool_def = registry.get_tool(req.tool_name)
+        if "__" in req.tool_name and not tool_def:
+            schemas = mcp_manager.get_all_tools_schema()
+            if any(t["name"] == req.tool_name for t in schemas):
+                is_mcp = True
+                
+        if is_mcp:
+            # Execute MCP tool
+            parts = req.tool_name.split("__", 1)
+            if len(parts) == 2:
+                server_id = parts[0]
+                actual_tool_name = parts[1]
+                
+                try:
+                    result = await mcp_manager.call_tool(server_id, actual_tool_name, req.tool_args)
+                    result_text = f"✅ MCP 工具 {req.tool_name} 执行成功！结果：\n{result}"
+                    db.add_message(session_id=req.session_id, role="tool", content=result_text)
+                    
+                    continuation_req = ChatRequest(
+                        text=f"MCP 工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
+                        context={},
+                        session_id=req.session_id,
+                        agent_id=req.agent_id
+                    )
+                    return await chat_endpoint(continuation_req)
+                except Exception as e:
+                    error_text = f"❌ MCP 工具执行失败: {str(e)}"
+                    db.add_message(session_id=req.session_id, role="tool", content=error_text)
+                    continuation_req = ChatRequest(
+                        text=f"MCP 工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
+                        context={},
+                        session_id=req.session_id,
+                        agent_id=req.agent_id
+                    )
+                    return await chat_endpoint(continuation_req)
+            return ChatResponse(text="MCP工具名称解析失败", session_id=req.session_id)
+            
+        # Execute local tool
+        elif tool_def:
             try:
                 # The tool_args coming from the Swift client will be a dict of {key: value}
                 # But since we use AnyCodableValue in Swift, simple types like Int/String should map correctly
@@ -90,7 +162,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     session_id=req.session_id,
                     agent_id=req.agent_id # Pass through the original agent
                 )
-                return await chat_with_agent(continuation_req)
+                return await chat_endpoint(continuation_req)
                 
             except Exception as e:
                 error_text = f"❌ 工具执行失败: {str(e)}"
@@ -102,7 +174,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     session_id=req.session_id,
                     agent_id=req.agent_id # Pass through the original agent
                 )
-                return await chat_with_agent(continuation_req)
+                return await chat_endpoint(continuation_req)
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
     else:
         cancel_text = "用户已取消执行工具操作。"
@@ -113,7 +185,7 @@ async def approve_tool_execution(req: ApprovalDecision):
             session_id=req.session_id,
             agent_id=req.agent_id
         )
-        return await chat_with_agent(continuation_req)
+        return await chat_endpoint(continuation_req)
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
@@ -182,9 +254,18 @@ JSON 格式必须严格如下：
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("args", {})
             
-            # Verify tool exists in registry
+            # Verify tool exists in registry (local or MCP)
             tool_def = registry.get_tool(tool_name)
-            if tool_def:
+            
+            # The tool name format for MCP is "server_id__tool_name"
+            is_mcp = False
+            if "__" in tool_name and not tool_def:
+                # We check if it matches an MCP schema
+                schemas = mcp_manager.get_all_tools_schema()
+                if any(t["name"] == tool_name for t in schemas):
+                    is_mcp = True
+            
+            if tool_def or is_mcp:
                 plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
                 
                 # Check if tool is "always allowed"
@@ -192,16 +273,24 @@ JSON 格式必须严格如下：
                 
                 if is_always_allowed:
                     # Auto-approve and execute
+                    risk_level = tool_def.risk_level if tool_def else "medium"
                     db.add_audit_log(
                         session_id=reply.session_id,
                         tool_name=tool_name,
                         tool_args=tool_args,
-                        risk_level=tool_def.risk_level,
+                        risk_level=risk_level,
                         decision="auto_approve"
                     )
                     
                     try:
-                        result = tool_def.handler(**tool_args)
+                        if is_mcp:
+                            parts = tool_name.split("__", 1)
+                            server_id = parts[0]
+                            actual_tool_name = parts[1]
+                            result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
+                        else:
+                            result = tool_def.handler(**tool_args)
+                            
                         result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
                         db.add_message(session_id=req.session_id, role="tool", content=result_text)
                         
@@ -215,15 +304,26 @@ JSON 格式必须严格如下：
                         prompt = f"工具 {tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。"
                         continue
                 
+                # Retrieve description safely
+                if tool_def:
+                    desc = tool_def.description
+                    risk = tool_def.risk_level
+                else:
+                    # Look it up from mcp_manager if possible
+                    schemas = mcp_manager.get_all_tools_schema()
+                    matched = next((t for t in schemas if t["name"] == tool_name), None)
+                    desc = matched["description"] if matched else "MCP 外部工具"
+                    risk = matched["risk_level"] if matched else "medium"
+                
                 return ChatResponse(
                     text=plan_summary,
                     session_id=reply.session_id,
                     requires_approval=True,
                     approval_request={
                         "tool_name": tool_name,
-                        "risk_level": tool_def.risk_level,
+                        "risk_level": risk,
                         "tool_args": tool_args,
-                        "description": tool_def.description
+                        "description": desc
                     }
                 )
                 
