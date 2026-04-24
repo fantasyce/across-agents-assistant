@@ -8,7 +8,7 @@ class CustomPanel: NSPanel {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: CustomPanel!
     lazy var sessionViewModel: SessionViewModel = {
         let vm = SessionViewModel()
@@ -80,8 +80,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func setupGlobalHotkey() {
-        // Register Option + Space as the global hotkey
-        hotKey = HotKey(key: .space, modifiers: [.option])
+        // Register Option + Tab as the global hotkey
+        hotKey = HotKey(key: .tab, modifiers: [.option])
         
         hotKey?.keyDownHandler = { [weak self] in
             DispatchQueue.main.async {
@@ -127,6 +127,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.level = .floating // Keep on top
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.delegate = self // Observe window events for auto-hiding
         
         // 5. Set Content View
         panel.contentView = NSHostingView(rootView: contentView)
@@ -165,5 +166,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+    
+    // Auto-hide when the user clicks away (window loses focus)
+    func windowDidResignKey(_ notification: Notification) {
+        hidePanel()
     }
 }
