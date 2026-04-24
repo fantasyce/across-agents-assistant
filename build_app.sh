@@ -3,7 +3,7 @@
 # Exit on any error
 set -e
 
-PROJECT_ROOT=$(pwd)
+PROJECT_ROOT=$(cd "$(dirname "$0")" && pwd)
 APP_NAME="AcrossAgentsAssistant"
 BUILD_DIR="$PROJECT_ROOT/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"

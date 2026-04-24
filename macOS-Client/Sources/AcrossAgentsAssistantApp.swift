@@ -13,20 +13,14 @@ struct AcrossAgentsAssistantApp: App {
         .commands {
             // Remove standard commands (New Window, etc.)
             CommandGroup(replacing: .newItem) {}
-        }
-        
-        MenuBarExtra("Across Agents", systemImage: "sparkles") {
-            Button("Toggle Panel (Option+Space)") {
-                appDelegate.togglePanel()
-            }
-            .keyboardShortcut(.space, modifiers: .option)
             
-            Divider()
-            
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
+            // Add custom settings command to App Menu
+            CommandGroup(replacing: .appSettings) {
+                Button("Preferences...") {
+                    appDelegate.openPreferences()
+                }
+                // Removed .keyboardShortcut("m", modifiers: .option) to rely on AppDelegate's global HotKey
             }
-            .keyboardShortcut("q", modifiers: .command)
         }
     }
 }

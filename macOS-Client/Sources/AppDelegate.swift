@@ -19,20 +19,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }()
     
     private var hotKey: HotKey?
+    private var prefsHotKey: HotKey?
     private var backendProcess: Process?
+    private var statusItem: NSStatusItem?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set to accessory to hide from dock but allow menu bar
         NSApp.setActivationPolicy(.accessory)
         
-        // Close the default empty window that SwiftUI might spawn
-        if let window = NSApp.windows.first {
+        // Close ALL default windows that SwiftUI spawns (this fixes the blank "dirty" window issue)
+        for window in NSApp.windows {
             window.close()
         }
         
+        setupMenuBar()
         setupPanel()
         setupGlobalHotkey()
         startBackend()
+    }
+    
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Across Agents")
+        }
+        
+        let menu = NSMenu()
+        
+        menu.addItem(NSMenuItem(title: "Toggle Panel (Option+Space)", action: #selector(togglePanel), keyEquivalent: " "))
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let prefsItem = NSMenuItem(title: "Preferences...", action: #selector(openPreferences), keyEquivalent: "m")
+        prefsItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(prefsItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        
+        statusItem?.menu = menu
+    }
+    
+    @objc func openPreferences() {
+        if sessionViewModel.showMCPPreferences && panel.isVisible {
+            // Toggle off if already visible
+            sessionViewModel.showMCPPreferences = false
+        } else {
+            // Toggle on and ensure panel is shown
+            sessionViewModel.showMCPPreferences = true
+            showPanel()
+        }
+    }
+    
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -80,12 +122,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     func setupGlobalHotkey() {
-        // Register Option + Tab as the global hotkey
+        // Register Option + Tab as the global hotkey for main panel
         hotKey = HotKey(key: .tab, modifiers: [.option])
         
         hotKey?.keyDownHandler = { [weak self] in
             DispatchQueue.main.async {
                 self?.togglePanel()
+            }
+        }
+        
+        // Register Option + M as the global hotkey for MCP preferences
+        prefsHotKey = HotKey(key: .m, modifiers: [.option])
+        
+        prefsHotKey?.keyDownHandler = { [weak self] in
+            DispatchQueue.main.async {
+                self?.openPreferences()
             }
         }
     }
@@ -170,6 +221,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     
     // Auto-hide when the user clicks away (window loses focus)
     func windowDidResignKey(_ notification: Notification) {
-        hidePanel()
+        // Only hide the main panel if it's the one losing focus
+        if let window = notification.object as? NSWindow, window == panel {
+            hidePanel()
+        }
     }
 }

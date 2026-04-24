@@ -87,32 +87,68 @@ class UniversalAgentClient:
             # e.g., ~/Documents/service -> /Users/didi/Documents/service
             expanded_message = re.sub(r'(~/[^ "\'\n]*)', lambda m: os.path.expanduser(m.group(1)), message)
             
-            path_match = re.search(r'(/Users/[^ "\'\n]+)', expanded_message)
-            if path_match:
-                potential_path = path_match.group(1).strip()
-                target_dir = None
-                
-                if os.path.exists(potential_path):
-                    if os.path.isdir(potential_path):
-                        target_dir = potential_path
-                    else:
-                        target_dir = os.path.dirname(potential_path)
-                else:
-                    # sometimes the match includes a trailing punctuation mark, try stripping it
-                    potential_path = potential_path.rstrip('.,:;!?')
+            # Parse attached_files block if present
+            attached_files_match = re.search(r'<attached_files>\n(.*?)\n</attached_files>', expanded_message, re.DOTALL)
+            inline_files_match = re.search(r'\["(/Users/[^"]+)"\]', expanded_message)
+            
+            if attached_files_match:
+                try:
+                    files_json = attached_files_match.group(1)
+                    attached_files = json.loads(files_json)
+                    if attached_files and isinstance(attached_files, list) and len(attached_files) > 0:
+                        first_path = attached_files[0]
+                        if os.path.exists(first_path):
+                            if os.path.isdir(first_path):
+                                workspace_dir = first_path
+                            else:
+                                workspace_dir = os.path.dirname(first_path)
+                            
+                            # For claude/dcc
+                            if agent_id in ["claude", "dcc"]:
+                                args.extend(["--add-dir", workspace_dir])
+                except:
+                    pass
+            elif inline_files_match:
+                try:
+                    first_path = inline_files_match.group(1)
+                    if os.path.exists(first_path):
+                        if os.path.isdir(first_path):
+                            workspace_dir = first_path
+                        else:
+                            workspace_dir = os.path.dirname(first_path)
+                        
+                        # For claude/dcc
+                        if agent_id in ["claude", "dcc"]:
+                            args.extend(["--add-dir", workspace_dir])
+                except:
+                    pass
+            else:
+                path_match = re.search(r'(/Users/[^ "\'\n]+)', expanded_message)
+                if path_match:
+                    potential_path = path_match.group(1).strip()
+                    target_dir = None
+                    
                     if os.path.exists(potential_path):
                         if os.path.isdir(potential_path):
                             target_dir = potential_path
                         else:
                             target_dir = os.path.dirname(potential_path)
-                            
-                if target_dir:
-                    # For claude/dcc, changing cwd breaks their session because they scope sessions by project dir!
-                    # Instead, we must use the --add-dir flag to bypass the sandbox while keeping the session stable.
-                    if agent_id in ["claude", "dcc"]:
-                        args.extend(["--add-dir", target_dir])
                     else:
-                        workspace_dir = target_dir
+                        # sometimes the match includes a trailing punctuation mark, try stripping it
+                        potential_path = potential_path.rstrip('.,:;!?')
+                        if os.path.exists(potential_path):
+                            if os.path.isdir(potential_path):
+                                target_dir = potential_path
+                            else:
+                                target_dir = os.path.dirname(potential_path)
+                                
+                    if target_dir:
+                        # For claude/dcc, changing cwd breaks their session because they scope sessions by project dir!
+                        # Instead, we must use the --add-dir flag to bypass the sandbox while keeping the session stable.
+                        if agent_id in ["claude", "dcc"]:
+                            args.extend(["--add-dir", target_dir])
+                        else:
+                            workspace_dir = target_dir
             
             result = subprocess.run(args, env=self.base_env, capture_output=True, text=True, cwd=workspace_dir)
             elapsed = time.time() - t0

@@ -1,105 +1,5 @@
 import SwiftUI
 
-// Helper to create Color from hex
-extension Color {
-    init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let a, r, g, b: UInt64
-        switch hex.count {
-        case 3: // RGB (12-bit)
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6: // RGB (24-bit)
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8: // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            (a, r, g, b) = (255, 0, 0, 0)
-        }
-        self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue:  Double(b) / 255, opacity: Double(a) / 255)
-    }
-}
-
-// Define custom colors to match the legacy UI
-extension Color {
-    static let legacyBgLight = Color(red: 249/255, green: 249/255, blue: 249/255)
-    static let legacyBgDark = Color(red: 28/255, green: 28/255, blue: 30/255)
-    
-    static let legacySidebarLight = Color(white: 1.0)
-    static let legacySidebarDark = Color(red: 28/255, green: 28/255, blue: 30/255)
-    
-    static let legacyTextLight = Color(red: 29/255, green: 29/255, blue: 31/255)
-    static let legacyTextDark = Color(red: 245/255, green: 245/255, blue: 247/255)
-    
-    static let legacyAccentLight = Color(red: 203/255, green: 166/255, blue: 240/255) // #CBA6F0
-    static let legacyAccentDark = Color(red: 181/255, green: 138/255, blue: 227/255) // #B58AE3
-    
-    static let legacyUserMsgBgLight = Color(red: 235/255, green: 227/255, blue: 245/255) // #EBE3F5
-    static let legacyUserMsgBgDark = Color(red: 155/255, green: 130/255, blue: 198/255) // #9B82C6
-    
-    static let legacyTreeSelectedLight = Color(red: 203/255, green: 166/255, blue: 240/255, opacity: 0.25)
-    static let legacyTreeSelectedDark = Color(red: 181/255, green: 138/255, blue: 227/255, opacity: 0.25)
-}
-
-struct CustomTrafficLights: View {
-    @State private var isHovered = false
-    
-    var body: some View {
-        HStack(spacing: 8) {
-            TrafficLightButton(colorHex: "#FF5F56", defaultHex: "#FFBFBB", iconName: "xmark", isGroupHovered: isHovered) {
-                NSApplication.shared.keyWindow?.close()
-            }
-            TrafficLightButton(colorHex: "#FFBD2E", defaultHex: "#FFE4AB", iconName: "minus", isGroupHovered: isHovered) {
-                NSApplication.shared.keyWindow?.miniaturize(nil)
-            }
-            TrafficLightButton(colorHex: "#27C93F", defaultHex: "#A8E9B2", iconName: "arrow.up.left.and.arrow.down.right", isGroupHovered: isHovered) {
-                NSApplication.shared.keyWindow?.zoom(nil)
-            }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
-struct TrafficLightButton: View {
-    let colorHex: String
-    let defaultHex: String
-    let iconName: String
-    let isGroupHovered: Bool
-    let action: () -> Void
-    
-    @State private var isPressed = false
-    @State private var isSelfHovered = false
-    
-    var body: some View {
-        RoundedRectangle(cornerRadius: 3)
-            .fill(Color(hex: isSelfHovered ? colorHex : defaultHex))
-            .frame(width: 12, height: 12)
-            .overlay(
-                Image(systemName: iconName)
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.black.opacity(isGroupHovered ? 0.5 : 0))
-            )
-            .scaleEffect(isPressed ? 0.9 : 1.0)
-            .onHover { hovering in
-                isSelfHovered = hovering
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isPressed = true }
-                    .onEnded { _ in 
-                        isPressed = false
-                        action()
-                    }
-            )
-    }
-}
-
 struct FileTreeView: View {
     let item: FileItemModel
     let depth: Int
@@ -151,32 +51,6 @@ struct FileTreeView: View {
         .onDrag {
             // Provide the actual file URL for dragging.
             return NSItemProvider(object: NSURL(fileURLWithPath: item.path))
-        }
-    }
-}
-
-struct WindowDragView: NSViewRepresentable {
-    func makeNSView(context: Context) -> DraggableNSView {
-        let view = DraggableNSView()
-        // Ensure the view registers hits in AppKit
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor(white: 0, alpha: 0.001).cgColor
-        return view
-    }
-    
-    func updateNSView(_ nsView: DraggableNSView, context: Context) {}
-}
-
-class DraggableNSView: NSView {
-    override var mouseDownCanMoveWindow: Bool {
-        return false
-    }
-    
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 {
-            self.window?.zoom(nil)
-        } else {
-            self.window?.performDrag(with: event)
         }
     }
 }
@@ -514,47 +388,39 @@ struct MainPanelView: View {
                     .buttonStyle(.plain)
                     
                     // Input Wrapper
-                    HStack {
-                        ZStack(alignment: .topLeading) {
-                            if viewModel.inputText.isEmpty {
-                                Text("Ask anything...")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary.opacity(0.5))
-                                    .padding(.top, 2)
-                                    .padding(.leading, 4)
-                            }
-                            
-                            MacEditorView(
-                                text: $viewModel.inputText,
-                                onSubmit: {
-                                    if viewModel.pendingApproval == nil {
-                                        submit()
-                                    }
-                                },
-                                textColor: NSColor(textColor)
-                            )
-                            .disabled(viewModel.pendingApproval != nil)
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 4)
-                        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                            for provider in providers {
-                                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                                    if let url = url {
-                                        DispatchQueue.main.async {
-                                            if !viewModel.inputText.isEmpty {
-                                                viewModel.inputText += " "
-                                            }
-                                            viewModel.inputText += url.path
-                                        }
-                                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        // Attached Files Area removed as it's now inline
+                        
+                        HStack {
+                            ZStack(alignment: .topLeading) {
+                                if viewModel.inputText.isEmpty {
+                                    Text("Ask anything...")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary.opacity(0.5))
+                                        .padding(.top, 2)
+                                        .padding(.leading, 4)
                                 }
+                                
+                                MacEditorView(
+                                     text: $viewModel.inputText,
+                                     attachedFiles: $viewModel.attachedFiles,
+                                     onSubmit: {
+                                         if viewModel.pendingApproval == nil {
+                                             submit()
+                                         }
+                                     },
+                                     onNavigateHistory: { up in
+                                         viewModel.navigateHistory(up: up)
+                                     },
+                                     textColor: NSColor(textColor)
+                                 )
+                                .disabled(viewModel.pendingApproval != nil)
                             }
-                            return true
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
                     
@@ -610,6 +476,16 @@ struct MainPanelView: View {
         .ignoresSafeArea(.all, edges: .top)
         .overlay(
             Group {
+                if viewModel.showMCPPreferences {
+                    MCPPreferencesView(onClose: {
+                        withAnimation {
+                            viewModel.showMCPPreferences = false
+                        }
+                    })
+                    .transition(.opacity)
+                    .zIndex(200)
+                }
+                
                 if let request = viewModel.pendingApproval {
                     ZStack {
                         Color.black.opacity(0.4).ignoresSafeArea()
@@ -670,10 +546,11 @@ struct MainPanelView: View {
     
     private func submit() {
         let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !viewModel.attachedFiles.isEmpty else { return }
         
-        viewModel.sendMessage(text)
+        viewModel.sendMessage(text, attachedFiles: viewModel.attachedFiles)
         viewModel.inputText = ""
+        viewModel.attachedFiles = []
     }
 }
 
@@ -684,6 +561,7 @@ struct LegacyMessageBubble: View {
     let agentTextColor: Color
     
     @State private var isHovered = false
+    @State private var isCopied = false
     
     var body: some View {
         HStack(alignment: .bottom) {
@@ -713,27 +591,89 @@ struct LegacyMessageBubble: View {
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.1)) {
                 isHovered = hovering
+                if !hovering {
+                    // Reset copied state when mouse leaves the message bubble
+                    isCopied = false
+                }
             }
         }
     }
     
+    @MainActor
     private var bubbleContent: some View {
-        Text(message.content)
-            .textSelection(.enabled)
-            .font(.system(size: 13))
-            .lineSpacing(4)
-            .padding(.horizontal, message.isUser ? 12 : 0)
-            .padding(.vertical, message.isUser ? 8 : 4)
-            .background(message.isUser ? userBgColor : Color.clear)
-            .foregroundColor(message.isUser ? userTextColor : agentTextColor)
-            .clipShape(
-                CustomRoundedCorners(
-                    topLeading: message.isUser ? 12 : 0,
-                    topTrailing: message.isUser ? 12 : 0,
-                    bottomLeading: message.isUser ? 12 : 0,
-                    bottomTrailing: 0
-                )
+        VStack(alignment: message.isUser ? .trailing : .leading, spacing: 6) {
+            if !message.content.isEmpty {
+                if message.attachedFiles.isEmpty {
+                    Text(message.content)
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .lineSpacing(4)
+                } else {
+                    mixedContent()
+                        .textSelection(.enabled)
+                        .font(.system(size: 13))
+                        .lineSpacing(4)
+                }
+            } else if !message.attachedFiles.isEmpty {
+                mixedContent()
+                    .textSelection(.enabled)
+                    .font(.system(size: 13))
+                    .lineSpacing(4)
+            }
+        }
+        .padding(.horizontal, message.isUser ? 12 : 0)
+        .padding(.vertical, message.isUser ? 8 : 4)
+        .background(message.isUser ? userBgColor : Color.clear)
+        .foregroundColor(message.isUser ? userTextColor : agentTextColor)
+        .clipShape(
+            CustomRoundedCorners(
+                topLeading: message.isUser ? 12 : 0,
+                topTrailing: message.isUser ? 12 : 0,
+                bottomLeading: message.isUser ? 12 : 0,
+                bottomTrailing: 0
             )
+        )
+    }
+    
+    @MainActor
+    private func mixedContent() -> Text {
+        let components = message.content.components(separatedBy: "\u{FFFC}")
+        var result = Text("")
+        var fileIndex = 0
+        
+        let textColorToUse = message.isUser ? userTextColor : agentTextColor
+        
+        for (i, component) in components.enumerated() {
+            result = result + Text(component)
+            if i < components.count - 1 && fileIndex < message.attachedFiles.count {
+                let file = message.attachedFiles[fileIndex]
+                
+                // Create the chip image
+                let renderer = ImageRenderer(content: FileChipView(file: file, textColor: textColorToUse))
+                renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
+                if let image = renderer.nsImage {
+                    // Align the chip visually with the text
+                    result = result + Text(Image(nsImage: image)).baselineOffset(-3)
+                } else {
+                    result = result + Text(" [\(file.name)] ")
+                }
+                
+                fileIndex += 1
+            }
+        }
+        
+        // If there are leftover files that weren't represented by \u{FFFC} (shouldn't happen normally)
+        while fileIndex < message.attachedFiles.count {
+            let file = message.attachedFiles[fileIndex]
+            let renderer = ImageRenderer(content: FileChipView(file: file, textColor: textColorToUse))
+            renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
+            if let image = renderer.nsImage {
+                result = result + Text(" ") + Text(Image(nsImage: image)).baselineOffset(-3)
+            }
+            fileIndex += 1
+        }
+        
+        return result
     }
     
     private var copyButton: some View {
@@ -741,72 +681,69 @@ struct LegacyMessageBubble: View {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(message.content, forType: .string)
+            withAnimation {
+                isCopied = true
+            }
         }) {
-            Image(systemName: "doc.on.doc")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .padding(4)
-                .background(Color.black.opacity(0.1))
-                .cornerRadius(4)
+            ZStack {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10))
+                    .opacity(isCopied ? 0 : 1)
+                
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .opacity(isCopied ? 1 : 0)
+            }
+            .foregroundColor(isCopied ? .green : .secondary)
+            .frame(width: 14, height: 14) // Fixed frame to prevent layout shifts
+            .padding(4)
+            .background(Color.black.opacity(0.1))
+            .cornerRadius(4)
         }
         .buttonStyle(.plain)
     }
 }
 
-// 1. Define custom Shape for macOS compatible specific corner radius
-struct CustomRoundedCorners: Shape {
-    var topLeading: CGFloat = 0.0
-    var topTrailing: CGFloat = 0.0
-    var bottomLeading: CGFloat = 0.0
-    var bottomTrailing: CGFloat = 0.0
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-
-        let w = rect.size.width
-        let h = rect.size.height
-
-        let tr = min(min(self.topTrailing, h/2), w/2)
-        let tl = min(min(self.topLeading, h/2), w/2)
-        let bl = min(min(self.bottomLeading, h/2), w/2)
-        let br = min(min(self.bottomTrailing, h/2), w/2)
-
-        // Top left
-        path.move(to: CGPoint(x: rect.minX + tl, y: rect.minY))
-
-        // Top right
-        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.minY))
-        path.addArc(center: CGPoint(x: rect.maxX - tr, y: rect.minY + tr), 
-                    radius: tr, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
-
-        // Bottom right
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - br))
-        path.addArc(center: CGPoint(x: rect.maxX - br, y: rect.maxY - br), 
-                    radius: br, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
-
-        // Bottom left
-        path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.maxY))
-        path.addArc(center: CGPoint(x: rect.minX + bl, y: rect.maxY - bl), 
-                    radius: bl, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
-
-        // Top left again
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tl))
-        path.addArc(center: CGPoint(x: rect.minX + tl, y: rect.minY + tl), 
-                    radius: tl, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 270), clockwise: false)
-
-        path.closeSubpath()
-        return path
-    }
-}
-
-struct VisualEffectView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
+struct AttachedFileChip: View {
+    let file: AttachedFile
+    let onRemove: (() -> Void)?
+    @State private var isHovered = false
+    @Environment(\.colorScheme) var colorScheme
     
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    var body: some View {
+        HStack(spacing: 4) {
+            if isHovered && onRemove != nil {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+            } else {
+                if file.isFolder {
+                    SVGIconView(name: "icon.14.explorer.folder.closed", size: 12)
+                } else {
+                    SVGIconView(name: getFileIconName(fileName: file.name), size: 12)
+                }
+            }
+            
+            Text(file.name)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08))
+        .cornerRadius(6)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
+        .onTapGesture {
+            if onRemove != nil {
+                onRemove?()
+            }
+        }
+        .help(file.path)
+    }
 }
+

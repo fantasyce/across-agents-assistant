@@ -3,11 +3,19 @@ import Combine
 import AVFoundation
 import AppKit
 
+struct AttachedFile: Identifiable, Codable, Equatable {
+    let id = UUID()
+    let name: String
+    let path: String
+    let isFolder: Bool
+}
+
 struct Message: Identifiable {
     let id = UUID()
     let content: String
     let isUser: Bool
     let timestamp: Date = Date()
+    var attachedFiles: [AttachedFile] = []
 }
 
 struct ChatRequest: Codable {
@@ -54,8 +62,18 @@ class SessionViewModel: ObservableObject {
     @Published var isProcessing: Bool = false
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var showPermissionAlert: Bool = false
+    @Published var showMCPPreferences: Bool = false
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
+    @Published var attachedFiles: [AttachedFile] = [] // Track files dropped into the input box
     @Published var showHiddenFiles: Bool = false
+    
+    // Input history state
+    private struct HistoryItem: Equatable {
+        let text: String
+        let files: [AttachedFile]
+    }
+    private var inputHistory: [HistoryItem] = []
+    private var historyIndex: Int = -1
     @Published var isMuted: Bool = false {
         didSet {
             if isMuted {
@@ -302,16 +320,31 @@ class SessionViewModel: ObservableObject {
                    let msgs = json["messages"] as? [[String: Any]], !msgs.isEmpty {
                     
                     var loadedMessages: [Message] = []
+                    var loadedHistory: [HistoryItem] = []
                     for m in msgs {
                         if let role = m["role"] as? String, let content = m["content"] as? String {
                             // "user", "assistant", "tool"
                             let isUser = (role == "user")
                             loadedMessages.append(Message(content: content, isUser: isUser))
+                            if isUser {
+                                // The backend now receives the inline path.
+                                // We don't have to strip anything out, the path IS the text.
+                                // However, if the old history format is loaded, we can still strip it for backward compatibility
+                                var pureText = content
+                                if let range = content.range(of: "<attached_files>") {
+                                    pureText = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                                } else if let range = content.range(of: "【附带的文件/目录】:\n") {
+                                    pureText = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                                }
+                                loadedHistory.append(HistoryItem(text: pureText, files: []))
+                            }
                         }
                     }
                     
                     DispatchQueue.main.async {
                         self.messages = loadedMessages
+                        self.inputHistory = loadedHistory
+                        self.historyIndex = loadedHistory.count
                     }
                 } else {
                     self.addGreeting()
@@ -331,11 +364,49 @@ class SessionViewModel: ObservableObject {
         }
     }
     
-    func sendMessage(_ text: String) {
-        guard !text.isEmpty else { return }
+    func sendMessage(_ text: String, attachedFiles: [AttachedFile] = []) {
+        let displayTrimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        let userMsg = Message(content: text, isUser: true)
+        guard !displayTrimmedText.isEmpty || !attachedFiles.isEmpty else { return }
+        
+        let userMsg = Message(content: displayTrimmedText, isUser: true, attachedFiles: attachedFiles)
         messages.append(userMsg)
+        
+        // Build the actual text to send to the backend
+        // Instead of appending a block at the end, we replace the \u{FFFC} placeholders 
+        // with the actual file paths inline!
+        var backendText = ""
+        let components = text.components(separatedBy: "\u{FFFC}")
+        var fileIndex = 0
+        
+        for (i, component) in components.enumerated() {
+            backendText += component
+            if i < components.count - 1 && fileIndex < attachedFiles.count {
+                let file = attachedFiles[fileIndex]
+                backendText += "[\"\(file.path)\"]"
+                fileIndex += 1
+            }
+        }
+        
+        // If there are leftover files that weren't represented by \u{FFFC} (e.g., dropped at the very end without typing anything after)
+        while fileIndex < attachedFiles.count {
+            let file = attachedFiles[fileIndex]
+            if !backendText.isEmpty && !backendText.hasSuffix(" ") {
+                backendText += " "
+            }
+            backendText += "[\"\(file.path)\"]"
+            fileIndex += 1
+        }
+        
+        backendText = backendText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Add to history if different from the last sent message
+        // We save the original text (with placeholders) to history so it can be restored perfectly
+        let historyItem = HistoryItem(text: text, files: attachedFiles)
+        if inputHistory.last != historyItem {
+            inputHistory.append(historyItem)
+        }
+        historyIndex = inputHistory.count
         
         isProcessing = true
         
@@ -344,7 +415,7 @@ class SessionViewModel: ObservableObject {
         
         // 2. Build Request
         let req = ChatRequest(
-            text: text,
+            text: backendText,
             context: context,
             session_id: currentSessionId,
             agent_id: selectedAgentId // Dynamically use the selected agent
@@ -416,6 +487,30 @@ class SessionViewModel: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    func navigateHistory(up: Bool) {
+        if inputHistory.isEmpty { return }
+        
+        if up {
+            if historyIndex > 0 {
+                historyIndex -= 1
+                let item = inputHistory[historyIndex]
+                inputText = item.text
+                attachedFiles = item.files
+            }
+        } else {
+            if historyIndex < inputHistory.count - 1 {
+                historyIndex += 1
+                let item = inputHistory[historyIndex]
+                inputText = item.text
+                attachedFiles = item.files
+            } else if historyIndex == inputHistory.count - 1 {
+                historyIndex = inputHistory.count
+                inputText = ""
+                attachedFiles = []
+            }
+        }
     }
     
     func submitDecision(decision: String) {

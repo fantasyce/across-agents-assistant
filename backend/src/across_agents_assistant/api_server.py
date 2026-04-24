@@ -259,7 +259,7 @@ JSON 格式必须严格如下：
             
             # The tool name format for MCP is "server_id__tool_name"
             is_mcp = False
-            if "__" in tool_name and not tool_def:
+            if tool_name and "__" in tool_name and not tool_def:
                 # We check if it matches an MCP schema
                 schemas = mcp_manager.get_all_tools_schema()
                 if any(t["name"] == tool_name for t in schemas):
@@ -329,7 +329,13 @@ JSON 格式必须严格如下：
                         "description": desc
                     }
                 )
-                
+            else:
+                # If the parser found JSON but the tool is NOT registered (hallucinated tool)
+                # Feed it back to the LLM automatically to correct its mistake
+                error_msg = f"错误：工具 `{tool_name}` 不存在。请严格检查【系统可用工具列表】，使用正确的工具名称（如 list_directory），或者直接回复纯文本。"
+                prompt = error_msg
+                continue
+            
         # We no longer generate or play audio in Python.
         # The Swift client will handle TTS natively.
 
