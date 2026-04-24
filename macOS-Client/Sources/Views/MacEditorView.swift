@@ -7,8 +7,8 @@ struct MacEditorView: NSViewRepresentable {
     var font: NSFont = .systemFont(ofSize: 13)
     var textColor: NSColor = .textColor
     
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+    func makeNSView(context: Context) -> EditorScrollView {
+        let scrollView = EditorScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
@@ -34,7 +34,7 @@ struct MacEditorView: NSViewRepresentable {
         return scrollView
     }
     
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ scrollView: EditorScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CustomTextView else { return }
         
         if textView.textColor != textColor {
@@ -82,6 +82,12 @@ struct MacEditorView: NSViewRepresentable {
     }
 }
 
+class EditorScrollView: NSScrollView {
+    override var intrinsicContentSize: NSSize {
+        return documentView?.intrinsicContentSize ?? super.intrinsicContentSize
+    }
+}
+
 class CustomTextView: NSTextView {
     var onSubmit: (() -> Void)?
     
@@ -91,9 +97,13 @@ class CustomTextView: NSTextView {
         }
         layoutManager.ensureLayout(for: textContainer)
         let size = layoutManager.usedRect(for: textContainer).size
-        // font size 13 typically has ~16pt line height. 16 * 5 = 80
-        let height = min(max(size.height, 16), 80)
+        let height = min(max(size.height, 16), 80) // 1 to ~5 lines
         return NSSize(width: NSView.noIntrinsicMetric, height: height)
+    }
+    
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        self.enclosingScrollView?.invalidateIntrinsicContentSize()
     }
     
     override func keyDown(with event: NSEvent) {
