@@ -5,6 +5,7 @@ struct MacEditorView: NSViewRepresentable {
     @Binding var text: String
     var onSubmit: () -> Void
     var font: NSFont = .systemFont(ofSize: 13)
+    var textColor: NSColor = .textColor
     
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -15,6 +16,7 @@ struct MacEditorView: NSViewRepresentable {
         let textView = CustomTextView()
         textView.delegate = context.coordinator
         textView.font = font
+        textView.textColor = textColor
         textView.backgroundColor = .clear
         textView.isRichText = false
         textView.allowsUndo = true
@@ -22,7 +24,6 @@ struct MacEditorView: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
-        // Set text container inset so it matches standard TextField padding roughly
         textView.textContainerInset = NSSize(width: 0, height: 0)
         textView.onSubmit = onSubmit
         
@@ -32,12 +33,20 @@ struct MacEditorView: NSViewRepresentable {
     
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CustomTextView else { return }
+        
+        if textView.textColor != textColor {
+            textView.textColor = textColor
+        }
+        
+        // Avoid overwriting text during IME composition or if identical
         if textView.string != text {
-            textView.string = text
-            textView.invalidateIntrinsicContentSize()
-            // Scroll to end if we just cleared the text or appended
-            if text.isEmpty {
-                textView.scrollToBeginningOfDocument(nil)
+            // Only update if not currently marked (IME typing) to prevent breaking IME
+            if !textView.hasMarkedText() {
+                textView.string = text
+                textView.invalidateIntrinsicContentSize()
+                if text.isEmpty {
+                    textView.scrollToBeginningOfDocument(nil)
+                }
             }
         }
     }

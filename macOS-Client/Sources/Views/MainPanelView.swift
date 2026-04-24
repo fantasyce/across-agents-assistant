@@ -524,11 +524,15 @@ struct MainPanelView: View {
                                     .padding(.leading, 4)
                             }
                             
-                            MacEditorView(text: $viewModel.inputText, onSubmit: {
-                                if viewModel.pendingApproval == nil {
-                                    submit()
-                                }
-                            })
+                            MacEditorView(
+                                text: $viewModel.inputText,
+                                onSubmit: {
+                                    if viewModel.pendingApproval == nil {
+                                        submit()
+                                    }
+                                },
+                                textColor: NSColor(textColor)
+                            )
                             .disabled(viewModel.pendingApproval != nil)
                         }
                         .fixedSize(horizontal: false, vertical: true)
