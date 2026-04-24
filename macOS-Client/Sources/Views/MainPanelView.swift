@@ -275,6 +275,7 @@ struct MainPanelView: View {
     @State private var showSettings = false
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 250
     @State private var dragStartWidth: Double = 0
+    @State private var scrollAnchorId: String? = nil
     
     var body: some View {
         HStack(spacing: 0) {
@@ -340,7 +341,7 @@ struct MainPanelView: View {
                         .padding(.top, 8)
                         .frame(minWidth: max(CGFloat(sidebarWidth), geo.size.width), minHeight: geo.size.height, alignment: .topLeading)
                     }
-                    .scrollPosition(id: $viewModel.selectedFileId)
+                    .scrollPosition(id: $scrollAnchorId)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -522,6 +523,7 @@ struct MainPanelView: View {
                                 .padding(.vertical, 8)
                                 .opacity(0)
                                 .layoutPriority(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             
                             ScrollView(.vertical, showsIndicators: false) {
                                 TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
