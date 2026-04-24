@@ -1,6 +1,7 @@
 import Cocoa
 import ApplicationServices
 import Vision
+import ScreenCaptureKit
 
 struct ContextPack: Codable {
     var frontmost_app: String?
@@ -96,12 +97,15 @@ class ContextEngine {
         return true
     }
     
-    // Request Screen Recording permissions
-    func requestScreenRecordingPermission() -> Bool {
-        if #available(macOS 10.15, *) {
-            return CGRequestScreenCaptureAccess()
+    // Trigger Screen Recording prompt gently
+    func triggerScreenRecordingPrompt() {
+        if #available(macOS 12.3, *) {
+            // This triggers the standard Screen Recording prompt (or adds the app to the list)
+            // without the scary "bypass system private window picker" warning
+            SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { _, _ in }
+        } else if #available(macOS 10.15, *) {
+            CGRequestScreenCaptureAccess()
         }
-        return true
     }
     
     func collectTier1Context() -> ContextPack {

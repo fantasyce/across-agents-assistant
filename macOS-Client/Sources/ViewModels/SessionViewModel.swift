@@ -115,10 +115,29 @@ class SessionViewModel: ObservableObject {
     private var currentSessionId: String = "default-session"
     
     func requestManualScreenshot() {
-        // We do not need to check or request global Screen Recording permissions for interactive screenshots!
-        // macOS natively handles the `screencapture -i` UI securely.
-        // Requesting it explicitly causes the scary "bypass system private window picker" warning in macOS 14.4+.
+        // 1. First check if we have screen recording permission
+        if !ContextEngine.shared.hasScreenRecordingPermission() {
+            // Hide the panel so the system prompt is visible
+            onHidePanel?()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // Trigger a modern, less scary screen recording prompt (SCShareableContent)
+                // This ensures the app is added to the Privacy Settings list
+                ContextEngine.shared.triggerScreenRecordingPrompt()
+                
+                // Show panel again and inform user
+                DispatchQueue.main.async {
+                    self.onShowPanel?()
+                    if !self.inputText.isEmpty {
+                        self.inputText += "\n"
+                    }
+                    self.inputText += "[提示：首次截图需要屏幕录制权限，请在弹出的系统提示中允许，或前往“系统设置 -> 隐私与安全性 -> 屏幕录制”中开启权限。授权后请重启应用]"
+                }
+            }
+            return
+        }
         
+        // 2. We already have permission, hide panel and capture
         onHidePanel?()
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
