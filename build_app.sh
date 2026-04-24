@@ -23,8 +23,6 @@ fi
 
 # We assume pyinstaller is installed. If not, this will fail.
 PYTHONPATH=src $PYTHON_BIN -m PyInstaller --name "backend" --onefile --clean --noconfirm \
-    --add-data "src/across_agents_assistant/assets:assets" \
-    --add-data "src/across_agents_assistant/assets:across_agents_assistant/assets" \
     main.py
 
 echo "=== 3. Building macOS Client (Release) ==="

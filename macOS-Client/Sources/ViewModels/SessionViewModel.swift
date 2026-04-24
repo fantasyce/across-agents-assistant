@@ -86,7 +86,7 @@ class SessionViewModel: ObservableObject {
     let agents: [AgentModel] = [
         AgentModel(id: "openclaw", name: "OpenClaw", iconName: "agent.openclaw", color: "#CBA6F0"),
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#FF9F0A"),
-        AgentModel(id: "claude", name: "Trae Solo", iconName: "agent.claude", color: "#D9775A")
+        AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#D9775A")
     ]
     
     @Published var fileTree: [FileItemModel] = [] {
