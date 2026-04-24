@@ -515,47 +515,41 @@ struct MainPanelView: View {
                     
                     // Input Wrapper
                     HStack {
-                        TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                            .foregroundColor(textColor)
-                            .lineLimit(1...5)
-                            .disabled(viewModel.pendingApproval != nil)
-                            .onSubmit {
+                        ZStack(alignment: .topLeading) {
+                            if viewModel.inputText.isEmpty {
+                                Text("Ask anything...")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .padding(.top, 2)
+                                    .padding(.leading, 4)
+                            }
+                            
+                            MacEditorView(text: $viewModel.inputText, onSubmit: {
                                 if viewModel.pendingApproval == nil {
                                     submit()
                                 }
-                            }
-                            .onChange(of: viewModel.inputText) { oldVal, newVal in
-                                // macOS SwiftUI TextField paste scroll bug workaround
-                                if newVal.count - oldVal.count > 1 && newVal.contains("\n") {
-                                    DispatchQueue.main.async {
-                                        let current = viewModel.inputText
-                                        viewModel.inputText = current + " "
+                            })
+                            .disabled(viewModel.pendingApproval != nil)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 4)
+                        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                            for provider in providers {
+                                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                    if let url = url {
                                         DispatchQueue.main.async {
-                                            viewModel.inputText = current
-                                        }
-                                    }
-                                }
-                            }
-                            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                                for provider in providers {
-                                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                                        if let url = url {
-                                            DispatchQueue.main.async {
-                                                if !viewModel.inputText.isEmpty {
-                                                    viewModel.inputText += " "
-                                                }
-                                                viewModel.inputText += url.path
+                                            if !viewModel.inputText.isEmpty {
+                                                viewModel.inputText += " "
                                             }
+                                            viewModel.inputText += url.path
                                         }
                                     }
                                 }
-                                return true
                             }
+                            return true
+                        }
                     }
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
                     
