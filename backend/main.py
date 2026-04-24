@@ -1,9 +1,31 @@
 import sys
+import os
+import time
+import signal
+import threading
 import multiprocessing
 from across_agents_assistant.api_server import start_api_server
+
+def watch_parent():
+    """Watch the parent process and exit if it dies."""
+    parent_pid = os.getppid()
+    while True:
+        # In macOS/Linux, if the parent process dies, the child is re-parented to init (PID 1)
+        if os.getppid() != parent_pid or os.getppid() == 1:
+            print(f"Parent process (PID {parent_pid}) died. Terminating backend.", flush=True)
+            os.kill(os.getpid(), signal.SIGTERM)
+            break
+        time.sleep(2)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     
-    print("Starting Across Agents Assistant API Server on port 8000...")
+    # Only start watcher if we are running as a bundled child process 
+    # (checking if parent is not a terminal or launchd can be tricky, but checking if we were spawned by our Swift app works. 
+    # We can pass an arg or just always watch).
+    if "--watch-parent" in sys.argv:
+        watcher_thread = threading.Thread(target=watch_parent, daemon=True)
+        watcher_thread.start()
+    
+    print("Starting Across Agents Assistant API Server on port 8000...", flush=True)
     start_api_server()

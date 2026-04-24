@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     
     private var hotKey: HotKey?
+    private var backendProcess: Process?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set to accessory to hide from dock but allow menu bar
@@ -31,6 +32,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         setupPanel()
         setupGlobalHotkey()
+        startBackend()
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        stopBackend()
+    }
+    
+    func startBackend() {
+        let bundle = Bundle.main
+        // The backend executable will be placed in Contents/Resources/backend
+        guard let backendURL = bundle.url(forResource: "backend", withExtension: nil) else {
+            print("Backend executable not found in bundle. Assuming development mode (backend runs separately).")
+            return
+        }
+        
+        backendProcess = Process()
+        backendProcess?.executableURL = backendURL
+        backendProcess?.arguments = ["--watch-parent"]
+        
+        let pipe = Pipe()
+        backendProcess?.standardOutput = pipe
+        backendProcess?.standardError = pipe
+        
+        do {
+            try backendProcess?.run()
+            print("Successfully launched bundled backend (PID: \(backendProcess?.processIdentifier ?? 0)).")
+            
+            // Read output asynchronously to prevent pipe full and blocking
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if let str = String(data: data, encoding: .utf8), !str.isEmpty {
+                    print("[Backend] \(str)", terminator: "")
+                }
+            }
+        } catch {
+            print("Failed to launch bundled backend: \(error)")
+        }
+    }
+    
+    func stopBackend() {
+        if let process = backendProcess, process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+            print("Bundled backend terminated.")
+        }
     }
     
     func setupGlobalHotkey() {
