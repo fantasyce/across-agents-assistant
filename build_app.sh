@@ -45,6 +45,11 @@ if [ -d "$PROJECT_ROOT/macOS-Client/.build/release/AcrossAgentsAssistant_AcrossA
     cp -R "$PROJECT_ROOT/macOS-Client/.build/release/AcrossAgentsAssistant_AcrossAgentsAssistantClient.bundle" "$APP_DIR/Contents/Resources/"
 fi
 
+# Copy App Icon
+if [ -f "$PROJECT_ROOT/assets/app_icon.icns" ]; then
+    cp "$PROJECT_ROOT/assets/app_icon.icns" "$APP_DIR/Contents/Resources/app_icon.icns"
+fi
+
 echo "=== 6. Generating Info.plist ==="
 cat <<PLIST > "$APP_DIR/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -53,6 +58,8 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
 <dict>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
+    <key>CFBundleIconFile</key>
+    <string>app_icon</string>
     <key>CFBundleIdentifier</key>
     <string>com.fantasyce.$APP_NAME</string>
     <key>CFBundleName</key>
