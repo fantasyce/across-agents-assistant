@@ -177,6 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hasShadow = true
         panel.level = .normal // Normal window level, not floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false // VERY IMPORTANT: Prevent window from being deallocated on close
         panel.delegate = self // Observe window events
         
         // 5. Set Content View
@@ -225,6 +226,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     //         hidePanel()
     //     }
     // }
+    
+    // Prevent the app from terminating when the window is closed
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender == panel {
+            hidePanel()
+            return false // We handle the hiding ourselves
+        }
+        return true
+    }
     
     // Re-open window when clicking dock icon
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
