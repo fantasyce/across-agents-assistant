@@ -115,35 +115,12 @@ class SessionViewModel: ObservableObject {
     private var currentSessionId: String = "default-session"
     
     func requestManualScreenshot() {
-        // 1. First check if we have screen recording permission
-        if !ContextEngine.shared.hasScreenRecordingPermission() {
-            // No permission yet. We need to hide the panel so the system prompt is visible
-            onHidePanel?()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                // Requesting permission will trigger the macOS system prompt
-                let granted = ContextEngine.shared.requestScreenRecordingPermission()
-                if !granted {
-                    // The user denied it or it requires a restart.
-                    // We can show the panel again and optionally add an error message.
-                    DispatchQueue.main.async {
-                        self.onShowPanel?()
-                        if !self.inputText.isEmpty {
-                            self.inputText += "\n"
-                        }
-                        self.inputText += "[提示：请在系统设置中允许屏幕录制权限并重启应用]"
-                    }
-                } else {
-                    // It was granted instantly? (Rare, usually requires restart)
-                    // Just in case, try screenshot.
-                    self.executeScreenshot()
-                }
-            }
-            return
-        }
+        // We do not need to check or request global Screen Recording permissions for interactive screenshots!
+        // macOS natively handles the `screencapture -i` UI securely.
+        // Requesting it explicitly causes the scary "bypass system private window picker" warning in macOS 14.4+.
         
-        // 2. We already have permission, hide panel and capture
         onHidePanel?()
+        
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             self.executeScreenshot()
         }
