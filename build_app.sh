@@ -67,9 +67,18 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>AcrossAgentsAssistant 需要截屏权限以获取屏幕内容，从而允许 AI 理解您的当前屏幕信息。</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AcrossAgentsAssistant 需要麦克风权限以支持语音对话。</string>
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>AcrossAgentsAssistant 需要访问系统扩展。</string>
 </dict>
 </plist>
 PLIST
+
+echo "=== 6.5 Signing App ==="
+codesign --force --deep --sign - --entitlements "$PROJECT_ROOT/macOS-Client/Entitlements.entitlements" "$APP_DIR"
 
 echo "=== 7. Creating DMG ==="
 mkdir -p "$DMG_DIR"
