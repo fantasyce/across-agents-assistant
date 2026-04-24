@@ -17,6 +17,9 @@ struct MacEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.font = font
         textView.textColor = textColor
+        // explicitly set typing attributes
+        textView.typingAttributes[.font] = font
+        textView.typingAttributes[.foregroundColor] = textColor
         textView.backgroundColor = .clear
         textView.isRichText = false
         textView.allowsUndo = true
@@ -43,6 +46,11 @@ struct MacEditorView: NSViewRepresentable {
             // Only update if not currently marked (IME typing) to prevent breaking IME
             if !textView.hasMarkedText() {
                 textView.string = text
+                
+                // IMPORTANT: Setting string clears typing attributes! We must restore them.
+                textView.font = font
+                textView.textColor = textColor
+                
                 textView.invalidateIntrinsicContentSize()
                 if text.isEmpty {
                     textView.scrollToBeginningOfDocument(nil)
@@ -58,8 +66,16 @@ struct MacEditorView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MacEditorView
         init(_ parent: MacEditorView) { self.parent = parent }
+        
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? CustomTextView else { return }
+            
+            // Re-apply typing attributes in case they got lost when empty
+            if textView.string.isEmpty || textView.typingAttributes[.font] == nil {
+                textView.typingAttributes[.font] = parent.font
+                textView.typingAttributes[.foregroundColor] = parent.textColor
+            }
+            
             parent.text = textView.string
             textView.invalidateIntrinsicContentSize()
         }
