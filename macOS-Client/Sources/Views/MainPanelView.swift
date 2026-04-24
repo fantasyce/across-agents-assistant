@@ -515,47 +515,47 @@ struct MainPanelView: View {
                     
                     // Input Wrapper
                     HStack {
-                        ZStack(alignment: .topLeading) {
-                            // Hidden text to force height expansion up to 5 lines
-                            Text(viewModel.inputText.isEmpty ? " " : viewModel.inputText)
-                                .font(.system(size: 13))
-                                .lineLimit(5)
-                                .padding(.vertical, 8)
-                                .opacity(0)
-                                .layoutPriority(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            
-                            ScrollView(.vertical, showsIndicators: false) {
-                                TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(textColor)
-                                    .padding(.vertical, 8)
-                                    .disabled(viewModel.pendingApproval != nil)
-                                    .onSubmit {
-                                        if viewModel.pendingApproval == nil {
-                                            submit()
+                        TextField("Ask anything...", text: $viewModel.inputText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                            .foregroundColor(textColor)
+                            .lineLimit(1...5)
+                            .disabled(viewModel.pendingApproval != nil)
+                            .onSubmit {
+                                if viewModel.pendingApproval == nil {
+                                    submit()
+                                }
+                            }
+                            .onChange(of: viewModel.inputText) { oldVal, newVal in
+                                // macOS SwiftUI TextField paste scroll bug workaround
+                                if newVal.count - oldVal.count > 1 && newVal.contains("\n") {
+                                    DispatchQueue.main.async {
+                                        let current = viewModel.inputText
+                                        viewModel.inputText = current + " "
+                                        DispatchQueue.main.async {
+                                            viewModel.inputText = current
                                         }
                                     }
-                                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                                        for provider in providers {
-                                            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                                                if let url = url {
-                                                    DispatchQueue.main.async {
-                                                        if !viewModel.inputText.isEmpty {
-                                                            viewModel.inputText += " "
-                                                        }
-                                                        viewModel.inputText += url.path
-                                                    }
+                                }
+                            }
+                            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                                for provider in providers {
+                                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                        if let url = url {
+                                            DispatchQueue.main.async {
+                                                if !viewModel.inputText.isEmpty {
+                                                    viewModel.inputText += " "
                                                 }
+                                                viewModel.inputText += url.path
                                             }
                                         }
-                                        return true
                                     }
+                                }
+                                return true
                             }
-                        }
                     }
                     .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
                     
