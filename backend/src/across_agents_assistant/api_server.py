@@ -129,7 +129,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     
                     continuation_req = ChatRequest(
                         text=f"MCP 工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
-                        context={},
+                        context=None,
                         session_id=req.session_id,
                         agent_id=req.agent_id
                     )
@@ -139,7 +139,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     db.add_message(session_id=req.session_id, role="tool", content=error_text)
                     continuation_req = ChatRequest(
                         text=f"MCP 工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
-                        context={},
+                        context=None,
                         session_id=req.session_id,
                         agent_id=req.agent_id
                     )
@@ -158,7 +158,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                 # --- AUTO CONTINUATION ---
                 continuation_req = ChatRequest(
                     text=f"工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
-                    context={}, # We don't need to resend tier1 context for the continuation
+                    context=None, # We don't need to resend tier1 context for the continuation
                     session_id=req.session_id,
                     agent_id=req.agent_id # Pass through the original agent
                 )
@@ -170,7 +170,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                 
                 continuation_req = ChatRequest(
                     text=f"工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
-                    context={},
+                    context=None,
                     session_id=req.session_id,
                     agent_id=req.agent_id # Pass through the original agent
                 )
@@ -181,7 +181,7 @@ async def approve_tool_execution(req: ApprovalDecision):
         db.add_message(session_id=req.session_id, role="tool", content=cancel_text)
         continuation_req = ChatRequest(
             text="用户拒绝了你的工具调用请求。请告知用户已取消，或者提供其他建议。",
-            context={},
+            context=None,
             session_id=req.session_id,
             agent_id=req.agent_id
         )
