@@ -568,12 +568,15 @@ class AcrossAgentsAssistantApp:
             - subtasks: List[subtask info]
             - dispatched_jobs: List[job info]
         """
+        self._logger.info(f"📋 Creating task: {description[:50]}...")
         task = self._task_state.create_task(description)
 
         # Decompose with LLM
+        self._logger.info(f"🧠 Decomposing task {task.task_id} with LLM...")
         await self._task_decomposer.decompose(task, context or {})
 
         if task.can_handle_directly:
+            self._logger.info(f"✅ Task {task.task_id} can be handled directly")
             return {
                 "task_id": task.task_id,
                 "can_handle_directly": True,
@@ -584,10 +587,13 @@ class AcrossAgentsAssistantApp:
 
         # Dispatch ready subtasks
         ready = self._task_state.get_ready_subtasks(task.task_id)
+        self._logger.info(f"📦 Task {task.task_id} decomposed into {len(task.subtasks)} subtasks, {len(ready)} ready to dispatch")
+
         dispatched = []
         for st in ready:
             job = self._task_dispatcher.dispatch_subtask(st)
             if job:
+                self._logger.info(f"🚀 Dispatched job {job.job_id} to {job.agent_id}")
                 dispatched.append({
                     "job_id": job.job_id,
                     "subtask_id": job.subtask_id,
