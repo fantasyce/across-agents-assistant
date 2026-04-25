@@ -117,6 +117,20 @@ class ApprovalDecision(BaseModel):
 agent_manager = AgentManager()
 agent_client = OrchestratorClient(agent_manager)
 
+class KeysRequest(BaseModel):
+    deepseek: Optional[str] = None
+    minimax: Optional[str] = None
+
+@app.post("/api/keys")
+async def update_keys(req: KeysRequest):
+    import os
+    if req.deepseek:
+        os.environ["DEEPSEEK_API_KEY"] = req.deepseek
+    if req.minimax:
+        os.environ["MINIMAX_API_KEY"] = req.minimax
+    return {"status": "ok"}
+
+
 @app.get("/api/history/{session_id}")
 async def get_chat_history(session_id: str):
     """Retrieve chat history for a specific session"""

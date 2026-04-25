@@ -311,15 +311,7 @@ struct MainPanelView: View {
                         }
                         .buttonStyle(.plain)
                         .popover(isPresented: $showSettings, arrowEdge: .bottom) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Settings")
-                                    .font(.headline)
-                                Text("This feature requires backend integration in Phase 6.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                            .frame(width: 250)
+                            ModelSettingsView()
                         }
                     }
                     .font(.system(size: 14))

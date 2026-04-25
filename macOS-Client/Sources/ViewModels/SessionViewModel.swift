@@ -84,10 +84,9 @@ class SessionViewModel: ObservableObject {
     }
     
     @Published var selectedAgentId: String = "deepseek"
-    let agents: [AgentModel] = [
-        AgentModel(id: "openclaw", name: "OpenClaw", iconName: "agent.openclaw", color: "#CBA6F0"),
-        AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#FF9F0A"),
-        AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#D9775A")
+        let agents: [AgentModel] = [
+        AgentModel(id: "deepseek", name: "DeepSeek", iconName: "agent.openclaw", color: "#4d6bfe"),
+        AgentModel(id: "minimax", name: "MiniMax", iconName: "agent.hermes", color: "#d97757")
     ]
     
     @Published var fileTree: [FileItemModel] = [] {

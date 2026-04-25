@@ -92,6 +92,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         backendProcess = Process()
         backendProcess?.executableURL = backendURL
         backendProcess?.arguments = ["--watch-parent"]
+
+        var env = ProcessInfo.processInfo.environment
+        if let deepseekKey = KeychainManager.shared.getKey(account: "deepseek") {
+            env["DEEPSEEK_API_KEY"] = deepseekKey
+        }
+        if let minimaxKey = KeychainManager.shared.getKey(account: "minimax") {
+            env["MINIMAX_API_KEY"] = minimaxKey
+        }
+        backendProcess?.environment = env
+
         
         let pipe = Pipe()
         backendProcess?.standardOutput = pipe
