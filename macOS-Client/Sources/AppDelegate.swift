@@ -100,6 +100,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let minimaxKey = KeychainManager.shared.getKey(account: "minimax") {
             env["MINIMAX_API_KEY"] = minimaxKey
         }
+        
         backendProcess?.environment = env
 
         

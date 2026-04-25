@@ -121,13 +121,31 @@ class KeysRequest(BaseModel):
     deepseek: Optional[str] = None
     minimax: Optional[str] = None
 
+class ActiveAgentRequest(BaseModel):
+    agent_id: str
+
+@app.post("/api/active_agent")
+async def update_active_agent(req: ActiveAgentRequest):
+    agent_manager.set_active_agent(req.agent_id)
+    return {"status": "ok"}
+
 @app.post("/api/keys")
 async def update_keys(req: KeysRequest):
     import os
     if req.deepseek:
         os.environ["DEEPSEEK_API_KEY"] = req.deepseek
+        agent_manager.update_agent("deepseek", {**agent_manager.get_agent_config("deepseek"), "api_key": req.deepseek})
     if req.minimax:
         os.environ["MINIMAX_API_KEY"] = req.minimax
+        minimax_config = agent_manager.get_agent_config("minimax") or {}
+        # Force update minimax config to new anthropic compatible endpoint
+        minimax_config.update({
+            "api_key": req.minimax,
+            "type": "anthropic",
+            "base_url": "https://api.minimaxi.com/anthropic",
+            "model": "MiniMax-M2.7"
+        })
+        agent_manager.update_agent("minimax", minimax_config)
     return {"status": "ok"}
 
 
@@ -292,7 +310,7 @@ async def chat_endpoint(req: ChatRequest):
     db.add_message(session_id=req.session_id, role="user", content=req.text)
     
     # Prepare system message with context if provided
-    system_msg = "You are a helpful AI assistant running in a macOS desktop environment. Do not use conversational filler, just act."
+    system_msg = "You are a helpful AI assistant running in a macOS desktop environment. You are NOT Claude. You are NOT Hermes. You are NOT OpenClaw. You are the Across Agents Copilot, a versatile tool for macOS users. Do not use conversational filler, just act."
     if req.context:
         ctx_parts = []
         if req.context.frontmost_app:
@@ -305,9 +323,16 @@ async def chat_endpoint(req: ChatRequest):
         if ctx_parts:
             system_msg += "\n\n【系统上下文】\n" + "\n".join(ctx_parts)
             
-    # Insert system prompt to DB if missing
+    # Insert system prompt to DB if missing (or update it if it exists to ensure the strong prompt is applied)
     db_messages = db.get_messages(req.session_id)
-    has_system = any(m["role"] == "system" for m in db_messages)
+    has_system = False
+    for m in db_messages:
+        if m["role"] == "system":
+            # Update the system prompt in DB to ensure it's always the strong one
+            db.update_system_message(req.session_id, system_msg)
+            has_system = True
+            break
+            
     if not has_system:
         db.add_message(session_id=req.session_id, role="system", content=system_msg)
         
@@ -324,12 +349,12 @@ async def _run_agent_loop(session_id: str, agent_id: str) -> ChatResponse:
     formatted_messages = []
     for m in messages:
         role = m["role"]
-        content = m["content"]
+        content = m["content"] or ""
         if role == "tool":
             formatted_messages.append({
                 "role": "tool",
                 "content": content,
-                "tool_call_id": m.get("tool_call_id", "unknown")
+                "tool_call_id": m.get("tool_call_id") or "unknown"
             })
         elif role == "assistant":
             msg = {
@@ -338,7 +363,19 @@ async def _run_agent_loop(session_id: str, agent_id: str) -> ChatResponse:
             }
             if m.get("tool_calls"):
                 try:
-                    msg["tool_calls"] = json.loads(m["tool_calls"])
+                    raw_tcs = json.loads(m["tool_calls"])
+                    openai_tcs = []
+                    for tc in raw_tcs:
+                        # Our db format is [{"id": "...", "name": "...", "arguments": {...}}]
+                        openai_tcs.append({
+                            "id": tc.get("id", "unknown"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+                            }
+                        })
+                    msg["tool_calls"] = openai_tcs
                 except Exception:
                     pass
             formatted_messages.append(msg)
@@ -348,7 +385,23 @@ async def _run_agent_loop(session_id: str, agent_id: str) -> ChatResponse:
                 "content": content
             })
             
-    reply = await agent_client.chat(agent_id, formatted_messages, all_schemas)
+    # Clean up history to prevent API errors from old incompatible data
+    valid_messages = []
+    for msg in formatted_messages:
+        if msg["role"] == "system":
+            valid_messages.insert(0, msg)
+        elif msg["role"] == "tool":
+            if valid_messages and valid_messages[-1]["role"] == "assistant" and "tool_calls" in valid_messages[-1]:
+                valid_messages.append(msg)
+        else:
+            if valid_messages and valid_messages[-1]["role"] == "assistant" and "tool_calls" in valid_messages[-1]:
+                del valid_messages[-1]["tool_calls"]
+            valid_messages.append(msg)
+            
+    if valid_messages and valid_messages[-1]["role"] == "assistant" and "tool_calls" in valid_messages[-1]:
+        del valid_messages[-1]["tool_calls"]
+        
+    reply = await agent_client.chat(agent_id, valid_messages, all_schemas)
     
     if reply.tool_calls:
         # Save assistant message with tool calls to history!
@@ -361,20 +414,24 @@ async def _run_agent_loop(session_id: str, agent_id: str) -> ChatResponse:
         # In OpenAI, the tool_call_id must match when sending tool result
         tool_call_id = tool_call.get("id", tool_name)
         
+        # Determine if it's MCP or Local Tool
+        tool_def = registry.get_tool(tool_name)
+        is_mcp = not tool_def
+        
         is_always_allowed = db.get_tool_authorization(tool_name)
         if is_always_allowed:
             db.add_audit_log(session_id, tool_name, tool_args, "medium", "auto_approve")
             
-            tool_def = registry.get_tool(tool_name)
-            is_mcp = not tool_def
-            
             try:
                 if is_mcp:
                     parts = tool_name.split("__", 1)
-                    server_id = parts[0]
-                    actual_tool_name = parts[1]
-                    result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
-                    result_text = str(result)
+                    if len(parts) == 2:
+                        server_id = parts[0]
+                        actual_tool_name = parts[1]
+                        result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
+                        result_text = str(result)
+                    else:
+                        result_text = "Error: Invalid MCP tool name format."
                 else:
                     result = tool_def.handler(**tool_args)
                     result_text = str(result)

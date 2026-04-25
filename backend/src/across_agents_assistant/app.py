@@ -50,7 +50,8 @@ class AcrossAgentsAssistantApp:
         self._worker: Optional[threading.Thread] = None
 
         self._agent_manager = AgentManager()
-        self._openclaw = OpenClawClient(manager=self._agent_manager)
+        from .llm_client import OrchestratorClient
+        self._openclaw = OrchestratorClient(config_manager=self._agent_manager)
         self._tts = TTSService(temp_dir=Path("/tmp/across-agents-assistant"))
         
         self.on_message_callback = None  # To send messages to UI
@@ -184,8 +185,9 @@ class AcrossAgentsAssistantApp:
     def _worker_loop(self):
         self._logger.info("🛠️ 后台工作线程已启动，进入主循环。")
         
-        # 启动后台初始化线程，检测 OpenClaw 并建立大脑连接
-        threading.Thread(target=self._openclaw.initialize, daemon=True).start()
+        # Start background initialization for agent_client if needed
+        # We don't need to initialize OpenClaw anymore as it's handled by OrchestratorClient on-the-fly
+        # threading.Thread(target=self._openclaw.initialize, daemon=True).start()
         
         while not self._shutdown.is_set():
             try:
@@ -370,29 +372,61 @@ class AcrossAgentsAssistantApp:
             t0 = time.time()
             
             session_id = self._state.active_session_ids.get(target_agent)
-            reply = self._openclaw.send(
-                message=text,
-                session_id=session_id,
-                use_current=True,
-                target_agent=target_agent
+            
+            import asyncio
+            from .db.database import db
+            from .tools.tool_registry import registry
+            from .tools.mcp_client import mcp_manager
+            
+            # Use db messages for history just like api_server
+            # For simplicity in voice mode, we just pass the current text if session is new
+            # If we want full history we could fetch it.
+            if not session_id:
+                import uuid
+                session_id = "voice-" + str(uuid.uuid4())
+                self._state.active_session_ids[target_agent] = session_id
+                
+            db.add_message(session_id=session_id, role="user", content=text)
+            messages = db.get_messages(session_id)
+            
+            # Format messages for Orchestrator
+            formatted_messages = []
+            system_msg = "You are a helpful AI assistant running in a macOS desktop environment. You are NOT Claude. You are NOT Hermes. You are NOT OpenClaw. You are the Across Agents Copilot, a versatile tool for macOS users. Keep your answers brief and suitable for voice synthesis."
+            formatted_messages.append({"role": "system", "content": system_msg})
+            
+            for m in messages:
+                if m["role"] in ["user", "assistant"]:
+                    formatted_messages.append({"role": m["role"], "content": m["content"] or ""})
+            
+            all_schemas = registry.get_all_tools_schema() + mcp_manager.get_all_tools_schema()
+            
+            # Run the async chat method in a new event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            reply = loop.run_until_complete(
+                self._openclaw.chat(
+                    agent_id=target_agent,
+                    messages=formatted_messages,
+                    tools=all_schemas
+                )
             )
             
+            db.add_message(session_id=session_id, role="assistant", content=reply.text or "")
+            
             elapsed_sec = time.time() - t0
-            if reply.session_id:
-                self._state.active_session_ids[target_agent] = reply.session_id
-            else:
-                # If the agent explicitly returned None for session_id (e.g. session deleted), clear it!
-                if target_agent in self._state.active_session_ids:
-                    del self._state.active_session_ids[target_agent]
-            self._logger.info(f"💬 {target_agent} 回复 (耗时: {elapsed_sec:.2f}s): {reply.text[:120]}".replace("\n", " "))
+            self._logger.info(f"💬 {target_agent} 回复 (耗时: {elapsed_sec:.2f}s): {(reply.text or '')[:120]}".replace("\n", " "))
 
             if self.on_message_callback:
-                self.on_message_callback("agent", reply.text, target_agent)
+                self.on_message_callback("agent", reply.text or "", target_agent)
 
             # 只有当前激活的 agent 的回复才会触发语音播报，避免多后台回复抢占 TTS
             if target_agent == self._agent_manager.get_active_agent():
                 if not self._silent_mode.is_set():
-                    self._speak(reply.text)
+                    self._speak(reply.text or "")
                 else:
                     self._logger.debug("🔇 静音模式已开启，跳过语音播报")
                     # Clear any pending TTS interrupt when skipping playback

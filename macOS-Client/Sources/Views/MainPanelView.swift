@@ -304,10 +304,21 @@ struct MainPanelView: View {
                         .help("复制完整对话记录")
                         
                         Button(action: {
+                            viewModel.startNewSession()
+                        }) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.plain)
+                        .help("New Chat")
+                        
+                        Button(action: {
                             showSettings.toggle()
                         }) {
                             Image(systemName: "gearshape")
-                                .foregroundColor(.secondary)
+                                .font(.system(size: 15))
+                                .foregroundColor(.primary)
                         }
                         .buttonStyle(.plain)
                         .popover(isPresented: $showSettings, arrowEdge: .bottom) {

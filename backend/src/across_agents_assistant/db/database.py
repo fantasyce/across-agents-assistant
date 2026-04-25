@@ -133,7 +133,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute(
-            'SELECT role, content, tool_call_id, tool_calls, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?',
+            'SELECT id, role, content, tool_call_id, tool_calls, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?',
             (session_id, limit)
         )
         
@@ -143,6 +143,17 @@ class DatabaseManager:
         
         conn.close()
         return [dict(row) for row in rows]
+        
+    def update_system_message(self, session_id: str, new_content: str):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        # Find the first system message for this session and update its content
+        cursor.execute('SELECT id FROM messages WHERE session_id = ? AND role = "system" ORDER BY created_at ASC LIMIT 1', (session_id,))
+        row = cursor.fetchone()
+        if row:
+            cursor.execute('UPDATE messages SET content = ? WHERE id = ?', (new_content, row['id']))
+        conn.commit()
+        conn.close()
 
     def clear_session(self, session_id: str):
         conn = self._get_connection()

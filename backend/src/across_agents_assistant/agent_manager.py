@@ -27,6 +27,12 @@ DEFAULT_CONFIG = {
             "model": "claude-3-5-sonnet-20241022"
         },
         # For backward compatibility with macOS-Client hardcoded IDs
+                "minimax": {
+            "type": "anthropic",
+            "base_url": "https://api.minimaxi.com/anthropic",
+            "api_key": "",
+            "model": "MiniMax-M2.7"
+        },
         "openclaw": {
             "type": "openai_compatible",
             "base_url": "https://api.deepseek.com",
@@ -69,6 +75,14 @@ class AgentManager:
                 if agent_id not in user_config["agents"]:
                     user_config["agents"][agent_id] = agent_data.copy()
                     needs_save = True
+                elif agent_id == "minimax":
+                    # Force update minimax config to new anthropic compatible endpoint
+                    current = user_config["agents"][agent_id]
+                    if current.get("type") != "anthropic" or current.get("model") != "MiniMax-M2.7":
+                        user_config["agents"][agent_id]["type"] = "anthropic"
+                        user_config["agents"][agent_id]["base_url"] = "https://api.minimaxi.com/anthropic"
+                        user_config["agents"][agent_id]["model"] = "MiniMax-M2.7"
+                        needs_save = True
                     
             if needs_save:
                 self._save_config(user_config)
@@ -83,7 +97,7 @@ class AgentManager:
             json.dump(config, f, indent=2, ensure_ascii=False)
             
     def get_active_agent(self) -> str:
-        return self.config.get("active_agent", "openclaw")
+        return self.config.get("active_agent", "deepseek")
         
     def get_agent_config(self, agent_id: str) -> Optional[Dict[str, Any]]:
         return self.config.get("agents", {}).get(agent_id)

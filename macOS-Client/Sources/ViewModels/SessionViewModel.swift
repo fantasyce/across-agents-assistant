@@ -83,8 +83,22 @@ class SessionViewModel: ObservableObject {
         }
     }
     
-    @Published var selectedAgentId: String = "deepseek"
-        let agents: [AgentModel] = [
+    @Published var selectedAgentId: String = "deepseek" {
+        didSet {
+            // Tell backend about the active agent
+            guard let url = URL(string: "http://127.0.0.1:8000/api/active_agent") else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let payload: [String: String] = ["agent_id": selectedAgentId]
+            if let body = try? JSONEncoder().encode(payload) {
+                request.httpBody = body
+                URLSession.shared.dataTask(with: request).resume()
+            }
+        }
+    }
+    
+    let agents: [AgentModel] = [
         AgentModel(id: "deepseek", name: "DeepSeek", iconName: "agent.openclaw", color: "#4d6bfe"),
         AgentModel(id: "minimax", name: "MiniMax", iconName: "agent.hermes", color: "#d97757")
     ]
@@ -160,6 +174,18 @@ class SessionViewModel: ObservableObject {
         }
     }
     
+        func startNewSession() {
+        let newSessionId = UUID().uuidString
+        currentSessionId = newSessionId
+        messages.removeAll()
+        
+        let systemWelcome = Message(
+            content: "Hello! I'm your Across Agents Copilot. Press Option+Tab anytime to chat with me.",
+            isUser: false
+        )
+        messages.append(systemWelcome)
+    }
+
     init() {
         // Load history or greet
         loadChatHistory()
