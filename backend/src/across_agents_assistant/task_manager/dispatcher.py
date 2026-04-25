@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import queue
 import threading
 import time
 from typing import Dict, List, Optional, Callable
@@ -22,7 +21,6 @@ class TaskDispatcher:
         self._state = state
         self._openclaw = openclaw_client
         self._job_threads: Dict[str, threading.Thread] = {}
-        self._job_queues: Dict[str, queue.Queue] = {}
         self._lock = threading.Lock()
         self._progress_callbacks: List[Callable[[ProgressUpdate], None]] = []
 
@@ -48,12 +46,8 @@ class TaskDispatcher:
                 self._notify_progress(job.job_id, JobStatus.RUNNING, 0.0, "Started")
 
                 # Execute based on agent type
-                if subtask.agent_id == "openclaw":
-                    result = self._execute_openclaw_job(job, subtask)
-                elif subtask.agent_id == "hermes":
-                    result = self._execute_hermes_job(job, subtask)
-                elif subtask.agent_id == "claude":
-                    result = self._execute_claude_job(job, subtask)
+                if subtask.agent_id in ("openclaw", "hermes", "claude"):
+                    result = self._execute_agent_job(job, subtask, subtask.agent_id)
                 else:
                     result = JobResult(job_id=job.job_id, success=False, error=f"Unknown agent: {subtask.agent_id}")
 
@@ -71,72 +65,30 @@ class TaskDispatcher:
             finally:
                 with self._lock:
                     self._job_threads.pop(job.job_id, None)
-                    self._job_queues.pop(job.job_id, None)
 
         thread = threading.Thread(target=run_job, daemon=True)
         with self._lock:
             self._job_threads[job.job_id] = thread
-            self._job_queues[job.job_id] = queue.Queue()
 
         thread.start()
         return job
 
-    def _execute_openclaw_job(self, job: Job, subtask: SubTask) -> JobResult:
-        """Execute a job using the openclaw agent."""
+    def _execute_agent_job(self, job: Job, subtask: SubTask, target_agent: str) -> JobResult:
+        """Execute a job using the specified agent."""
         try:
-            self._state.update_job_progress(job.job_id, 0.1, "Connecting to openclaw agent...")
+            self._state.update_job_progress(job.job_id, 0.1, f"Connecting to {target_agent} agent...")
             self._notify_progress(job.job_id, JobStatus.RUNNING, 0.1, "Connecting...")
 
             response = self._openclaw.send(
                 message=subtask.description,
                 session_id=None,
                 use_current=True,
-                target_agent="openclaw"
+                target_agent=target_agent
             )
 
             self._state.update_job_progress(job.job_id, 0.9, "Processing response...")
             self._notify_progress(job.job_id, JobStatus.RUNNING, 0.9, "Processing...")
 
-            output = response.text if response and response.text else ""
-            return JobResult(job_id=job.job_id, success=True, output=output)
-
-        except Exception as e:
-            return JobResult(job_id=job.job_id, success=False, error=str(e))
-
-    def _execute_hermes_job(self, job: Job, subtask: SubTask) -> JobResult:
-        """Execute a job using the hermes agent."""
-        try:
-            self._state.update_job_progress(job.job_id, 0.1, "Connecting to hermes agent...")
-            self._notify_progress(job.job_id, JobStatus.RUNNING, 0.1, "Connecting...")
-
-            response = self._openclaw.send(
-                message=subtask.description,
-                session_id=None,
-                use_current=True,
-                target_agent="hermes"
-            )
-
-            self._state.update_job_progress(job.job_id, 0.9, "Processing response...")
-            output = response.text if response and response.text else ""
-            return JobResult(job_id=job.job_id, success=True, output=output)
-
-        except Exception as e:
-            return JobResult(job_id=job.job_id, success=False, error=str(e))
-
-    def _execute_claude_job(self, job: Job, subtask: SubTask) -> JobResult:
-        """Execute a job using the claude agent."""
-        try:
-            self._state.update_job_progress(job.job_id, 0.1, "Connecting to claude agent...")
-            self._notify_progress(job.job_id, JobStatus.RUNNING, 0.1, "Connecting...")
-
-            response = self._openclaw.send(
-                message=subtask.description,
-                session_id=None,
-                use_current=True,
-                target_agent="claude"
-            )
-
-            self._state.update_job_progress(job.job_id, 0.9, "Processing response...")
             output = response.text if response and response.text else ""
             return JobResult(job_id=job.job_id, success=True, output=output)
 
