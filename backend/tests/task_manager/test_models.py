@@ -69,3 +69,43 @@ def test_progress_update():
     assert update.status == JobStatus.RUNNING
     assert update.progress == 0.5
     assert update.log == "Processing..."
+
+def test_task_new():
+    """Test Task.new() factory method"""
+    task = Task.new("测试任务")
+    assert task.task_id.startswith("task-")
+    assert task.description == "测试任务"
+    assert task.task_type == TaskType.UNKNOWN
+    assert len(task.subtasks) == 0
+    assert task.can_handle_directly == False
+    assert task.created_at > 0
+
+def test_task_new_with_type():
+    """Test Task.new() with explicit task type"""
+    task = Task.new("代码审查", task_type=TaskType.CODE_REVIEW)
+    assert task.task_type == TaskType.CODE_REVIEW
+
+def test_job_new():
+    """Test Job.new() factory method"""
+    subtask = SubTask(
+        subtask_id="st-123",
+        description="执行任务",
+        agent_id="openclaw",
+        priority=1
+    )
+    job = Job.new(subtask, "openclaw")
+    assert job.job_id.startswith("job-")
+    assert job.subtask_id == "st-123"
+    assert job.agent_id == "openclaw"
+    assert job.task_description == "执行任务"
+    assert job.status == JobStatus.PENDING
+    assert job.progress == 0.0
+
+def test_progress_update_default():
+    """Test ProgressUpdate with default log=None"""
+    update = ProgressUpdate(
+        job_id="job-1",
+        status=JobStatus.COMPLETED,
+        progress=1.0
+    )
+    assert update.log is None
