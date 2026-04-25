@@ -32,8 +32,7 @@ except Exception as e:
     print(f"Warning: Failed to patch PATH: {e}")
 
 from .agent_manager import AgentManager
-from .openclaw.client import UniversalAgentClient
-from .openclaw.intent_parser import ToolIntentParser
+from .llm_client import OrchestratorClient, OrchestratorResponse
 
 # Ensure builtin tools are registered
 from .tools import builtin_tools
@@ -116,7 +115,7 @@ class ApprovalDecision(BaseModel):
 
 # Global instances
 agent_manager = AgentManager()
-agent_client = UniversalAgentClient(agent_manager)
+agent_client = OrchestratorClient(agent_manager)
 
 @app.get("/api/history/{session_id}")
 async def get_chat_history(session_id: str):
@@ -271,49 +270,15 @@ async def cancel_chat(req: ChatCancelRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     # DB: Record the user's message
     db.add_message(session_id=req.session_id, role="user", content=req.text)
     
-    # 1. Build prompt with context and inject Tool Schema (M4 Integration)
-    prompt = req.text
-    
-    # Generate Tool Schema instructions
-    # We must combine local tools AND MCP tools
-    tool_schemas = registry.get_all_tools_schema()
-    mcp_schemas = mcp_manager.get_all_tools_schema()
-    all_schemas = tool_schemas + mcp_schemas
-    
-    print(f"\n========== [DEBUG] 当前获取到的所有 Schema 数量: {len(all_schemas)} (MCP: {len(mcp_schemas)}) ==========\n")
-    
-    schema_str = "【系统可用外部系统列表 (External Systems)】\n"
-    for ts in all_schemas:
-        import json
-        schema_str += f"- {ts['name']}: {ts['description']}\n  参数: {json.dumps(ts['parameters'], ensure_ascii=False)}\n"
-        
-    schema_str += """
-【CRITICAL INSTRUCTION FOR EXTERNAL SYSTEMS】
-You are running inside a wrapper called "Across Agents Assistant".
-The external systems listed above (e.g. local_kb__search_local_wiki) are NOT in your native tool registry. THEY ARE NOT TOOLS.
-DO NOT TRY TO USE `<invoke>`, `<function_calls>`, OR ANY NATIVE TOOL CALLING SYNTAX FOR THEM! Your orchestrator will block it and say "No such tool".
-
-Instead, to request data from these external systems, you MUST output a raw markdown JSON code block in your response text. The wrapper will parse your text, intercept this JSON block, fetch the data, and return it to you in the next message.
-
-When the user asks you to search or retrieve information from the knowledge base, you MUST use the `local_kb__search_local_wiki` external system FIRST. DO NOT rely on your internal knowledge for domain-specific questions; ALWAYS query the knowledge base!
-
-You must output EXACTLY this JSON format in your response:
-```json
-{
-  "plan_summary": "I am going to search the local knowledge base.",
-  "tool_calls": [
-    {"name": "local_kb__search_local_wiki", "args": {"query": "target keyword"}}
-  ]
-}
-```
-Only output the JSON block and wait for the results. Do not attempt to use native tools for this.
-"""
-
+    # Prepare system message with context if provided
+    system_msg = "You are a helpful AI assistant running in a macOS desktop environment. Do not use conversational filler, just act."
     if req.context:
         ctx_parts = []
         if req.context.frontmost_app:
@@ -324,139 +289,107 @@ Only output the JSON block and wait for the results. Do not attempt to use nativ
             ctx_parts.append(f"剪贴板内容: {req.context.clipboard_text}")
             
         if ctx_parts:
-            prompt = f"{schema_str}\n\n【系统上下文】\n" + "\n".join(ctx_parts) + f"\n\n【用户指令】\n{req.text}"
-    else:
-        prompt = f"{schema_str}\n\n【用户指令】\n{req.text}"
-
-    print(f"\n========== [DEBUG] 发送给大模型的 PROMPT ==========\n{prompt}\n==================================================\n")
-
-    while True:
-        # 2. Call Agent (Real LLM Execution)
-        reply = agent_client.send(
-            message=prompt,
-            session_id=req.session_id,
-            target_agent=req.agent_id
-        )
-        
-        print(f"\n========== [DEBUG] 大模型返回的 RAW TEXT ==========\n{reply.text}\n==================================================\n")
-        
-        # 3. Parse Intent & Trigger Real Approval Flow
-        # Add defensive checking for reply.text being None
-        reply_text = reply.text if reply.text else ""
-        intent = ToolIntentParser.parse_intent(reply_text)
-        
-        if intent and "tool_calls" in intent and len(intent["tool_calls"]) > 0:
-            # We got a valid tool call from the LLM!
-            tool_call = intent["tool_calls"][0]
-            tool_name = tool_call.get("name")
-            tool_args = tool_call.get("args", {})
+            system_msg += "\n\n【系统上下文】\n" + "\n".join(ctx_parts)
             
-            # Verify tool exists in registry (local or MCP)
+    # Insert system prompt to DB if missing
+    db_messages = db.get_messages(req.session_id)
+    has_system = any(m["role"] == "system" for m in db_messages)
+    if not has_system:
+        db.add_message(session_id=req.session_id, role="system", content=system_msg)
+        
+    return await _run_agent_loop(req.session_id, req.agent_id)
+
+async def _run_agent_loop(session_id: str, agent_id: str) -> ChatResponse:
+    import json
+    tool_schemas = registry.get_all_tools_schema()
+    mcp_schemas = mcp_manager.get_all_tools_schema()
+    all_schemas = tool_schemas + mcp_schemas
+    
+    messages = db.get_messages(session_id)
+    
+    formatted_messages = []
+    for m in messages:
+        role = m["role"]
+        content = m["content"]
+        if role == "tool":
+            formatted_messages.append({
+                "role": "tool",
+                "content": content,
+                "tool_call_id": m.get("tool_call_id", "unknown")
+            })
+        elif role == "assistant":
+            msg = {
+                "role": "assistant",
+                "content": content
+            }
+            if m.get("tool_calls"):
+                try:
+                    msg["tool_calls"] = json.loads(m["tool_calls"])
+                except Exception:
+                    pass
+            formatted_messages.append(msg)
+        else:
+            formatted_messages.append({
+                "role": role,
+                "content": content
+            })
+            
+    reply = await agent_client.chat(agent_id, formatted_messages, all_schemas)
+    
+    if reply.tool_calls:
+        # Save assistant message with tool calls to history!
+        db.add_message(session_id=session_id, role="assistant", content=reply.text or "", tool_calls=json.dumps(reply.tool_calls, ensure_ascii=False))
+        
+        tool_call = reply.tool_calls[0]
+        tool_name = tool_call["name"]
+        tool_args = tool_call["arguments"]
+        
+        # In OpenAI, the tool_call_id must match when sending tool result
+        tool_call_id = tool_call.get("id", tool_name)
+        
+        is_always_allowed = db.get_tool_authorization(tool_name)
+        if is_always_allowed:
+            db.add_audit_log(session_id, tool_name, tool_args, "medium", "auto_approve")
+            
             tool_def = registry.get_tool(tool_name)
+            is_mcp = not tool_def
             
-            # The tool name format for MCP is "server_id__tool_name"
-            is_mcp = False
-            if tool_name and not tool_def:
-                # We check if it matches an MCP schema, with forgiving naming
-                schemas = mcp_manager.get_all_tools_schema()
-                normalized_target = tool_name.replace("-", "_")
-                
-                for t in schemas:
-                    normalized_schema_name = t["name"].replace("-", "_")
-                    # Match exact (with prefix) OR match just the tool name (LLM forgot prefix)
-                    if normalized_schema_name == normalized_target or normalized_schema_name.endswith(f"__{normalized_target}"):
-                        is_mcp = True
-                        tool_name = t["name"] # Auto-correct to the real schema name (e.g. local_kb__search-local-wiki)
-                        break
-            
-            if tool_def or is_mcp:
-                plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
-                
-                # Check if tool is "always allowed"
-                is_always_allowed = db.get_tool_authorization(tool_name)
-                
-                if is_always_allowed:
-                    # Auto-approve and execute
-                    risk_level = tool_def.risk_level if tool_def else "medium"
-                    db.add_audit_log(
-                        session_id=reply.session_id,
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        risk_level=risk_level,
-                        decision="auto_approve"
-                    )
-                    
-                    try:
-                        if is_mcp:
-                            parts = tool_name.split("__", 1)
-                            server_id = parts[0]
-                            actual_tool_name = parts[1]
-                            result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
-                        else:
-                            result = tool_def.handler(**tool_args)
-                            
-                        result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
-                        db.add_message(session_id=req.session_id, role="tool", content=result_text)
-                        
-                        recent_messages = db.get_messages(req.session_id)
-                        original_question = "用户之前的问题"
-                        if len(recent_messages) >= 2:
-                            for msg in reversed(recent_messages):
-                                if msg["role"] == "user":
-                                    original_question = msg["content"]
-                                    break
-                                    
-                        prompt = f"【工具执行反馈】\n刚才你调用的工具 `{tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>"
-                        continue
-                        
-                    except Exception as e:
-                        error_text = f"❌ 工具 (自动授权) 执行失败: {str(e)}"
-                        db.add_message(session_id=req.session_id, role="tool", content=error_text)
-                        
-                        prompt = f"工具 {tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。"
-                        continue
-                
-                # Retrieve description safely
-                if tool_def:
-                    desc = tool_def.description
-                    risk = tool_def.risk_level
+            try:
+                if is_mcp:
+                    parts = tool_name.split("__", 1)
+                    server_id = parts[0]
+                    actual_tool_name = parts[1]
+                    result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
+                    result_text = str(result)
                 else:
-                    # Look it up from mcp_manager if possible
-                    schemas = mcp_manager.get_all_tools_schema()
-                    matched = next((t for t in schemas if t["name"] == tool_name), None)
-                    desc = matched["description"] if matched else "MCP 外部工具"
-                    risk = matched["risk_level"] if matched else "medium"
-                    
-                # Hide JSON payload from user if possible
-                display_text = plan_summary
+                    result = tool_def.handler(**tool_args)
+                    result_text = str(result)
+            except Exception as e:
+                result_text = f"Error executing tool: {str(e)}"
                 
-                return ChatResponse(
-                    text=display_text,
-                    session_id=reply.session_id,
-                    requires_approval=True,
-                    approval_request={
-                        "tool_name": tool_name,
-                        "risk_level": risk,
-                        "tool_args": tool_args,
-                        "description": desc
-                    }
-                )
-            else:
-                # If the parser found JSON but the tool is NOT registered (hallucinated tool)
-                # Feed it back to the LLM automatically to correct its mistake
-                error_msg = f"错误：工具 `{tool_name}` 不存在。请严格检查【系统可用工具列表】，使用正确的工具名称（如 list_directory），或者直接回复纯文本。"
-                prompt = error_msg
-                continue
+            db.add_message(session_id=session_id, role="tool", content=result_text, tool_call_id=tool_call_id)
             
-        # We no longer generate or play audio in Python.
-        # The Swift client will handle TTS natively.
-
-        db.add_message(session_id=req.session_id, role="assistant", content=reply.text)
+            return await _run_agent_loop(session_id, agent_id)
+            
+        matched = next((t for t in all_schemas if t["name"] == tool_name), None)
+        desc = matched["description"] if matched else "外部工具"
+        risk = matched["risk_level"] if matched else "medium"
+        
         return ChatResponse(
-            text=reply.text,
-            session_id=reply.session_id,
-            audio_path=None
+            text=f"请求调用工具：{tool_name}",
+            session_id=session_id,
+            requires_approval=True,
+            approval_request={
+                "tool_name": tool_name,
+                "risk_level": risk,
+                "tool_args": tool_args,
+                "description": desc
+            }
         )
+        
+    db.add_message(session_id=session_id, role="assistant", content=reply.text or "")
+    return ChatResponse(text=reply.text or "", session_id=session_id)
+
 
 def start_api_server(host="127.0.0.1", port=8000):
     uvicorn.run(app, host=host, port=port)

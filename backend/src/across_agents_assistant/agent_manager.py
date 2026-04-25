@@ -3,28 +3,47 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-AGENTS_CONFIG_FILE = Path(os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/agents.json"))
+AGENTS_CONFIG_FILE = Path(os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/llm_agents.json"))
 
 DEFAULT_CONFIG = {
-    "active_agent": "openclaw",
+    "active_agent": "deepseek",
     "agents": {
+        "deepseek": {
+            "type": "openai_compatible",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "",
+            "model": "deepseek-chat"
+        },
+        "openai": {
+            "type": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "model": "gpt-4o"
+        },
+        "anthropic": {
+            "type": "anthropic",
+            "base_url": "",
+            "api_key": "",
+            "model": "claude-3-5-sonnet-20241022"
+        },
+        # For backward compatibility with macOS-Client hardcoded IDs
         "openclaw": {
-            "type": "builtin",
-            "executable_path": "",
-            "args_template": ["agent", "--agent", "main", "--message", "{message}", "--json"],
-            "output_format": "json"
+            "type": "openai_compatible",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "",
+            "model": "deepseek-chat"
         },
         "hermes": {
-            "type": "builtin",
-            "executable_path": "",
-            "args_template": ["chat", "-q", "{message}", "-Q"],
-            "output_format": "raw"
+            "type": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "model": "gpt-4o-mini"
         },
         "claude": {
-            "type": "builtin",
-            "executable_path": "",
-            "args_template": ["-p", "{message}"],
-            "output_format": "raw"
+            "type": "anthropic",
+            "base_url": "",
+            "api_key": "",
+            "model": "claude-3-5-sonnet-20241022"
         }
     }
 }
@@ -42,28 +61,14 @@ class AgentManager:
             with open(AGENTS_CONFIG_FILE, "r", encoding="utf-8") as f:
                 user_config = json.load(f)
                 
-            # Merge missing builtin agents into user config
             needs_save = False
             if "agents" not in user_config:
                 user_config["agents"] = {}
-                
-            # Remove aider if it exists in user config
-            if "aider" in user_config["agents"]:
-                del user_config["agents"]["aider"]
-                needs_save = True
-                if user_config.get("active_agent") == "aider":
-                    user_config["active_agent"] = "openclaw"
                 
             for agent_id, agent_data in DEFAULT_CONFIG["agents"].items():
                 if agent_id not in user_config["agents"]:
                     user_config["agents"][agent_id] = agent_data.copy()
                     needs_save = True
-                else:
-                    # Update args_template if builtin args change
-                    if user_config["agents"][agent_id].get("type") == "builtin":
-                        if user_config["agents"][agent_id].get("args_template") != agent_data.get("args_template"):
-                            user_config["agents"][agent_id]["args_template"] = agent_data.get("args_template")
-                            needs_save = True
                     
             if needs_save:
                 self._save_config(user_config)
@@ -94,8 +99,12 @@ class AgentManager:
         self._save_config(self.config)
         
     def is_agent_ready(self, agent_id: str) -> bool:
+        # Now readiness depends on API Key
         agent = self.get_agent_config(agent_id)
         if not agent:
             return False
-        path = agent.get("executable_path", "")
-        return bool(path and os.path.exists(path) and os.access(path, os.X_OK))
+        api_key = agent.get("api_key", "").strip()
+        # To avoid blocking users from trying, we can return True even without API key,
+        # but returning False if empty encourages them to configure it.
+        # Wait, if they don't have a UI to configure it yet, returning True is safer.
+        return True

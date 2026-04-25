@@ -1,0 +1,26 @@
+@@ -28,7 +28,8 @@
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id TEXT NOT NULL,
+             role TEXT NOT NULL,
+             content TEXT,
++            tool_call_id TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+         )
+@@ -130,13 +137,13 @@
+         conn.commit()
+         conn.close()
+ 
+-    def add_message(self, session_id: str, role: str, content: str):
++    def add_message(self, session_id: str, role: str, content: str, tool_call_id: str = None):
+         self.get_or_create_session(session_id)
+         
+         conn = self._get_connection()
+         cursor = conn.cursor()
+         cursor.execute(
+-            'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+-            (session_id, role, content)
++            'INSERT INTO messages (session_id, role, content, tool_call_id) VALUES (?, ?, ?, ?)',
++            (session_id, role, content, tool_call_id)
+         )
+         conn.commit()

@@ -11,3 +11,5 @@ pywebview>=4.4
 fastapi>=0.100.0
 uvicorn>=0.23.0
 mcp>=1.2.0
+openai>=1.0.0
+anthropic>=0.20.0

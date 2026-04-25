@@ -1,0 +1,51 @@
+--- backend/src/across_agents_assistant/db/database.py
++++ backend/src/across_agents_assistant/db/database.py
+@@ -28,7 +28,8 @@
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id TEXT NOT NULL,
+             role TEXT NOT NULL,
+             content TEXT,
++            tool_call_id TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+         )
+@@ -40,6 +41,12 @@
+         cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)')
+         cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id ON audit_logs(session_id)')
+         
++        # Try to add tool_call_id column if it doesn't exist
++        try:
++            cursor.execute('ALTER TABLE messages ADD COLUMN tool_call_id TEXT')
++        except Exception:
++            pass
++            
+         conn.commit()
+         conn.close()
+ 
+@@ -98,13 +105,13 @@
+         conn.commit()
+         conn.close()
+ 
+-    def add_message(self, session_id: str, role: str, content: str):
++    def add_message(self, session_id: str, role: str, content: str, tool_call_id: str = None):
+         self.get_or_create_session(session_id)
+         
+         conn = self._get_connection()
+         cursor = conn.cursor()
+         cursor.execute(
+-            'INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+-            (session_id, role, content)
++            'INSERT INTO messages (session_id, role, content, tool_call_id) VALUES (?, ?, ?, ?)',
++            (session_id, role, content, tool_call_id)
+         )
+         conn.commit()
+         conn.close()
+@@ -118,7 +125,7 @@
+         cursor = conn.cursor()
+         
+         cursor.execute(
+-            'SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?',
++            'SELECT role, content, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?',
+             (session_id, limit)
+         )
+         

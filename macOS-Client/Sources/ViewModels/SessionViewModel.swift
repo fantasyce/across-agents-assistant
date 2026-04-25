@@ -83,7 +83,7 @@ class SessionViewModel: ObservableObject {
         }
     }
     
-    @Published var selectedAgentId: String = "openclaw"
+    @Published var selectedAgentId: String = "deepseek"
     let agents: [AgentModel] = [
         AgentModel(id: "openclaw", name: "OpenClaw", iconName: "agent.openclaw", color: "#CBA6F0"),
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#FF9F0A"),
