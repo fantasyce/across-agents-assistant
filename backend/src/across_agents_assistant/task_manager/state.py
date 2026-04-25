@@ -181,10 +181,11 @@ class TaskState:
             return ready
 
     def _get_subtask_status(self, task_id: str, subtask_id: str) -> JobStatus:
-        task = self._tasks.get(task_id)
-        if not task:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return JobStatus.PENDING
+            for st in task.subtasks:
+                if st.subtask_id == subtask_id:
+                    return st.status
             return JobStatus.PENDING
-        for st in task.subtasks:
-            if st.subtask_id == subtask_id:
-                return st.status
-        return JobStatus.PENDING

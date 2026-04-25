@@ -75,3 +75,55 @@ def test_cancel_task():
     cancelled = state.cancel_task(task.task_id)
     assert cancelled == True
     assert state.get_job(job.job_id).status == JobStatus.CANCELLED
+
+def test_update_subtask_status():
+    state = TaskState()
+    task = state.create_task("测试")
+    subtask = state.add_subtask(task.task_id, "执行", "openclaw")
+    updated = state.update_subtask_status(task.task_id, subtask.subtask_id, JobStatus.RUNNING)
+    assert updated == True
+    # Verify via task
+    task = state.get_task(task.task_id)
+    assert task.subtasks[0].status == JobStatus.RUNNING
+
+def test_get_job_by_subtask():
+    state = TaskState()
+    task = state.create_task("测试")
+    subtask = state.add_subtask(task.task_id, "执行", "openclaw")
+    job = state.create_job(subtask)
+    found = state.get_job_by_subtask(subtask.subtask_id)
+    assert found is not None
+    assert found.job_id == job.job_id
+
+def test_get_ready_subtasks_with_dependencies():
+    state = TaskState()
+    task = state.create_task("测试")
+    subtask1 = state.add_subtask(task.task_id, "第一步", "openclaw")
+    subtask2 = state.add_subtask(task.task_id, "第二步", "claude", dependencies=[subtask1.subtask_id])
+    # Initially only first is ready
+    ready = state.get_ready_subtasks(task.task_id)
+    assert len(ready) == 1
+    assert ready[0].subtask_id == subtask1.subtask_id
+    # Complete first task
+    job1 = state.create_job(subtask1)
+    state.complete_job(job1.job_id, success=True)
+    # Now second should be ready
+    ready = state.get_ready_subtasks(task.task_id)
+    assert len(ready) == 1
+    assert ready[0].subtask_id == subtask2.subtask_id
+
+def test_complete_job_failure():
+    state = TaskState()
+    task = state.create_task("测试")
+    subtask = state.add_subtask(task.task_id, "执行", "openclaw")
+    job = state.create_job(subtask)
+    state.update_job_status(job.job_id, JobStatus.RUNNING)
+    result = state.complete_job(job.job_id, success=False, error="执行失败")
+    assert result.success == False
+    assert result.error == "执行失败"
+    assert state.get_job(job.job_id).status == JobStatus.FAILED
+
+def test_update_nonexistent_job():
+    state = TaskState()
+    result = state.update_job_progress("nonexistent", 0.5)
+    assert result is None
