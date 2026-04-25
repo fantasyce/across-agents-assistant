@@ -32,8 +32,22 @@ class AgentMessage:
     @classmethod
     def from_json(cls, json_str: str) -> AgentMessage:
         """Deserialize from JSON string."""
-        data = json.loads(json_str)
-        data["message_type"] = MessageType(data["message_type"])
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON: {json_str[:100]}")
+
+        # Validate required fields
+        required = ["message_id", "message_type", "agent_id"]
+        for field in required:
+            if field not in data:
+                raise ValueError(f"Missing required field: {field}")
+
+        try:
+            data["message_type"] = MessageType(data["message_type"])
+        except ValueError:
+            raise ValueError(f"Invalid message_type: {data['message_type']}")
+
         return cls(**data)
 
     @staticmethod
