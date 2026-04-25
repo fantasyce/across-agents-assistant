@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .config import AppConfig
 from .logging_setup import setup_logger
@@ -14,6 +14,7 @@ from .agent_manager import AgentManager
 from .speech import SpeechClient, SpeechInterruptMonitor
 from .tts import TTSService
 from .wakeword import contains_wake_word, is_exit_word, is_hallucination
+from .llm_gateway.gateway import get_gateway
 
 
 @dataclass
@@ -52,7 +53,9 @@ class AcrossAgentsAssistantApp:
         self._agent_manager = AgentManager()
         self._openclaw = OpenClawClient(manager=self._agent_manager)
         self._tts = TTSService(temp_dir=Path("/tmp/across-agents-assistant"))
-        
+
+        self._llm_gateway = get_gateway()  # LLM Gateway for task planning
+
         self.on_message_callback = None  # To send messages to UI
         
         self._speech_client = SpeechClient(
@@ -503,3 +506,34 @@ class AcrossAgentsAssistantApp:
                     return True
         except queue.Empty:
             return False
+
+    async def plan_with_llm(self, user_request: str, context: Dict[str, Any]) -> str:
+        """
+        Use LLM Gateway to plan task decomposition.
+
+        This enables App to act as a Manager with its own LLM brain,
+        breaking user requests into sub-tasks for specialized agents.
+        """
+        system_prompt = """You are a task planning assistant for a macOS assistant app.
+Your role is to break down user requests into clear, actionable sub-tasks.
+Output a JSON plan with the following structure:
+{
+    "task_type": "research|code_review|automation|simple_qa",
+    "subtasks": [
+        {"description": "...", "agent": "openclaw|hermes|claude", "priority": 1}
+    ],
+    "can_handle_directly": true|false,
+    "direct_response": "..." (if can_handle_directly)
+}"""
+
+        try:
+            response = await self._llm_gateway.chat(
+                message=user_request,
+                system_prompt=system_prompt,
+                context=context,
+                temperature=0.3  # Lower temperature for structured output
+            )
+            return response.text
+        except Exception as e:
+            self._logger.error(f"LLM planning failed: {e}")
+            return ""
