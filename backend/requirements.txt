@@ -1,1 +1,14 @@
+edge-tts>=7.0.0
+pynput>=1.7.0
+requests>=2.31.0
+pyobjc-framework-AppKit>=10.0
+pytest>=8.0.0
+sounddevice>=0.4.6
+numpy>=1.26.0
+faster-whisper>=1.0.0
+webrtcvad>=2.0.10
+pywebview>=4.4
+fastapi>=0.100.0
+uvicorn>=0.23.0
+mcp>=1.2.0
 httpx>=0.25.0

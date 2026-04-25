@@ -1,23 +1,39 @@
-# Across-Agents Assistant 🤖
+# Across-Agents Assistant
 
-一款为 macOS 打造的多智能体语音助手，常驻菜单栏，支持全局快捷键唤醒、离线语音识别 (ASR)、云端语音合成 (TTS) 以及动态切换多个 AI 核心（Agents）。
+Across Agents Assistant 是一个面向 macOS 的桌面智能助手项目。当前 MVP 方向聚焦于 **受控的半自动 Agent**：通过菜单栏或快捷键触发，结合最小必要的系统上下文、大模型规划能力和审批机制，帮助用户完成问答、总结、草稿生成和受控执行任务。
 
-## ✨ 核心特性
+当前文档定义的目标不是“全自动接管电脑”，而是“可解释、可审批、可落地”的 macOS 桌面副驾。
 
-- 🖥 **原生集成**：常驻 macOS 菜单栏，极简星芒图标，支持深色/浅色模式自适应。
-- 🎙 **离线语音识别**：内置基于 `faster-whisper` 的本地离线语音识别，极速响应，保护隐私。
-- 🗣 **智能语音交互**：基于大模型的对话能力，结合高质量 TTS（支持 Minimax 和 Edge-TTS）。
-- ⌨️ **全局快捷键**：随时随地通过全局快捷键（默认双击 Control）唤醒助手。
-- ⚙️ **多智能体配置**：提供精美的 Webview 桌面配置界面，轻松管理、切换和定制不同的 AI 智能体。
+## 核心特性
 
-## 📦 安装与使用 (普通用户)
+- **macOS 桌面入口**：常驻菜单栏，支持全局快捷键唤起。
+- **语音与文本输入**：支持语音输入、文本输入与后续任务反馈。
+- **上下文增强**：按需采集前台应用、窗口标题、剪贴板和应用适配上下文。
+- **受控工具执行**：通过白名单工具和审批网关实现安全执行。
+- **安全优先**：高风险操作需要审批，默认草稿优先，不直接外发。
+
+## 文档入口
+
+如果你希望快速理解项目方向、架构和实施计划，建议按如下顺序阅读：
+
+1. [文档索引](./Documentation_Index.md)
+2. [MVP 产品需求文档](./MVP_PRD.md)
+3. [技术架构设计文档](./Technical_Architecture_Design.md)
+4. [实施路线图](./Implementation_Roadmap.md)
+5. [工程任务拆解](./Engineering_Task_Breakdown.md)
+6. [协议规范](./Context_Pack_and_Tool_Protocol.md)
+7. [安全与审批策略](./Approval_Safety_and_Permission_Policy.md)
+8. [交互流程与状态机](./Interaction_Flows_and_State_Machine.md)
+9. [测试与发布计划](./QA_Test_and_Release_Plan.md)
+
+## 安装与使用
 
 1. 前往本仓库的 [Releases](#) 页面。
 2. 下载最新版本的 `AcrossAgentsAssistant.dmg` 文件。
 3. 双击打开 `.dmg`，将 `Across-Agents Assistant.app` 拖入 `Applications`（应用程序）文件夹。
 4. 启动应用。首次运行时请在系统设置中授予**麦克风权限**和**辅助功能权限**（用于全局快捷键）。
 
-## 🛠 开发与构建 (开发者)
+## 开发与构建
 
 如果你希望在本地运行或二次开发本项目，请按照以下步骤操作：
 
@@ -44,13 +60,16 @@ pip install -r requirements.txt
 
 ### 3. 本地运行
 
-```bash
-# 以 GUI 模式运行主程序
-python3 main.py run
+本项目后端是一个 FastAPI API Server，运行在 `127.0.0.1:8000`。
 
-# 仅运行配置界面
-python3 main.py ui
+```bash
+cd backend
+source .venv/bin/activate  # 激活虚拟环境（如使用）
+pip install -r requirements.txt
+python3 main.py
 ```
+
+这将启动 API Server。前端（macOS Client）是独立的 Swift 应用，通常通过 DMG 安装后运行。
 
 ### 4. 打包为 macOS 应用 (.app / .dmg)
 
@@ -69,11 +88,17 @@ hdiutil create -volname "AcrossAgentsAssistant" -srcfolder dist/dmg -ov -format 
 ```
 打包成功后，你可以在 `dist/` 目录下找到 `.app` 和 `.dmg` 文件。
 
-## 🔐 环境变量与 API Key
+## 环境变量与 API Key
 
-- **TTS (Minimax)**: 默认会尝试从系统环境变量或 Keychain (`openclaw.minimax.api`) 中读取 `MINIMAX_API_KEY`。如果未配置，将自动降级使用免费的微软 Edge-TTS。
-- **大模型 API**: 智能体的对话核心基于 OpenClaw 客户端调用，你需要配置对应大模型提供商的 API Key。
+- **TTS (Minimax)**: 默认会尝试从系统环境变量或 Keychain (`openclaw.minimax.api`) 中读取 `MINIMAX_API_KEY`。如果未配置，将自动降级使用 Edge-TTS。
+- **大模型 API**: 项目中的模型调用能力依赖对应模型服务配置，你需要提供可用的 API Key 或本地服务地址。
 
-## 📄 许可证
+## 当前状态说明
+
+- 仓库中仍保留了一部分更早期的实现路径和模块。
+- 当前建议以文档中定义的 MVP 边界为准，逐步收敛到“受控半自动 Agent”方向。
+- 如果代码实现与最新文档存在差异，应以最新产品和架构文档作为后续迭代依据。
+
+## 许可证
 
 MIT License
