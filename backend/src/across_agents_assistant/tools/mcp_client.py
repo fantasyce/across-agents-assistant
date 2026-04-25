@@ -14,13 +14,27 @@ class MCPClientManager:
         self._exit_stacks = {}
         self.server_configs: Dict[str, StdioServerParameters] = {}
         self.server_tools: Dict[str, List[Dict[str, Any]]] = {}
+        self._connecting: set = set()
 
     def register_server(self, server_id: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None):
         """Register a new MCP server configuration."""
+        import shutil
+        import os
+        
+        # Merge with global os.environ to ensure PATH is included
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+            
+        # Try to resolve the command to its absolute path to prevent "command not found" errors
+        resolved_command = shutil.which(command, path=merged_env.get("PATH"))
+        if resolved_command:
+            command = resolved_command
+            
         self.server_configs[server_id] = StdioServerParameters(
             command=command,
             args=args,
-            env=env
+            env=merged_env
         )
 
     async def connect_server(self, server_id: str):
@@ -32,6 +46,13 @@ class MCPClientManager:
         if server_id in self.sessions:
             logger.info(f"Already connected to MCP server {server_id}.")
             return True
+            
+        if server_id in self._connecting:
+            logger.info(f"Already connecting to MCP server {server_id}, ignoring duplicate request.")
+            # We could wait for the connection to finish, but returning True simplifies things for now
+            return True
+            
+        self._connecting.add(server_id)
 
         params = self.server_configs[server_id]
         logger.info(f"Connecting to MCP server {server_id} via {params.command} {' '.join(params.args)}")
@@ -62,6 +83,7 @@ class MCPClientManager:
                     "original_name": t.name
                 })
             logger.info(f"Fetched {len(self.server_tools[server_id])} tools from {server_id}.")
+            self._connecting.remove(server_id)
             return True
             
         except Exception as e:
@@ -69,6 +91,8 @@ class MCPClientManager:
             if server_id in self._exit_stacks:
                 await self._exit_stacks[server_id].aclose()
                 del self._exit_stacks[server_id]
+            if server_id in self._connecting:
+                self._connecting.remove(server_id)
             return False
 
     async def disconnect_server(self, server_id: str):

@@ -29,6 +29,24 @@ class MCPPluginManager: ObservableObject {
     // Define the built-in plugins
     private let builtInPlugins: [MCPPlugin] = [
         MCPPlugin(
+            id: "local_kb",
+            name: "本地知识库",
+            description: "索引并搜索本地 Wiki 文件夹，提供极速且保护隐私的个性化记忆。",
+            command: "python3", // 占位符，后续替换为实际的本地 MCP Server 脚本
+            args: ["-m", "mcp_local_kb", "--dir", ""], // Path to be filled by user
+            isEnabled: false,
+            isBuiltIn: true
+        ),
+        MCPPlugin(
+            id: "external_rag",
+            name: "自定义 RAG 接口",
+            description: "连接您自行部署的 RAG 服务或企业知识库 API (如 Dify, AnythingLLM)。",
+            command: "python3", // 占位符
+            args: ["-m", "mcp_external_rag", "--endpoint", ""], // URL to be filled by user
+            isEnabled: false,
+            isBuiltIn: true
+        ),
+        MCPPlugin(
             id: "sqlite",
             name: "SQLite Database",
             description: "允许 AI 读取和分析你的本地 SQLite 数据库文件。",
@@ -50,6 +68,21 @@ class MCPPluginManager: ObservableObject {
     
     private init() {
         loadPlugins()
+        
+        // Wait a very short bit for the backend to fully start before attempting connections
+        // (The backend startup has been optimized so it should be ready much faster now)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.autoConnectEnabledPlugins()
+        }
+    }
+    
+    private func autoConnectEnabledPlugins() {
+        for plugin in plugins where plugin.isEnabled {
+            // Only connect if it's currently disconnected or error, to prevent overlapping the initial retry loops
+            if plugin.status == "disconnected" || plugin.status == "error" {
+                connectPlugin(id: plugin.id)
+            }
+        }
     }
     
     func loadPlugins() {
@@ -75,9 +108,9 @@ class MCPPluginManager: ObservableObject {
             self.plugins = builtInPlugins
         }
         
-        // Automatically connect enabled plugins on startup
-        for plugin in plugins where plugin.isEnabled {
-            connectPlugin(id: plugin.id)
+        // Auto-connect enabled plugins on load
+        for plugin in self.plugins where plugin.isEnabled {
+            self.connectPlugin(id: plugin.id)
         }
     }
     
@@ -135,6 +168,10 @@ class MCPPluginManager: ObservableObject {
             if let index = self.plugins.firstIndex(where: { $0.id == id }) {
                 self.plugins[index].status = status
                 self.plugins[index].errorMessage = errorMessage
+                if status == "error" {
+                    self.plugins[index].isEnabled = false // Auto disable on fail
+                    self.savePlugins()
+                }
             }
         }
     }
@@ -152,14 +189,24 @@ class MCPPluginManager: ObservableObject {
         let server_id: String
     }
     
-    private func connectPlugin(id: String) {
+    private func connectPlugin(id: String, retryCount: Int = 0) {
         guard let plugin = plugins.first(where: { $0.id == id }) else { return }
+        
+        // Prevent concurrent connection attempts if we are already explicitly connecting,
+        // EXCEPT when we are in the retry loop (where we intentionally want to try again)
+        if retryCount == 0 && plugin.status == "connecting" {
+            return
+        }
         
         // Validation for built-in plugins requiring paths
         if plugin.isBuiltIn {
             let pathArg = plugin.args.last ?? ""
             if pathArg.isEmpty {
-                updateStatus(id: id, status: "error", errorMessage: "请先配置路径")
+                updateStatus(id: id, status: "error", errorMessage: "请先配置参数")
+                if let index = plugins.firstIndex(where: { $0.id == id }) {
+                    plugins[index].isEnabled = false
+                    savePlugins()
+                }
                 return
             }
         }
@@ -183,12 +230,32 @@ class MCPPluginManager: ObservableObject {
             request.httpBody = try JSONEncoder().encode(req)
         } catch {
             updateStatus(id: id, status: "error", errorMessage: "请求编码失败")
+            if let index = plugins.firstIndex(where: { $0.id == id }) {
+                plugins[index].isEnabled = false
+                savePlugins()
+            }
             return
         }
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             if let error = error {
+                if retryCount < 40 {
+                    // Backend might still be starting up, retry after 0.5 seconds (up to 20 seconds total)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.connectPlugin(id: id, retryCount: retryCount + 1)
+                    }
+                    return
+                }
                 self?.updateStatus(id: id, status: "error", errorMessage: "网络错误: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    if let index = self?.plugins.firstIndex(where: { $0.id == id }) {
+                        // Do NOT auto-disable built-in plugins on network error, so they can retry on next launch
+                        if !(self?.plugins[index].isBuiltIn ?? false) {
+                            self?.plugins[index].isEnabled = false
+                            self?.savePlugins()
+                        }
+                    }
+                }
                 return
             }
             
@@ -199,6 +266,13 @@ class MCPPluginManager: ObservableObject {
                     errorMsg = detail
                 }
                 self?.updateStatus(id: id, status: "error", errorMessage: errorMsg)
+                DispatchQueue.main.async {
+                    if let index = self?.plugins.firstIndex(where: { $0.id == id }) {
+                        // Configuration error (e.g. 500 from backend because invalid path), so disable it
+                        self?.plugins[index].isEnabled = false
+                        self?.savePlugins()
+                    }
+                }
                 return
             }
             

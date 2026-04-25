@@ -93,24 +93,32 @@ MVP 阶段的产品定位为：
 - 支持任务结果展示、错误说明和下一步建议。
 
 ### 6.4 可执行工具范围
-MVP 仅支持受控工具，不支持开放式通用执行器。首批建议工具：
-- `get_frontmost_app`
-- `get_window_title`
-- `read_clipboard`
-- `read_selected_text`
-- `read_project_file`
-- `list_directory`
-- `get_git_status`
-- `open_url`
-- `create_email_draft`
-- `create_note_draft`
-- `write_workspace_file`
+MVP 仅支持受控工具，不支持开放式通用执行器。实际实现的工具：
+
+**内置工具（builtin_tools.py）：**
+- `list_directory` - 列出目录内容（risk_level: low）
+- `get_finder_context` - 获取 Finder 当前目录和选中文件（risk_level: low）
+- `get_xcode_context` - 获取 Xcode 当前打开的文件路径（risk_level: low）
+- `get_active_browser_url` - 获取 Chrome/Safari 当前标签页 URL（risk_level: low）
+- `toggle_system_dark_mode` - 切换 macOS 深色/浅色模式（risk_level: low）
+- `set_system_volume` - 设置系统音量 0-100（risk_level: low）
+- `create_email_draft` - 在 Mail.app 创建邮件草稿（risk_level: medium）
+- `create_note_draft` - 在 Notes.app 创建笔记草稿（risk_level: medium）
+
+**MCP 工具：** 通过 MCP 服务器动态接入，例如 `local_kb__search_local_wiki`、`external_rag__query`。
+
+**注意：**
+- 文档中部分工具（如 `get_frontmost_app`、`read_clipboard`、`open_url` 等）未作为独立工具实现
+- 上下文获取（如前台应用、窗口标题、剪贴板）通过 `ContextPack` 在请求时自动收集
+- 风险等级使用 `"low"` / `"medium"` 字符串，而非 L0/L1/L2/L3
 
 ### 6.5 审批与安全
 - 高风险动作必须弹出审批 UI。
-- 审批 UI 必须展示用户原始意图、执行计划、所需读取的数据、写入目标和风险级别。
-- 用户可执行的审批动作包括：同意一次、拒绝、改为草稿、取消任务。
+- 审批 UI 必须展示用户原始意图、执行计划、所需工具、参数和风险级别。
+- 用户可执行的审批动作包括：`approve`（同意一次）、`reject`（拒绝）、`always_allow`（始终允许该工具）。
 - 所有审批结果和实际执行动作都必须记录审计日志。
+
+**注意**：`approve_once`、`convert_to_draft`、`cancel` 选项当前未实现。
 
 ### 6.6 设置与历史
 - 配置模型 API Key 或模型服务地址。
@@ -143,21 +151,17 @@ MVP 仅支持受控工具，不支持开放式通用执行器。首批建议工�
 
 ## 8. 风险分级与审批策略
 ### 8.1 风险分级
-- **L0：纯问答**
-  - 例如解释当前文本、总结页面内容。
-  - 不需要审批。
+实际实现使用 `"low"` / `"medium"` 字符串，而非 L0/L1/L2/L3。
 
-- **L1：低风险只读**
-  - 例如读取剪贴板、读取当前窗口标题、读取项目内文本文件。
-  - 默认不审批，但在 UI 中显式展示读取来源。
+- **low：低风险只读**
+  - 例如获取 Finder 上下文、Xcode 上下文、浏览器 URL、切换系统主题、设置音量。
+  - 默认不审批。
 
-- **L2：受控可逆写入**
-  - 例如生成邮件草稿、创建笔记草稿、写入工作区草稿文件。
-  - 默认轻审批，允许用户同意。
+- **medium：受控写入**
+  - 例如创建邮件草稿、创建笔记草稿。
+  - 默认需要审批。
 
-- **L3：高风险不可逆或外发**
-  - 例如删除文件、发送邮件、执行终端命令、修改系统设置。
-  - 必须强审批，MVP 默认尽量避免直接支持。
+**注意**：代码中没有 L0/L1/L2/L3 的分类。L0 纯问答不涉及工具调用，L3 高风险（如删除文件、执行终端命令）当前未实现。
 
 ### 8.2 审批原则
 - 不以“工具名”单独决定是否审批，而以“动作 + 目标 + 影响范围”综合决定。

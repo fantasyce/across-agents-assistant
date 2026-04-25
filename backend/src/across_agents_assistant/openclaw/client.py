@@ -17,6 +17,7 @@ class UniversalAgentClient:
         self.manager = manager
         # Cache environments for agents
         self.envs = {}
+        self.active_processes = {} # session_id -> subprocess.Popen
         
         try:
             result = subprocess.run(
@@ -45,6 +46,18 @@ class UniversalAgentClient:
     def initialize(self):
         # Kept for backward compatibility, not needed anymore
         pass
+
+    def cancel(self, session_id: str) -> bool:
+        """Cancel a running agent request for a specific session."""
+        process = self.active_processes.get(session_id)
+        if process:
+            try:
+                process.kill() # Force kill to ensure it stops immediately
+                return True
+            except Exception as e:
+                import logging
+                logging.getLogger("across_agents_assistant").error(f"Failed to cancel process for {session_id}: {e}")
+        return False
 
     def send(self, message: str, session_id: Optional[str] = None, use_current: bool = True, target_agent: Optional[str] = None) -> OpenClawReply:
         t0 = time.time()
@@ -150,26 +163,45 @@ class UniversalAgentClient:
                         else:
                             workspace_dir = target_dir
             
-            result = subprocess.run(args, env=self.base_env, capture_output=True, text=True, cwd=workspace_dir)
+            # We use Popen instead of run so we can store the process and cancel it
+            process = subprocess.Popen(
+                args, 
+                env=self.base_env, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                cwd=workspace_dir
+            )
+            
+            if session_id:
+                self.active_processes[session_id] = process
+                
+            stdout, stderr = process.communicate()
+            
+            if session_id and session_id in self.active_processes:
+                del self.active_processes[session_id]
+                
             elapsed = time.time() - t0
         except Exception as e:
             import logging
+            if session_id and session_id in self.active_processes:
+                del self.active_processes[session_id]
             logging.getLogger("across_agents_assistant").error(f"Failed to execute {agent_id}: {e}")
             return OpenClawReply(
-                text=f"抱歉，处理失败。我无法连接到 {agent_id}，请检查配置是否正确。", 
+                text=f"抱歉，处理失败或已被取消。无法连接到 {agent_id}。", 
                 session_id=session_id, 
                 elapsed_sec=time.time() - t0
             )
 
         # Parse output based on configured format
         ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
-        clean = ansi_pattern.sub("", result.stdout)
-        clean_err = ansi_pattern.sub("", result.stderr or "").strip()
+        clean = ansi_pattern.sub("", stdout)
+        clean_err = ansi_pattern.sub("", stderr or "").strip()
         
         # dcc sometimes returns non-zero code even when it replies correctly,
         # but if the output is just an error, we should return it.
         # We'll first check if there is a valid output payload.
-        is_error = result.returncode != 0
+        is_error = process.returncode != 0
         if is_error:
             # Special case for claude/dcc: "No conversation found" usually goes to stdout or stderr
             msg = clean.strip() or clean_err

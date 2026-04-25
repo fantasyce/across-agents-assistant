@@ -294,6 +294,16 @@ struct MainPanelView: View {
                         .buttonStyle(.plain)
                         
                         Button(action: {
+                            viewModel.copyFullConversation()
+                        }) {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("复制完整对话记录")
+                        
+                        Button(action: {
                             showSettings.toggle()
                         }) {
                             Image(systemName: "gearshape")
@@ -424,16 +434,31 @@ struct MainPanelView: View {
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(14)
                     
-                    Button(action: submit) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil ? .secondary : accentColor)
-                            .frame(width: 32, height: 32)
-                            .background(Color.black.opacity(0.05))
-                            .cornerRadius(6)
+                    if viewModel.isProcessing {
+                        Button(action: {
+                            viewModel.cancelGeneration()
+                        }) {
+                            Image(systemName: "stop.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(accentColor)
+                                .frame(width: 32, height: 32)
+                                .background(Color.black.opacity(0.05))
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help("停止生成")
+                    } else {
+                        Button(action: submit) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil ? .secondary : accentColor)
+                                .frame(width: 32, height: 32)
+                                .background(Color.black.opacity(0.05))
+                                .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.inputText.isEmpty || viewModel.pendingApproval != nil)
                 }
                 .padding(EdgeInsets(top: 12, leading: 24, bottom: 16, trailing: 24))
                 .background(bgColor)
@@ -545,6 +570,7 @@ struct MainPanelView: View {
     }
     
     private func submit() {
+        guard !viewModel.isProcessing else { return }
         let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !viewModel.attachedFiles.isEmpty else { return }
         

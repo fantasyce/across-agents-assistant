@@ -20,7 +20,20 @@ MVP 推荐采用 **SwiftUI + AppKit 的原生 macOS 应用** 作为前端和系�
   - 缺点是多进程管理、打包和调试更复杂。
 
 ### 2.2 MVP 推荐决策
-考虑到当前仓库已存在 Python 侧语音、热键、菜单栏等能力雏形，MVP 推荐优先采用 **Swift + Python 混合架构**，以缩短验证周期；中长期再评估是否将核心编排逐步迁移到 Swift。
+考虑到代码实现现状，MVP 采用 **Python FastAPI 后端 + Swift macOS 客户端** 的分离架构：
+
+- **Python 后端** (`backend/`)：FastAPI API Server，运行在 `127.0.0.1:8000`。负责 Agent 编排、工具执行、数据库管理、MCP 集成。
+- **Swift 客户端** (`macOS-Client/`): 独立的 macOS menu bar 应用，通过 HTTP 与后端通信。
+- 两者通过本地 HTTP API 通信，不是同一个进程。
+
+核心模块位于 `backend/src/across_agents_assistant/`:
+- `api_server.py` - FastAPI HTTP Server（核心入口）
+- `app.py` - 独立 Python 应用（包含 TTS、语音处理）
+- `agent_manager.py` - Agent 配置管理
+- `openclaw/client.py` - OpenClaw Agent 客户端
+- `tools/builtin_tools.py` - 内置工具注册
+- `tools/mcp_client.py` - MCP 客户端
+- `db/database.py` - SQLite 数据库管理
 
 ## 3. 核心设计原则
 - **受控执行优先**：先保证可解释和可审批，再提升自动化程度。
@@ -64,169 +77,108 @@ flowchart TD
 ```
 
 ## 5. 分层模块设计
-### 5.1 UI 层
+
+### 5.1 UI 层 (macOS Client)
 职责：
 - 提供状态栏入口、主浮窗、审批弹窗、设置页面、历史页面。
 - 展示录音状态、识别状态、任务执行状态和结果。
-- 在权限不足、审批中、执行失败时提供可解释反馈。
 
-推荐实现：
-- `SwiftUI` 负责界面布局和状态绑定。
-- `AppKit` 负责状态栏图标、窗口层级、全局快捷键、浮层行为等原生能力。
-
-核心组件：
-- `MenuBarController`
-- `MainPanelController`
-- `ApprovalDialogController`
-- `SettingsViewModel`
-- `SessionViewModel`
+技术实现：
+- `SwiftUI` + `AppKit` 混合架构。
+- 菜单栏应用（Menu Bar App）。
+- 通过 HTTP API 与 Python 后端通信。
 
 ### 5.2 触发与输入层
 职责：
 - 统一处理快捷键触发、菜单栏点击、文本输入、语音输入。
-- 将用户输入转化为标准任务请求。
 
-推荐能力：
-- 全局快捷键监听。
-- 按住说话或点击录音开始/停止。
-- STT 中间态展示。
-
-明确不做：
-- 不做默认后台持续唤醒词监听。
-
-### 5.3 会话控制层
+### 5.3 会话与编排层 (Python Backend)
 职责：
-- 管理一次任务的生命周期。
-- 串联上下文采集、模型规划、审批和执行。
-- 处理取消、重试、超时和降级。
+- 管理会话生命周期和 Agent 编排。
+- 串联上下文收集、模型调用、审批和执行。
 
-建议对象：
-- `SessionController`
-- `TaskStateMachine`
-- `ExecutionCoordinator`
+实际组件：
+- `api_server.py` - 处理所有 HTTP API 端点
+- `app.py` - Python 应用主类，管理 TTS 和语音
+- `agent_manager.py` - 管理 Agent 配置
+- `openclaw/client.py` - OpenClaw Agent 客户端
 
 ### 5.4 上下文引擎
 职责：
-- 按层级收集上下文。
-- 统一输出结构化 `ContextPack`。
-- 根据策略决定是否请求更重的上下文。
+- 按层级收集上下文，统一输出结构化 `ContextPack`。
 
 分层设计：
 - **Tier 1：稳定快速**
-  - 前台应用名
-  - 窗口标题
-  - 剪贴板文本
-  - 时间、语言环境
+  - 前台应用名（frontmost_app）
+  - 窗口标题（window_title）
+  - 剪贴板文本（clipboard_text）
 
 - **Tier 2：应用适配**
-  - IDE 当前文件路径、选中文本、光标位置
-  - 浏览器 URL、页面标题
-  - Finder 当前目录
+  - IDE 当前文件路径（通过 `get_xcode_context` 工具）
+  - 浏览器 URL（通过 `get_active_browser_url` 工具）
+  - Finder 当前目录（通过 `get_finder_context` 工具）
 
-- **Tier 3：重型上下文**
+- **Tier 3：重型上下文（未实现）**
   - 屏幕截图
   - OCR 文本
-  - 视觉摘要
-
-实现建议：
-- 为每类应用实现 `AppContextAdapter` 协议。
-- 不把“读取选中文本”视为通用能力，而视为“可能能力”。
 
 ### 5.5 模型编排层
 职责：
-- 构造 Prompt。
-- 调用 LLM。
-- 解析结构化输出，包括自然语言回复、执行计划、工具调用意图。
+- 构造 Prompt，调用 LLM，解析结构化输出。
 
-建议组件：
-- `PromptBuilder`
-- `ModelClient`
-- `Planner`
-- `ToolIntentParser`
-
-输出契约建议：
-- 普通回复模式：返回文本答案和建议下一步。
-- 工具规划模式：返回目标、理由、工具列表、参数、风险等级、是否需要审批。
+实际实现：
+- `openclaw/client.py` 的 `UniversalAgentClient` 调用 LLM
+- `intent_parser.py` 的 `ToolIntentParser` 解析 LLM 输出的 JSON
+- **注意**：LLM 输出的是 JSON 格式的 markdown 代码块（` ```json ... ``` `），而非原生 tool calling
 
 ### 5.6 审批引擎
 职责：
-- 根据规则和工具意图判断风险等级。
-- 决定是否阻塞执行并展示审批 UI。
-- 记录审批决策。
+- 根据规则和工具意图判断风险等级，决定是否展示审批 UI。
 
-建议组件：
-- `RiskClassifier`
-- `PolicyEvaluator`
-- `ApprovalCoordinator`
-
-审批输入维度：
-- 动作类型
-- 目标对象
-- 读写范围
-- 是否外发
-- 是否可逆
-- 用户当前模式
+实际实现：
+- 内置于 `api_server.py` 的 `/api/approve` 端点
+- 风险等级使用 `”low”` / `”medium”` 字符串（而非 L0/L1/L2/L3）
 
 ### 5.7 工具执行层
 职责：
-- 承载所有可执行动作。
-- 统一校验参数、权限和范围。
-- 输出标准执行结果。
+- 承载所有可执行动作，统一校验参数、权限和范围。
 
-MVP 原则：
-- 只允许白名单工具。
-- 每个工具必须有 schema、权限要求、风险级别、超时配置。
-- 不直接暴露 Shell。
+实际实现：
+- `tools/builtin_tools.py` 中的 `registry` 管理所有内置工具
+- `tools/mcp_client.py` 管理 MCP 服务器和工具
 
 ### 5.8 审计与存储层
 职责：
-- 记录任务历史、审批日志、错误信息、性能指标。
-- 保存用户设置、白名单配置、偏好项。
+- 记录任务历史、审批日志、错误信息。
 
-推荐存储：
-- 配置：`UserDefaults`
-- 任务历史和日志：`SQLite`
+实际实现：
+- `db/database.py` 中的 `DatabaseManager` 管理 SQLite 数据库
+- 数据库位于 `~/.across_agents/assistant.db`
+- 表：`sessions`, `messages`, `audit_logs`, `tool_authorizations`
 
 ## 6. 关键数据结构
 ### 6.1 ContextPack
 ```json
 {
-  "request_id": "uuid",
-  "user_input": "帮我总结当前页面并写一个跟进邮件草稿",
-  "trigger": {
-    "type": "shortcut",
-    "timestamp": "2026-04-21T10:00:00Z"
-  },
-  "app_context": {
-    "frontmost_app": "Google Chrome",
-    "window_title": "客户方案 - Notion",
-    "browser_url": "https://example.com",
-    "selected_text": null
-  },
-  "device_context": {
-    "clipboard_text": "客户关注交付时间和价格",
-    "locale": "zh-CN",
-    "timezone": "Asia/Shanghai"
-  },
-  "screen_context": {
-    "screenshot_enabled": false,
-    "ocr_text": null
-  },
-  "policy_context": {
-    "approval_mode": "strict",
-    "allowed_tools": ["read_clipboard", "create_email_draft"]
-  }
+  "frontmost_app": "Google Chrome",
+  "window_title": "客户方案 - Notion",
+  "clipboard_text": "客户关注交付时间和价格"
 }
 ```
+
+实际实现只有 3 个字段（`api_server.py` 中的 `ContextPack` 类）：
+- `frontmost_app`：前台应用名
+- `window_title`：窗口标题
+- `clipboard_text`：剪贴板文本
 
 ### 6.2 ToolDescriptor
 ```json
 {
   "name": "create_email_draft",
-  "risk_level": "L2",
+  "risk_level": "medium",
   "required_permissions": ["none"],
   "input_schema": {
-    "to": "string?",
+    "recipient": "string",
     "subject": "string",
     "body": "string"
   },
@@ -235,47 +187,61 @@ MVP 原则：
 }
 ```
 
+注意：实际 risk_level 使用 `"low"` / `"medium"` 字符串，而非 L0/L1/L2/L3。
+
 ### 6.3 ApprovalRequest
 ```json
 {
-  "request_id": "uuid",
-  "user_goal": "联系客户并确认下周会议",
-  "plan_summary": "创建一封邮件草稿，不会直接发送",
-  "read_set": ["clipboard_text", "window_title"],
-  "write_target": ["mail_draft"],
-  "risk_level": "L2",
-  "tool_calls": [
-    {
-      "tool": "create_email_draft",
-      "args": {
-        "subject": "下周会议确认",
-        "body": "..."
-      }
-    }
-  ]
+  "tool_name": "create_email_draft",
+  "risk_level": "medium",
+  "tool_args": {
+    "recipient": "example@email.com",
+    "subject": "下周会议确认",
+    "body": "..."
+  },
+  "description": "Create an email draft in the macOS Mail app."
 }
 ```
 
+实际实现只有 4 个字段（见 `api_server.py` 中的 `ChatResponse.approval_request`）：
+- `tool_name`：工具名称
+- `risk_level`：风险等级（"low" / "medium"）
+- `tool_args`：工具参数（字典）
+- `description`：工具描述
+
+### 6.4 ApprovalDecision
+```json
+{
+  "session_id": "session-001",
+  "decision": "approve",
+  "tool_name": "create_email_draft",
+  "tool_args": {...},
+  "agent_id": "openclaw"
+}
+```
+
+实际实现（`api_server.py` 中的 `ApprovalDecision`）：
+- `decision`：可选 "approve", "reject", "always_allow"（不是 approve_once）
+- 不支持 "convert_to_draft" 和 "cancel" 选项
+
 ## 7. 状态机设计
 ### 7.1 会话状态
-推荐状态流转如下：
+实际实现使用 threading Events 管理状态，而非完整状态机。
 
-`Idle -> CapturingInput -> CollectingContext -> Planning -> WaitingForApproval -> Executing -> Completed`
+`app.py` 中的状态管理：
+- `_voice_mode_enabled`：语音模式是否启用
+- `_continuous_mode`：连续对话模式是否启用
+- `_hotkey_interrupt`：热键中断事件
+- `_tts_interrupt`：TTS 打断事件
 
-异常分支：
-
-`CollectingContext -> PermissionBlocked -> Idle`
-
-`Planning -> Failed -> Idle`
-
-`WaitingForApproval -> Rejected -> Idle`
-
-`Executing -> Failed -> Idle`
+状态流转通过这些 Events 的 set/clear 组合实现，而非显式状态机。
 
 ### 7.2 状态机要求
 - 每个状态都必须可取消。
 - 任一阶段失败都必须向 UI 返回可解释错误。
 - 审批等待状态必须支持超时和用户主动关闭。
+
+注：当前实现未使用完整状态机，但基本满足上述要求。
 
 ## 8. 核心执行流程
 ### 8.1 标准只读任务

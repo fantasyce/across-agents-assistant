@@ -3,6 +3,33 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
+import os
+import subprocess
+import shutil
+
+# Patch PATH globally so that npx, uvx, python3 etc can be found even when launched from macOS App
+try:
+    # Just use standard paths without spawning a shell to save startup time
+    current_path = os.environ.get("PATH", "")
+    path_parts = [p for p in current_path.split(":") if p]
+    extras = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.cargo/bin"),
+        os.path.expanduser("~/.bun/bin"),
+        os.path.expanduser("~/.nvm/versions/node/v20.0.0/bin"),
+        os.path.expanduser("~/.nvm/versions/node/v21.0.0/bin"),
+        os.path.expanduser("~/.nvm/versions/node/v22.0.0/bin")
+    ]
+    
+    # Optionally attempt to find node via glob if needed, but standard homebrew is usually enough
+    for extra in extras:
+        if os.path.isdir(extra) and extra not in path_parts:
+            path_parts.insert(0, extra)
+    os.environ["PATH"] = ":".join(path_parts)
+except Exception as e:
+    print(f"Warning: Failed to patch PATH: {e}")
 
 from .agent_manager import AgentManager
 from .openclaw.client import UniversalAgentClient
@@ -26,6 +53,21 @@ class MCPConnectRequest(BaseModel):
 async def connect_mcp_server(req: MCPConnectRequest):
     """Register and connect to an MCP server dynamically."""
     try:
+        # Intercept built-in Python MCP servers so they run via the bundled backend
+        if req.command == "python3" and req.args and req.args[0] == "-m" and req.args[1] in ["mcp_local_kb", "mcp_external_rag"]:
+            import sys
+            import os
+            server_name = req.args[1].replace("mcp_", "") # e.g., "local_kb"
+            req.command = sys.executable
+            if getattr(sys, 'frozen', False):
+                # We are running as PyInstaller bundled binary
+                req.args = ["mcp", server_name] + req.args[2:]
+            else:
+                # We are running in dev mode, sys.executable is python
+                # Find the path to main.py
+                main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "main.py"))
+                req.args = [main_path, "mcp", server_name] + req.args[2:]
+                
         mcp_manager.register_server(req.server_id, req.command, req.args, req.env)
         success = await mcp_manager.connect_server(req.server_id)
         if success:
@@ -87,7 +129,9 @@ async def get_chat_history(session_id: str):
 
 @app.get("/api/tools", response_model=List[Dict[str, Any]])
 async def get_tools():
-    return registry.get_all_tools_schema()
+    local_tools = registry.get_all_tools_schema()
+    mcp_tools = mcp_manager.get_all_tools_schema()
+    return local_tools + mcp_tools
 
 @app.post("/api/approve", response_model=ChatResponse)
 async def approve_tool_execution(req: ApprovalDecision):
@@ -109,26 +153,43 @@ async def approve_tool_execution(req: ApprovalDecision):
     if req.decision in ["approve", "always_allow"]:
         # Check if it's an MCP tool or a local tool
         is_mcp = False
-        tool_def = registry.get_tool(req.tool_name)
-        if "__" in req.tool_name and not tool_def:
+        tool_name = req.tool_name
+        tool_def = registry.get_tool(tool_name)
+        
+        if not tool_def:
             schemas = mcp_manager.get_all_tools_schema()
-            if any(t["name"] == req.tool_name for t in schemas):
-                is_mcp = True
+            normalized_target = tool_name.replace("-", "_")
+            for t in schemas:
+                normalized_schema_name = t["name"].replace("-", "_")
+                if normalized_schema_name == normalized_target or normalized_schema_name.endswith(f"__{normalized_target}"):
+                    is_mcp = True
+                    tool_name = t["name"]
+                    break
                 
         if is_mcp:
             # Execute MCP tool
-            parts = req.tool_name.split("__", 1)
+            parts = tool_name.split("__", 1)
             if len(parts) == 2:
                 server_id = parts[0]
                 actual_tool_name = parts[1]
                 
                 try:
                     result = await mcp_manager.call_tool(server_id, actual_tool_name, req.tool_args)
-                    result_text = f"✅ MCP 工具 {req.tool_name} 执行成功！结果：\n{result}"
+                    result_text = f"✅ MCP 工具 {tool_name} 执行成功！结果：\n{result}"
                     db.add_message(session_id=req.session_id, role="tool", content=result_text)
                     
+                    # Fetch recent chat history to remind the agent of the context
+                    recent_messages = db.get_messages(req.session_id)
+                    original_question = "用户之前的问题"
+                    if len(recent_messages) >= 2:
+                        # The last message is usually the tool call, the one before is the user's question
+                        for msg in reversed(recent_messages):
+                            if msg["role"] == "user":
+                                original_question = msg["content"]
+                                break
+
                     continuation_req = ChatRequest(
-                        text=f"MCP 工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
+                        text=f"【工具执行反馈】\n刚才你调用的 MCP 工具 `{tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>",
                         context=None,
                         session_id=req.session_id,
                         agent_id=req.agent_id
@@ -138,7 +199,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     error_text = f"❌ MCP 工具执行失败: {str(e)}"
                     db.add_message(session_id=req.session_id, role="tool", content=error_text)
                     continuation_req = ChatRequest(
-                        text=f"MCP 工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
+                        text=f"MCP 工具 {tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
                         context=None,
                         session_id=req.session_id,
                         agent_id=req.agent_id
@@ -156,8 +217,16 @@ async def approve_tool_execution(req: ApprovalDecision):
                 db.add_message(session_id=req.session_id, role="tool", content=result_text)
                 
                 # --- AUTO CONTINUATION ---
+                recent_messages = db.get_messages(req.session_id)
+                original_question = "用户之前的问题"
+                if len(recent_messages) >= 2:
+                    for msg in reversed(recent_messages):
+                        if msg["role"] == "user":
+                            original_question = msg["content"]
+                            break
+
                 continuation_req = ChatRequest(
-                    text=f"工具 {req.tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。",
+                    text=f"【工具执行反馈】\n刚才你调用的工具 `{req.tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>",
                     context=None, # We don't need to resend tier1 context for the continuation
                     session_id=req.session_id,
                     agent_id=req.agent_id # Pass through the original agent
@@ -187,6 +256,21 @@ async def approve_tool_execution(req: ApprovalDecision):
         )
         return await chat_endpoint(continuation_req)
 
+class ChatCancelRequest(BaseModel):
+    session_id: str
+
+@app.post("/api/chat/cancel")
+async def cancel_chat(req: ChatCancelRequest):
+    """Cancel a running chat request for a specific session."""
+    try:
+        success = agent_client.cancel(req.session_id)
+        if success:
+            db.add_message(session_id=req.session_id, role="system", content="用户已手动终止对话生成。")
+            return {"status": "success", "message": "Chat cancelled"}
+        return {"status": "ignored", "message": "No active chat found to cancel"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     # DB: Record the user's message
@@ -196,25 +280,38 @@ async def chat_endpoint(req: ChatRequest):
     prompt = req.text
     
     # Generate Tool Schema instructions
+    # We must combine local tools AND MCP tools
     tool_schemas = registry.get_all_tools_schema()
-    schema_str = "【系统可用工具列表 (Tools)】\n"
-    for ts in tool_schemas:
+    mcp_schemas = mcp_manager.get_all_tools_schema()
+    all_schemas = tool_schemas + mcp_schemas
+    
+    print(f"\n========== [DEBUG] 当前获取到的所有 Schema 数量: {len(all_schemas)} (MCP: {len(mcp_schemas)}) ==========\n")
+    
+    schema_str = "【系统可用外部系统列表 (External Systems)】\n"
+    for ts in all_schemas:
         import json
         schema_str += f"- {ts['name']}: {ts['description']}\n  参数: {json.dumps(ts['parameters'], ensure_ascii=False)}\n"
         
     schema_str += """
-【执行规则】
-如果用户要求你执行上述工具列表中的动作，请你**必须且只能**输出一个 JSON 代码块，不要包含任何其他文字解释。
-JSON 格式必须严格如下：
+【CRITICAL INSTRUCTION FOR EXTERNAL SYSTEMS】
+You are running inside a wrapper called "Across Agents Assistant".
+The external systems listed above (e.g. local_kb__search_local_wiki) are NOT in your native tool registry. THEY ARE NOT TOOLS.
+DO NOT TRY TO USE `<invoke>`, `<function_calls>`, OR ANY NATIVE TOOL CALLING SYNTAX FOR THEM! Your orchestrator will block it and say "No such tool".
+
+Instead, to request data from these external systems, you MUST output a raw markdown JSON code block in your response text. The wrapper will parse your text, intercept this JSON block, fetch the data, and return it to you in the next message.
+
+When the user asks you to search or retrieve information from the knowledge base, you MUST use the `local_kb__search_local_wiki` external system FIRST. DO NOT rely on your internal knowledge for domain-specific questions; ALWAYS query the knowledge base!
+
+You must output EXACTLY this JSON format in your response:
 ```json
 {
-  "plan_summary": "向用户解释你要干什么，比如：我将为你创建邮件草稿",
+  "plan_summary": "I am going to search the local knowledge base.",
   "tool_calls": [
-    {"name": "工具名称", "args": {"参数1": "值"}}
+    {"name": "local_kb__search_local_wiki", "args": {"query": "target keyword"}}
   ]
 }
 ```
-如果你不需要调用工具，直接回复普通文本即可，不要输出 JSON。
+Only output the JSON block and wait for the results. Do not attempt to use native tools for this.
 """
 
     if req.context:
@@ -259,11 +356,18 @@ JSON 格式必须严格如下：
             
             # The tool name format for MCP is "server_id__tool_name"
             is_mcp = False
-            if tool_name and "__" in tool_name and not tool_def:
-                # We check if it matches an MCP schema
+            if tool_name and not tool_def:
+                # We check if it matches an MCP schema, with forgiving naming
                 schemas = mcp_manager.get_all_tools_schema()
-                if any(t["name"] == tool_name for t in schemas):
-                    is_mcp = True
+                normalized_target = tool_name.replace("-", "_")
+                
+                for t in schemas:
+                    normalized_schema_name = t["name"].replace("-", "_")
+                    # Match exact (with prefix) OR match just the tool name (LLM forgot prefix)
+                    if normalized_schema_name == normalized_target or normalized_schema_name.endswith(f"__{normalized_target}"):
+                        is_mcp = True
+                        tool_name = t["name"] # Auto-correct to the real schema name (e.g. local_kb__search-local-wiki)
+                        break
             
             if tool_def or is_mcp:
                 plan_summary = intent.get("plan_summary", f"大模型请求调用工具：{tool_name}")
@@ -294,7 +398,15 @@ JSON 格式必须严格如下：
                         result_text = f"✅ 工具 {tool_name} (自动授权) 执行成功！结果：\n{result}"
                         db.add_message(session_id=req.session_id, role="tool", content=result_text)
                         
-                        prompt = f"工具 {tool_name} 已执行，结果如下：\n{result}\n请基于此结果继续回答用户的问题。"
+                        recent_messages = db.get_messages(req.session_id)
+                        original_question = "用户之前的问题"
+                        if len(recent_messages) >= 2:
+                            for msg in reversed(recent_messages):
+                                if msg["role"] == "user":
+                                    original_question = msg["content"]
+                                    break
+                                    
+                        prompt = f"【工具执行反馈】\n刚才你调用的工具 `{tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>"
                         continue
                         
                     except Exception as e:

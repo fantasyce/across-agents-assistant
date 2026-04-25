@@ -60,13 +60,16 @@ pip install -r requirements.txt
 
 ### 3. 本地运行
 
-```bash
-# 以 GUI 模式运行主程序
-python3 main.py run
+本项目后端是一个 FastAPI API Server，运行在 `127.0.0.1:8000`。
 
-# 仅运行配置界面
-python3 main.py ui
+```bash
+cd backend
+source .venv/bin/activate  # 激活虚拟环境（如使用）
+pip install -r requirements.txt
+python3 main.py
 ```
+
+这将启动 API Server。前端（macOS Client）是独立的 Swift 应用，通常通过 DMG 安装后运行。
 
 ### 4. 打包为 macOS 应用 (.app / .dmg)
 

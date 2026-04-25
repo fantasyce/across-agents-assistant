@@ -196,7 +196,10 @@ class CustomTextView: NSTextView {
         }
         layoutManager.ensureLayout(for: textContainer)
         let size = layoutManager.usedRect(for: textContainer).size
-        let height = min(max(size.height, 16), 80) // 1 to ~5 lines
+        // Ensure a stable minimum height so it doesn't jump slightly on first character
+        // For size 13 font, the empty height is often 0 or very small, and 1 line is ~16
+        // Setting min height to 18 provides a stable buffer
+        let height = min(max(ceil(size.height), 18), 80) // 1 to ~5 lines
         return NSSize(width: NSView.noIntrinsicMetric, height: height)
     }
     
@@ -206,6 +209,12 @@ class CustomTextView: NSTextView {
     }
     
     override func keyDown(with event: NSEvent) {
+        // Handle IME confirmation (Marked Text)
+        if self.hasMarkedText() {
+            super.keyDown(with: event)
+            return
+        }
+        
         // Enter key (36)
         if event.keyCode == 36 {
             if event.modifierFlags.contains(.shift) {

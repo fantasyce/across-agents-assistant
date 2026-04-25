@@ -125,9 +125,17 @@ struct MCPCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 28, alignment: .topLeading)
             
+            if plugin.status == "error", let errorMsg = plugin.errorMessage {
+                Text(errorMsg)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red.opacity(0.8))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            
             if plugin.isBuiltIn {
                 HStack(spacing: 6) {
-                    TextField("尚未配置", text: Binding(
+                    TextField(plugin.id == "external_rag" ? "填写 API Endpoint URL" : "尚未配置路径", text: Binding(
                         get: { plugin.args.last ?? "" },
                         set: { newValue in
                             var newArgs = plugin.args
@@ -146,21 +154,23 @@ struct MCPCardView: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(4)
-                    .disabled(true)
+                    .disabled(plugin.id != "external_rag") // Only external_rag allows direct text editing for now
                     
-                    Button(action: openFilePicker) {
-                        Text("浏览")
-                            .font(.system(size: 11))
-                            .foregroundColor(textColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.black.opacity(isHoveringBrowse ? 0.1 : 0.05))
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        withAnimation(.easeInOut(duration: 0.1)) {
-                            isHoveringBrowse = hovering
+                    if plugin.id != "external_rag" {
+                        Button(action: openFilePicker) {
+                            Text("浏览")
+                                .font(.system(size: 11))
+                                .foregroundColor(textColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(isHoveringBrowse ? 0.1 : 0.05))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            withAnimation(.easeInOut(duration: 0.1)) {
+                                isHoveringBrowse = hovering
+                            }
                         }
                     }
                 }
@@ -180,6 +190,8 @@ struct MCPCardView: View {
     }
     
     private func iconName(for id: String) -> String {
+        if id == "local_kb" { return "macwindow" }
+        if id == "external_rag" { return "cloud.fill" }
         if id == "sqlite" { return "externaldrive.fill" }
         if id == "filesystem" { return "folder.fill" }
         return "puzzlepiece.fill"
@@ -211,7 +223,7 @@ struct MCPCardView: View {
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
             panel.allowedContentTypes = [.data] // Allow .db, .sqlite etc.
-        } else if plugin.id == "filesystem" {
+        } else if plugin.id == "filesystem" || plugin.id == "local_kb" {
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
         }

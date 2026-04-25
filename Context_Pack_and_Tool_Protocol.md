@@ -51,75 +51,29 @@ MVP 建议统一使用以下顶层对象：
 
 ## 5. ContextPack
 ### 5.1 说明
-表示一次任务使用的全部上下文信息，是 Planner 和审批层的主要输入。
+表示一次任务使用的全部上下文信息。
 
-### 5.2 示例
+**实际实现**（`api_server.py` 中的 `ContextPack` 类）只有 3 个字段：
+
 ```json
 {
-  "version": "1.0",
-  "request_id": "0d630e9e-cf5a-4eb0-9eb8-d6dd7d2dbe1b",
-  "user_input": "帮我总结当前页面并起草一封跟进邮件",
-  "trigger": {
-    "type": "shortcut",
-    "timestamp": "2026-04-21T10:00:00Z"
-  },
-  "app_context": {
-    "frontmost_app": "Google Chrome",
-    "window_title": "客户周报 - Notion",
-    "browser_url": "https://example.com",
-    "selected_text": null,
-    "file_path": null,
-    "cursor_position": null
-  },
-  "device_context": {
-    "clipboard_text": "客户重点关注价格与交付周期",
-    "locale": "zh-CN",
-    "timezone": "Asia/Shanghai"
-  },
-  "screen_context": {
-    "enabled": false,
-    "screenshot_id": null,
-    "ocr_text": null
-  },
-  "policy_context": {
-    "approval_mode": "strict",
-    "allowed_tools": [
-      "read_clipboard",
-      "create_email_draft"
-    ]
-  },
-  "context_sources": [
-    {
-      "name": "frontmost_app",
-      "tier": 1,
-      "sensitive": false
-    },
-    {
-      "name": "clipboard_text",
-      "tier": 1,
-      "sensitive": true
-    }
-  ]
+  "frontmost_app": "Google Chrome",
+  "window_title": "客户方案 - Notion",
+  "clipboard_text": "客户关注交付时间和价格"
 }
 ```
 
-### 5.3 字段定义
+### 5.2 字段定义
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| version | string | 是 | 协议版本 |
-| request_id | string | 是 | 请求 ID |
-| user_input | string | 是 | 用户输入 |
-| trigger | object | 是 | 触发元数据 |
-| app_context | object | 是 | 应用与窗口相关上下文 |
-| device_context | object | 是 | 设备和剪贴板等上下文 |
-| screen_context | object | 是 | 截图与 OCR 信息 |
-| policy_context | object | 是 | 当前策略上下文 |
-| context_sources | array | 是 | 本次使用的上下文来源摘要 |
+| frontmost_app | string | 否 | 前台应用名 |
+| window_title | string | 否 | 窗口标题 |
+| clipboard_text | string | 否 | 剪贴板文本 |
 
-### 5.4 分层原则
-- Tier 1：默认快速采集，可优先进入 Planner。
-- Tier 2：按应用适配采集，仅在需要时获取。
-- Tier 3：截图和 OCR 等重型上下文，仅按需或经用户允许后采集。
+### 5.3 分层原则
+- Tier 1：默认快速采集（frontmost_app, window_title, clipboard_text）
+- Tier 2：按应用适配采集（通过工具如 `get_finder_context`、`get_xcode_context`）
+- Tier 3：截图和 OCR 等重型上下文（**未实现**）
 
 ## 6. PlannerResponse
 ### 6.1 说明
@@ -209,115 +163,120 @@ MVP 建议统一使用以下顶层对象：
 
 ## 8. ToolCallIntent
 ### 8.1 说明
-表示一次准备执行的具体工具调用，是 Planner 和执行层之间的中间对象。
+表示一次准备执行的具体工具调用。
 
-### 8.2 示例
+**注意**：实际代码中，LLM 不使用原生 tool calling，而是输出 JSON 格式的 markdown 代码块。
+
+### 8.2 LLM 调用方式
+实际实现（`api_server.py`）要求 LLM 输出 markdown JSON 代码块：
+
 ```json
 {
-  "tool_name": "write_workspace_file",
-  "arguments": {
-    "path": "notes/customer_followup.md",
-    "content": "# 客户跟进\n\n- 待确认交付时间"
-  },
-  "reason": "将生成的跟进要点保存到当前工作区",
-  "risk_level": "L2"
+  "plan_summary": "我将搜索本地知识库",
+  "tool_calls": [
+    {"name": "local_kb__search_local_wiki", "args": {"query": "目标关键词"}}
+  ]
+}
+```
+
+Prompt 中的关键指示：
+```
+You MUST output a raw markdown JSON code block in your response text...
+DO NOT TRY TO USE `<invoke>`, `<function_calls>`, OR ANY NATIVE TOOL CALLING SYNTAX FOR THEM!
+```
+
+### 8.3 Intent 解析
+`intent_parser.py` 中的 `ToolIntentParser.parse_intent()` 使用正则表达式解析：
+```python
+json_pattern = re.compile(r'```json\s*(\{.*?\})\s*```', re.DOTALL)
+match = json_pattern.search(llm_output)
+```
+
+### 8.4 ToolDescriptor 示例
+```json
+{
+  "name": "list_directory",
+  "risk_level": "low",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "目录路径"}
+    },
+    "required": ["path"]
+  }
 }
 ```
 
 ## 9. ApprovalRequest
 ### 9.1 说明
-表示一次需要用户决策的审批请求，是审批 UI 的直接输入。
+表示一次需要用户决策的审批请求。
 
-### 9.2 示例
+**实际实现**（`api_server.py` 中 `ChatResponse.approval_request`）只有 4 个字段：
+
 ```json
 {
-  "version": "1.0",
-  "request_id": "0d630e9e-cf5a-4eb0-9eb8-d6dd7d2dbe1b",
-  "user_goal": "帮我跟进客户邮件",
-  "plan_summary": "创建邮件草稿，不会直接发送",
-  "risk_level": "L2",
-  "read_set": [
-    "window_title",
-    "clipboard_text"
-  ],
-  "write_target": [
-    "mail_draft"
-  ],
-  "tool_calls": [
-    {
-      "tool_name": "create_email_draft",
-      "arguments": {
-        "subject": "项目进展同步",
-        "body": "..."
-      }
-    }
-  ],
-  "approval_options": [
-    "approve_once",
-    "reject",
-    "convert_to_draft",
-    "cancel"
-  ]
-}
-```
-
-## 10. ToolExecutionResult
-### 10.1 说明
-表示一个工具调用的执行结果，供 UI、日志和后续模型追问使用。
-
-### 10.2 示例
-```json
-{
-  "version": "1.0",
-  "request_id": "0d630e9e-cf5a-4eb0-9eb8-d6dd7d2dbe1b",
   "tool_name": "create_email_draft",
-  "status": "success",
-  "duration_ms": 1320,
-  "result": {
-    "draft_id": "mail-draft-123",
-    "subject": "项目进展同步"
+  "risk_level": "medium",
+  "tool_args": {
+    "recipient": "example@email.com",
+    "subject": "下周会议确认",
+    "body": "..."
   },
-  "error": null
+  "description": "Create an email draft in the macOS Mail app."
 }
 ```
 
-### 10.3 状态定义
-- `success`
-- `failed`
-- `timeout`
-- `permission_denied`
-- `rejected`
-- `cancelled`
+### 9.2 字段定义
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| tool_name | string | 是 | 工具名称 |
+| risk_level | string | 是 | 风险等级（"low" / "medium"） |
+| tool_args | object | 是 | 工具参数 |
+| description | string | 是 | 工具描述 |
 
-## 11. TaskRecord
-### 11.1 说明
-表示一次任务的审计记录，用于历史查看和问题排查。
+### 9.3 用户可选动作
+实际支持：`approve`, `reject`, `always_allow`
 
-### 11.2 建议字段
+**注意**：`approve_once`、`convert_to_draft`、`cancel` 选项当前未实现。
+
+## 10. ApprovalDecision
+### 10.1 说明
+表示用户对审批请求的决策。
+
+**实际实现**（`api_server.py` 中的 `ApprovalDecision` 类）：
+
 ```json
 {
-  "version": "1.0",
-  "request_id": "0d630e9e-cf5a-4eb0-9eb8-d6dd7d2dbe1b",
   "session_id": "session-001",
-  "status": "completed",
-  "input_mode": "voice",
-  "user_input_summary": "总结页面并创建跟进邮件草稿",
-  "context_source_names": [
-    "frontmost_app",
-    "window_title",
-    "clipboard_text"
-  ],
-  "risk_level": "L2",
-  "approval_decision": "approve_once",
-  "tool_names": [
-    "create_email_draft"
-  ],
-  "started_at": "2026-04-21T10:00:00Z",
-  "ended_at": "2026-04-21T10:00:04Z"
+  "decision": "approve",
+  "tool_name": "create_email_draft",
+  "tool_args": {...},
+  "agent_id": "openclaw"
 }
 ```
 
-## 12. 错误对象
+### 10.2 字段定义
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| session_id | string | 是 | 会话 ID |
+| decision | string | 是 | 决策：`approve`, `reject`, `always_allow` |
+| tool_name | string | 是 | 工具名称 |
+| tool_args | object | 是 | 工具参数 |
+| agent_id | string | 是 | Agent ID（默认 "openclaw"） |
+
+### 10.3 决策处理
+- `approve`：执行一次工具调用
+- `reject`：拒绝执行，终止任务
+- `always_allow`：将工具加入"始终允许"列表，下次自动执行
+
+### 10.4 数据库中的审计表
+`db/database.py` 中实际有以下表：
+- `sessions`：会话记录
+- `messages`：消息记录（role: user/assistant/tool）
+- `audit_logs`：审批决策日志
+- `tool_authorizations`：工具"始终允许"配置
+
+**注意**：`TaskRecord` 表当前不存在。
 ### 12.1 建议结构
 ```json
 {

@@ -21,43 +21,38 @@
 
 ## 4. 主状态机
 ### 4.1 会话主状态
-MVP 推荐使用以下主状态：
-- `Idle`
-- `CapturingInput`
-- `Transcribing`
-- `CollectingContext`
-- `Planning`
-- `WaitingForApproval`
-- `Executing`
-- `Completed`
-- `Failed`
-- `PermissionBlocked`
-- `Cancelled`
+**实际实现**：代码中并未使用完整状态机，而是通过 threading Events 管理状态。
 
-### 4.2 状态转移图
+`app.py` 中的状态管理：
+- `_voice_mode_enabled`：语音模式是否启用
+- `_continuous_mode`：连续对话模式是否启用
+- `_hotkey_interrupt`：热键中断事件（用于中断整个对话循环）
+- `_tts_interrupt`：TTS 打断事件
+- `_silent_mode`：静音模式
+- `_manual_listen`：手动触发单次对话
+
+状态流转通过 Events 的 set/clear 组合实现，而非显式状态机。
+
+### 4.2 状态说明
+| 状态 | 类型 | 说明 |
+|------|------|------|
+| Idle | - | 默认状态，voice_mode 和 continuous_mode 均未设置 |
+| 连续对话中 | Event: _continuous_mode.is_set() | 用户启用了连续对话模式 |
+| 语音模式 | Event: _voice_mode_enabled.is_set() | 用户启用了语音输入 |
+| TTS 播报中 | Event: _tts_interrupt | TTS 正在播报，可被打断 |
+| 等待审批 | 实际由 API 层处理 | 工具需要用户审批 |
+
+### 4.3 状态转移图（简化版）
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> CapturingInput: 用户触发
-    CapturingInput --> Transcribing: 语音输入结束
-    CapturingInput --> CollectingContext: 文本输入提交
-    Transcribing --> CollectingContext: STT 完成
-    CollectingContext --> Planning: ContextPack 完成
-    CollectingContext --> PermissionBlocked: 权限缺失
-    Planning --> Completed: 纯回复任务
-    Planning --> WaitingForApproval: 需要审批
-    Planning --> Executing: 无需审批且可执行
-    Planning --> Failed: 模型失败/解析失败
-    WaitingForApproval --> Executing: 用户同意
-    WaitingForApproval --> Cancelled: 用户取消
-    WaitingForApproval --> Completed: 用户改为草稿文本方案
-    WaitingForApproval --> Failed: 审批流程异常
-    Executing --> Completed: 执行成功
-    Executing --> Failed: 工具失败
-    PermissionBlocked --> Idle: 用户放弃或降级
-    Completed --> Idle: 用户关闭或开始新任务
-    Failed --> Idle: 用户确认
-    Cancelled --> Idle: 返回空闲
+    Idle --> VoiceMode: 用户启用语音模式
+    Idle --> ContinuousMode: 用户启用连续对话
+    VoiceMode --> Idle: 用户关闭语音模式
+    ContinuousMode --> Idle: 用户关闭或说"再见"
+    ContinuousMode --> Executing: 用户输入
+    Executing --> ContinuousMode: 回复完成，继续等待
+    Executing --> Idle: 说"再见"退出
 ```
 
 ## 5. 标准交互流程
@@ -138,14 +133,14 @@ stateDiagram-v2
 - 可选动作
 
 ### 8.3 审批结果处理
-- `approve_once`
-  - 进入执行状态。
+- `approve`
+  - 执行工具调用。
 - `reject`
-  - 停止执行并进入 `Cancelled` 或 `Completed`，同时给出替代建议。
-- `convert_to_draft`
-  - 不执行业务动作，仅返回草稿文本或草稿对象。
-- `cancel`
-  - 终止整个任务。
+  - 停止执行，给出替代建议（如只生成文本建议）。
+- `always_allow`
+  - 执行工具，并将该工具加入"始终允许"列表，下次自动执行。
+
+**注意**：`convert_to_draft` 和 `cancel` 选项当前未实现。
 
 ## 9. 执行流程
 ### 9.1 只读执行

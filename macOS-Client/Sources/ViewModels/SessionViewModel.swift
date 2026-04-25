@@ -60,6 +60,7 @@ struct FileItemModel: Identifiable, Equatable {
 class SessionViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isProcessing: Bool = false
+    private var currentChatTask: URLSessionDataTask?
     @Published var pendingApproval: ApprovalRequest? = nil
     @Published var showPermissionAlert: Bool = false
     @Published var showMCPPreferences: Bool = false
@@ -383,7 +384,7 @@ class SessionViewModel: ObservableObject {
     private func addGreeting() {
         DispatchQueue.main.async {
             self.messages.append(Message(
-                content: "Hello! I'm your Across Agents Copilot. Press Cmd+Option+Space anytime to chat with me.",
+                content: "Hello! I'm your Across Agents Copilot. Press Option+Tab anytime to chat with me.",
                 isUser: false
             ))
         }
@@ -454,6 +455,7 @@ class SessionViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 300 // 5 minutes timeout for slow LLM generations
         
         do {
             request.httpBody = try JSONEncoder().encode(req)
@@ -463,9 +465,17 @@ class SessionViewModel: ObservableObject {
         }
         
         // 3. Send HTTP Request
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        currentChatTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
+                // If it was cancelled intentionally, don't show an error
+                if let nsError = error as NSError?, nsError.code == NSURLErrorCancelled {
+                    self?.isProcessing = false
+                    self?.currentChatTask = nil
+                    return
+                }
+                
                 self?.isProcessing = false
+                self?.currentChatTask = nil
                 
                 if let error = error {
                     self?.addError("网络错误: \(error.localizedDescription)")
@@ -480,38 +490,57 @@ class SessionViewModel: ObservableObject {
                 do {
                     let chatResp = try JSONDecoder().decode(ChatResponse.self, from: data)
                     
-                    DispatchQueue.main.async {
-                        if let sessionId = chatResp.session_id {
-                            self?.currentSessionId = sessionId
-                        }
+                    if let sessionId = chatResp.session_id {
+                        self?.currentSessionId = sessionId
+                    }
+                    
+                    if chatResp.requires_approval == true, let request = chatResp.approval_request {
+                        self?.pendingApproval = request
+                    } else {
+                        self?.messages.append(Message(
+                            content: chatResp.text,
+                            isUser: false,
+                            attachedFiles: []
+                        ))
                         
-                        // Use the correct text property from chatResp
-                        let botMsg = Message(content: chatResp.text, isUser: false)
-                        self?.messages.append(botMsg)
-                        
-                        // Trigger Native TTS
+                        // Play Native TTS if not muted
                         if self?.isMuted == false {
                             TTSEngine.shared.speak(chatResp.text)
                         }
-                        
-                        // Handle Phase 3: Security Approval Flow
-                        if chatResp.requires_approval == true, let request = chatResp.approval_request {
-                            self?.pendingApproval = request
-                        } else {
-                            // If the user only has default voices, show a gentle tip in the UI once
-                            if !TTSEngine.shared.hasHighQualityVoice && self?.messages.filter({ !$0.isUser }).count == 2 {
-                                let tipMsg = Message(content: "💡 提示：为了让我说话更自然，请在 Mac 的「系统设置 -> 辅助功能 -> 朗读内容 -> 管理声音」中下载【Tingting(增强/高级)】或【Siri】的中文语音包哦~", isUser: false)
-                                self?.messages.append(tipMsg)
-                            }
-                        }
                     }
                 } catch {
-                    DispatchQueue.main.async {
-                        self?.addError("解析失败: \(error.localizedDescription)\n返回数据: \(String(data: data, encoding: .utf8) ?? "")")
-                    }
+                    self?.addError("解析响应失败: \(error.localizedDescription)")
                 }
             }
-        }.resume()
+        }
+        
+        isProcessing = true
+        currentChatTask?.resume()
+    }
+    
+    func cancelGeneration() {
+        guard isProcessing else { return }
+        
+        // 1. Cancel the local URLSession request
+        currentChatTask?.cancel()
+        currentChatTask = nil
+        isProcessing = false
+        
+        // 2. Add a visual indication to the UI
+        let cancelMsg = Message(content: "已停止生成", isUser: false, attachedFiles: [])
+        messages.append(cancelMsg)
+        
+        // 3. Send the cancel signal to the backend
+        guard let url = URL(string: "http://127.0.0.1:8000/api/chat/cancel") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: String] = ["session_id": currentSessionId]
+        
+        if let body = try? JSONEncoder().encode(payload) {
+            request.httpBody = body
+            URLSession.shared.dataTask(with: request).resume() // Fire and forget
+        }
     }
     
     func navigateHistory(up: Bool) {
@@ -584,6 +613,7 @@ class SessionViewModel: ObservableObject {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.timeoutInterval = 300 // 5 minutes timeout for slow LLM generations
         
         do {
             urlRequest.httpBody = try JSONEncoder().encode(decisionReq)
@@ -616,6 +646,7 @@ class SessionViewModel: ObservableObject {
                         
                         let botMsg = Message(content: chatResp.text, isUser: false)
                         self.messages.append(botMsg)
+                        
                         if !self.isMuted {
                             TTSEngine.shared.speak(chatResp.text)
                         }
@@ -629,9 +660,60 @@ class SessionViewModel: ObservableObject {
         }.resume()
     }
     
-    private func addError(_ text: String) {
+    private func addError(_ message: String) {
         isProcessing = false
-        messages.append(Message(content: "⚠️ " + text, isUser: false))
+        messages.append(Message(
+            content: "⚠️ \(message)",
+            isUser: false,
+            attachedFiles: []
+        ))
+    }
+    
+    func copyFullConversation() {
+        let maxCharacters = 100000 // 100k characters limit
+        var copiedText = ""
+        var currentLength = 0
+        var isTruncated = false
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        
+        // Reverse iterate to prioritize latest messages
+        for msg in messages.reversed() {
+            let role = msg.isUser ? "User" : "Agent"
+            let timeStr = dateFormatter.string(from: msg.timestamp)
+            var msgStr = "[\(timeStr)] \(role):\n\(msg.content)\n\n"
+            
+            if !msg.attachedFiles.isEmpty {
+                let fileNames = msg.attachedFiles.map { $0.name }.joined(separator: ", ")
+                msgStr += "📎 附件: \(fileNames)\n\n"
+            }
+            
+            if currentLength + msgStr.count > maxCharacters {
+                isTruncated = true
+                break
+            }
+            
+            // Prepend because we are iterating backwards
+            copiedText = msgStr + copiedText
+            currentLength += msgStr.count
+        }
+        
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(copiedText, forType: .string)
+        
+        if isTruncated {
+            // Optional: You can also show an NSAlert here or rely on a toast UI
+            let alert = NSAlert()
+            alert.messageText = "对话已复制"
+            alert.informativeText = "对话内容已复制到剪贴板，但由于内容过长，早期的对话可能已被截断（最多保留约10万字符，优先保留最新内容）。"
+            alert.alertStyle = .warning
+            alert.runModal()
+        } else {
+            // Show a simple success feedback if possible
+            // Let's just do a small non-blocking notification or nothing
+        }
     }
     
     func openAccessibilitySettings() {

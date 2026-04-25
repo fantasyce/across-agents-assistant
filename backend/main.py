@@ -4,6 +4,19 @@ import time
 import signal
 import threading
 import multiprocessing
+
+if len(sys.argv) > 2 and sys.argv[1] == "mcp":
+    if sys.argv[2] == "local_kb":
+        from across_agents_assistant.mcp_servers import local_kb
+        sys.argv = [sys.argv[0]] + sys.argv[3:]
+        local_kb.main()
+        sys.exit(0)
+    elif sys.argv[2] == "external_rag":
+        from across_agents_assistant.mcp_servers import external_rag
+        sys.argv = [sys.argv[0]] + sys.argv[3:]
+        external_rag.main()
+        sys.exit(0)
+
 from across_agents_assistant.api_server import start_api_server
 
 def watch_parent():
