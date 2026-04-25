@@ -161,6 +161,39 @@ class TaskState:
             task.updated_at = time.time()
             return True
 
+    def cancel_job(self, job_id: str, error: Optional[str] = None) -> Optional[JobResult]:
+        """Cancel a specific job and return the result."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            if job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
+                return None
+
+            job.status = JobStatus.CANCELLED
+            job.completed_at = time.time()
+            job.error = error or "Cancelled by user"
+            job.progress = 0.0
+
+            # Update subtask status
+            for task in self._tasks.values():
+                for st in task.subtasks:
+                    if st.subtask_id == job.subtask_id:
+                        st.status = JobStatus.CANCELLED
+                        st.progress = 0.0
+
+            duration = None
+            if job.started_at and job.completed_at:
+                duration = job.completed_at - job.started_at
+
+            return JobResult(
+                job_id=job_id,
+                success=False,
+                output=None,
+                error=job.error,
+                duration_sec=duration
+            )
+
     def get_ready_subtasks(self, task_id: str) -> List[SubTask]:
         """Get subtasks that are ready to run (pending and dependencies satisfied)."""
         with self._lock:
