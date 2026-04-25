@@ -5,6 +5,8 @@ import time
 from typing import Dict, List, Optional, Callable
 
 from ..openclaw.client import UniversalAgentClient
+from ..agent_bridge.bridge import AgentBridge
+from ..agent_bridge.result import SubtaskResult, ResultStatus
 from .models import Job, JobStatus, SubTask, Task, JobResult, ProgressUpdate
 from .state import TaskState
 
@@ -20,6 +22,8 @@ class TaskDispatcher:
     def __init__(self, state: TaskState, openclaw_client: UniversalAgentClient):
         self._state = state
         self._openclaw = openclaw_client
+        # Use AgentBridge for agent communication
+        self._agent_bridge = AgentBridge(openclaw_client)
         self._job_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
         self._progress_callbacks: List[Callable[[ProgressUpdate], None]] = []
@@ -79,18 +83,20 @@ class TaskDispatcher:
             self._state.update_job_progress(job.job_id, 0.1, f"Connecting to {target_agent} agent...")
             self._notify_progress(job.job_id, JobStatus.RUNNING, 0.1, "Connecting...")
 
-            response = self._openclaw.send(
+            response = self._agent_bridge.invoke(
+                agent_id=target_agent,
                 message=subtask.description,
-                session_id=None,
-                use_current=True,
-                target_agent=target_agent
+                context={},
+                timeout=120.0
             )
 
             self._state.update_job_progress(job.job_id, 0.9, "Processing response...")
             self._notify_progress(job.job_id, JobStatus.RUNNING, 0.9, "Processing...")
 
-            output = response.text if response and response.text else ""
-            return JobResult(job_id=job.job_id, success=True, output=output)
+            if response.is_success:
+                return JobResult(job_id=job.job_id, success=True, output=response.output)
+            else:
+                return JobResult(job_id=job.job_id, success=False, error=response.error)
 
         except Exception as e:
             return JobResult(job_id=job.job_id, success=False, error=str(e))
