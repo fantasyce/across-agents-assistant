@@ -1,7 +1,7 @@
 import pytest
 from dataclasses import dataclass
 from across_agents_assistant.task_manager.models import (
-    JobStatus, TaskType, SubTask, Task, Job, JobResult
+    JobStatus, TaskType, SubTask, Task, Job, JobResult, ProgressUpdate
 )
 
 def test_job_status_enum():
@@ -9,12 +9,14 @@ def test_job_status_enum():
     assert JobStatus.RUNNING.value == "running"
     assert JobStatus.COMPLETED.value == "completed"
     assert JobStatus.FAILED.value == "failed"
+    assert JobStatus.CANCELLED.value == "cancelled"
 
 def test_task_type_enum():
     assert TaskType.RESEARCH.value == "research"
     assert TaskType.CODE_REVIEW.value == "code_review"
     assert TaskType.AUTOMATION.value == "automation"
     assert TaskType.SIMPLE_QA.value == "simple_qa"
+    assert TaskType.UNKNOWN.value == "unknown"
 
 def test_subtask_creation():
     st = SubTask(
@@ -55,3 +57,15 @@ def test_job_result():
         output="分析完成：项目结构良好"
     )
     assert result.success == True
+
+def test_progress_update():
+    update = ProgressUpdate(
+        job_id="job-1",
+        status=JobStatus.RUNNING,
+        progress=0.5,
+        log="Processing..."
+    )
+    assert update.job_id == "job-1"
+    assert update.status == JobStatus.RUNNING
+    assert update.progress == 0.5
+    assert update.log == "Processing..."
