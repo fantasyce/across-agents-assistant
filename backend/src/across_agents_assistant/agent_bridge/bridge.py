@@ -92,29 +92,26 @@ class AgentBridge:
         if not requests:
             return []
 
-        responses = [None] * len(requests)
+        responses = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(requests)) as executor:
             future_to_req_id = {
                 executor.submit(self.invoke, req.agent_id, req.message, req.context, req.timeout): req.request_id
                 for req in requests
             }
 
-            futures = [
-                executor.submit(self.invoke, req.agent_id, req.message, req.context, req.timeout)
-                for req in requests
-            ]
-
-            for idx, (future, req) in enumerate(zip(futures, requests)):
+            for future in future_to_req_id:
+                req_id = future_to_req_id[future]
                 try:
-                    responses[idx] = future.result(timeout=req.timeout)
+                    response = future.result()
                 except Exception as e:
-                    responses[idx] = AgentResponse(
+                    response = AgentResponse(
                         message_id=f"msg-{uuid.uuid4().hex[:8]}",
-                        request_id=req.request_id,
+                        request_id=req_id,
                         success=False,
                         error=str(e),
-                        agent_id=req.agent_id
+                        agent_id="unknown"
                     )
+                responses.append(response)
 
         return responses
 
