@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 class ResultStatus(str, Enum):
     PENDING = "pending"
@@ -35,7 +35,7 @@ class TaskResult:
     task_id: str
     subtask_results: List[SubtaskResult] = field(default_factory=list)
     total_subtasks: int = 0
-    metadata: Dict[str, any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def add_subtask_result(self, result: SubtaskResult) -> None:
         """Add a subtask result."""
