@@ -682,6 +682,34 @@ class TaskCreateResponse(BaseModel):
     can_handle_directly: bool
     direct_response: Optional[str]
     progress: float
+    created_at: float
+    updated_at: float
+
+def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
+    """Convert a Task to TaskInfo with its subtasks."""
+    from .task_manager.models import SubTask
+    return TaskInfo(
+        task_id=task.task_id,
+        description=task.description,
+        task_type=task.task_type.value,
+        subtasks=[
+            SubTaskInfo(
+                subtask_id=st.subtask_id,
+                description=st.description,
+                agent_id=st.agent_id,
+                priority=st.priority,
+                status=st.status.value,
+                progress=st.progress,
+                dependencies=st.dependencies
+            )
+            for st in task.subtasks
+        ],
+        can_handle_directly=task.can_handle_directly,
+        direct_response=task.direct_response,
+        progress=state.get_task_progress(task.task_id),
+        created_at=task.created_at,
+        updated_at=task.updated_at
+    )
 
 @app.post("/api/tasks", response_model=TaskCreateResponse)
 async def create_task(req: TaskCreateRequest):
@@ -694,28 +722,7 @@ async def create_task(req: TaskCreateRequest):
             context = req.context or {}
             await decomposer.decompose(task, context)
 
-        progress = _task_state.get_task_progress(task.task_id)
-
-        return TaskCreateResponse(
-            task_id=task.task_id,
-            description=task.description,
-            task_type=task.task_type.value,
-            subtasks=[
-                SubTaskInfo(
-                    subtask_id=st.subtask_id,
-                    description=st.description,
-                    agent_id=st.agent_id,
-                    priority=st.priority,
-                    status=st.status.value,
-                    progress=st.progress,
-                    dependencies=st.dependencies
-                )
-                for st in task.subtasks
-            ],
-            can_handle_directly=task.can_handle_directly,
-            direct_response=task.direct_response,
-            progress=progress
-        )
+        return _task_to_info(task, _task_state)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -789,30 +796,7 @@ async def get_task(task_id: str):
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        progress = _task_state.get_task_progress(task_id)
-
-        return TaskInfo(
-            task_id=task.task_id,
-            description=task.description,
-            task_type=task.task_type.value,
-            subtasks=[
-                SubTaskInfo(
-                    subtask_id=st.subtask_id,
-                    description=st.description,
-                    agent_id=st.agent_id,
-                    priority=st.priority,
-                    status=st.status.value,
-                    progress=st.progress,
-                    dependencies=st.dependencies
-                )
-                for st in task.subtasks
-            ],
-            can_handle_directly=task.can_handle_directly,
-            direct_response=task.direct_response,
-            progress=progress,
-            created_at=task.created_at,
-            updated_at=task.updated_at
-        )
+        return _task_to_info(task, _task_state)
     except HTTPException:
         raise
     except Exception as e:
@@ -823,31 +807,7 @@ async def list_tasks():
     """List all tasks."""
     try:
         tasks = _task_state.get_all_tasks()
-        return [
-            TaskInfo(
-                task_id=t.task_id,
-                description=t.description,
-                task_type=t.task_type.value,
-                subtasks=[
-                    SubTaskInfo(
-                        subtask_id=st.subtask_id,
-                        description=st.description,
-                        agent_id=st.agent_id,
-                        priority=st.priority,
-                        status=st.status.value,
-                        progress=st.progress,
-                        dependencies=st.dependencies
-                    )
-                    for st in t.subtasks
-                ],
-                can_handle_directly=t.can_handle_directly,
-                direct_response=t.direct_response,
-                progress=_task_state.get_task_progress(t.task_id),
-                created_at=t.created_at,
-                updated_at=t.updated_at
-            )
-            for t in tasks
-        ]
+        return [_task_to_info(t, _task_state) for t in tasks]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -878,6 +838,21 @@ async def get_job(task_id: str, job_id: str):
 async def cancel_job(task_id: str, job_id: str):
     """Cancel a running job."""
     try:
+        # Verify job belongs to task
+        job = _task_state.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Verify job belongs to this task
+        task = _task_state.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        # Check if subtask belongs to task
+        subtask_ids = [st.subtask_id for st in task.subtasks]
+        if job.subtask_id not in subtask_ids:
+            raise HTTPException(status_code=400, detail=f"Job {job_id} does not belong to task {task_id}")
+
         dispatcher = get_task_dispatcher()
         success = dispatcher.cancel_job(job_id)
         if not success:
