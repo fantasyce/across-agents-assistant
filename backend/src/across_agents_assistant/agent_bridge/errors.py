@@ -41,8 +41,10 @@ class AgentException(Exception):
             error_type = AgentError.UNAVAILABLE
         elif "cancelled" in msg.lower() or "cancel" in msg.lower():
             error_type = AgentError.CANCELLED
-        elif "invalid" in msg.lower() or "parse" in msg.lower():
+        elif "invalid" in msg.lower() or "parse" in msg.lower() or "malformed" in msg.lower():
             error_type = AgentError.INVALID_RESPONSE
+        elif "protocol" in msg.lower() or "schema" in msg.lower():
+            error_type = AgentError.PROTOCOL_ERROR
 
         return cls(
             error=error_type,
