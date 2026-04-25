@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 from across_agents_assistant.task_manager.task_decomposer import TaskDecomposer
@@ -70,3 +71,30 @@ def test_validate_agent():
     assert decomposer._validate_agent("claude") == "claude"
     assert decomposer._validate_agent("hermes") == "hermes"
     assert decomposer._validate_agent("unknown") == "openclaw"  # Default fallback
+
+def test_decompose_calls_llm(mock_gateway):
+    """Test that decompose() calls LLM and applies results to task."""
+    # Setup mock response
+    mock_response = LLMResponse(
+        text='{"task_type":"research","can_handle_directly":false,"subtasks":[{"description":"搜索信息","agent":"openclaw","priority":1}]}',
+        raw={},
+        model="MiniMax-Text-01",
+        provider="minimax",
+        finish_reason="stop"
+    )
+    mock_gateway.chat = AsyncMock(return_value=mock_response)
+
+    decomposer = TaskDecomposer(mock_gateway)
+    task = Task.new("帮我搜索信息")
+
+    result = asyncio.run(decomposer.decompose(task))
+
+    # Verify LLM was called
+    mock_gateway.chat.assert_called_once()
+
+    # Verify task was updated
+    assert result.task_type == TaskType.RESEARCH
+    assert result.can_handle_directly == False
+    assert len(result.subtasks) == 1
+    assert result.subtasks[0].description == "搜索信息"
+    assert result.subtasks[0].agent_id == "openclaw"

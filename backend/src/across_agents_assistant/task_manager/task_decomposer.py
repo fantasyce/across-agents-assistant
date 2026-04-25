@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import uuid
 from typing import Dict, Any, Optional
 
 from ..llm_gateway.gateway import LLMGateway
@@ -143,7 +144,7 @@ class TaskDecomposer:
             dependencies = st_data.get("dependencies", [])
 
             subtask = SubTask(
-                subtask_id=f"st-",  # Will be set properly in dispatch
+                subtask_id=f"st-{uuid.uuid4().hex[:8]}",
                 description=description,
                 agent_id=agent,
                 priority=priority,
