@@ -83,36 +83,37 @@ class ApprovalService:
         self._notify_callbacks(request)
         return request
 
-    def approve(self, request_id: str) -> bool:
-        """批准请求"""
+    def _get_pending_request_mutate_status(self, request_id: str, new_status: ApprovalStatus) -> Optional[ApprovalRequest]:
+        """Helper to get a pending request and update its status. Returns request on success, None on failure."""
         request = self._pending_requests.get(request_id)
         if not request:
             logger.warning(f"审批请求不存在: {request_id}")
-            return False
+            return None
 
         if request.status != ApprovalStatus.PENDING:
             logger.warning(f"请求状态不是 pending: {request_id} 状态={request.status}")
+            return None
+
+        request.status = new_status
+        del self._pending_requests[request_id]
+        return request
+
+    def approve(self, request_id: str) -> bool:
+        """批准请求"""
+        request = self._get_pending_request_mutate_status(request_id, ApprovalStatus.APPROVED)
+        if not request:
             return False
 
-        request.status = ApprovalStatus.APPROVED
-        del self._pending_requests[request_id]
         logger.info(f"批准审批请求: {request_id}")
         self._notify_callbacks(request)
         return True
 
     def reject(self, request_id: str) -> bool:
         """拒绝请求"""
-        request = self._pending_requests.get(request_id)
+        request = self._get_pending_request_mutate_status(request_id, ApprovalStatus.REJECTED)
         if not request:
-            logger.warning(f"审批请求不存在: {request_id}")
             return False
 
-        if request.status != ApprovalStatus.PENDING:
-            logger.warning(f"请求状态不是 pending: {request_id} 状态={request.status}")
-            return False
-
-        request.status = ApprovalStatus.REJECTED
-        del self._pending_requests[request_id]
         logger.info(f"拒绝审批请求: {request_id}")
         self._notify_callbacks(request)
         return True

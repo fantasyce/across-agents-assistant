@@ -69,3 +69,42 @@ def test_always_allow(service):
 def test_unknown_request_approve(service):
     result = service.approve("unknown-id")
     assert result == False
+
+def test_remove_always_allow(service):
+    service._always_allowed_tools.add("list_directory")
+    result = service.remove_always_allow("list_directory")
+    assert result == True
+    assert service.is_auto_approved("list_directory") == False
+
+def test_remove_always_allow_not_in_list(service):
+    result = service.remove_always_allow("nonexistent_tool")
+    assert result == False
+
+def test_get_always_allowed_tools(service):
+    service._always_allowed_tools.add("tool_a")
+    service._always_allowed_tools.add("tool_b")
+    tools = service.get_always_allowed_tools()
+    assert "tool_a" in tools
+    assert "tool_b" in tools
+
+def test_reject_unknown_request(service):
+    result = service.reject("unknown-id")
+    assert result == False
+
+def test_always_allow_non_pending_request(service):
+    req = service.create_approval_request(
+        task_id="task-1",
+        subtask_id="st-1",
+        agent_id="claude",
+        tool_name="list_directory",
+        tool_params={},
+        risk_level=RiskLevel.LOW,
+        description="查看目录"
+    )
+    # First approve it
+    service.approve(req.request_id)
+    # Now try to always_allow the same request (should fail since it's no longer pending)
+    result = service.always_allow(req.request_id)
+    assert result == False
+    # Verify tool was NOT added to always allowed list
+    assert service.is_auto_approved("list_directory") == False
