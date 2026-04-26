@@ -7,6 +7,10 @@ from typing import Dict, List, Optional, Callable
 from ..openclaw.client import UniversalAgentClient
 from ..agent_bridge.bridge import AgentBridge
 from ..agent_bridge.result import SubtaskResult, ResultStatus
+from ..approval.service import ApprovalService
+from ..approval.executor import ToolExecutor
+from ..approval.models import RiskLevel, ApprovalStatus
+from ..tools.tool_registry import registry
 from .models import Job, JobStatus, SubTask, Task, JobResult, ProgressUpdate
 from .state import TaskState
 
@@ -24,6 +28,9 @@ class TaskDispatcher:
         self._openclaw = openclaw_client
         # Use AgentBridge for agent communication
         self._agent_bridge = AgentBridge(openclaw_client)
+        # Approval service for tool execution control
+        self._approval_service = ApprovalService()
+        self._tool_executor = ToolExecutor(registry, self._approval_service)
         self._job_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
         self._progress_callbacks: List[Callable[[ProgressUpdate], None]] = []
@@ -132,3 +139,27 @@ class TaskDispatcher:
                 callback(update)
             except Exception as e:
                 logger.error(f"Progress callback error: {e}")
+
+    def get_pending_approvals(self) -> List:
+        """获取所有待审批请求"""
+        return self._approval_service.get_pending_requests()
+
+    def approve_request(self, request_id: str) -> bool:
+        """批准审批请求"""
+        return self._approval_service.approve(request_id)
+
+    def reject_request(self, request_id: str) -> bool:
+        """拒绝审批请求"""
+        return self._approval_service.reject(request_id)
+
+    def always_allow_tool(self, request_id: str) -> bool:
+        """始终允许工具"""
+        return self._approval_service.always_allow(request_id)
+
+    def add_approval_callback(self, callback) -> None:
+        """添加审批状态变化回调"""
+        self._approval_service.add_callback(callback)
+
+    def is_tool_auto_approved(self, tool_name: str) -> bool:
+        """检查工具是否自动批准"""
+        return self._approval_service.is_auto_approved(tool_name)
