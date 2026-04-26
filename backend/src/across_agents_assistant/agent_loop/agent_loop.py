@@ -1,9 +1,13 @@
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+import uuid
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from .config import LoopConfig, LoopResult
+
+if TYPE_CHECKING:
+    from backend.src.across_agents_assistant.persistence.audit_logger import AuditLogger
 
 logger = logging.getLogger("across_agents_assistant.agent_loop")
 
@@ -18,10 +22,18 @@ class ChatMessage:
 class AgentLoop:
     """Agent 推理循环"""
 
-    def __init__(self, llm_client: Any, tool_registry: Any, config: LoopConfig = None):
+    def __init__(
+        self,
+        llm_client: Any,
+        tool_registry: Any,
+        config: LoopConfig = None,
+        audit_logger: Optional["AuditLogger"] = None
+    ):
         self.llm = llm_client
         self.tools = tool_registry
         self.config = config or LoopConfig()
+        self._audit_logger = audit_logger
+        self._task_id = str(uuid.uuid4())[:8]
 
     async def run(self, user_message: str, context: Dict[str, Any] = None) -> LoopResult:
         """
@@ -85,6 +97,18 @@ class AgentLoop:
         """执行单个工具调用"""
         tool_name = tool_call.get('name')
         params = tool_call.get('arguments', {})
+
+        # Log tool call to audit logger if available
+        if self._audit_logger:
+            try:
+                self._audit_logger.log_tool_call(
+                    task_id=self._task_id,
+                    tool_name=tool_name,
+                    risk_level='medium',  # Default risk level for agent loop tools
+                    params=params
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log tool call: {e}")
 
         tool = self.tools.get_tool(tool_name) if self.tools else None
         if not tool:

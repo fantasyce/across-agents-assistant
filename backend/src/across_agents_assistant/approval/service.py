@@ -2,10 +2,12 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Dict, List, Set, Callable, Optional
-from dataclasses import dataclass, field
+from typing import Dict, List, Set, Callable, Optional, TYPE_CHECKING
 
 from .models import RiskLevel, ApprovalStatus, ApprovalRequest
+
+if TYPE_CHECKING:
+    from backend.src.across_agents_assistant.persistence.permissions import ToolPermissionStore
 
 logger = logging.getLogger("across_agents_assistant.approval")
 
@@ -15,12 +17,18 @@ APPROVAL_TIMEOUT_SEC = 300  # 5分钟
 class ApprovalService:
     """
     审批服务，管理待审批队列和审批操作。
+    支持可选的 ToolPermissionStore 持久化。
     """
 
-    def __init__(self):
+    def __init__(self, permission_store: Optional["ToolPermissionStore"] = None):
         self._pending_requests: Dict[str, ApprovalRequest] = {}
         self._always_allowed_tools: Set[str] = set()
         self._approval_callbacks: List[Callable[[ApprovalRequest], None]] = []
+        self._permission_store = permission_store
+        # 如果有持久化存储，加载已有的 always allow 列表
+        if self._permission_store:
+            for tool_name in self._permission_store.list_always_allowed():
+                self._always_allowed_tools.add(tool_name)
 
     def add_callback(self, callback: Callable[[ApprovalRequest], None]) -> None:
         """添加审批状态变化回调"""
@@ -130,6 +138,9 @@ class ApprovalService:
 
         # 添加到始终允许列表
         self._always_allowed_tools.add(request.tool_name)
+        # 持久化到 ToolPermissionStore
+        if self._permission_store:
+            self._permission_store.grant_always_allow(request.tool_name)
         request.status = ApprovalStatus.ALWAYS_ALLOW
         del self._pending_requests[request_id]
         logger.info(f"始终允许工具: {request.tool_name}")
@@ -165,5 +176,8 @@ class ApprovalService:
         """从始终允许列表移除"""
         if tool_name in self._always_allowed_tools:
             self._always_allowed_tools.remove(tool_name)
+            # 从持久化存储中移除
+            if self._permission_store:
+                self._permission_store.revoke_permission(tool_name)
             return True
         return False
