@@ -150,6 +150,7 @@ struct MainPanelView: View {
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 250
     @State private var dragStartWidth: Double = 0
     @State private var scrollAnchorId: String? = nil
+    @State private var mcpPollingTimer: Timer? = nil
     
     var body: some View {
         HStack(spacing: 0) {
@@ -159,9 +160,33 @@ struct MainPanelView: View {
                 HStack {
                     // Custom Traffic Lights
                     CustomTrafficLights()
-                    
+
                     Spacer()
-                    
+
+                    // MCP Context Indicator
+                    if !viewModel.activeMCPContexts.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(viewModel.activeMCPContexts) { context in
+                                HStack(spacing: 3) {
+                                    Image(systemName: "externaldrive.fill")
+                                        .font(.system(size: 9))
+                                    Text(context.name)
+                                        .font(.system(size: 9))
+                                    if let dbPath = context.dbPath {
+                                        Text("(\(URL(fileURLWithPath: dbPath).lastPathComponent))")
+                                            .font(.system(size: 8))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.15))
+                                .cornerRadius(4)
+                            }
+                        }
+                        .padding(.leading, 8)
+                    }
+
                     HStack(spacing: 12) {
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -499,6 +524,15 @@ struct MainPanelView: View {
         .frame(minWidth: 700, idealWidth: 900, minHeight: 500, idealHeight: 650)
         .background(VisualEffectView().ignoresSafeArea())
         .ignoresSafeArea(.all, edges: .top)
+        .onAppear {
+            viewModel.fetchMCPContexts()
+            mcpPollingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+                viewModel.fetchMCPContexts()
+            }
+        }
+        .onDisappear {
+            mcpPollingTimer?.invalidate()
+        }
         .overlay(
             Group {
                 if viewModel.showMCPPreferences {
