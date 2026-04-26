@@ -490,12 +490,20 @@ Only output the JSON block and wait for the results. Do not attempt to use nativ
 async def chat_stream_endpoint(req: ChatRequest):
     """Streaming version of chat endpoint using Server-Sent Events.
 
-    NOTE: This endpoint is NOT IMPLEMENTED because the underlying
-    openclaw_client does not support streaming. The UniversalAgentClient.send()
-    method blocks until the entire response is received before returning.
+    Supports Claude Code and Hermes agents with streaming output.
+    Falls back to non-streaming for OpenClaw.
     """
     async def event_generator():
-        yield f"data: {json.dumps({'type': 'error', 'content': 'Streaming not implemented: openclaw_client does not support stream_generate'})}\n\n"
+        try:
+            # Get agent_id from request, default to openclaw
+            agent_id = req.agent_id or "openclaw"
+
+            async for chunk in agent_client.send_stream(req.text, session_id=req.session_id, target_agent=agent_id):
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
