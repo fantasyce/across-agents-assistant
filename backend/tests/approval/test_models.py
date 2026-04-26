@@ -1,3 +1,4 @@
+import time
 import pytest
 from across_agents_assistant.approval.models import RiskLevel, ApprovalStatus, ApprovalRequest, ToolExecutionResult
 
@@ -39,3 +40,40 @@ def test_tool_execution_result():
     )
     assert result.success == True
     assert result.output == "邮件草稿已创建"
+
+def test_approval_request_is_pending():
+    req = ApprovalRequest(
+        request_id="req-1",
+        task_id="task-1",
+        subtask_id="st-1",
+        agent_id="claude",
+        tool_name="create_email_draft",
+        tool_params={},
+        risk_level=RiskLevel.MEDIUM,
+        description="帮我写邮件"
+    )
+    assert req.is_pending() == True
+    req.status = ApprovalStatus.APPROVED
+    assert req.is_pending() == False
+
+def test_approval_request_is_expired():
+    req = ApprovalRequest(
+        request_id="req-1",
+        task_id="task-1",
+        subtask_id="st-1",
+        agent_id="claude",
+        tool_name="create_email_draft",
+        tool_params={},
+        risk_level=RiskLevel.MEDIUM,
+        description="帮我写邮件"
+    )
+    # Not expired when just created
+    assert req.is_expired() == False
+
+    # Simulate time passing by directly modifying created_at
+    req.created_at = time.time() - 600  # 10 minutes ago
+    assert req.is_expired() == True
+
+    # If not pending, is_expired returns False regardless of time
+    req.status = ApprovalStatus.APPROVED
+    assert req.is_expired() == False
