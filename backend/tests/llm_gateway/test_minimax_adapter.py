@@ -27,8 +27,7 @@ def test_supports_function_calling(minimax_config):
     assert adapter.supports_function_calling("MiniMax-Text-01") == True
     assert adapter.supports_function_calling("unknown-model") == False
 
-@pytest.mark.asyncio
-async def test_chat_request_structure(minimax_config):
+def test_chat_request_structure(minimax_config):
     from across_agents_assistant.llm_gateway.base_adapter import ChatCompletionRequest, ChatMessage
     adapter = MiniMaxAdapter(minimax_config)
     request = ChatCompletionRequest(
