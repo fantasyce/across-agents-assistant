@@ -143,12 +143,17 @@ class MCPClientManager:
                     texts.append(content.text)
                 else:
                     texts.append(f"[{content.type} content]")
-                    
+
+            # Echo the underlying command for debugging transparency
+            echo_info = f"【执行的命令】\n工具: {tool_name}\n参数: {json.dumps(arguments, ensure_ascii=False, indent=2)}"
+            result_text = "\n".join(texts)
+            full_result = f"{echo_info}\n\n【执行结果】\n{result_text}"
+
             if result.isError:
                 logger.warning(f"MCP tool {tool_name} returned error: {texts}")
-                return f"Error from tool: {''.join(texts)}"
-                
-            return "\n".join(texts)
+                return f"Error from tool: {''.join(texts)}\n\n{echo_info}"
+
+            return full_result
         except Exception as e:
             logger.error(f"Exception calling MCP tool {tool_name}: {e}")
             return f"Error executing tool: {e}"
