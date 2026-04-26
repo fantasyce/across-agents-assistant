@@ -44,3 +44,4 @@ macOS-Client/*.xcodeproj/xcuserdata/
 macOS-Client/*.xcworkspace/xcuserdata/
 backend/models/
 backend/temp_tts/
+.worktrees/
