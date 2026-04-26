@@ -40,6 +40,39 @@ from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .db.database import db
 
+# LLM Gateway imports
+from .llm_gateway.gateway import get_gateway, LLMGateway
+from .llm_gateway.config import load_llm_config
+
+# Task Manager imports
+from .task_manager.state import TaskState
+from .task_manager.dispatcher import TaskDispatcher
+from .task_manager.task_decomposer import TaskDecomposer
+from .task_manager.models import TaskType, JobStatus
+
+# Global Task Manager instances
+_task_state = TaskState()
+_task_decomposer: Optional[TaskDecomposer] = None
+
+def get_task_decomposer() -> TaskDecomposer:
+    global _task_decomposer
+    if _task_decomposer is None:
+        from .llm_gateway.gateway import get_gateway
+        _task_decomposer = TaskDecomposer(get_gateway())
+    return _task_decomposer
+
+_task_dispatcher: Optional[TaskDispatcher] = None
+
+def get_task_dispatcher() -> TaskDispatcher:
+    global _task_dispatcher
+    if _task_dispatcher is None:
+        from .openclaw.client import UniversalAgentClient
+        from .agent_manager import AgentManager
+        agent_manager = AgentManager()
+        openclaw_client = UniversalAgentClient(agent_manager)
+        _task_dispatcher = TaskDispatcher(_task_state, openclaw_client)
+    return _task_dispatcher
+
 app = FastAPI(title="Across Agents Assistant API")
 
 class MCPConnectRequest(BaseModel):
@@ -290,6 +323,139 @@ async def approve_tool_execution(req: ApprovalDecision):
 class ChatCancelRequest(BaseModel):
     session_id: str
 
+class LLMProviderResponse(BaseModel):
+    provider_id: str
+    name: str
+    enabled: bool
+    available: bool  # Has API key
+    models: List[Dict[str, Any]]
+
+class LLMModelInfo(BaseModel):
+    model_id: str
+    name: str
+    supports_function_calling: bool
+    max_tokens: int
+
+class LLMSwitchRequest(BaseModel):
+    provider_id: str
+    model_id: Optional[str] = None
+
+@app.get("/api/llm/providers", response_model=List[LLMProviderResponse])
+async def list_llm_providers():
+    """List all configured LLM providers."""
+    try:
+        config = load_llm_config()
+        gw = LLMGateway(config)
+        result = []
+        for provider in config.providers:
+            adapter = gw._adapters.get(provider.provider_id)
+            available = adapter.is_available() if adapter else False
+            result.append(LLMProviderResponse(
+                provider_id=provider.provider_id,
+                name=provider.name,
+                enabled=provider.enabled,
+                available=available,
+                models=[
+                    {
+                        "model_id": m.model_id,
+                        "name": m.name,
+                        "supports_function_calling": m.supports_function_calling,
+                        "max_tokens": m.max_tokens
+                    }
+                    for m in provider.models
+                ]
+            ))
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/llm/models/{provider_id}", response_model=List[LLMModelInfo])
+async def list_llm_models(provider_id: str):
+    """List all models for a specific provider."""
+    try:
+        config = load_llm_config()
+        gw = LLMGateway(config)
+        models = gw.list_models(provider_id)
+        return [
+            LLMModelInfo(
+                model_id=m.model_id,
+                name=m.name,
+                supports_function_calling=m.supports_function_calling,
+                max_tokens=m.max_tokens
+            )
+            for m in models
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/llm/switch")
+async def switch_llm_provider(req: LLMSwitchRequest):
+    """Switch the active LLM provider."""
+    try:
+        gw = get_gateway()
+        success = gw.switch_provider(req.provider_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Provider not available or no API key")
+        return {"status": "success", "provider_id": req.provider_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/llm/status")
+async def get_llm_status():
+    """Get current LLM provider status."""
+    try:
+        gw = get_gateway()
+        current = gw.get_current_provider_id()
+        config = load_llm_config()
+        provider = next((p for p in config.providers if p.provider_id == current), None)
+        return {
+            "current_provider": current,
+            "provider_name": provider.name if provider else None,
+            "available": gw.get_current_adapter().is_available() if gw.get_current_adapter() else False
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class LLMChatRequest(BaseModel):
+    message: str
+    system_prompt: Optional[str] = None
+    context: Optional[Dict[str, str]] = None
+    model: Optional[str] = None
+    temperature: float = 0.7
+    max_tokens: int = 2048
+
+class LLMChatResponse(BaseModel):
+    text: str
+    model: str
+    provider: str
+    finish_reason: str
+    usage: Optional[Dict[str, int]] = None
+
+@app.post("/api/llm/chat", response_model=LLMChatResponse)
+async def llm_chat(req: LLMChatRequest):
+    """Direct LLM chat endpoint (for testing the gateway)."""
+    try:
+        gw = get_gateway()
+        response = await gw.chat(
+            message=req.message,
+            system_prompt=req.system_prompt,
+            context=req.context,
+            model=req.model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens
+        )
+        return LLMChatResponse(
+            text=response.text,
+            model=response.model,
+            provider=response.provider,
+            finish_reason=response.finish_reason,
+            usage=response.usage
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat/cancel")
 async def cancel_chat(req: ChatCancelRequest):
     """Cancel a running chat request for a specific session."""
@@ -483,6 +649,221 @@ async def revoke_tool_authorization(req: RevokeRequest):
     try:
         db.set_tool_authorization(req.tool_name, False)
         return {"status": "success", "tool_name": req.tool_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Task Manager Models
+class TaskCreateRequest(BaseModel):
+    description: str
+    context: Optional[Dict[str, Any]] = None
+    decompose_with_llm: bool = True
+
+class SubTaskInfo(BaseModel):
+    subtask_id: str
+    description: str
+    agent_id: str
+    priority: int
+    status: str
+    progress: float
+    dependencies: List[str]
+
+class TaskInfo(BaseModel):
+    task_id: str
+    description: str
+    task_type: str
+    subtasks: List[SubTaskInfo]
+    can_handle_directly: bool
+    direct_response: Optional[str]
+    progress: float
+    created_at: float
+    updated_at: float
+
+class TaskCreateResponse(BaseModel):
+    task_id: str
+    description: str
+    task_type: str
+    subtasks: List[SubTaskInfo]
+    can_handle_directly: bool
+    direct_response: Optional[str]
+    progress: float
+    created_at: float
+    updated_at: float
+
+def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
+    """Convert a Task to TaskInfo with its subtasks."""
+    from .task_manager.models import SubTask
+    return TaskInfo(
+        task_id=task.task_id,
+        description=task.description,
+        task_type=task.task_type.value,
+        subtasks=[
+            SubTaskInfo(
+                subtask_id=st.subtask_id,
+                description=st.description,
+                agent_id=st.agent_id,
+                priority=st.priority,
+                status=st.status.value,
+                progress=st.progress,
+                dependencies=st.dependencies
+            )
+            for st in task.subtasks
+        ],
+        can_handle_directly=task.can_handle_directly,
+        direct_response=task.direct_response,
+        progress=state.get_task_progress(task.task_id),
+        created_at=task.created_at,
+        updated_at=task.updated_at
+    )
+
+@app.post("/api/tasks", response_model=TaskCreateResponse)
+async def create_task(req: TaskCreateRequest):
+    """Create a new task, optionally decomposing it with LLM."""
+    try:
+        task = _task_state.create_task(req.description)
+
+        if req.decompose_with_llm:
+            decomposer = get_task_decomposer()
+            context = req.context or {}
+            await decomposer.decompose(task, context)
+
+        return _task_to_info(task, _task_state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class TaskDispatchRequest(BaseModel):
+    subtask_ids: Optional[List[str]] = None
+
+class JobInfo(BaseModel):
+    job_id: str
+    subtask_id: str
+    agent_id: str
+    task_description: str
+    status: str
+    progress: float
+    logs: List[str]
+    result: Optional[str]
+    error: Optional[str]
+
+class TaskDispatchResponse(BaseModel):
+    task_id: str
+    dispatched_jobs: List[JobInfo]
+    ready_remaining: int
+
+@app.post("/api/tasks/{task_id}/dispatch", response_model=TaskDispatchResponse)
+async def dispatch_task(task_id: str, req: TaskDispatchRequest):
+    """Dispatch subtasks to agents."""
+    try:
+        task = _task_state.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        if req.subtask_ids:
+            subtasks_to_dispatch = [st for st in task.subtasks if st.subtask_id in req.subtask_ids]
+        else:
+            subtasks_to_dispatch = _task_state.get_ready_subtasks(task_id)
+
+        dispatcher = get_task_dispatcher()
+        dispatched = []
+
+        for subtask in subtasks_to_dispatch:
+            job = dispatcher.dispatch_subtask(subtask)
+            if job:
+                dispatched.append(JobInfo(
+                    job_id=job.job_id,
+                    subtask_id=job.subtask_id,
+                    agent_id=job.agent_id,
+                    task_description=job.task_description,
+                    status=job.status.value,
+                    progress=job.progress,
+                    logs=job.logs,
+                    result=job.result,
+                    error=job.error
+                ))
+
+        remaining = len(_task_state.get_ready_subtasks(task_id))
+
+        return TaskDispatchResponse(
+            task_id=task_id,
+            dispatched_jobs=dispatched,
+            ready_remaining=remaining
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tasks/{task_id}", response_model=TaskInfo)
+async def get_task(task_id: str):
+    """Get task details and progress."""
+    try:
+        task = _task_state.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        return _task_to_info(task, _task_state)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tasks", response_model=List[TaskInfo])
+async def list_tasks():
+    """List all tasks."""
+    try:
+        tasks = _task_state.get_all_tasks()
+        return [_task_to_info(t, _task_state) for t in tasks]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tasks/{task_id}/jobs/{job_id}", response_model=JobInfo)
+async def get_job(task_id: str, job_id: str):
+    """Get job details."""
+    try:
+        job = _task_state.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        return JobInfo(
+            job_id=job.job_id,
+            subtask_id=job.subtask_id,
+            agent_id=job.agent_id,
+            task_description=job.task_description,
+            status=job.status.value,
+            progress=job.progress,
+            logs=job.logs,
+            result=job.result,
+            error=job.error
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tasks/{task_id}/jobs/{job_id}/cancel")
+async def cancel_job(task_id: str, job_id: str):
+    """Cancel a running job."""
+    try:
+        # Verify job belongs to task
+        job = _task_state.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Verify job belongs to this task
+        task = _task_state.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        # Check if subtask belongs to task
+        subtask_ids = [st.subtask_id for st in task.subtasks]
+        if job.subtask_id not in subtask_ids:
+            raise HTTPException(status_code=400, detail=f"Job {job_id} does not belong to task {task_id}")
+
+        dispatcher = get_task_dispatcher()
+        success = dispatcher.cancel_job(job_id)
+        if not success:
+            raise HTTPException(status_code=400, detail=f"Cannot cancel job {job_id}")
+        return {"status": "success", "job_id": job_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .config import AppConfig
 from .logging_setup import setup_logger
@@ -14,6 +14,10 @@ from .agent_manager import AgentManager
 from .speech import SpeechClient, SpeechInterruptMonitor
 from .tts import TTSService
 from .wakeword import contains_wake_word, is_exit_word, is_hallucination
+from .llm_gateway.gateway import get_gateway
+from .task_manager.state import TaskState
+from .task_manager.dispatcher import TaskDispatcher
+from .task_manager.task_decomposer import TaskDecomposer
 
 
 @dataclass
@@ -53,7 +57,14 @@ class AcrossAgentsAssistantApp:
         from .llm_client import OrchestratorClient
         self._openclaw = OrchestratorClient(config_manager=self._agent_manager)
         self._tts = TTSService(temp_dir=Path("/tmp/across-agents-assistant"))
-        
+
+        self._llm_gateway = get_gateway()  # LLM Gateway for task planning
+
+        # Task Manager for multi-agent coordination
+        self._task_state = TaskState()
+        self._task_dispatcher = TaskDispatcher(self._task_state, self._openclaw)
+        self._task_decomposer = TaskDecomposer(self._llm_gateway)
+
         self.on_message_callback = None  # To send messages to UI
         
         self._speech_client = SpeechClient(
@@ -575,3 +586,99 @@ class AcrossAgentsAssistantApp:
                     return True
         except queue.Empty:
             return False
+
+    async def process_task(self, description: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Process a user task using the Task Manager.
+
+        1. Create task and decompose with LLM
+        2. If can_handle_directly, return direct response
+        3. Otherwise, dispatch subtasks to agents
+
+        Returns a dict with:
+            - task_id: str
+            - can_handle_directly: bool
+            - direct_response: Optional[str]
+            - subtasks: List[subtask info]
+            - dispatched_jobs: List[job info]
+        """
+        self._logger.info(f"📋 Creating task: {description[:50]}...")
+        task = self._task_state.create_task(description)
+
+        # Decompose with LLM
+        self._logger.info(f"🧠 Decomposing task {task.task_id} with LLM...")
+        await self._task_decomposer.decompose(task, context or {})
+
+        if task.can_handle_directly:
+            self._logger.info(f"✅ Task {task.task_id} can be handled directly")
+            return {
+                "task_id": task.task_id,
+                "can_handle_directly": True,
+                "direct_response": task.direct_response,
+                "subtasks": [],
+                "dispatched_jobs": []
+            }
+
+        # Dispatch ready subtasks
+        ready = self._task_state.get_ready_subtasks(task.task_id)
+        self._logger.info(f"📦 Task {task.task_id} decomposed into {len(task.subtasks)} subtasks, {len(ready)} ready to dispatch")
+
+        dispatched = []
+        for st in ready:
+            job = self._task_dispatcher.dispatch_subtask(st)
+            if job:
+                self._logger.info(f"🚀 Dispatched job {job.job_id} to {job.agent_id}")
+                dispatched.append({
+                    "job_id": job.job_id,
+                    "subtask_id": job.subtask_id,
+                    "agent_id": job.agent_id,
+                    "status": job.status.value
+                })
+
+        return {
+            "task_id": task.task_id,
+            "can_handle_directly": False,
+            "direct_response": None,
+            "subtasks": [
+                {
+                    "subtask_id": st.subtask_id,
+                    "description": st.description,
+                    "agent_id": st.agent_id,
+                    "priority": st.priority,
+                    "status": st.status.value
+                }
+                for st in task.subtasks
+            ],
+            "dispatched_jobs": dispatched
+        }
+
+    async def plan_with_llm(self, user_request: str, context: Dict[str, Any]) -> str:
+        """
+        Use LLM Gateway to plan task decomposition.
+
+        This enables App to act as a Manager with its own LLM brain,
+        breaking user requests into sub-tasks for specialized agents.
+        """
+        system_prompt = """You are a task planning assistant for a macOS assistant app.
+Your role is to break down user requests into clear, actionable sub-tasks.
+Output a JSON plan with the following structure:
+{
+    "task_type": "research|code_review|automation|simple_qa",
+    "subtasks": [
+        {"description": "...", "agent": "openclaw|hermes|claude", "priority": 1}
+    ],
+    "can_handle_directly": true|false,
+    "direct_response": "..." (if can_handle_directly)
+}"""
+
+        try:
+            response = await self._llm_gateway.chat(
+                message=user_request,
+                system_prompt=system_prompt,
+                context=context,
+                temperature=0.3  # Lower temperature for structured output
+            )
+            return response.text
+        except Exception as e:
+            self._logger.error(f"LLM planning failed: {e}")
+            return ""
