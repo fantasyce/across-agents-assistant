@@ -9,7 +9,7 @@ from ..agent_bridge.bridge import AgentBridge
 from ..agent_bridge.result import SubtaskResult, ResultStatus
 from ..approval.service import ApprovalService
 from ..approval.executor import ToolExecutor
-from ..approval.models import RiskLevel, ApprovalStatus
+from ..approval.models import RiskLevel, ApprovalStatus, ApprovalRequest
 from ..tools.tool_registry import registry
 from .models import Job, JobStatus, SubTask, Task, JobResult, ProgressUpdate
 from .state import TaskState
@@ -140,7 +140,7 @@ class TaskDispatcher:
             except Exception as e:
                 logger.error(f"Progress callback error: {e}")
 
-    def get_pending_approvals(self) -> List:
+    def get_pending_approvals(self) -> List[ApprovalRequest]:
         """获取所有待审批请求"""
         return self._approval_service.get_pending_requests()
 
