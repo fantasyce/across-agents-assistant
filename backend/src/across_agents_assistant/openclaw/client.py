@@ -289,5 +289,67 @@ class UniversalAgentClient:
                 
             return OpenClawReply(text=text if text else "抱歉，大脑没有返回任何内容。", session_id=session_id, elapsed_sec=elapsed)
 
+    async def send_stream(self, message: str, session_id: Optional[str] = None, target_agent: Optional[str] = None):
+        """Stream response from agent. Yields text chunks for SSE."""
+        import asyncio
+        import json
+
+        agent_id = target_agent or self.manager.get_active_agent()
+
+        # Check if agent supports streaming
+        supports_streaming = agent_id in ["claude", "hermes"]
+
+        if not supports_streaming:
+            # Fall back to blocking send for OpenClaw
+            reply = self.send(message, session_id=session_id, target_agent=target_agent)
+            yield reply.text
+            return
+
+        # For Claude/Hermes, use streaming mode
+        config = self.manager.get_agent_config(agent_id)
+        executable_path = config.get("executable_path")
+
+        # Build args with streaming flags
+        args = [executable_path]
+
+        if agent_id == "claude":
+            # Claude Code: use -p for print mode with streaming
+            args.extend(["-p", "--output-format", "stream-json", message])
+        elif agent_id == "hermes":
+            # Hermes: use -q with stream-json output
+            args.extend(["chat", "-q", message, "--output-format", "stream-json", "--include-partial-messages"])
+
+        # Run with asyncio subprocess for async streaming
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            env=self.base_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        if session_id:
+            self.active_processes[session_id] = process
+
+        # Read line by line (each line is a JSON object for stream-json)
+        try:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                line = line.decode('utf-8').strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if "content" in data:
+                        yield data["content"]
+                except json.JSONDecodeError:
+                    continue
+        finally:
+            # Wait for process to complete
+            await process.wait()
+            if session_id and session_id in self.active_processes:
+                del self.active_processes[session_id]
+
 # Backward compatibility alias
 OpenClawClient = UniversalAgentClient

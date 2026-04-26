@@ -9,13 +9,14 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
     var args: [String]
     var isEnabled: Bool
     var isBuiltIn: Bool
-    
+    var isReadOnly: Bool = false
+
     // Status can be: "disconnected", "connecting", "connected", "error"
     var status: String = "disconnected"
     var errorMessage: String? = nil
-    
+
     enum CodingKeys: String, CodingKey {
-        case id, name, description, command, args, isEnabled, isBuiltIn
+        case id, name, description, command, args, isEnabled, isBuiltIn, isReadOnly
     }
 }
 
@@ -183,6 +184,8 @@ class MCPPluginManager: ObservableObject {
         let command: String
         let args: [String]
         let env: [String: String]?
+        let allowed_paths: [String]?
+        let readonly: Bool
     }
     
     struct MCPDisconnectRequest: Codable {
@@ -217,7 +220,9 @@ class MCPPluginManager: ObservableObject {
             server_id: plugin.id,
             command: plugin.command,
             args: plugin.args,
-            env: nil // Extend later if needed
+            env: nil,
+            allowed_paths: nil,
+            readonly: plugin.isReadOnly
         )
         
         guard let url = URL(string: "http://127.0.0.1:8000/api/mcp/connect") else { return }

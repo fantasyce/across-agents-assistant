@@ -1,11 +1,13 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import asyncio
 import os
 import subprocess
 import shutil
+import json
 
 # Patch PATH globally so that npx, uvx, python3 etc can be found even when launched from macOS App
 try:
@@ -48,6 +50,8 @@ class MCPConnectRequest(BaseModel):
     command: str
     args: List[str]
     env: Optional[Dict[str, str]] = None
+    allowed_paths: Optional[List[str]] = None
+    readonly: Optional[bool] = False
 
 @app.post("/api/mcp/connect")
 async def connect_mcp_server(req: MCPConnectRequest):
@@ -68,7 +72,9 @@ async def connect_mcp_server(req: MCPConnectRequest):
                 main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "main.py"))
                 req.args = [main_path, "mcp", server_name] + req.args[2:]
                 
-        mcp_manager.register_server(req.server_id, req.command, req.args, req.env)
+        mcp_manager.register_server(req.server_id, req.command, req.args, req.env,
+                                 allowed_paths=req.allowed_paths,
+                                 readonly=req.readonly)
         success = await mcp_manager.connect_server(req.server_id)
         if success:
             return {"status": "success", "message": f"Connected to MCP server: {req.server_id}"}
@@ -88,6 +94,24 @@ async def disconnect_mcp_server(req: MCPDisconnectRequest):
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class MCPContext(BaseModel):
+    server_id: str
+    name: str
+    status: str
+    db_path: Optional[str] = None  # For sqlite plugin
+
+@app.get("/api/mcp/contexts")
+async def get_mcp_contexts():
+    """Get list of currently active MCP contexts for UI display."""
+    contexts = []
+    for server_id, session in mcp_manager.sessions.items():
+        contexts.append(MCPContext(
+            server_id=server_id,
+            name=server_id,
+            status="connected"
+        ))
+    return contexts
 
 class ContextPack(BaseModel):
     frontmost_app: Optional[str] = None
@@ -457,6 +481,23 @@ Only output the JSON block and wait for the results. Do not attempt to use nativ
             session_id=reply.session_id,
             audio_path=None
         )
+
+# NOT IMPLEMENTED: stream_generate method does not exist in openclaw_client
+# The UniversalAgentClient.send() method does not support streaming responses.
+# If streaming is needed in the future, the openclaw client would need to be modified
+# to support async streaming output.
+@app.post("/api/chat/stream")
+async def chat_stream_endpoint(req: ChatRequest):
+    """Streaming version of chat endpoint using Server-Sent Events.
+
+    NOTE: This endpoint is NOT IMPLEMENTED because the underlying
+    openclaw_client does not support streaming. The UniversalAgentClient.send()
+    method blocks until the entire response is received before returning.
+    """
+    async def event_generator():
+        yield f"data: {json.dumps({'type': 'error', 'content': 'Streaming not implemented: openclaw_client does not support stream_generate'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 def start_api_server(host="127.0.0.1", port=8000):
     uvicorn.run(app, host=host, port=port)

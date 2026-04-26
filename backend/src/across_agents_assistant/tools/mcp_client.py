@@ -16,26 +16,35 @@ class MCPClientManager:
         self.server_tools: Dict[str, List[Dict[str, Any]]] = {}
         self._connecting: set = set()
 
-    def register_server(self, server_id: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None):
+    def register_server(self, server_id: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None,
+                        allowed_paths: Optional[List[str]] = None, readonly: bool = False):
         """Register a new MCP server configuration."""
         import shutil
         import os
-        
+
         # Merge with global os.environ to ensure PATH is included
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
-            
+
         # Try to resolve the command to its absolute path to prevent "command not found" errors
         resolved_command = shutil.which(command, path=merged_env.get("PATH"))
         if resolved_command:
             command = resolved_command
-            
+
         self.server_configs[server_id] = StdioServerParameters(
             command=command,
             args=args,
             env=merged_env
         )
+
+        # Store sandbox settings
+        if not hasattr(self, '_sandbox_settings'):
+            self._sandbox_settings = {}
+        self._sandbox_settings[server_id] = {
+            'allowed_paths': allowed_paths or [],
+            'readonly': readonly
+        }
 
     async def connect_server(self, server_id: str):
         """Connect to an MCP server and fetch its tools."""
@@ -111,7 +120,17 @@ class MCPClientManager:
         if server_id not in self.sessions:
             logger.error(f"Cannot call tool: not connected to {server_id}")
             return f"Error: Not connected to MCP server {server_id}"
-            
+
+        # Sandbox validation
+        sandbox = self._sandbox_settings.get(server_id, {})
+        if sandbox.get('allowed_paths') or sandbox.get('readonly'):
+            file_args = self._extract_file_paths(arguments)
+            for file_path in file_args:
+                if not self._is_path_allowed(file_path, sandbox.get('allowed_paths', [])):
+                    return f"Error: Access to path '{file_path}' is not allowed. Allowed paths: {sandbox['allowed_paths']}"
+                if sandbox.get('readonly') and self._is_write_operation(tool_name, arguments):
+                    return f"Error: This MCP server is in readonly mode. Write operations are not allowed."
+
         session = self.sessions[server_id]
         logger.info(f"Calling MCP tool {tool_name} on {server_id} with args {arguments}")
         
@@ -133,6 +152,33 @@ class MCPClientManager:
         except Exception as e:
             logger.error(f"Exception calling MCP tool {tool_name}: {e}")
             return f"Error executing tool: {e}"
+
+    def _extract_file_paths(self, arguments: Dict[str, Any]) -> List[str]:
+        """Extract file paths from tool arguments."""
+        paths = []
+        for value in arguments.values():
+            if isinstance(value, str) and (value.startswith('/') or value.startswith('~')):
+                paths.append(value)
+        return paths
+
+    def _is_path_allowed(self, path: str, allowed_paths: List[str]) -> bool:
+        """Check if a path is within allowed_paths."""
+        import os
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        for allowed in allowed_paths:
+            abs_allowed = os.path.abspath(os.path.expanduser(allowed))
+            if abs_path.startswith(abs_allowed):
+                return True
+        return False
+
+    def _is_write_operation(self, tool_name: str, arguments: Dict[str, Any]) -> bool:
+        """Check if a tool call is a write operation."""
+        write_keywords = ['write', 'create', 'delete', 'remove', 'move', 'rename', 'edit', 'update', 'save']
+        tool_lower = tool_name.lower()
+        for keyword in write_keywords:
+            if keyword in tool_lower:
+                return True
+        return False
 
     def get_all_tools_schema(self) -> List[Dict[str, Any]]:
         """Get all tools from all connected servers in the format expected by the LLM."""

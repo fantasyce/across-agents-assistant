@@ -67,7 +67,15 @@ class SessionViewModel: ObservableObject {
     @Published var inputText: String = "" // Add inputText to ViewModel so we can modify it from here
     @Published var attachedFiles: [AttachedFile] = [] // Track files dropped into the input box
     @Published var showHiddenFiles: Bool = false
-    
+    @Published var activeMCPContexts: [MCPContextInfo] = []
+
+    struct MCPContextInfo: Identifiable, Codable {
+        let id: String
+        let name: String
+        let status: String
+        let dbPath: String?
+    }
+
     // Input history state
     private struct HistoryItem: Equatable {
         let text: String
@@ -165,8 +173,22 @@ class SessionViewModel: ObservableObject {
         // Load history or greet
         loadChatHistory()
         loadHomeDirectory()
+        fetchMCPContexts()
     }
-    
+
+    func fetchMCPContexts() {
+        guard let url = URL(string: "http://127.0.0.1:8000/api/mcp/contexts") else { return }
+
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data else { return }
+            if let contexts = try? JSONDecoder().decode([MCPContextInfo].self, from: data) {
+                DispatchQueue.main.async {
+                    self?.activeMCPContexts = contexts
+                }
+            }
+        }.resume()
+    }
+
     func loadHomeDirectory() {
         let homeUrl = FileManager.default.homeDirectoryForCurrentUser
         fileTree = [FileItemModel(name: homeUrl.lastPathComponent, path: homeUrl.path, isFolder: true, children: loadContents(of: homeUrl.path), isExpanded: true)]

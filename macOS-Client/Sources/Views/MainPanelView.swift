@@ -664,7 +664,7 @@ struct LegacyMessageBubble: View {
         VStack(alignment: message.isUser ? .trailing : .leading, spacing: 6) {
             if !message.content.isEmpty {
                 if message.attachedFiles.isEmpty {
-                    Text(message.content)
+                    Text(MarkdownRenderer.renderWithCodeHighlighting(message.content))
                         .textSelection(.enabled)
                         .font(.system(size: 13))
                         .lineSpacing(4)
