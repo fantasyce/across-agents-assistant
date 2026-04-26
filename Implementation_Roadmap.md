@@ -275,10 +275,11 @@ gantt
 - [ ] App 可在全新 Mac 上以最少配置顺利跑通主要场景。
 
 ### M6：MCP 与体验优化
-- [ ] 显式显示 MCP 上下文状态
-- [ ] MCP 强制只读与沙盒白名单
-- [ ] UI 对话气泡 Markdown 渲染与流式输出
-- [ ] 开发者模式自定义 MCP 面板
+- [x] 显式显示 MCP 上下文状态 - Header 右侧显示已连接 MCP 插件状态
+- [x] MCP 强制只读与沙盒白名单 - 支持 allowed_paths 和 readonly 模式
+- [x] UI 对话气泡 Markdown 渲染与流式输出 - MarkdownRenderer 实现；Streaming 支持 Claude/Hermes
+- [x] 开发者模式自定义 MCP 面板 - MCPPreferencesView + MCPPluginManager
+- [x] Agent 输出回显底层指令 - MCP call_tool 结果包含执行的命令和参数
 
 ## 11. 文档联动要求
 - 路线图调整后，必须同步更新 `Engineering_Task_Breakdown.md`。
