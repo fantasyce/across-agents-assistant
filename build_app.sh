@@ -8,6 +8,12 @@ APP_NAME="Across Agents Assistant"
 EXECUTABLE_NAME="AcrossAgentsAssistant"
 BUILD_DIR="$PROJECT_ROOT/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
+APP_VERSION="${APP_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$PROJECT_ROOT/backend/pyproject.toml" | head -1)}"
+
+if [ -z "$APP_VERSION" ]; then
+    echo "ERROR: Could not resolve app version from backend/pyproject.toml"
+    exit 1
+fi
 
 echo "=== 1. Cleaning up previous builds ==="
 rm -rf "$BUILD_DIR"
@@ -171,9 +177,9 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

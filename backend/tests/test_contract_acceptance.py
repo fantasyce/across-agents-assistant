@@ -1504,6 +1504,64 @@ document.getElementById('recompute-route').addEventListener('click', () => {
     assert result["passed"] is True
 
 
+def test_browser_e2e_probe_prefers_route_evidence_panel_over_route_button(tmp_path):
+    node = contract_acceptance._node_probe_executable()
+    if not node:
+        pytest.skip("node is unavailable")
+    probe = subprocess.run(
+        [node, "-e", "require('playwright'); console.log('ok')"],
+        cwd=str(tmp_path),
+        env={**contract_acceptance.os.environ, "NODE_PATH": contract_acceptance._playwright_node_path(str(tmp_path))},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        pytest.skip("playwright is unavailable")
+
+    (tmp_path / "index.html").write_text(
+        """
+<!doctype html>
+<html>
+  <head><title>Delivery Benchmark Command Center</title></head>
+  <body>
+    <h1>Delivery Benchmark Command Center</h1>
+    <section class="task-composer">
+      <h2>Task Composer</h2>
+      <textarea id="task-textarea"></textarea>
+      <button id="composer-recompute" aria-label="Recompute Route">Recompute Route</button>
+    </section>
+    <section class="route-evidence">
+      <h2>Route Evidence</h2>
+      <div id="route-output">Waiting for route evidence</div>
+    </section>
+    <script src="app.js"></script>
+  </body>
+</html>
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "app.js").write_text(
+        """
+function renderRoute() {
+  document.getElementById('route-output').textContent =
+    'Selected Agent: Hermes. Matched Skill: Browser E2E. MCP Risk: Low. Reason: quality gate review.';
+}
+document.getElementById('composer-recompute').addEventListener('click', renderRoute);
+document.getElementById('task-textarea').addEventListener('input', renderRoute);
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = contract_acceptance._run_browser_e2e(
+        str(tmp_path),
+        "Build Delivery Benchmark Command Center with route evidence and recompute route.",
+    )
+
+    assert result["passed"] is True
+
+
 def test_static_web_smoke_fails_when_canvas_nodes_initialized_before_resize(tmp_path):
     (tmp_path / "index.html").write_text(
         """

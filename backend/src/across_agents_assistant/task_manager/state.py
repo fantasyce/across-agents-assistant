@@ -735,13 +735,19 @@ class TaskState:
                 return False
             for st in task.subtasks:
                 st.status = JobStatus.CANCELLED
+                st.error_message = st.error_message or "Cancelled by user"
+                self._persist_subtask(st)
                 job_id = self._subtask_to_job.get(st.subtask_id)
                 if job_id:
                     job = self._jobs.get(job_id)
                     if job and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
                         job.status = JobStatus.CANCELLED
                         job.completed_at = time.time()
+                        job.error = job.error or "Cancelled by user"
+            task.status = TaskStatus.CANCELLED
+            task.error = "Task cancelled by user."
             task.updated_at = time.time()
+            self._persist_task(task)
             logger.info(f"Cancelled task {task_id}: {len(task.subtasks)} subtasks affected")
             return True
 

@@ -225,6 +225,8 @@ POSITIVE_PATH_LIST_PREFIX_RE = re.compile(
     r".{0,120}\b(?:files?|deliverables?|artifacts?)\b)"
     r"|(?:\b(?:files?|deliverables?|artifacts?)\b.{0,120}"
     r"\b(?:deliver|create|include|write|produce|required|exactly|only|single)\b)"
+    r"|(?:\bkeep\b.{0,80}\b(?:deliverable|deliverables|artifact|artifacts|file|files)\b.{0,40}\bsmall\b)"
+    r"|(?:\b(?:deliverable|deliverables|artifact|artifacts|file|files)\b.{0,40}\bsmall\b)"
     r"|(?:交付|创建|生成|输出|需要|必须).{0,80}(?:文件|产物)",
     re.IGNORECASE,
 )
@@ -403,7 +405,7 @@ def _is_positive_runtime_entrypoint_before_negative_context(clause: str, path_hi
         negative_targets_tooling = bool(
             re.search(
                 r"\b(?:package\s+managers?|external\s+cdn|generated\s+dependencies|dependencies|"
-                r"node_modules|frameworks?|dev\s+servers?|server|build\s+commands?)\b",
+                r"node_modules|frameworks?|dev\s+servers?|server|build\s+(?:commands?|steps?))\b",
                 negative_tail,
             )
         )

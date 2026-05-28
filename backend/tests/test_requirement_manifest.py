@@ -122,6 +122,19 @@ class TestExtractRequiredPathHints:
 
         assert {"index.html", "styles.css", "app.js", "README.md"} <= set(hints)
 
+    def test_opening_index_directly_with_no_build_step_keeps_index_required(self):
+        description = (
+            "Build a static web app called Delivery Benchmark Command Center. "
+            "It must open directly from index.html with no build step. "
+            "Keep the deliverable small: index.html, styles.css, app.js, and README.md only."
+        )
+
+        assert "index.html" not in extract_forbidden_path_hints(description)
+
+        hints = extract_required_path_hints(description)
+
+        assert {"index.html", "styles.css", "app.js", "README.md"} <= set(hints)
+
     def test_chinese_forbidden_docker_is_not_extracted_as_required_path(self):
         hints = extract_required_path_hints(
             "实现 FastAPI + SQLite Web 应用，不得创建 Dockerfile/docker-compose，只需要 README.md 和 TESTING.md。"

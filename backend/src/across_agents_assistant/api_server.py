@@ -4139,6 +4139,40 @@ async def get_task_status(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+def _comma_separated_values(value: Optional[str]) -> List[str]:
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
+
+
+@app.get("/api/tasks/{task_id}/quality-benchmark")
+async def get_task_quality_benchmark(
+    task_id: str,
+    expected_files: Optional[str] = None,
+    required_probes: Optional[str] = None,
+    min_quality_score: int = 70,
+    max_remediation_attempts: int = 2,
+    benchmark_id: Optional[str] = None,
+):
+    """Evaluate a task status payload against release-quality benchmark gates."""
+    from . import __version__
+    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+
+    payload = await get_task_status(task_id)
+    report = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id=benchmark_id or f"task-{task_id}-release-{__version__}",
+        expected_files=_comma_separated_values(expected_files),
+        required_probes=_comma_separated_values(required_probes),
+        min_quality_score=min_quality_score,
+        max_remediation_attempts=max_remediation_attempts,
+    )
+    report["app_version"] = __version__
+    return report
+
 @app.get("/api/tasks/{task_id}/stream")
 async def task_stream(task_id: str):
     """SSE endpoint for task state changes.

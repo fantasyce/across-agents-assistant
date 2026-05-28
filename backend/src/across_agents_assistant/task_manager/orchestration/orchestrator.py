@@ -3077,6 +3077,15 @@ class TaskOrchestrator:
             )
             failure_items.append((requirement, reason, constraint_type))
 
+        # Probe remediations often edit the same source files; serialize them
+        # so each fix is verified before the next probe-specific repair starts.
+        probe_failure_items = [
+            item for item in failure_items
+            if item[2] == "probe_failure"
+        ]
+        if len(probe_failure_items) > 1:
+            failure_items = [probe_failure_items[0]]
+
         for requirement, reason, failure_category in failure_items:
             key = self._quality_requirement_key(requirement, failure_category=failure_category)
             current = attempts.get(key, 0)
@@ -3375,6 +3384,12 @@ The service exposes `GET /items`, `POST /items`, `GET /items/{id}`, and `DELETE 
         """
         task = self._state.get_task(task_id)
         if not task:
+            return
+
+        if task.status == TaskStatus.CANCELLED:
+            task.error = task.error or "Task cancelled by user."
+            task.updated_at = time.time()
+            self._state._persist_task(task)
             return
 
         # Defer finalization if active remediation subtasks exist.

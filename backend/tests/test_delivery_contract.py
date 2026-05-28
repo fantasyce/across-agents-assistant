@@ -260,6 +260,42 @@ def test_contract_does_not_forbid_static_entrypoint_when_no_package_managers():
     assert not any(group["id"] == "group-install-metadata" for group in contract["deliverable_groups"])
 
 
+def test_contract_keeps_static_entrypoint_when_no_build_step_and_small_deliverable_list():
+    manifest = {
+        "deliverables": [
+            {"requirement_id": "req-index", "artifact_type": "frontend_source", "path_hint": "index.html", "required": True},
+            {"requirement_id": "req-css", "artifact_type": "frontend_source", "path_hint": "styles.css", "required": True},
+            {"requirement_id": "req-js", "artifact_type": "frontend_source", "path_hint": "app.js", "required": True},
+            {"requirement_id": "req-readme", "artifact_type": "documentation", "path_hint": "README.md", "required": True},
+        ]
+    }
+    contract = build_owner_delivery_contract(
+        task_id="task-static",
+        description=(
+            "Build a static web app called Delivery Benchmark Command Center. "
+            "It must open directly from index.html with no build step. "
+            "Keep the deliverable small: index.html, styles.css, app.js, and README.md only."
+        ),
+        task_types=["functional", "artifact"],
+        project_dir="/tmp/project",
+        manifest=manifest,
+    )
+
+    deliverable_paths = {item["path_hint"] for item in contract["deliverables"]}
+    forbidden_file_values = {
+        c["value"] for c in contract["constraints"]
+        if c["constraint_type"] == "forbidden_file"
+    }
+    allowed_files = [
+        c["value"] for c in contract["constraints"]
+        if c["constraint_type"] == "allowed_files"
+    ]
+
+    assert {"index.html", "styles.css", "app.js", "README.md"} <= deliverable_paths
+    assert "index.html" not in forbidden_file_values
+    assert allowed_files == [["index.html", "styles.css", "app.js", "README.md"]]
+
+
 def test_documentation_only_artifact_contract_does_not_require_install_metadata():
     manifest = {
         "deliverables": [

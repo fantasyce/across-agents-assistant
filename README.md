@@ -176,6 +176,21 @@ pip install -r requirements.txt
 PYTHONPATH=src python3 -m pytest tests --ignore=tests/e2e -q
 ```
 
+### Delivery Quality Benchmark
+
+After a complex task completes, the backend can turn the task's delivery report
+into a release-quality benchmark result. This is useful for comparing versions
+with the same task prompt and acceptance thresholds.
+
+```bash
+curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+  "http://backend/api/tasks/<task-id>/quality-benchmark?expected_files=index.html,styles.css,app.js,README.md&required_probes=static_web_smoke,browser_e2e&min_quality_score=70"
+```
+
+The benchmark fails if required probes fail, expected files drift, the quality
+gate is not passed, required checks are skipped, active remediation remains, or
+the final score falls below the requested threshold.
+
 ## macOS Client Development
 
 ```bash

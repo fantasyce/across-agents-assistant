@@ -1223,6 +1223,39 @@ class TestStructuredOwnerDecision:
         assert result.recommended_action == "approve"
         assert result.failed_checks == []
 
+    def test_accept_subtask_trusts_contract_file_when_judge_only_missing_write_confirmation(self, tmp_path):
+        state = TaskState()
+        state.set_persistence(InMemoryPersistence())
+        task = state.create_task("Create app.js", project_dir=str(tmp_path))
+        subtask = state.add_subtask(task.task_id, "Create app.js", "openclaw")
+        (tmp_path / "app.js").write_text("const state = { ready: true };\n", encoding="utf-8")
+        state._persistence.save_task_contract({
+            "contract_id": "contract-app-js",
+            "task_id": task.task_id,
+            "subtask_id": subtask.subtask_id,
+            "level": "subtask",
+            "expected_deliverables": [
+                {"artifact_type": "file", "path_hint": "app.js", "required": True}
+            ],
+            "project_dir": str(tmp_path),
+        })
+        job = Job.new(subtask, agent_id="openclaw")
+        job.status = JobStatus.COMPLETED
+        job.result = "I read the existing files to understand the structure before writing app.js."
+        job.output_file = str(tmp_path / "app.js")
+        owner = OwnerAgent(
+            MockLLMGateway(
+                '{"passed": false, "feedback": "The agent did not report actually writing the app.js file.", "action": "fix"}'
+            ),
+            state,
+        )
+
+        result = owner.accept_subtask(job)
+
+        assert result.level2_passed is True
+        assert result.recommended_action == "approve"
+        assert result.failed_checks == []
+
     def test_structured_decision_scopes_repeated_failures_to_same_subtask_family(self):
         state = TaskState()
         state.set_persistence(InMemoryPersistence())

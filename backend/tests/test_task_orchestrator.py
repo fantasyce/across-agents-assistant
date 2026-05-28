@@ -3472,6 +3472,127 @@ def test_static_web_probe_failure_uses_static_web_remediation_guardrails(orchest
     mock_dispatcher.dispatch_subtask.assert_called()
 
 
+def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrator, mock_dispatcher, tmp_path):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description="Build Delivery Benchmark Command Center",
+        project_dir=str(tmp_path),
+        task_types=["functional"],
+        delivery_mode="functional",
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-static-web-probes",
+        "task_id": task.task_id,
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "project_dir": str(tmp_path),
+        "capabilities": [{"id": "cap-ui", "description": "Static web behavior", "required": True}],
+        "deliverables": [
+            {"path_hint": "index.html", "artifact_type": "html_entrypoint", "required": True},
+            {"path_hint": "styles.css", "artifact_type": "stylesheet", "required": True},
+            {"path_hint": "app.js", "artifact_type": "client_script", "required": True},
+            {"path_hint": "README.md", "artifact_type": "documentation", "required": True},
+        ],
+        "constraints": [],
+        "acceptance_probes": [
+            {"id": "probe-static-web-smoke", "probe_type": "static_web_smoke", "required": True},
+            {"id": "probe-browser-e2e", "probe_type": "browser_e2e", "required": True},
+        ],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    orchestrator._orchestrator_states[task.task_id].max_quality_remediation_attempts = 4
+    mock_dispatcher._get_valid_agents.return_value = ["hermes", "openclaw"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-static-web-smoke",
+                "probe_type": "static_web_smoke",
+                "passed": False,
+                "required": True,
+                "output_tail": "application name and route evidence labels missing",
+            },
+            {
+                "id": "probe-browser-e2e",
+                "probe_type": "browser_e2e",
+                "passed": False,
+                "required": True,
+                "output_tail": "route evidence recomputes visible rows",
+            },
+        ],
+        evidence_gaps=[],
+        failed_constraints=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert len(created) == 1
+    restored = orchestrator._state.get_task(task.task_id)
+    quality_subtasks = [st for st in restored.subtasks if st.subtask_id.startswith("st-quality-")]
+    assert len(quality_subtasks) == 1
+    assert "probe-static-web-smoke" in quality_subtasks[0].description
+    attempts = restored.last_owner_decision["quality_remediation_attempts"]
+    assert attempts == {"probe_failure:probe-static-web-smoke": 1}
+    mock_dispatcher.dispatch_subtask.assert_called_once()
+
+
+def test_cancel_task_marks_task_status_cancelled():
+    state = TaskState()
+    task = state.create_task("cancel me")
+    state.add_subtask(task.task_id, "work", "local", subtask_id="st-cancel-me")
+
+    assert state.cancel_task(task.task_id) is True
+
+    restored = state.get_task(task.task_id)
+    assert restored.status == TaskStatus.CANCELLED
+    assert all(st.status == JobStatus.CANCELLED for st in restored.subtasks)
+
+
+def test_finalize_preserves_cancelled_task_status(orchestrator, tmp_path):
+    task = orchestrator._state.create_task(
+        description="Build a static app",
+        project_dir=str(tmp_path),
+        task_types=["functional"],
+        delivery_mode="functional",
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-cancelled",
+        "task_id": task.task_id,
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [],
+        "constraints": [],
+        "acceptance_probes": [],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    subtask = orchestrator._state.add_subtask(task.task_id, "work", "local", subtask_id="st-cancelled-work")
+    subtask.status = JobStatus.CANCELLED
+    task.status = TaskStatus.CANCELLED
+    task.last_owner_decision = {
+        "delivery_quality": {"delivery_quality": "passed", "probe_results": []}
+    }
+    orchestrator._state._persist_task(task)
+
+    run(orchestrator._finalize_task_status(task.task_id))
+
+    restored = orchestrator._state.get_task(task.task_id)
+    assert restored.status == TaskStatus.CANCELLED
+
+
 def test_static_web_package_instruction_failure_points_remediation_to_readme(orchestrator, mock_dispatcher, tmp_path):
     from types import SimpleNamespace
 

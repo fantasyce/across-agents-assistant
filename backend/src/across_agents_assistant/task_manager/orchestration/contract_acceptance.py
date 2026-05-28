@@ -2461,7 +2461,58 @@ function includesAll(text, terms) {
 
     if (needs(/\broute\s+evidence|recompute\s+route\b/)) {
       const routeResult = await page.evaluate(async () => {
+        function textOf(el) {
+          return (el && (el.innerText || el.textContent || '')) || '';
+        }
+        function routeIdentity(el) {
+          return [
+            el.id || '',
+            typeof el.className === 'string' ? el.className : '',
+            el.getAttribute && el.getAttribute('aria-label') || '',
+            el.getAttribute && el.getAttribute('aria-labelledby') || ''
+          ].join(' ');
+        }
+        function isControl(el) {
+          return !!(
+            el.closest && el.closest('button,a,input,textarea,select,[role="button"],[role="tab"]')
+          );
+        }
+        function chooseRoutePanel() {
+          const containerSelectors = [
+            '.route-evidence',
+            '.route-evidence-panel',
+            '#route-evidence',
+            '#routeEvidence',
+            '#routeEvidencePanel',
+            '.evidence-list',
+            '[class*="route"][class*="evidence"]',
+            '[id*="route"][id*="evidence"]'
+          ];
+          for (const selector of containerSelectors) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+          }
+
+          const ariaPanel = Array.from(document.querySelectorAll('[aria-label]')).find(el => {
+            const label = el.getAttribute('aria-label') || '';
+            return /route evidence/i.test(label) && !isControl(el);
+          });
+          if (ariaPanel) return ariaPanel;
+
+          const routeHeading = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,[id],[class]')).find(el => {
+            const identity = routeIdentity(el);
+            return /route evidence/i.test(textOf(el)) || /route[-_\s]*evidence/i.test(identity);
+          });
+          if (routeHeading) {
+            return routeHeading.closest('section,article,main,aside,.panel,.card,[class*="panel"],[class*="route"],[class*="evidence"]')
+              || routeHeading.parentElement;
+          }
+
+          return null;
+        }
         const routeTask = 'Implement and test a browser E2E route evidence workflow with MCP risk review and quality gates';
+        const panel = chooseRoutePanel() || document.body;
+        const beforeInput = panel.innerText || '';
         const taskInput = document.querySelector(
           'textarea, input[name*="task" i], input[id*="task" i], input[name*="description" i], input[id*="description" i]'
         );
@@ -2471,18 +2522,19 @@ function includesAll(text, terms) {
           taskInput.dispatchEvent(new Event('input', { bubbles: true }));
           taskInput.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        const panel = document.querySelector(
-          '.route-evidence, .route-evidence-panel, #route-evidence, #routeEvidence, #routeEvidencePanel, [aria-label*="Route"], .evidence-list, [class*="route"][class*="evidence"]'
-        ) || document.body;
-        const button = Array.from(document.querySelectorAll('button')).find(btn => /recompute route/i.test(btn.textContent || ''));
-        const before = panel.innerText || '';
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const afterInput = panel.innerText || '';
+        const scopedButton = Array.from(panel.querySelectorAll ? panel.querySelectorAll('button') : [])
+          .find(btn => /recompute route/i.test(btn.textContent || ''));
+        const button = scopedButton || Array.from(document.querySelectorAll('button'))
+          .find(btn => /recompute route/i.test(btn.textContent || '') || /recompute route/i.test(btn.getAttribute('aria-label') || ''));
         if (button) button.click();
         await new Promise(resolve => setTimeout(resolve, 1300));
         const after = panel.innerText || '';
         const lowered = after.toLowerCase();
         return {
           buttonExists: !!button,
-          changed: before !== after,
+          changed: beforeInput !== afterInput || afterInput !== after,
           hasSelectedAgent: lowered.includes('selected agent') || /(openclaw|hermes|claude code|deepseek|minimax)/.test(lowered),
           hasMatched: lowered.includes('matched') || /\b(skill|capability|backend api|schema|research|review)\b/.test(lowered),
           hasMcpRisk: lowered.includes('mcp risk') || /\b(low|medium|high)\b/.test(lowered),
