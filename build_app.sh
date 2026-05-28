@@ -1,0 +1,224 @@
+#!/bin/bash
+
+# Exit on any error
+set -e
+
+PROJECT_ROOT=$(cd "$(dirname "$0")" && pwd)
+APP_NAME="Across Agents Assistant"
+EXECUTABLE_NAME="AcrossAgentsAssistant"
+BUILD_DIR="$PROJECT_ROOT/build"
+APP_DIR="$BUILD_DIR/$APP_NAME.app"
+
+echo "=== 1. Cleaning up previous builds ==="
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+echo "=== 2. Building Python Backend ==="
+cd "$PROJECT_ROOT/backend"
+
+# --- Virtual Environment Setup ---
+# Always use a virtual environment to avoid system Python restrictions (PEP 668)
+# and ensure consistent dependency management.
+# Find Python 3.10+ (required by mcp and other dependencies)
+PYTHON_3_10=$(which python3.10 2>/dev/null || which python3.11 2>/dev/null || which python3.12 2>/dev/null)
+if [ -z "$PYTHON_3_10" ]; then
+    echo "ERROR: Python 3.10+ is required but not found. Please install Python 3.10 or later."
+    exit 1
+fi
+echo "Using Python: $PYTHON_3_10"
+
+VENV_DIR="$PROJECT_ROOT/backend/.venv"
+if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/bin/activate" ]; then
+    echo "Virtual environment is incomplete; recreating $VENV_DIR..."
+    rm -rf "$VENV_DIR"
+fi
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at $VENV_DIR..."
+    "$PYTHON_3_10" -m venv "$VENV_DIR"
+fi
+
+# Activate venv
+source "$VENV_DIR/bin/activate"
+PYTHON_BIN="$VENV_DIR/bin/python"
+
+# Upgrade pip to avoid compatibility issues
+echo "Upgrading pip..."
+$PYTHON_BIN -m pip install --upgrade pip --quiet
+
+# Install/upgrade PyInstaller (required for building)
+echo "Installing PyInstaller..."
+$PYTHON_BIN -m pip install pyinstaller --quiet
+
+# Keep PyInstaller and cache writes inside the repository to avoid
+# permission issues in sandboxed or restricted environments.
+export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller"
+export XDG_CACHE_HOME="$PROJECT_ROOT/build/cache"
+mkdir -p "$PYINSTALLER_CONFIG_DIR" "$XDG_CACHE_HOME"
+
+BACKEND_BUNDLE_MODE="${BACKEND_BUNDLE_MODE:-onedir}"
+case "$BACKEND_BUNDLE_MODE" in
+    onefile)
+        PYINSTALLER_BUNDLE_FLAG="--onefile"
+        ;;
+    onedir)
+        PYINSTALLER_BUNDLE_FLAG="--onedir"
+        ;;
+    *)
+        echo "ERROR: BACKEND_BUNDLE_MODE must be 'onefile' or 'onedir' (got '$BACKEND_BUNDLE_MODE')."
+        exit 1
+        ;;
+esac
+echo "Backend bundle mode: $BACKEND_BUNDLE_MODE"
+
+# Install project dependencies one by one to avoid a single failure blocking everything
+echo "Installing Python dependencies..."
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip empty lines and comments
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    pkg=$(echo "$line" | sed 's/[[:space:]]*#.*//')
+    [[ -z "$pkg" ]] && continue
+    echo "  Installing $pkg..."
+    $PYTHON_BIN -m pip install "$pkg" --quiet 2>/dev/null || {
+        echo "    Warning: Failed to install $pkg (may be platform-specific or optional)"
+    }
+done < requirements.txt
+
+# --- PyInstaller Build ---
+# Optimized flags:
+# - Remove --collect-all for non-package modules (openai, anthropic, local, appdirs, etc.)
+#   These are regular packages, not data-heavy; PyInstaller auto-discovers them.
+# - Remove duplicate --collect-all entries (fastapi, anyio appeared twice)
+# - Add --exclude-module for broken/unnecessary modules (tkinter, setuptools.tests)
+echo "Running PyInstaller..."
+PYTHONPATH=src $PYTHON_BIN -m PyInstaller --name "backend" "$PYINSTALLER_BUNDLE_FLAG" --clean --noconfirm \
+    --collect-all mcp \
+    --collect-all uvicorn \
+    --collect-all starlette \
+    --collect-all fastapi \
+    --collect-all httpx \
+    --collect-all httpcore \
+    --collect-all anyio \
+    --collect-all h11 \
+    --collect-all pydantic \
+    --collect-all sse_starlette \
+    --collect-all across_agents_assistant \
+    --collect-all click \
+    --collect-all idna \
+    --collect-all certifi \
+    --hidden-import AppKit \
+    --hidden-import Foundation \
+    --hidden-import Vision \
+    --hidden-import Quartz \
+    --exclude-module tkinter \
+    --exclude-module setuptools.tests \
+    --exclude-module _tkinter \
+    main.py
+
+echo "=== 3. Building macOS Client (Release) ==="
+cd "$PROJECT_ROOT/macOS-Client"
+swift build -c release --disable-sandbox --force-resolved-versions --skip-update
+
+echo "=== 4. Creating App Bundle Structure ==="
+mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
+
+echo "=== 5. Copying Executables and Resources ==="
+# Copy Swift executable
+cp "$PROJECT_ROOT/macOS-Client/.build/release/AcrossAgentsAssistantClient" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
+
+# Copy the backend in the selected PyInstaller shape. The app launcher supports
+# either Resources/backend as an executable or Resources/backend/backend in a
+# one-directory backend bundle.
+if [ "$BACKEND_BUNDLE_MODE" = "onefile" ]; then
+    cp "$PROJECT_ROOT/backend/dist/backend" "$APP_DIR/Contents/Resources/backend"
+    chmod +x "$APP_DIR/Contents/Resources/backend"
+else
+    rm -rf "$APP_DIR/Contents/Resources/backend"
+    /usr/bin/ditto "$PROJECT_ROOT/backend/dist/backend" "$APP_DIR/Contents/Resources/backend"
+    chmod +x "$APP_DIR/Contents/Resources/backend/backend"
+fi
+
+# Copy SwiftPM resource bundle into the conventional app resources directory.
+# App code resolves this bundle from Bundle.main.resourceURL so normal macOS
+# code signing does not see unsealed content at the .app bundle root.
+RESOURCE_BUNDLE_NAME="AcrossAgentsAssistant_AcrossAgentsAssistantClient.bundle"
+RESOURCE_BUNDLE="$PROJECT_ROOT/macOS-Client/.build/release/$RESOURCE_BUNDLE_NAME"
+if [ -d "$RESOURCE_BUNDLE" ]; then
+    rm -rf "$APP_DIR/Contents/Resources/$RESOURCE_BUNDLE_NAME"
+    cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
+else
+    echo "Error: SwiftPM resource bundle not found: $RESOURCE_BUNDLE" >&2
+    exit 1
+fi
+
+# Copy App Icon (from backend assets)
+if [ -f "$PROJECT_ROOT/backend/assets/app_icon.icns" ]; then
+    cp "$PROJECT_ROOT/backend/assets/app_icon.icns" "$APP_DIR/Contents/Resources/app_icon.icns"
+fi
+
+echo "=== 6. Generating Info.plist ==="
+cat <<PLIST > "$APP_DIR/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>$EXECUTABLE_NAME</string>
+    <key>CFBundleIconFile</key>
+    <string>app_icon</string>
+    <key>CFBundleIdentifier</key>
+    <string>app.acrossagents.assistant</string>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Across Agents Assistant needs screen capture permission so AI can understand the current screen when you explicitly request it.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Across Agents Assistant needs microphone permission to support voice conversations.</string>
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Across Agents Assistant needs access to system extensions for local automation features.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Across Agents Assistant needs permission to control apps such as Finder, Mail, and Notes when you request automation tasks.</string>
+</dict>
+</plist>
+PLIST
+
+echo "=== 6.5 Signing App ==="
+echo "Clearing extended attributes..."
+xattr -cr "$APP_DIR" || true
+
+echo "Signing nested Mach-O files..."
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+    echo "Using ad-hoc signing for local validation."
+else
+    echo "Using signing identity: $SIGNING_IDENTITY"
+fi
+
+while IFS= read -r -d '' candidate; do
+    if file "$candidate" | grep -q "Mach-O"; then
+        codesign --force --sign "$SIGNING_IDENTITY" "$candidate"
+    fi
+done < <(find "$APP_DIR/Contents" -type f -print0)
+
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+    # Recent macOS builds can reject ad-hoc signed GUI apps when restricted
+    # entitlements are attached. Keep local validation bundles entitlement-free;
+    # real distribution signing should provide SIGNING_IDENTITY.
+    codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
+else
+    codesign --force --deep --options runtime \
+        --entitlements "$PROJECT_ROOT/macOS-Client/Entitlements.entitlements" \
+        --sign "$SIGNING_IDENTITY" "$APP_DIR"
+fi
+
+echo "=== Done! Local app bundle is ready at $APP_DIR ==="
+echo "Note: This build is ad-hoc signed for local development and is not a distributable DMG."
+echo "On newer macOS versions, LaunchServices may require a trusted SIGNING_IDENTITY to open packaged GUI apps."

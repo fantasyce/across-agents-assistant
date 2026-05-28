@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <defs>
+        <linearGradient id='hermesGrad' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#FACC15'/>
+            <stop offset='48%' stop-color='#EAB308'/>
+            <stop offset='100%' stop-color='#B45309'/>
+        </linearGradient>
+    </defs>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='#FFFFFF' stroke='#E5E7EB' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#111827' stroke-opacity='0.06' stroke-width='1'/>
+    <path d='M25,20 h12 v22 h26 v-22 h12 v60 h-12 v-24 h-26 v24 h-12 z' fill='url(#hermesGrad)' stroke='#B45309' stroke-width='1.5' stroke-linejoin='miter'/>
+    <path d='M27,22 h8 v22 h30 v-22 h8 v56 h-8 v-24 h-30 v24 h-8 z' fill='none' stroke='#FDE68A' stroke-width='0.8'/>
+</svg>

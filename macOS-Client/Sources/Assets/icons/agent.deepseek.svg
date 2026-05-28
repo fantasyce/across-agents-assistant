@@ -1,0 +1,24 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <defs>
+        <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#2A2C31'/>
+            <stop offset='100%' stop-color='#1B1C20'/>
+        </linearGradient>
+        <linearGradient id='mark' x1='20' y1='24' x2='80' y2='78' gradientUnits='userSpaceOnUse'>
+            <stop offset='0%' stop-color='#A5B4FF'/>
+            <stop offset='48%' stop-color='#667CFF'/>
+            <stop offset='100%' stop-color='#365FEF'/>
+        </linearGradient>
+        <linearGradient id='belly' x1='24' y1='52' x2='76' y2='80' gradientUnits='userSpaceOnUse'>
+            <stop offset='0%' stop-color='#FFFFFF' stop-opacity='0.34'/>
+            <stop offset='100%' stop-color='#FFFFFF' stop-opacity='0.12'/>
+        </linearGradient>
+    </defs>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='url(#bg)' stroke='#2F3238' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#FFFFFF' stroke-opacity='0.06' stroke-width='1'/>
+    <path d='M68 33c-9-7-23-8-34-2-11 6-17 17-14 29 3 12 14 20 27 20 11 0 20-5 25-15 3 0 6-2 8-5-5 0-9-2-11-7 0-7 0-13-1-20Z' fill='url(#mark)'/>
+    <path d='M24 57c10 1 19 6 27 13 4 4 10 5 16 3-7 7-18 10-29 6-10-3-17-11-18-22 1 0 3 0 4 0Z' fill='url(#belly)'/>
+    <path d='M34 43c8 2 17 7 24 15' fill='none' stroke='#FFFFFF' stroke-width='5' stroke-opacity='0.62' stroke-linecap='round'/>
+    <path d='M41 35c-7 2-12 6-16 13' fill='none' stroke='#D8DEFF' stroke-width='4' stroke-opacity='0.60' stroke-linecap='round'/>
+    <circle cx='60' cy='43' r='4' fill='#FFFFFF' fill-opacity='0.97'/>
+</svg>

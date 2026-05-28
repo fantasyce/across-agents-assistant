@@ -1,0 +1,87 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+build/
+dist/
+/build/
+/dist/
+backend/*.spec
+
+# Logs
+logs/
+*.log
+*.pid
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Mac specific
+.DS_Store
+*.DS_Store
+.AppleDouble
+.LSOverride
+*.dmg
+
+# Local config overrides
+.env
+.env.local
+.env.*.local
+*.local.json
+credentials*.json
+secrets/
+llm_config.json
+llm_agents.json
+
+# Local databases and runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Certificates, keys, and Apple signing artifacts
+*.key
+*.pem
+*.p12
+*.cer
+*.mobileprovision
+
+# Large model files (should not be checked into Git directly)
+# Suggest users to download them manually or use Git LFS
+backend/models/whisper-small/*.bin
+backend/models/whisper-small/*.json
+backend/models/whisper-small/*.txt
+backend/models/whisper-small/.cache/
+
+.trae/
+.superpowers/
+
+# Private maintainer notes and generated package metadata
+docs/
+E2E_TEST_REPORT*.md
+*.egg-info/
+
+# E2E/browser test artifacts
+playwright-report/
+test-results/
+.playwright/
+
+# Swift / macOS
+macOS-Client/.build/
+macOS-Client/build/
+macOS-Client/DerivedData/
+macOS-Client/*.xcodeproj/xcuserdata/
+macOS-Client/*.xcworkspace/xcuserdata/
+macOS-Client/*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+xcuserdata/
+backend/models/
+backend/temp_tts/
+.worktrees/
+.claude/

@@ -1,0 +1,148 @@
+import json
+import os
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+from .agent_ids import LEGACY_LOCAL_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
+from .paths import data_file
+
+AGENTS_CONFIG_FILE = data_file("llm_agents.json")
+LEGACY_AGENTS_CONFIG_FILE = Path(os.path.expanduser("~/Library/Application Support/AcrossAgentsAssistant/llm_agents.json"))
+
+DEFAULT_CONFIG = {
+    "active_agent": "deepseek",
+    "agents": {
+        "deepseek": {
+            "type": "openai_compatible",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "",
+            "model": "deepseek-chat"
+        },
+        "openai": {
+            "type": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "model": "gpt-4o"
+        },
+        "anthropic": {
+            "type": "anthropic",
+            "base_url": "",
+            "api_key": "",
+            "model": "claude-3-5-sonnet-20241022"
+        },
+        # MiniMax: use OpenAI-compatible /v1 (recommended by MiniMax docs). The Anthropic
+        # compatible endpoint can return success with content=null when used via Anthropic SDK.
+        "minimax": {
+            "type": "openai_compatible",
+            "base_url": "https://api.minimaxi.com/v1",
+            "api_key": "",
+            "model": "MiniMax-M2.7"
+        },
+        LOCAL_AGENT_ID: {
+            "type": "openai_compatible",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "",
+            "model": "deepseek-chat"
+        },
+        "hermes": {
+            "type": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "model": "gpt-4o-mini"
+        },
+        "claude": {
+            "type": "anthropic",
+            "base_url": "",
+            "api_key": "",
+            "model": "claude-3-5-sonnet-20241022"
+        }
+    }
+}
+
+class AgentManager:
+    def __init__(self):
+        self.config = self._load_config()
+
+    def _load_config(self) -> Dict[str, Any]:
+        source_file = AGENTS_CONFIG_FILE if AGENTS_CONFIG_FILE.exists() else LEGACY_AGENTS_CONFIG_FILE
+        if not source_file.exists():
+            self._save_config(DEFAULT_CONFIG)
+            return DEFAULT_CONFIG.copy()
+
+        try:
+            with open(source_file, "r", encoding="utf-8") as f:
+                user_config = json.load(f)
+            if source_file == LEGACY_AGENTS_CONFIG_FILE and not AGENTS_CONFIG_FILE.exists():
+                self._save_config(user_config)
+
+            needs_save = False
+            if "agents" not in user_config:
+                user_config["agents"] = {}
+            agents = user_config["agents"]
+            if isinstance(agents, dict) and LEGACY_LOCAL_AGENT_ID in agents:
+                agents.setdefault(LOCAL_AGENT_ID, agents[LEGACY_LOCAL_AGENT_ID])
+                agents.pop(LEGACY_LOCAL_AGENT_ID, None)
+                needs_save = True
+            if user_config.get("active_agent") == LEGACY_LOCAL_AGENT_ID:
+                user_config["active_agent"] = LOCAL_AGENT_ID
+                needs_save = True
+
+            for agent_id, agent_data in DEFAULT_CONFIG["agents"].items():
+                if agent_id not in agents:
+                    agents[agent_id] = agent_data.copy()
+                    needs_save = True
+                elif agent_id == "minimax":
+                    current = agents[agent_id]
+                    url = (current.get("base_url") or "").lower()
+                    if current.get("type") == "anthropic" or "/anthropic" in url:
+                        if "minimax.io" in url:
+                            current["base_url"] = "https://api.minimax.io/v1"
+                        else:
+                            current["base_url"] = "https://api.minimaxi.com/v1"
+                        current["type"] = "openai_compatible"
+                        needs_save = True
+                    if current.get("model") != "MiniMax-M2.7":
+                        current["model"] = "MiniMax-M2.7"
+                        needs_save = True
+
+            if needs_save:
+                self._save_config(user_config)
+
+            return user_config
+        except Exception:
+            return DEFAULT_CONFIG.copy()
+
+    def _save_config(self, config: Dict[str, Any]):
+        AGENTS_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(AGENTS_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+    def get_active_agent(self) -> str:
+        return normalize_agent_id(self.config.get("active_agent", "deepseek")) or "deepseek"
+
+    def get_agent_config(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        agent_id = normalize_agent_id(agent_id) or agent_id
+        return self.config.get("agents", {}).get(agent_id)
+
+    def update_agent(self, agent_id: str, agent_config: Dict[str, Any]):
+        agent_id = normalize_agent_id(agent_id) or agent_id
+        if "agents" not in self.config:
+            self.config["agents"] = {}
+        self.config["agents"][agent_id] = agent_config
+        self._save_config(self.config)
+
+    def set_active_agent(self, agent_id: str):
+        agent_id = normalize_agent_id(agent_id) or agent_id
+        self.config["active_agent"] = agent_id
+        self._save_config(self.config)
+
+    def is_agent_ready(self, agent_id: str) -> bool:
+        # Now readiness depends on API Key
+        agent = self.get_agent_config(agent_id)
+        if not agent:
+            return False
+        api_key = agent.get("api_key", "").strip()
+        # To avoid blocking users from trying, we can return True even without API key,
+        # but returning False if empty encourages them to configure it.
+        # Wait, if they don't have a UI to configure it yet, returning True is safer.
+        return True

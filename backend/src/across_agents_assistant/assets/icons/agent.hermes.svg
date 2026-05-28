@@ -1,0 +1,24 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <defs>
+        <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#2A2C31'/>
+            <stop offset='100%' stop-color='#1B1C20'/>
+        </linearGradient>
+        <linearGradient id='hermesGrad' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#FACC15'/>
+            <stop offset='45%' stop-color='#EAB308'/>
+            <stop offset='75%' stop-color='#B45309'/>
+            <stop offset='100%' stop-color='#78350F'/>
+        </linearGradient>
+    </defs>
+
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='url(#bg)' stroke='#2F3238' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#FFFFFF' stroke-opacity='0.06' stroke-width='1'/>
+
+    <g fill='url(#hermesGrad)' stroke='#B45309' stroke-width='1.5' stroke-linejoin='miter'>
+        <path d='M25,20 h12 v22 h26 v-22 h12 v60 h-12 v-24 h-26 v24 h-12 z'/>
+    </g>
+    <g fill='none' stroke='#FCD34D' stroke-width='0.5'>
+        <path d='M26,21 h10 v22 h28 v-22 h10 v58 h-10 v-24 h-28 v24 h-10 z'/>
+    </g>
+</svg>

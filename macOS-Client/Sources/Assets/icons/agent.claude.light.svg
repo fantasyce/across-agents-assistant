@@ -1,0 +1,7 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='#FFFFFF' stroke='#E5E7EB' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#111827' stroke-opacity='0.06' stroke-width='1'/>
+    <path d='M30,27 L70,27 L70,42 L80,42 L80,57 L70,57 L70,73 L64,73 L64,57 L60,57 L60,73 L54,73 L54,57 L46,57 L46,73 L40,73 L40,57 L36,57 L36,73 L30,73 L30,57 L20,57 L20,42 L30,42 Z' fill='#D9775A'/>
+    <rect x='36' y='36' width='6' height='10' fill='#FFFFFF'/>
+    <rect x='58' y='36' width='6' height='10' fill='#FFFFFF'/>
+</svg>
