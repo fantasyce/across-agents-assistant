@@ -36,6 +36,159 @@ def test_task_info_includes_requirement_manifest():
     assert payload["requirement_manifest"]["deliverables"][0]["path_hint"] == "main.py"
 
 
+def test_task_info_exposes_observability_timeline_and_quality_evidence():
+    from across_agents_assistant.task_manager.models import JobStatus, SubTask, Wave
+
+    state = TaskState()
+    task = state.create_task(
+        "Build release-quality Web/API/CLI evidence",
+        project_dir="/tmp/project",
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+        owner_agent="auto",
+        allowed_subtask_agents=["hermes", "deepseek", "openclaw"],
+    )
+    task.subtasks.extend([
+        SubTask(
+            subtask_id="st-web",
+            description="Create web UI",
+            agent_id="hermes",
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            wave_number=1,
+            task_id=task.task_id,
+        ),
+        SubTask(
+            subtask_id="st-quality-browser",
+            description="Repair browser E2E evidence",
+            agent_id="openclaw",
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            wave_number=2,
+            task_id=task.task_id,
+        ),
+    ])
+    task.waves.append(
+        Wave(
+            wave_id="wave-1",
+            wave_number=1,
+            task_id=task.task_id,
+            subtasks=[task.subtasks[0]],
+            status=JobStatus.COMPLETED,
+            governance_status="approved",
+        )
+    )
+    task.last_owner_decision = {
+        "quality_remediation_attempts": {"probe_failure:probe-browser-e2e": 1},
+        "delivery_quality": {
+            "delivery_quality": "passed",
+            "produced_required": ["web/index.html", "api/server.mjs"],
+            "quality_report": {
+                "quality_gate": "passed",
+                "final_quality_score": 88,
+                "gate_results": [
+                    {
+                        "gate_id": "gate-agent-mix",
+                        "adapter_id": "agent_mix",
+                        "status": "passed",
+                        "required": True,
+                        "evidence": {
+                            "satisfied_constraints": [
+                                {
+                                    "id": "constraint-agent-mix",
+                                    "evidence": {
+                                        "actual_agents": ["hermes", "deepseek", "openclaw"],
+                                        "local_agents": ["hermes", "openclaw"],
+                                        "cloud_agents": ["deepseek"],
+                                    },
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "gate_id": "probe-browser-e2e",
+                        "adapter_id": "browser_e2e",
+                        "status": "passed",
+                        "required": True,
+                        "summary": "browser ok",
+                    },
+                ],
+            },
+        },
+    }
+
+    payload = (_task_to_info(task, state).model_dump())
+
+    observability = payload["observability"]
+    assert observability["agent_mix"]["actual_agents"] == ["hermes", "deepseek", "openclaw"]
+    assert observability["quality_gates"][0]["adapter_id"] == "agent_mix"
+    assert observability["remediation"]["attempted"] is True
+    timeline_kinds = [event["kind"] for event in observability["timeline"]]
+    assert "task_created" in timeline_kinds
+    assert "wave_approved" in timeline_kinds
+    assert "subtask_completed" in timeline_kinds
+    assert "quality_gate_passed" in timeline_kinds
+    assert "remediation_attempted" in timeline_kinds
+
+
+def test_persisted_task_info_exposes_observability_snapshot(tmp_path):
+    from across_agents_assistant.api_server import _task_info_from_db
+
+    task_dict = {
+        "task_id": "task-observability-db",
+        "description": "Historical quality task",
+        "status": "completed",
+        "project_dir": str(tmp_path),
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "subtasks": [
+            {
+                "subtask_id": "st-api",
+                "description": "Create API",
+                "agent_id": "deepseek",
+                "status": "completed",
+                "progress": 1.0,
+                "dependencies": [],
+                "wave_number": 1,
+            }
+        ],
+        "waves": [
+            {
+                "wave_id": "wave-1",
+                "wave_number": 1,
+                "status": "completed",
+                "is_blocked": False,
+                "governance_status": "approved",
+            }
+        ],
+        "artifact_records": [],
+        "acceptance_records": [],
+        "last_owner_decision": {
+            "delivery_quality": {
+                "delivery_quality": "passed",
+                "quality_report": {
+                    "quality_gate": "passed",
+                    "gate_results": [
+                        {
+                            "gate_id": "probe-api-service",
+                            "adapter_id": "api_service",
+                            "status": "passed",
+                            "required": True,
+                        }
+                    ],
+                },
+            }
+        },
+        "created_at": 1.0,
+        "updated_at": 2.0,
+    }
+
+    payload = _task_info_from_db(task_dict).model_dump()
+
+    assert payload["observability"]["quality_gates"][0]["adapter_id"] == "api_service"
+    assert payload["observability"]["timeline"][-1]["kind"] == "quality_gate_passed"
+
+
 def test_list_tasks_includes_persisted_terminal_history(monkeypatch, tmp_path):
     import asyncio
     import across_agents_assistant.api_server as api_server

@@ -155,6 +155,10 @@ def test_openclaw_list_marks_missing_requirements_unavailable():
     assert skills["apple-notes"]["availability"] == "unavailable"
     assert skills["apple-notes"]["missing_requirements"] == ["bins: memo", "env: NOTES_TOKEN"]
     assert "Missing requirements" in skills["apple-notes"]["unavailable_reason"]
+    assert skills["apple-notes"]["repair_suggestions"] == [
+        "Install required binary `memo` and make it available on PATH.",
+        "Set environment variable `NOTES_TOKEN` for the agent runtime.",
+    ]
     assert ("openclaw", "skills", "check") in [tuple(command) for command in runner.commands]
 
 

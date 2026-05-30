@@ -33,6 +33,39 @@ def _contains_no_docker_constraint(description: str) -> bool:
     return has_negative_container_constraint(description)
 
 
+def _extract_required_agent_mix(description: str) -> Dict[str, int]:
+    text = description or ""
+    lowered = text.lower()
+    if "required agent execution mix" not in lowered and "actual agent mix" not in lowered:
+        return {}
+
+    def value(patterns: List[str], default: int) -> int:
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                try:
+                    return max(0, int(match.group(1)))
+                except (TypeError, ValueError):
+                    return default
+        return default
+
+    return {
+        "min_distinct_agents": value([
+            r"At least\s+(\d+)\s+distinct\s+non-owner\s+agents?",
+            r"min[_ -]?distinct[_ -]?agents?\s*[:=]\s*(\d+)",
+        ], 2),
+        "min_local_agents": value([
+            r"At least\s+(\d+)\s+local\s+agents?",
+            r"min[_ -]?local[_ -]?agents?\s*[:=]\s*(\d+)",
+        ], 1),
+        "min_cloud_agents": value([
+            r"At least\s+(\d+)\s+cloud\s+LLMs?",
+            r"At least\s+(\d+)\s+cloud\s+agents?",
+            r"min[_ -]?cloud[_ -]?agents?\s*[:=]\s*(\d+)",
+        ], 1),
+    }
+
+
 def _forbidden_file_scope(description: str, path_hint: str) -> str:
     """Infer whether a forbidden file applies only at project root.
 
@@ -300,8 +333,16 @@ def _delivery_path_hints(manifest: Dict[str, Any]) -> set[str]:
     }
 
 
+def _without_absolute_paths(description: str) -> str:
+    """Remove workspace paths so temp directory names do not imply a stack."""
+    text = description or ""
+    text = re.sub(r"(?<!\w)/(?:[^\s,;]+)", " ", text)
+    text = re.sub(r"\b[A-Za-z]:\\[^\s,;]+", " ", text)
+    return text
+
+
 def _has_python_delivery_signal(description: str, manifest: Dict[str, Any]) -> bool:
-    lowered = (description or "").lower()
+    lowered = _without_absolute_paths(description).lower()
     path_hints = _delivery_path_hints(manifest)
     return any(path.endswith(".py") for path in path_hints) or bool(
         re.search(r"\b(python|fastapi|starlette|asgi|uvicorn|pytest)\b", lowered)
@@ -538,7 +579,7 @@ def _infer_delivery_facets(description: str, task_types: List[str], manifest: Di
 
 
 def _infer_technology_hypotheses(description: str, manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
-    lowered = description.lower()
+    lowered = _without_absolute_paths(description).lower()
     deliverables = manifest.get("deliverables", []) or []
     path_hints = {str(item.get("path_hint") or "").lower() for item in deliverables}
     hypotheses: List[Dict[str, Any]] = []
@@ -609,9 +650,20 @@ def _infer_deliverable_groups(
                 "kind": "api_service_source",
                 "required": True,
                 "description": "Backend API service source files.",
-                "allowed_roots": ["app/", "src/", "server/", "backend/", "."],
-                "allowed_extensions": [".js", ".ts", ".tsx", ".go", ".rs", ".rb", ".php", ".java", ".kt"],
-                "one_of_entrypoints": ["server.js", "app.js", "index.js", "src/server.ts", "src/main.ts", "main.go", "src/main.rs"],
+                "allowed_roots": ["api/", "app/", "src/", "server/", "backend/", "."],
+                "allowed_extensions": [".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".rb", ".php", ".java", ".kt"],
+                "one_of_entrypoints": [
+                    "api/server.mjs",
+                    "api/server.js",
+                    "server.mjs",
+                    "server.js",
+                    "app.js",
+                    "index.js",
+                    "src/server.ts",
+                    "src/main.ts",
+                    "main.go",
+                    "src/main.rs",
+                ],
                 "min_file_count": 1,
                 "max_file_count": 120,
             })
@@ -621,10 +673,11 @@ def _infer_deliverable_groups(
             "kind": "frontend_source",
             "required": True,
             "description": "User-facing frontend source files.",
-            "allowed_roots": ["static/", "public/", "assets/", "src/", "app/", "."],
+            "allowed_roots": ["web/", "static/", "public/", "assets/", "src/", "app/", "."],
             "allowed_extensions": [".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"],
             "one_of_entrypoints": [
                 "index.html",
+                "web/index.html",
                 "static/index.html",
                 "app/static/index.html",
                 "public/index.html",
@@ -642,7 +695,7 @@ def _infer_deliverable_groups(
             "required": True,
             "description": "Automated tests for the delivered behavior.",
             "allowed_roots": ["tests/", "test/", "__tests__/", "src/"],
-            "allowed_extensions": [".py", ".js", ".ts", ".tsx", ".jsx", ".swift", ".go", ".rs"],
+            "allowed_extensions": [".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".swift", ".go", ".rs"],
             "min_file_count": 1,
             "max_file_count": 80,
         })
@@ -760,7 +813,11 @@ def _infer_acceptance_probes(description: str, task_types: List[str], manifest: 
     lowered = description.lower()
     has_python = _has_python_delivery_signal(description, manifest)
     path_hints = _delivery_path_hints(manifest)
-    wants_pytest = _mentions_test_suite(description) or has_python
+    artifact_types = {
+        str(item.get("artifact_type") or "").lower()
+        for item in manifest.get("deliverables", []) or []
+    }
+    wants_pytest = has_python and (_mentions_test_suite(description) or any(path.endswith(".py") for path in path_hints))
     probes: List[Dict[str, Any]] = []
     if "functional" in task_types and has_python:
         probes.append({
@@ -799,6 +856,36 @@ def _infer_acceptance_probes(description: str, task_types: List[str], manifest: 
             "required": True,
             "source": "owner_inferred",
             "minimum_evidence": "L3",
+        })
+    requires_node_api_probe = (
+        "api/server.mjs" in path_hints
+        or "api/server.js" in path_hints
+        or "api/server.mjs" in lowered
+        or "node.js built-in http server" in lowered
+        or ("api_service_source" in artifact_types and any(path.endswith((".mjs", ".js")) for path in path_hints))
+    )
+    if "functional" in task_types and requires_node_api_probe:
+        probes.append({
+            "id": "probe-api-service",
+            "probe_type": "api_service",
+            "command": "start the Node API with PORT and verify /health, /api/agents, /api/route, and /api/report",
+            "required": True,
+            "source": "owner_inferred",
+            "minimum_evidence": "L2",
+        })
+    requires_cli_probe = (
+        "cli/quality-check.mjs" in path_hints
+        or "cli/quality-check.mjs" in lowered
+        or "quality-check.mjs" in lowered
+    )
+    if "functional" in task_types and requires_cli_probe:
+        probes.append({
+            "id": "probe-cli-generic",
+            "probe_type": "cli_generic",
+            "command": "node cli/quality-check.mjs",
+            "required": True,
+            "source": "owner_inferred",
+            "minimum_evidence": "L2",
         })
     if "functional" in task_types and wants_pytest:
         probes.append({
@@ -891,6 +978,16 @@ def build_owner_delivery_contract(
             "required": True,
             "source": "explicit_user_request",
             "description": "Do not require, generate, or validate Docker/container tooling.",
+        })
+    required_agent_mix = _extract_required_agent_mix(description)
+    if required_agent_mix:
+        constraints.append({
+            "id": "constraint-agent-mix",
+            "constraint_type": "agent_mix",
+            "value": required_agent_mix,
+            "required": True,
+            "source": "explicit_user_request",
+            "description": "Required actual execution mix across local agents and cloud LLMs.",
         })
     allowed_docs = _extract_allowed_documentation_files(description)
     if allowed_docs:

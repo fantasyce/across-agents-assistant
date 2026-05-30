@@ -133,6 +133,18 @@ struct TaskListSidebar: View {
             .cornerRadius(6)
             .padding(.horizontal, 12)
 
+            ReleaseEvaluationCard(
+                summary: viewModel.releaseEvaluation,
+                isLoading: viewModel.isLoadingReleaseEvaluation,
+                errorMessage: viewModel.releaseEvaluationError,
+                isStartingE2E: viewModel.isStartingReleaseE2E,
+                e2eErrorMessage: viewModel.releaseE2EError,
+                onRefresh: { viewModel.loadReleaseEvaluation() },
+                onRunE2E: { viewModel.startReleaseE2E() }
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+
             if viewModel.isBackendUnavailable {
                 BackendUnavailableBanner(
                     message: viewModel.backendUnavailableMessage,
@@ -181,6 +193,180 @@ struct TaskListSidebar: View {
         }
         .frame(maxHeight: .infinity)
         .background(theme.background)
+    }
+}
+
+struct ReleaseEvaluationCard: View {
+    let summary: ReleaseEvaluationSummary?
+    let isLoading: Bool
+    let errorMessage: String?
+    let isStartingE2E: Bool
+    let e2eErrorMessage: String?
+    let onRefresh: () -> Void
+    let onRunE2E: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var appPreferences: AppPreferences
+    private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(readinessColor(summary?.releaseReadiness ?? "no_evidence"))
+                    .frame(width: 7, height: 7)
+
+                Text(appPreferences.text("tasks.releaseEvaluation"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundColor(.secondary.opacity(0.75))
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.65)
+                }
+
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help(appPreferences.text("tasks.releaseEvaluation.refresh"))
+            }
+
+            if let summary {
+                HStack(spacing: 8) {
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.readiness"),
+                        localizedReadiness(summary.releaseReadiness)
+                    )
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.passRate"),
+                        "\(summary.passRatePercent)%"
+                    )
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.score"),
+                        summary.averageFinalQualityScore.map(String.init) ?? "-"
+                    )
+                }
+
+                HStack(spacing: 8) {
+                    Text(String(format: appPreferences.text("tasks.releaseEvaluation.evaluated"), summary.evaluatedTaskCount))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    if summary.totalRemediationCount > 0 {
+                        Text(String(format: appPreferences.text("tasks.releaseEvaluation.remediations"), summary.totalRemediationCount))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Color(hex: "#ff9f0a"))
+                    }
+                }
+
+                if let risk = summary.primaryRiskMessage, !risk.isEmpty {
+                    Text(risk)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(errorMessage?.isEmpty == false ? errorMessage! : appPreferences.text("tasks.releaseEvaluation.empty"))
+                    .font(.system(size: 10))
+                    .foregroundColor(errorMessage == nil ? .secondary : Color(hex: "#ff9f0a"))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+                .opacity(0.45)
+
+            Button(action: onRunE2E) {
+                HStack(spacing: 7) {
+                    Image(systemName: "checklist.checked")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color(hex: "#B58AE3"))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(isStartingE2E ? appPreferences.text("tasks.releaseE2E.starting") : appPreferences.text("tasks.releaseE2E.run"))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.strongText)
+                            .lineLimit(1)
+                        Text(appPreferences.text("tasks.releaseE2E.help"))
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary.opacity(0.75))
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    if isStartingE2E {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .scaleEffect(0.65)
+                    } else {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.secondary.opacity(0.75))
+                    }
+                }
+                .padding(8)
+                .background(theme.hoverBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .disabled(isStartingE2E)
+            .help(appPreferences.text("tasks.releaseE2E.help"))
+
+            if let e2eErrorMessage, !e2eErrorMessage.isEmpty {
+                Text(e2eErrorMessage)
+                    .font(.system(size: 9))
+                    .foregroundColor(Color(hex: "#ff9f0a"))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(theme.fieldBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(theme.divider, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func releaseMetric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary.opacity(0.75))
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.strongText)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func localizedReadiness(_ readiness: String) -> String {
+        appPreferences.text("tasks.releaseEvaluation.readiness.\(readiness)")
+    }
+
+    private func readinessColor(_ readiness: String) -> Color {
+        switch readiness {
+        case "ready":
+            return Color(hex: "#30d158")
+        case "attention":
+            return Color(hex: "#ff9f0a")
+        case "blocked":
+            return Color(hex: "#FF453A")
+        default:
+            return Color(hex: "#8e8e93")
+        }
     }
 }
 
@@ -321,6 +507,7 @@ struct TaskDetailPanel: View {
 
     @State private var isDescriptionExpanded = false
     @State private var isHealthExpanded = false
+    @State private var isObservabilityExpanded = true
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
@@ -428,6 +615,7 @@ struct TaskDetailPanel: View {
                 VStack(spacing: 20) {
                     taskDescriptionSection(task: task)
                     qualityOverviewSection(task: task)
+                    observabilitySection(task: task)
 
                     if !task.waves.isEmpty {
                         DAGVisualization(task: task, viewModel: viewModel)
@@ -703,9 +891,11 @@ struct TaskDetailPanel: View {
         let orchestrationHealth = health?.orchestrationHealth
         let requiredTotal = report?.requiredTotal ?? health?.manifestRequired
         let acceptedTotal = report?.acceptedTotal ?? health?.manifestAccepted
+        let finalQualityScore = report?.qualityReport?.finalQualityScore
         let hasQualityData = deliveryQuality != nil
             || orchestrationHealth != nil
             || report?.summary != nil
+            || finalQualityScore != nil
             || requiredTotal != nil
             || task.hasOwnerDeliveryContract
             || task.hasRequirementManifest
@@ -745,6 +935,13 @@ struct TaskDetailPanel: View {
                                 title: appPreferences.text("tasks.required"),
                                 value: "\(acceptedTotal ?? 0)/\(requiredTotal)",
                                 status: (acceptedTotal ?? 0) >= requiredTotal ? "passed" : "partial"
+                            )
+                        }
+                        if let finalQualityScore {
+                            qualityMetricChip(
+                                title: appPreferences.text("tasks.score"),
+                                value: "\(finalQualityScore)",
+                                status: finalQualityScore >= 80 ? "passed" : "partial"
                             )
                         }
                         if let deliveryMode = task.deliveryMode, deliveryMode != "legacy" {
@@ -844,6 +1041,17 @@ struct TaskDetailPanel: View {
         if report?.consistency?.terminalWithActiveRemediation == true {
             lines.append(appPreferences.text("tasks.terminalRemediation"))
         }
+        if let qualityReport = report?.qualityReport {
+            if let count = qualityReport.requiredFailedCount, count > 0 {
+                lines.append(String(format: appPreferences.text("tasks.requiredGateFailures"), count))
+            }
+            if let count = qualityReport.manualRequiredCount, count > 0 {
+                lines.append(String(format: appPreferences.text("tasks.manualGateChecks"), count))
+            }
+            if let count = qualityReport.skippedRequiredCount, count > 0 {
+                lines.append(String(format: appPreferences.text("tasks.skippedGateChecks"), count))
+            }
+        }
         if !(health?.activeRemediationSubtasks.isEmpty ?? true) {
             lines.append(String(format: appPreferences.text("tasks.activeRemediation"), health?.activeRemediationSubtasks.joined(separator: ", ") ?? ""))
         }
@@ -852,6 +1060,136 @@ struct TaskDetailPanel: View {
         }
 
         return Array(NSOrderedSet(array: lines)) as? [String] ?? lines
+    }
+
+    @ViewBuilder
+    private func observabilitySection(task: TaskOrchestrationViewModel.TaskDetail) -> some View {
+        if let observability = task.observability,
+           !observability.timeline.isEmpty || !observability.qualityGates.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Button(action: { isObservabilityExpanded.toggle() }) {
+                    HStack(spacing: 6) {
+                        Text(appPreferences.text("tasks.observability"))
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color(hex: "#4d6bfe"))
+                        Image(systemName: isObservabilityExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if isObservabilityExpanded {
+                    if let mix = observability.agentMix,
+                       !mix.actualAgents.isEmpty || !mix.localAgents.isEmpty || !mix.cloudAgents.isEmpty {
+                        HStack(spacing: 8) {
+                            qualityMetricChip(
+                                title: appPreferences.text("tasks.observability.agents"),
+                                value: "\(mix.actualAgents.count)",
+                                status: mix.actualAgents.count >= 3 ? "passed" : "partial"
+                            )
+                            qualityMetricChip(
+                                title: appPreferences.text("tasks.observability.local"),
+                                value: "\(mix.localAgents.count)",
+                                status: mix.localAgents.count >= 2 ? "passed" : "partial"
+                            )
+                            qualityMetricChip(
+                                title: appPreferences.text("tasks.observability.cloud"),
+                                value: "\(mix.cloudAgents.count)",
+                                status: mix.cloudAgents.count >= 1 ? "passed" : "partial"
+                            )
+                            if let score = observability.qualityScore {
+                                qualityMetricChip(
+                                    title: appPreferences.text("tasks.score"),
+                                    value: "\(score)",
+                                    status: score >= 80 ? "passed" : "partial"
+                                )
+                            }
+                        }
+                    }
+
+                    let passedGateCount = observability.qualityGates.filter { $0.status == "passed" }.count
+                    if !observability.qualityGates.isEmpty {
+                        HStack(spacing: 8) {
+                            qualityMetricChip(
+                                title: appPreferences.text("tasks.observability.gates"),
+                                value: "\(passedGateCount)/\(observability.qualityGates.count)",
+                                status: passedGateCount == observability.qualityGates.count ? "passed" : "partial"
+                            )
+                            if let remediation = observability.remediation, remediation.attempted {
+                                qualityMetricChip(
+                                    title: appPreferences.text("tasks.observability.remediation"),
+                                    value: "\(remediation.attemptsByRequirement.values.reduce(0, +))",
+                                    status: "partial"
+                                )
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(observability.timeline.prefix(8)) { event in
+                            HStack(alignment: .top, spacing: 8) {
+                                Circle()
+                                    .fill(observabilityColor(for: event.kind, status: event.status))
+                                    .frame(width: 7, height: 7)
+                                    .padding(.top, 5)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(observabilityEventTitle(event))
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(theme.strongText)
+                                            .lineLimit(1)
+                                        if let agentId = event.agentId, !agentId.isEmpty {
+                                            Text(agentId)
+                                                .font(.system(size: 10, weight: .medium))
+                                                .foregroundColor(.secondary)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(theme.fieldBackground)
+                                                .cornerRadius(5)
+                                        }
+                                    }
+                                    if let summary = event.summary, !summary.isEmpty {
+                                        Text(summary)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(10)
+                    .background(theme.fieldBackground)
+                    .cornerRadius(8)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isObservabilityExpanded)
+        }
+    }
+
+    private func observabilityEventTitle(_ event: TaskOrchestrationViewModel.TaskObservability.TimelineEvent) -> String {
+        if let label = event.label, !label.isEmpty {
+            return label
+        }
+        return displayStatus(event.kind.replacingOccurrences(of: "_", with: " "))
+    }
+
+    private func observabilityColor(for kind: String, status: String?) -> Color {
+        if kind.contains("failed") || status == "failed" {
+            return Color(hex: "#FF453A")
+        }
+        if kind.contains("remediation") || kind.contains("revalidating") || status == "partial" {
+            return Color(hex: "#ff9f0a")
+        }
+        if kind.contains("passed") || kind.contains("completed") || status == "completed" {
+            return Color(hex: "#30d158")
+        }
+        return Color(hex: "#4d6bfe")
     }
 
     private func displayStatus(_ status: String) -> String {
@@ -1399,6 +1737,12 @@ struct TaskNewTaskForm: View {
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .lineLimit(2)
+                        if !best.matchedNativeSkillIds.isEmpty {
+                            Text(preflightNativeSkillText(best))
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: "#B58AE3"))
+                                .lineLimit(2)
+                        }
                     }
                     Spacer()
                     Text("\(best.score)")
@@ -1407,6 +1751,20 @@ struct TaskNewTaskForm: View {
                         .frame(width: 26, height: 22)
                         .background(Color(hex: "#B58AE3").opacity(0.16))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
+
+                if !best.nativeSkillRepairSuggestions.isEmpty {
+                    Text(preflightRepairText(best))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !best.warnings.isEmpty {
+                    Text(best.warnings.joined(separator: " "))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if !capabilityPreflight.warnings.isEmpty {
@@ -1496,10 +1854,24 @@ struct TaskNewTaskForm: View {
         return String(format: appPreferences.text("tasks.capabilityPreflight.matched"), names.joined(separator: ", "))
     }
 
+    private func preflightNativeSkillText(_ summary: AgentCapabilityPreflightAgentSummary) -> String {
+        let names = summary.matchedNativeSkillIds.prefix(3).map(preflightSkillName)
+        return String(format: appPreferences.text("tasks.capabilityPreflight.nativeMatched"), names.joined(separator: ", "))
+    }
+
+    private func preflightRepairText(_ summary: AgentCapabilityPreflightAgentSummary) -> String {
+        let suggestions = summary.nativeSkillRepairSuggestions.prefix(2).joined(separator: " ")
+        return String(format: appPreferences.text("tasks.capabilityPreflight.repair"), suggestions)
+    }
+
     private func preflightSkillName(_ skillId: String) -> String {
         let key = "capabilities.skill.\(skillId).name"
         let value = appPreferences.text(key)
-        return value == key ? skillId.replacingOccurrences(of: "_", with: " ") : value
+        return value == key
+            ? skillId
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+            : value
     }
 
     private func displayAgentName(_ agentId: String) -> String {

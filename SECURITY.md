@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-This project is preparing for its first open-source release. Until a public release policy is established, security fixes target the current `main` branch.
+Until versioned public releases are established, security fixes target the current `main` branch.
 
 ## Reporting a Vulnerability
 
@@ -32,3 +32,7 @@ If a real credential is accidentally committed or shared:
 ## Security Expectations
 
 Across Agents Assistant can interact with local files, screenshots, model providers, and local agent tools. Changes in these areas should preserve explicit user control, avoid silent credential disclosure, and keep high-risk actions observable and reviewable.
+
+Local agents, native skills, and MCP servers can expand what the app is able to read, write, or execute. Changes that add or modify those integrations should keep permissions project-scoped where possible, mark unavailable or high-risk capabilities clearly, avoid sending unnecessary local context to providers or tools, and record enough task evidence for users to understand what happened.
+
+Release-candidate changes should include a current-tree secret scan, generated-file cleanup, and relevant E2E validation before publication.

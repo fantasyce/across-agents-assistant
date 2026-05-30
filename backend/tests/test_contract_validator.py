@@ -559,6 +559,100 @@ class TestContractValidator:
 
         assert report.passed is True
 
+    def test_mjs_file_satisfies_api_service_source_contract(self, code_dir):
+        class PersistenceStub:
+            def get_task_contracts(self, _task_id):
+                return [{
+                    "level": "subtask",
+                    "subtask_id": "st-api",
+                    "expected_deliverables": [
+                        {
+                            "artifact_type": "api_service_source",
+                            "required": True,
+                            "description": "Node.js API service source must exist",
+                        }
+                    ],
+                    "acceptance_checks": [
+                        {
+                            "check_type": "api_source_exists",
+                            "required": True,
+                            "description": "API source exists",
+                        }
+                    ],
+                }]
+
+        class StateStub:
+            def __init__(self, task):
+                self.task = task
+                self._persistence = PersistenceStub()
+
+            def get_task_by_subtask(self, _subtask_id):
+                return self.task
+
+        server_path = write_file(code_dir, "api/server.mjs", "import http from 'node:http';\n")
+        task = Task.new("Build Node API service", project_dir=code_dir)
+        subtask = SubTask(
+            subtask_id="st-api",
+            description="Create api/server.mjs",
+            agent_id="deepseek",
+            task_id=task.task_id,
+        )
+        subtask.output_file = server_path
+        task.subtasks.append(subtask)
+        job = Job.new(subtask, agent_id="deepseek")
+        job.result_metadata = {"created_files": [server_path]}
+
+        report = ContractValidator(StateStub(task)).validate(job)
+
+        assert report.passed is True
+
+    def test_mjs_file_satisfies_test_suite_contract(self, code_dir):
+        class PersistenceStub:
+            def get_task_contracts(self, _task_id):
+                return [{
+                    "level": "subtask",
+                    "subtask_id": "st-test",
+                    "expected_deliverables": [
+                        {
+                            "artifact_type": "test_suite",
+                            "required": True,
+                            "description": "Node.js smoke tests must exist",
+                        }
+                    ],
+                    "acceptance_checks": [
+                        {
+                            "check_type": "test_suite_exists",
+                            "required": True,
+                            "description": "Test suite exists",
+                        }
+                    ],
+                }]
+
+        class StateStub:
+            def __init__(self, task):
+                self.task = task
+                self._persistence = PersistenceStub()
+
+            def get_task_by_subtask(self, _subtask_id):
+                return self.task
+
+        test_path = write_file(code_dir, "tests/e2e-smoke.mjs", "import assert from 'node:assert';\n")
+        task = Task.new("Build Node smoke test", project_dir=code_dir)
+        subtask = SubTask(
+            subtask_id="st-test",
+            description="Create tests/e2e-smoke.mjs",
+            agent_id="claude",
+            task_id=task.task_id,
+        )
+        subtask.output_file = test_path
+        task.subtasks.append(subtask)
+        job = Job.new(subtask, agent_id="claude")
+        job.result_metadata = {"created_files": [test_path]}
+
+        report = ContractValidator(StateStub(task)).validate(job)
+
+        assert report.passed is True
+
     def test_workspace_metadata_file_does_not_satisfy_generic_file_deliverable(self, code_dir):
         class PersistenceStub:
             def get_task_contracts(self, _task_id):

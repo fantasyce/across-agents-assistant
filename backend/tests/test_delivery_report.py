@@ -263,3 +263,35 @@ def test_delivery_report_uses_quality_health_delivery_report_when_owner_decision
     assert report["consistency"]["has_failed_constraints"] is True
     assert report["failed_constraints"][0]["constraint_type"] == "forbidden_file"
     assert report["failed_constraints"][0]["value"] == "__init__.py"
+
+
+def test_delivery_report_exposes_structured_quality_report():
+    task = SimpleNamespace(
+        task_id="task-quality-report",
+        status="completed",
+        last_owner_decision={},
+        subtasks=[],
+    )
+
+    report = build_delivery_report(
+        task=task,
+        manifest={"deliverables": [{"path_hint": "index.html", "required": True, "status": "accepted"}]},
+        artifact_records=[],
+        acceptance_records=[],
+        quality_health={
+            "quality_gate": "passed",
+            "manifest_accepted": 1,
+            "delivery_quality_report": {
+                "delivery_quality": "passed",
+                "quality_report": {
+                    "quality_gate": "passed",
+                    "generated_quality_score": 82,
+                    "final_quality_score": 96,
+                },
+            },
+        },
+        final_status="completed",
+    )
+
+    assert report["quality_report"]["final_quality_score"] == 96
+    assert report["quality_report"]["generated_quality_score"] == 82

@@ -10,6 +10,8 @@ final class MainWindowRegistry {
 
     private weak var mainWindow: NSWindow?
     private var openMainWindowAction: (() -> Void)?
+    private var fallbackWindowFactory: (() -> NSWindow)?
+    private var fallbackWindow: NSWindow?
     private let closeDelegate = MainWindowCloseDelegate()
 
     var isTerminating = false
@@ -20,6 +22,10 @@ final class MainWindowRegistry {
         openMainWindowAction = action
     }
 
+    func registerFallbackWindowFactory(_ factory: @escaping () -> NSWindow) {
+        fallbackWindowFactory = factory
+    }
+
     func registerMainWindow(_ window: NSWindow) {
         mainWindow = window
         window.isReleasedWhenClosed = false
@@ -27,12 +33,20 @@ final class MainWindowRegistry {
     }
 
     func showMainWindow() {
+        debugLog("showMainWindow requested windows=\(windowDiagnostics())")
         if NSApp.isHidden {
             NSApp.unhide(nil)
         }
 
         if let window = reusableMainWindow() {
+            debugLog("showMainWindow reusing window title=\(window.title) visible=\(window.isVisible) mini=\(window.isMiniaturized) canKey=\(window.canBecomeKey) hasController=\(window.contentViewController != nil)")
             show(window)
+            return
+        }
+
+        if let fallbackWindow {
+            debugLog("showMainWindow reusing fallback window visible=\(fallbackWindow.isVisible) mini=\(fallbackWindow.isMiniaturized)")
+            show(fallbackWindow)
             return
         }
 
@@ -40,8 +54,10 @@ final class MainWindowRegistry {
 
         DispatchQueue.main.async { [weak self] in
             if let window = self?.reusableMainWindow() {
+                self?.debugLog("showMainWindow async reuse title=\(window.title) visible=\(window.isVisible)")
                 self?.show(window)
             } else {
+                self?.debugLog("showMainWindow async no reusable window; activating app")
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
@@ -60,9 +76,23 @@ final class MainWindowRegistry {
     }
 
     func requestOpenMainWindow() {
-        if let openMainWindowAction {
+        if let window = reusableMainWindow() {
+            debugLog("requestOpenMainWindow reusing window title=\(window.title) visible=\(window.isVisible)")
+            show(window)
+        } else if let openMainWindowAction {
+            debugLog("requestOpenMainWindow using SwiftUI openWindow action")
             openMainWindowAction()
+        } else if let fallbackWindow {
+            debugLog("requestOpenMainWindow reusing fallback NSWindow")
+            show(fallbackWindow)
+        } else if let fallbackWindowFactory {
+            debugLog("requestOpenMainWindow using fallback NSWindow factory")
+            let window = fallbackWindowFactory()
+            fallbackWindow = window
+            registerMainWindow(window)
+            show(window)
         } else {
+            debugLog("requestOpenMainWindow sending newWindow action")
             NSApp.sendAction(Selector(("newWindow:")), to: nil, from: nil)
         }
     }
@@ -73,8 +103,23 @@ final class MainWindowRegistry {
         }
 
         return NSApp.windows.first { window in
-            window.canBecomeKey || window.isVisible || window.isMiniaturized
+            isMainWindowCandidate(window)
         }
+    }
+
+    private func isMainWindowCandidate(_ window: NSWindow) -> Bool {
+        let normalizedTitle = window.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedTitle == "Across Agents Assistant",
+           window.isVisible || window.isMiniaturized || window.contentViewController != nil {
+            return true
+        }
+        guard window.isVisible || window.isMiniaturized else {
+            return false
+        }
+        if window.contentViewController != nil {
+            return true
+        }
+        return normalizedTitle.contains("Across Agents Assistant")
     }
 
     private var hasVisibleMainWindow: Bool {
@@ -91,8 +136,43 @@ final class MainWindowRegistry {
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
-        window.makeKeyAndOrderFront(nil)
+        window.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
+        window.level = .normal
+        if let screen = NSScreen.main {
+            let visible = screen.visibleFrame
+            let width = min(max(window.frame.width, 900), visible.width)
+            let height = min(max(window.frame.height, 600), visible.height)
+            let origin = CGPoint(
+                x: visible.midX - width / 2,
+                y: visible.midY - height / 2
+            )
+            window.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
+        }
         NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func windowDiagnostics() -> String {
+        NSApp.windows.map { window in
+            let title = window.title.isEmpty ? "<empty>" : window.title
+            return "\(title){visible=\(window.isVisible),mini=\(window.isMiniaturized),canKey=\(window.canBecomeKey),hasController=\(window.contentViewController != nil),frame=\(NSStringFromRect(window.frame))}"
+        }.joined(separator: " | ")
+    }
+
+    private func debugLog(_ msg: String) {
+        let url = LocalAppPaths.logFile("main_window.log")
+        if let data = (msg + "\n").data(using: .utf8) {
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+        print(msg)
     }
 }
 

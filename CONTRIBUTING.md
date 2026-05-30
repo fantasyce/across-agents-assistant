@@ -41,9 +41,11 @@ Before opening a pull request:
 1. Keep the change scoped to one feature, bug fix, or cleanup.
 2. Add or update tests when behavior changes.
 3. Update public root documentation when user-facing setup, configuration, permissions, or APIs change.
-4. Run the relevant backend tests and Swift build.
-5. Do not commit generated build output, local databases, local model files, logs, credentials, screenshots with private data, or machine-specific config.
-6. Follow the project [Code of Conduct](CODE_OF_CONDUCT.md).
+4. Run the relevant backend tests, Swift build, and packaged app check for changes that affect app startup or task delivery.
+5. Run complex Release E2E before release-candidate changes to task orchestration, delivery contracts, capability routing, native skills, MCP tools, or quality gates.
+6. Run `git diff --check` and scan the changed tree for credentials, personal paths, private organization names, generated logs, and local runtime files.
+7. Do not commit generated build output, local databases, local model files, logs, credentials, screenshots with private data, or machine-specific config.
+8. Follow the project [Code of Conduct](CODE_OF_CONDUCT.md).
 
 By contributing, you agree that your contribution is provided under the
 project's GNU Affero General Public License v3.0.
@@ -74,6 +76,7 @@ Never commit:
 - Local app databases or runtime state under `~/.across_agents`.
 - Personal absolute paths, private project names, private screenshots, local tool caches, or generated design scratchpads.
 - Large model files unless a future maintainer explicitly moves them to a documented Git LFS flow.
+- Temporary E2E projects, generated browser reports, packaged `.app` bundles, DMGs, PyInstaller output, or Swift build directories.
 
 Use environment variables, Keychain, or local ignored config for credentials.
 
@@ -105,7 +108,7 @@ bundled asset:
 
 Keep public documentation in root-level files such as `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `NOTICE`, and `TRADEMARK_POLICY.md`.
 
-Maintainer notes, design drafts, validation reports, and release checklists are private local files and should stay out of Git unless the project explicitly decides to publish a cleaned version.
+Maintainer notes, design drafts, validation reports, and release checklists are private local files and should stay out of Git unless the project explicitly decides to publish a cleaned version. If a private note becomes public documentation, rewrite it as a current-state guide and remove personal paths, raw logs, task scratch directories, private project names, and maintainer-only process details.
 
 ## Security Issues
 

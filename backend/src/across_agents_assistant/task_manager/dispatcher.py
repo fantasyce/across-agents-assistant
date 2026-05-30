@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import threading
 import time
 from typing import Dict, List, Optional, Callable, Any
@@ -20,19 +21,6 @@ logger = logging.getLogger("across_agents_assistant.task_manager")
 
 # Max concurrent jobs to prevent thread explosion
 MAX_CONCURRENT_JOBS = 3
-
-
-def _agent_timeout_for_subtask(subtask: SubTask) -> float:
-    """Return the execution timeout for a subtask's agent call."""
-    import os
-
-    is_quality_remediation = (
-        str(subtask.subtask_id or "").startswith("st-quality-")
-        or str(subtask.description or "").lower().startswith("quality remediation attempt")
-    )
-    if is_quality_remediation:
-        return float(os.environ.get("ACROSS_AGENTS_REMEDIATION_TIMEOUT", "240"))
-    return float(os.environ.get("ACROSS_AGENTS_AGENT_TIMEOUT", "600"))
 
 class TaskDispatcher:
     """
@@ -98,6 +86,32 @@ class TaskDispatcher:
             return False
         except Exception:
             return False
+
+    @staticmethod
+    def _timeout_from_env(env_name: str, default: float) -> float:
+        raw = os.environ.get(env_name)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+        logger.warning("Ignoring invalid timeout value for %s: %r", env_name, raw)
+        return default
+
+    def _agent_timeout_for_subtask(self, subtask: SubTask) -> float:
+        """Return the bridge timeout for one subtask.
+
+        Quality remediation runs after normal delivery and should fail fast
+        enough for the owner loop to continue repairing instead of waiting for
+        the full worker budget.
+        """
+        subtask_id = str(getattr(subtask, "subtask_id", "") or "")
+        if subtask_id.startswith("st-quality-"):
+            return self._timeout_from_env("ACROSS_AGENTS_QUALITY_REMEDIATION_TIMEOUT", 120.0)
+        return self._timeout_from_env("ACROSS_AGENTS_AGENT_TIMEOUT", 600.0)
 
     def add_progress_callback(self, callback: Callable[[ProgressUpdate], None]) -> None:
         """Add a callback for progress updates."""
@@ -195,11 +209,15 @@ class TaskDispatcher:
                 project_dir = task.project_dir
             if task:
                 context["task_id"] = task.task_id
+                allowed_writable_files = self._allowed_writable_files_for_subtask(task, subtask)
+                if allowed_writable_files:
+                    context["allowed_writable_files"] = allowed_writable_files
+                    context["writable_scope_reason"] = "requirement_manifest_assignment"
             context["subtask_id"] = subtask.subtask_id
             context["job_id"] = job.job_id
             context["user_description"] = subtask.description
 
-            agent_timeout = _agent_timeout_for_subtask(subtask)
+            agent_timeout = self._agent_timeout_for_subtask(subtask)
             response = self._agent_bridge.invoke(
                 agent_id=target_agent,
                 message=subtask.description,
@@ -229,6 +247,49 @@ class TaskDispatcher:
 
         except Exception as e:
             return JobResult(job_id=job.job_id, success=False, error=str(e))
+
+    def _allowed_writable_files_for_subtask(self, task: Task, subtask: SubTask) -> List[str]:
+        """Return project-relative files this subtask is explicitly assigned to write.
+
+        The manifest assignment is the strongest signal because it is created
+        from the user's requested deliverables after coverage matching.  It lets
+        a subtask read dependency outputs while preventing it from creating
+        downstream or unrelated files.
+        """
+        allowed: List[str] = []
+
+        def add(path_hint: Any) -> None:
+            normalized = self._normalize_project_relative_path(path_hint)
+            if normalized and normalized not in allowed:
+                allowed.append(normalized)
+
+        manifest = self._state.get_requirement_manifest(task.task_id)
+        for item in (manifest or {}).get("deliverables", []) or []:
+            if item.get("assigned_subtask_id") != subtask.subtask_id:
+                continue
+            add(item.get("path_hint"))
+
+        if allowed:
+            return allowed
+
+        contract = self._state.get_contract_by_subtask(task.task_id, subtask.subtask_id)
+        for item in (contract or {}).get("expected_deliverables", []) or []:
+            artifact_type = str(item.get("artifact_type") or "").lower()
+            if artifact_type in {"file", "documentation", "test_source", "api_service_source", "frontend_source"}:
+                add(item.get("path_hint"))
+        return allowed
+
+    @staticmethod
+    def _normalize_project_relative_path(path_hint: Any) -> Optional[str]:
+        text = str(path_hint or "").replace("\\", "/").strip()
+        if not text:
+            return None
+        if os.path.isabs(text):
+            return None
+        normalized = os.path.normpath(text).replace("\\", "/")
+        if normalized in {"", "."} or normalized.startswith("../") or normalized == "..":
+            return None
+        return normalized.strip("/")
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a running job."""

@@ -12,6 +12,10 @@ from across_agents_assistant.task_manager.models import (
 )
 from across_agents_assistant.task_manager.state import TaskState
 from across_agents_assistant.task_manager.orchestration.owner_agent import OwnerAgent
+from across_agents_assistant.task_manager.orchestration.release_e2e import (
+    RELEASE_E2E_SCENARIO_ID,
+    build_release_e2e_task_request,
+)
 
 
 class MockLLMResponse:
@@ -34,6 +38,41 @@ class MockLLMGateway:
 
 
 AVAILABLE_AGENT_IDS = ["claude", "deepseek", "hermes", "minimax", "local"]
+
+
+def test_parse_json_response_ignores_thinking_block_before_acceptance_json(fake_task_state):
+    owner = OwnerAgent(MockLLMGateway("{}"), fake_task_state)
+    response_text = """
+<think>
+Let me inspect the previous attempts first.
+The draft includes an object-shaped note: {"not": "the decision"}.
+</think>
+
+{"passed": true, "feedback": "Verified deterministic evidence.", "action": "approve"}
+"""
+
+    parsed = owner._parse_json_response(response_text)
+
+    assert parsed == {
+        "passed": True,
+        "feedback": "Verified deterministic evidence.",
+        "action": "approve",
+    }
+
+
+def test_parse_json_response_extracts_first_balanced_json_object(fake_task_state):
+    owner = OwnerAgent(MockLLMGateway("{}"), fake_task_state)
+    response_text = """
+Review complete.
+{"passed": false, "feedback": "Missing api/server.mjs", "action": "fix"}
+Additional prose after the JSON should be ignored.
+"""
+
+    parsed = owner._parse_json_response(response_text)
+
+    assert parsed["passed"] is False
+    assert parsed["action"] == "fix"
+    assert parsed["feedback"] == "Missing api/server.mjs"
 
 
 def _dag_subtasks(subtasks):
@@ -203,6 +242,58 @@ class TestDecomposeAndAssign:
         deliverables = script_contract.get("expected_deliverables") or []
         assert any(item.get("path_hint") == "app.js" for item in deliverables)
         assert not any(st.subtask_id.startswith("st-gap-") and "app.js" in st.description for st in _dag_subtasks(result.subtasks))
+
+    def test_release_e2e_node_api_contract_keeps_server_path_and_needs_no_gap(self, tmp_path):
+        state = TaskState()
+        state.set_persistence(InMemoryPersistence())
+        request = build_release_e2e_task_request(
+            scenario_id=RELEASE_E2E_SCENARIO_ID,
+            project_dir=str(tmp_path / "release-e2e"),
+            run_label="owner-coverage",
+        )
+        task = state.create_task(
+            request["description"],
+            project_dir=request["project_dir"],
+            owner_agent=request["owner_agent"],
+            allowed_subtask_agents=request["allowed_subtask_agents"],
+            task_types=request["task_types"],
+        )
+        task.strict_dependency = request["strict_dependency"]
+        task.enable_wave_gate = request["enable_wave_gate"]
+        task.required_agent_mix = request["required_agent_mix"]
+
+        owner = OwnerAgent(MockLLMGateway('{"subtasks": []}'), state)
+        owner._get_available_agents = lambda: [
+            {"id": "claude", "name": "Claude Code", "characteristics": "architecture"},
+            {"id": "deepseek", "name": "DeepSeek", "characteristics": "backend"},
+            {"id": "hermes", "name": "Hermes", "characteristics": "frontend"},
+            {"id": "minimax", "name": "MiniMax", "characteristics": "devops"},
+            {"id": "openclaw", "name": "OpenClaw", "characteristics": "general"},
+        ]
+
+        result = owner.decompose_and_assign(
+            task,
+            context={
+                "release_e2e": {"scenario_id": RELEASE_E2E_SCENARIO_ID},
+                "owner_agent": request["owner_agent"],
+                "allowed_subtask_agents": request["allowed_subtask_agents"],
+                "task_types": request["task_types"],
+            },
+        )
+
+        api_contract = next(
+            contract for contract in state.get_task_contracts(task.task_id)
+            if contract.get("subtask_id")
+            and "Create api/server.mjs" in str(contract.get("goal") or "")
+        )
+        deliverables = api_contract.get("expected_deliverables") or []
+        gap_descriptions = [
+            st.description for st in _dag_subtasks(result.subtasks)
+            if st.subtask_id.startswith("st-gap-")
+        ]
+
+        assert any(item.get("path_hint") == "api/server.mjs" for item in deliverables)
+        assert not any("api/server.mjs" in description for description in gap_descriptions)
 
     def test_agent_capability_context_guides_decomposition_and_worker_prompt(self, tmp_path):
         state = TaskState()
@@ -567,6 +658,33 @@ class TestDecomposeAndAssign:
         docs = next(st for st in dag_subtasks if "README.md and TESTING.md" in st.description)
         assert docs.dependencies == [tests.subtask_id]
         assert any("Write pytest tests" in st.description for st in dag_subtasks)
+
+    def test_structure_only_subtasks_are_filtered_from_functional_decomposition(self, tmp_path):
+        state = TaskState()
+        task = state.create_task(
+            "Build a Node API and static web app with exact file deliverables.",
+            project_dir=str(tmp_path),
+            task_types=["functional", "artifact"],
+        )
+
+        llm_response = """{"subtasks": [
+            {"id": "structure", "description": "Create the exact project directory structure with web/, api/, cli/, and tests/ subdirectories. Ensure no extra files, package.json, node_modules, or metadata are created.", "agent": "deepseek", "priority": 1, "dependencies": [], "deliverables": [], "acceptance_checks": []},
+            {"id": "api", "description": "Create api/server.mjs using Node.js built-in http module.", "agent": "deepseek", "priority": 2, "dependencies": ["structure"], "deliverables": [
+                {"artifact_type": "file", "path_hint": "api/server.mjs", "required": true}
+            ], "acceptance_checks": [{"check_type": "file_exists", "required": true}]}
+        ]}"""
+
+        llm = MockLLMGateway(llm_response)
+        owner = OwnerAgent(llm, state)
+        owner._get_available_agents = _all_agents
+
+        result = owner.decompose_and_assign(task, context={"task_types": ["functional", "artifact"]})
+        dag_subtasks = _dag_subtasks(result.subtasks)
+
+        assert len(dag_subtasks) == 1
+        assert "api/server.mjs" in dag_subtasks[0].description
+        assert dag_subtasks[0].dependencies == []
+        assert not any("directory structure" in st.description.lower() for st in dag_subtasks)
 
     def test_functional_decomposition_prompt_blocks_unrequested_auth(self, tmp_path):
         state = TaskState()
@@ -1400,6 +1518,121 @@ class TestInferSubtaskDeliverables:
         assert file_hints == ["src/server.py"]
         assert "file_exists" in {c.check_type for c in checks}
 
+    def test_infer_subtask_deliverables_ignores_validation_manifest_references(self):
+        from across_agents_assistant.task_manager.orchestration.requirements import extract_forbidden_path_hints
+
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+        description = (
+            "Create cli/quality-check.mjs as a standalone validation script. "
+            "It must check the exact seven-file manifest (README.md, web/index.html, "
+            "web/styles.css, web/app.js, api/server.mjs, cli/quality-check.mjs, "
+            "tests/e2e-smoke.mjs), validate security/privacy constraints with no external "
+            "packages, and must not require package.json, node_modules, or files outside the manifest."
+        )
+
+        deliverables, checks = owner._infer_subtask_deliverables(
+            description,
+            "deepseek",
+            project_dir="/tmp/project",
+        )
+
+        file_hints = [
+            d.path_hint
+            for d in deliverables
+            if d.artifact_type == "file"
+        ]
+        assert file_hints == ["cli/quality-check.mjs"]
+        assert "file_exists" in {c.check_type for c in checks}
+        forbidden = extract_forbidden_path_hints(description)
+        assert "cli/quality-check.mjs" not in forbidden
+        assert "web/app.js" not in forbidden
+        assert "package.json" in forbidden
+
+    def test_infer_subtask_deliverables_ignores_smoke_test_dependency_references(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, _checks = owner._infer_subtask_deliverables(
+            (
+                "Implement tests/e2e-smoke.mjs that: starts api/server.mjs on an available "
+                "local port, verifies /health, runs cli/quality-check.mjs as a child process, "
+                "and exits non-zero on failure."
+            ),
+            "deepseek",
+            project_dir="/tmp/project",
+        )
+
+        file_hints = [
+            d.path_hint
+            for d in deliverables
+            if d.artifact_type == "file"
+        ]
+        assert file_hints == ["tests/e2e-smoke.mjs"]
+
+    def test_infer_subtask_deliverables_ignores_readme_command_references(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, _checks = owner._infer_subtask_deliverables(
+            (
+                "Create README.md explaining how to: open web/index.html directly, "
+                "run API server with node api/server.mjs, run node cli/quality-check.mjs, "
+                "and run node tests/e2e-smoke.mjs."
+            ),
+            "claude",
+            project_dir="/tmp/project",
+        )
+
+        file_hints = [
+            d.path_hint
+            for d in deliverables
+            if d.artifact_type == "file"
+        ]
+        assert file_hints == ["README.md"]
+
+    def test_infer_subtask_deliverables_keeps_app_js_with_without_fetch_constraint(self):
+        from across_agents_assistant.task_manager.orchestration.requirements import extract_forbidden_path_hints
+
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+        description = (
+            "Create web/app.js with animated canvas, localStorage persistence, "
+            "offline/static-preview mode for file:// protocol using local fixture data without fetch, "
+            "API calls only when protocol is http: or https:, and catch failures without console.error."
+        )
+
+        deliverables, _checks = owner._infer_subtask_deliverables(
+            description,
+            "openclaw",
+            project_dir="/tmp/project",
+        )
+
+        file_hints = [
+            d.path_hint
+            for d in deliverables
+            if d.artifact_type == "file"
+        ]
+        assert file_hints == ["web/app.js"]
+        assert "web/app.js" not in extract_forbidden_path_hints(description)
+
+    def test_infer_subtask_deliverables_does_not_make_planning_review_a_file(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, checks = owner._infer_subtask_deliverables(
+            (
+                "Review requirements and plan cross-agent implementation. Define agent capability "
+                "matrix, API contracts, and data flow. Ensure all 7 required files are accounted "
+                "for in the architecture."
+            ),
+            "claude",
+            project_dir="/tmp/project",
+        )
+
+        assert deliverables == []
+        assert {check.check_type for check in checks} == {"planning_review_completed"}
+
     def test_infer_subtask_deliverables_does_not_require_file_for_directory_structure(self):
         state = TaskState()
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
@@ -1490,6 +1723,42 @@ class TestInferSubtaskDeliverables:
         assert ("dockerfile", None) not in details
         assert "container_config_exists" not in {c.check_type for c in checks}
         assert ("file", "src/todo.py") in details
+
+    def test_infer_subtask_deliverables_does_not_treat_ui_container_as_docker(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, checks = owner._infer_subtask_deliverables(
+            (
+                "Build index.html with a full semantic DOM skeleton: "
+                "canvas animation container, agent capability cards, and route evidence panel."
+            ),
+            "deepseek",
+            project_dir="/tmp/project",
+        )
+
+        details = {(d.artifact_type, d.path_hint) for d in deliverables}
+        assert ("dockerfile", None) not in details
+        assert "container_config_exists" not in {c.check_type for c in checks}
+        assert ("file", "index.html") in details
+
+    def test_infer_subtask_deliverables_ignores_backend_label_in_static_app_js_ui_copy(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, checks = owner._infer_subtask_deliverables(
+            (
+                "Create app.js implementing dashboard behavior for a static web app. "
+                "Show agent cards with DeepSeek: Backend API, Data modeling, Code review."
+            ),
+            "claude",
+            project_dir="/tmp/project",
+        )
+
+        details = {(d.artifact_type, d.path_hint) for d in deliverables}
+        assert ("api_service_source", None) not in details
+        assert ("file", "app.js") in details
+        assert "api_source_exists" not in {c.check_type for c in checks}
 
     def test_infer_subtask_deliverables_ignores_runtime_json_store_paths(self):
         state = TaskState()
@@ -1748,6 +2017,32 @@ class TestInferSubtaskDeliverables:
         )
 
         assert {(d.artifact_type, d.path_hint) for d in deliverables} == {("file", "README.md")}
+        assert {c.check_type for c in checks} == {"file_exists"}
+
+    def test_sanitize_ignores_backend_label_inside_static_app_js_ui_copy(self):
+        state = TaskState()
+        owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
+
+        deliverables, checks = owner._sanitize_subtask_contract_specs(
+            description=(
+                "Create app.js implementing dashboard behavior for a static web app. "
+                "Show Local Agent cards and Cloud LLM cards, including DeepSeek: Backend API, "
+                "Data modeling, Code review.\n\n"
+                "[CRITICAL] All files MUST be written to this directory: /tmp/project\n"
+                "Do NOT create files in any other location."
+            ),
+            agent_id="claude",
+            deliverables=[
+                DeliverableSpec(artifact_type="api_service_source", required=True, description="hallucinated"),
+                DeliverableSpec(artifact_type="file", required=True, path_hint="app.js", description="real file"),
+            ],
+            checks=[
+                AcceptanceCheck(check_type="api_source_exists", description="hallucinated", required=True),
+                AcceptanceCheck(check_type="file_exists", description="real file", required=True),
+            ],
+        )
+
+        assert {(d.artifact_type, d.path_hint) for d in deliverables} == {("file", "app.js")}
         assert {c.check_type for c in checks} == {"file_exists"}
 
     def test_infer_subtask_deliverables_does_not_require_forbidden_files_or_docker(self):
@@ -2176,6 +2471,23 @@ class TestNoDockerNegativeConstraint:
     def test_task_contract_inference_does_not_treat_chinese_no_docker_as_required_docker(self, fake_owner_agent, fake_task_state, tmp_path):
         task = fake_task_state.create_task(
             description="实现 FastAPI + SQLite Web 应用，不得创建 Dockerfile/docker-compose。",
+            project_dir=str(tmp_path),
+            task_types=["functional"],
+            delivery_mode="functional",
+        )
+
+        deliverables, checks = fake_owner_agent._infer_task_contract_requirements(task)
+
+        assert not any(item.artifact_type == "dockerfile" for item in deliverables)
+        assert not any(item.check_type == "container_config_exists" for item in checks)
+
+    def test_task_contract_inference_does_not_treat_canvas_container_as_docker(self, fake_owner_agent, fake_task_state, tmp_path):
+        task = fake_task_state.create_task(
+            description=(
+                "Build a static web app with index.html, styles.css, app.js, and README.md. "
+                "Create a canvas animation container and responsive card layout. "
+                "Open index.html directly without a server."
+            ),
             project_dir=str(tmp_path),
             task_types=["functional"],
             delivery_mode="functional",

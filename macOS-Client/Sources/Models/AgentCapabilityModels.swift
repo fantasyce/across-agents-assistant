@@ -166,6 +166,9 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
     let agentId: String
     let score: Int
     let matchedSkillIds: [String]
+    let matchedNativeSkillIds: [String]
+    let unavailableNativeSkillIds: [String]
+    let nativeSkillRepairSuggestions: [String]
     let configuredCount: Int
     let warnings: [String]
 
@@ -173,8 +176,43 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
         case agentId = "agent_id"
         case score
         case matchedSkillIds = "matched_skill_ids"
+        case matchedNativeSkillIds = "matched_native_skill_ids"
+        case unavailableNativeSkillIds = "unavailable_native_skill_ids"
+        case nativeSkillRepairSuggestions = "native_skill_repair_suggestions"
         case configuredCount = "configured_count"
         case warnings
+    }
+
+    init(
+        agentId: String,
+        score: Int,
+        matchedSkillIds: [String],
+        matchedNativeSkillIds: [String] = [],
+        unavailableNativeSkillIds: [String] = [],
+        nativeSkillRepairSuggestions: [String] = [],
+        configuredCount: Int,
+        warnings: [String]
+    ) {
+        self.agentId = agentId
+        self.score = score
+        self.matchedSkillIds = matchedSkillIds
+        self.matchedNativeSkillIds = matchedNativeSkillIds
+        self.unavailableNativeSkillIds = unavailableNativeSkillIds
+        self.nativeSkillRepairSuggestions = nativeSkillRepairSuggestions
+        self.configuredCount = configuredCount
+        self.warnings = warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agentId = try container.decode(String.self, forKey: .agentId)
+        score = try container.decodeIfPresent(Int.self, forKey: .score) ?? 0
+        matchedSkillIds = try container.decodeIfPresent([String].self, forKey: .matchedSkillIds) ?? []
+        matchedNativeSkillIds = try container.decodeIfPresent([String].self, forKey: .matchedNativeSkillIds) ?? []
+        unavailableNativeSkillIds = try container.decodeIfPresent([String].self, forKey: .unavailableNativeSkillIds) ?? []
+        nativeSkillRepairSuggestions = try container.decodeIfPresent([String].self, forKey: .nativeSkillRepairSuggestions) ?? []
+        configuredCount = try container.decodeIfPresent(Int.self, forKey: .configuredCount) ?? 0
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 }
 
@@ -214,6 +252,7 @@ struct NativeSkillDefinition: Codable, Identifiable, Equatable {
     let availability: String?
     let unavailableReason: String?
     let missingRequirements: [String]
+    let repairSuggestions: [String]
     let managedByApp: Bool
     let supportsUpdate: Bool
     let supportsUninstall: Bool
@@ -229,6 +268,7 @@ struct NativeSkillDefinition: Codable, Identifiable, Equatable {
         case availability
         case unavailableReason = "unavailable_reason"
         case missingRequirements = "missing_requirements"
+        case repairSuggestions = "repair_suggestions"
         case managedByApp = "managed_by_app"
         case supportsUpdate = "supports_update"
         case supportsUninstall = "supports_uninstall"
@@ -245,6 +285,7 @@ struct NativeSkillDefinition: Codable, Identifiable, Equatable {
         availability: String? = nil,
         unavailableReason: String? = nil,
         missingRequirements: [String] = [],
+        repairSuggestions: [String] = [],
         managedByApp: Bool = false,
         supportsUpdate: Bool = false,
         supportsUninstall: Bool = false
@@ -259,6 +300,7 @@ struct NativeSkillDefinition: Codable, Identifiable, Equatable {
         self.availability = availability
         self.unavailableReason = unavailableReason
         self.missingRequirements = missingRequirements
+        self.repairSuggestions = repairSuggestions
         self.managedByApp = managedByApp
         self.supportsUpdate = supportsUpdate
         self.supportsUninstall = supportsUninstall
@@ -276,6 +318,7 @@ struct NativeSkillDefinition: Codable, Identifiable, Equatable {
         availability = try container.decodeIfPresent(String.self, forKey: .availability)
         unavailableReason = try container.decodeIfPresent(String.self, forKey: .unavailableReason)
         missingRequirements = try container.decodeIfPresent([String].self, forKey: .missingRequirements) ?? []
+        repairSuggestions = try container.decodeIfPresent([String].self, forKey: .repairSuggestions) ?? []
         managedByApp = try container.decodeIfPresent(Bool.self, forKey: .managedByApp) ?? false
         supportsUpdate = try container.decodeIfPresent(Bool.self, forKey: .supportsUpdate) ?? false
         supportsUninstall = try container.decodeIfPresent(Bool.self, forKey: .supportsUninstall) ?? false

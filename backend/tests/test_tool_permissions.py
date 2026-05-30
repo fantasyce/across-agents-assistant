@@ -5,6 +5,7 @@ import pytest
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from across_agents_assistant.persistence.permissions import ToolPermissionStore
+from across_agents_assistant.tools.mcp_client import MCPClientManager
 
 
 def test_permission_store_marks_tool_unavailable(tmp_path):
@@ -149,3 +150,96 @@ async def test_mcp_tool_approval_routes_to_matching_mcp_server(monkeypatch):
 
     assert response.text == "continued"
     assert calls == [("sqlite", "sqlite_query", {"query": "select 1"})]
+
+
+def test_mcp_path_allowlist_rejects_sibling_prefix_paths():
+    manager = MCPClientManager()
+
+    assert manager._is_path_allowed("/tmp/project/file.txt", ["/tmp/project"])
+    assert not manager._is_path_allowed("/tmp/project-secrets/file.txt", ["/tmp/project"])
+
+
+def test_mcp_tool_schemas_include_safety_metadata():
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "filesystem": {"allowed_paths": ["/tmp/project"], "readonly": False}
+    }
+    manager.server_tools = {
+        "filesystem": [
+            {
+                "name": "filesystem__write_file",
+                "description": "Write a file",
+                "parameters": {},
+                "risk_level": "medium",
+                "original_name": "write_file",
+            }
+        ]
+    }
+
+    schema = manager.get_all_tools_schema()[0]
+
+    assert schema["source"] == "mcp"
+    assert schema["server_id"] == "filesystem"
+    assert schema["risk_level"] == "high"
+    assert schema["requires_approval"] is True
+    assert schema["sandbox"]["allowed_paths"] == ["/tmp/project"]
+    assert "write-capable" in schema["safety_labels"]
+
+
+def test_mcp_safety_report_summarizes_server_risk():
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "filesystem": {"allowed_paths": ["/tmp/project"], "readonly": False},
+        "readonly_notes": {"allowed_paths": [], "readonly": True},
+    }
+    manager.server_tools = {
+        "filesystem": [
+            {
+                "name": "filesystem__read_file",
+                "description": "Read a file",
+                "parameters": {},
+                "risk_level": "low",
+                "original_name": "read_file",
+            },
+            {
+                "name": "filesystem__write_file",
+                "description": "Write a file",
+                "parameters": {},
+                "risk_level": "medium",
+                "original_name": "write_file",
+            },
+        ],
+        "readonly_notes": [
+            {
+                "name": "readonly_notes__create_note",
+                "description": "Create a note",
+                "parameters": {},
+                "risk_level": "high",
+                "original_name": "create_note",
+            }
+        ],
+    }
+
+    report = manager.get_safety_report()
+
+    filesystem = next(item for item in report["servers"] if item["server_id"] == "filesystem")
+    assert filesystem["tool_count"] == 2
+    assert filesystem["highest_risk"] == "high"
+    assert filesystem["write_capable_tool_count"] == 1
+    assert filesystem["sandbox"]["allowed_paths"] == ["/tmp/project"]
+    assert "High-risk MCP tools require approval." in filesystem["warnings"]
+
+    readonly = next(item for item in report["servers"] if item["server_id"] == "readonly_notes")
+    assert readonly["sandbox"]["readonly"] is True
+    assert "Readonly mode blocks write-capable tools at call time." in readonly["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_readonly_mode_blocks_write_tools_without_path_arguments():
+    manager = MCPClientManager()
+    manager._sandbox_settings = {"notes": {"allowed_paths": [], "readonly": True}}
+    manager.sessions["notes"] = object()
+
+    result = await manager.call_tool("notes", "create_note", {"title": "Demo"})
+
+    assert result == "Error: This MCP server is in readonly mode. Write operations are not allowed."

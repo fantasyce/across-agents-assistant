@@ -2,10 +2,50 @@ from across_agents_assistant.task_manager.orchestration.delivery_contract import
     build_owner_delivery_contract,
     normalize_delivery_task_types,
 )
+from across_agents_assistant.task_manager.orchestration.requirements import (
+    extract_requirement_manifest,
+    extract_required_path_hints,
+)
+from across_agents_assistant.task_manager.state import TaskState
 
 
 def test_normalize_delivery_task_types_composite():
     assert normalize_delivery_task_types(["functional", "artifact"]) == (["functional", "artifact"], "composite")
+
+
+def test_contract_includes_probe_adapter_plan_for_static_web(tmp_path):
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    contract = build_owner_delivery_contract(
+        task_id="task-static",
+        description="Build a runnable static web page with browser interaction.",
+        task_types=["functional"],
+        project_dir=str(tmp_path),
+        manifest={"deliverables": [{"path_hint": "index.html", "artifact_type": "frontend_source", "required": True}]},
+    )
+
+    adapter_ids = {gate["adapter_id"] for gate in contract["probe_adapter_plan"]}
+    assert "static_web" in adapter_ids
+    assert "browser_e2e" in adapter_ids
+
+
+def test_contract_unknown_source_project_requires_manual_validation_recipe(tmp_path):
+    (tmp_path / "README.md").write_text("# Unknown stack\n", encoding="utf-8")
+
+    contract = build_owner_delivery_contract(
+        task_id="task-unknown",
+        description="Build a runnable local app, but no technology stack is specified.",
+        task_types=["functional"],
+        project_dir=str(tmp_path),
+        manifest={"deliverables": []},
+    )
+
+    unknown_gates = [
+        gate for gate in contract["probe_adapter_plan"]
+        if gate["adapter_id"] == "unknown_stack"
+    ]
+    assert unknown_gates
+    assert unknown_gates[0]["status"] == "manual_required"
 
 
 def test_contract_turns_no_docker_into_constraint_not_deliverable():
@@ -226,6 +266,72 @@ def test_contract_records_allowed_files_when_user_requests_exact_file_set():
     ]
     assert allowed
     assert allowed[0]["value"] == ["README.md"]
+
+
+def test_exact_static_web_contract_keeps_index_when_no_build_step_is_forbidden():
+    description = (
+        "Build a static web app called Release Evaluation Cockpit. "
+        "It must open directly from index.html with no build step. "
+        "Deliver exactly these files and no others: index.html, styles.css, app.js, README.md."
+    )
+
+    assert extract_required_path_hints(description) == [
+        "index.html",
+        "styles.css",
+        "app.js",
+        "README.md",
+    ]
+
+    manifest = extract_requirement_manifest("task-static", description, "/tmp/project")
+    manifest_payload = TaskState()._manifest_to_dict(manifest)
+    contract = build_owner_delivery_contract(
+        task_id="task-static",
+        description=description,
+        task_types=["functional", "artifact"],
+        project_dir="/tmp/project",
+        manifest=manifest_payload,
+    )
+
+    assert [item["path_hint"] for item in contract["deliverables"]] == [
+        "index.html",
+        "styles.css",
+        "app.js",
+        "README.md",
+    ]
+    allowed = [
+        c for c in contract["constraints"]
+        if c["constraint_type"] == "allowed_files"
+    ]
+    assert allowed
+    assert allowed[0]["value"] == ["index.html", "styles.css", "app.js", "README.md"]
+
+
+def test_functional_contract_records_allowed_files_when_user_requests_exact_file_set():
+    manifest = {
+        "deliverables": [
+            {"requirement_id": "req-index", "artifact_type": "frontend_source", "path_hint": "index.html", "required": True},
+            {"requirement_id": "req-css", "artifact_type": "frontend_source", "path_hint": "styles.css", "required": True},
+            {"requirement_id": "req-js", "artifact_type": "frontend_source", "path_hint": "app.js", "required": True},
+            {"requirement_id": "req-readme", "artifact_type": "documentation", "path_hint": "README.md", "required": True},
+        ]
+    }
+    contract = build_owner_delivery_contract(
+        task_id="task-static",
+        description=(
+            "Build a static web app. "
+            "Create exactly these files: index.html, styles.css, app.js, README.md."
+        ),
+        task_types=["functional"],
+        project_dir="/tmp/project",
+        manifest=manifest,
+    )
+
+    allowed = [
+        c for c in contract["constraints"]
+        if c["constraint_type"] == "allowed_files"
+    ]
+    assert allowed
+    assert allowed[0]["value"] == ["index.html", "styles.css", "app.js", "README.md"]
 
 
 def test_contract_does_not_forbid_static_entrypoint_when_no_package_managers():

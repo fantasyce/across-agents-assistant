@@ -111,8 +111,8 @@ class TaskPersistenceService:
             cursor.execute(
                 '''
                 SELECT task_id, description, status, progress, completed_count, total_count,
-                       created_at, updated_at, project_dir, owner_agent, delivery_mode,
-                       last_owner_decision
+                       created_at, updated_at, project_dir, owner_agent, allowed_subtask_agents,
+                       task_types, delivery_mode, last_owner_decision
                 FROM tasks
                 ORDER BY updated_at DESC, created_at DESC
                 LIMIT ? OFFSET ?
@@ -142,6 +142,11 @@ class TaskPersistenceService:
                     )
                 except json.JSONDecodeError:
                     row["last_owner_decision"] = {}
+                for key in ("allowed_subtask_agents", "task_types"):
+                    try:
+                        row[key] = json.loads(row[key]) if row.get(key) else []
+                    except json.JSONDecodeError:
+                        row[key] = []
             return rows, int(total or 0)
 
     def update_task_status(self, task_id: str, status: str, error: str = None) -> None:

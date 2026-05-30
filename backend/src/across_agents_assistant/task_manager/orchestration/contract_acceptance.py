@@ -5,9 +5,13 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List
 
 from across_agents_assistant.workspace_hygiene import IGNORED_DIR_NAMES, scan_workspace_hygiene
@@ -18,6 +22,10 @@ from .project_acceptance import (
     first_existing_candidate,
 )
 from .quality_gates import QualityGateResult, build_quality_report
+
+
+LOCAL_AGENT_IDS = {"openclaw", "hermes", "claude"}
+CLOUD_AGENT_IDS = {"deepseek", "minimax"}
 
 
 def _python_probe_executable() -> str:
@@ -282,6 +290,7 @@ def _validate_deliverable_groups(project_dir: str, groups: List[Dict[str, Any]])
         if one_of and not any(_group_entrypoint_exists(project_dir, item) for item in one_of):
             invalid.append({
                 "path_hint": " / ".join(one_of),
+                "candidate_path_hints": one_of,
                 "group_id": group_id,
                 "check_type": "deliverable_group_one_of",
                 "message": f"Required deliverable group {group_id} needs one of: {', '.join(one_of)}",
@@ -297,6 +306,7 @@ def _validate_deliverable_groups(project_dir: str, groups: List[Dict[str, Any]])
         if one_of_entrypoints and not any(_group_entrypoint_exists(project_dir, item) for item in one_of_entrypoints):
             invalid.append({
                 "path_hint": " / ".join(one_of_entrypoints),
+                "candidate_path_hints": one_of_entrypoints,
                 "group_id": group_id,
                 "check_type": "deliverable_group_entrypoint",
                 "message": f"Required deliverable group {group_id} needs at least one entrypoint.",
@@ -732,6 +742,7 @@ except Exception:
 
 STATIC_WEB_ENTRYPOINTS = (
     "index.html",
+    "web/index.html",
     "static/index.html",
     "public/index.html",
     "app/static/index.html",
@@ -886,6 +897,8 @@ def _required_static_asset_link_failures(
         path_hint = str(deliverable.get("path_hint") or "").strip().replace("\\", "/").lstrip("./")
         if not path_hint.lower().endswith((".css", ".js", ".mjs")):
             continue
+        if not _is_static_web_asset_path(path_hint, entrypoint):
+            continue
         if os.path.isfile(os.path.join(project_dir, path_hint)):
             required_assets.append(path_hint)
     missing: List[str] = []
@@ -895,6 +908,29 @@ def _required_static_asset_link_failures(
         if asset_key not in refs and asset_basename not in {os.path.basename(ref) for ref in refs}:
             missing.append(asset)
     return missing
+
+
+def _is_static_web_asset_path(path_hint: str, entrypoint: str) -> bool:
+    """Return True when a deliverable is expected to be loaded by static HTML.
+
+    Composite tasks can include JavaScript files that are not browser assets,
+    such as Node API services, CLI tools, or smoke tests.  The static smoke
+    probe should require links for CSS/JS that belong to the web surface only.
+    """
+    normalized = str(path_hint or "").replace("\\", "/").strip().lstrip("./")
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if lowered.startswith(("api/", "cli/", "tests/", "test/", "backend/", "server/")):
+        return False
+
+    entry_dir = os.path.dirname(entrypoint).replace("\\", "/").strip("/")
+    if entry_dir:
+        return lowered == entry_dir.lower() or lowered.startswith(entry_dir.lower() + "/")
+
+    if "/" not in normalized:
+        return True
+    return lowered.startswith(("static/", "public/", "assets/", "web/"))
 
 
 STATIC_WEB_FEATURE_RULES = [
@@ -1570,6 +1606,9 @@ def _requested_agent_routing_entities(description: str) -> List[str]:
         return []
     entities: List[str] = []
     for match in re.finditer(r"\bacross\s+([^.\n]+)", description or "", flags=re.IGNORECASE):
+        prefix = (description or "")[max(0, match.start() - 40):match.start()].lower()
+        if re.search(r"(?:called|named|titled)\s+[\"'“”]?$", prefix):
+            continue
         segment = match.group(1)
         segment = re.split(
             r"\b(?:implement|show|inside|with|using|that|which|for|must|should)\b",
@@ -2165,7 +2204,7 @@ def _run_static_web_smoke(
             "probe_type": "static_web_smoke",
             "passed": False,
             "returncode": 1,
-            "output_tail": "No static web entrypoint found. Expected index.html, static/index.html, public/index.html, or app/static/index.html.",
+            "output_tail": "No static web entrypoint found. Expected index.html, web/index.html, static/index.html, public/index.html, or app/static/index.html.",
             "blocked_by_environment": False,
         }
 
@@ -2299,7 +2338,7 @@ def _run_browser_e2e(
             "probe_type": "browser_e2e",
             "passed": False,
             "returncode": 1,
-            "output_tail": "No static web entrypoint found for browser E2E.",
+            "output_tail": "No static web entrypoint found for browser E2E. Expected index.html or web/index.html.",
             "blocked_by_environment": False,
         }
 
@@ -2481,6 +2520,7 @@ function includesAll(text, terms) {
           const containerSelectors = [
             '.route-evidence',
             '.route-evidence-panel',
+            '.route-evidence-section',
             '#route-evidence',
             '#routeEvidence',
             '#routeEvidencePanel',
@@ -2510,7 +2550,7 @@ function includesAll(text, terms) {
 
           return null;
         }
-        const routeTask = 'Implement and test a browser E2E route evidence workflow with MCP risk review and quality gates';
+        const routeTask = 'Review backend API schema, browser E2E, security privacy, MCP risk, and deployment routing ' + Date.now();
         const panel = chooseRoutePanel() || document.body;
         const beforeInput = panel.innerText || '';
         const taskInput = document.querySelector(
@@ -2778,6 +2818,284 @@ def _run_notes_cli_smoke(project_dir: str) -> Dict[str, Any]:
         cleanup_generated_files()
 
 
+def _find_api_service_entrypoint(project_dir: str, contract: Dict[str, Any] | None = None) -> str | None:
+    contract = contract or {}
+    candidates: List[str] = []
+    for deliverable in contract.get("deliverables", []) or []:
+        path_hint = str(deliverable.get("path_hint") or "").strip().replace("\\", "/")
+        if not path_hint:
+            continue
+        artifact_type = str(deliverable.get("artifact_type") or "").lower()
+        if artifact_type == "api_service_source" or path_hint in {"api/server.mjs", "api/server.js", "server.mjs", "server.js"}:
+            candidates.append(path_hint)
+    candidates.extend(["api/server.mjs", "api/server.js", "server.mjs", "server.js"])
+    seen: set[str] = set()
+    for relative_path in candidates:
+        if relative_path in seen:
+            continue
+        seen.add(relative_path)
+        full_path = os.path.realpath(os.path.join(project_dir, relative_path))
+        try:
+            if os.path.commonpath([os.path.realpath(project_dir), full_path]) != os.path.realpath(project_dir):
+                continue
+        except ValueError:
+            continue
+        if os.path.isfile(full_path):
+            return relative_path
+    return None
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _http_json_request(port: int, method: str, path: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    body = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=body,
+        method=method,
+        headers={"content-type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=1.5) as response:
+        raw = response.read(200000).decode("utf-8", "ignore")
+        return {
+            "status": response.status,
+            "body": json.loads(raw or "{}"),
+        }
+
+
+def _run_api_service_smoke(project_dir: str, contract: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    entrypoint = _find_api_service_entrypoint(project_dir, contract)
+    if not entrypoint:
+        return {
+            "probe_type": "api_service",
+            "passed": False,
+            "returncode": 1,
+            "output_tail": "No API service entrypoint found. Expected api/server.mjs, api/server.js, server.mjs, or server.js.",
+            "blocked_by_environment": False,
+        }
+    node = _node_probe_executable()
+    if not node:
+        return {
+            "probe_type": "api_service",
+            "passed": False,
+            "returncode": None,
+            "output_tail": "Node.js executable was not found for API service smoke.",
+            "blocked_by_environment": True,
+            "entrypoint": entrypoint,
+        }
+
+    port = _free_local_port()
+    env = dict(os.environ)
+    env["PORT"] = str(port)
+    proc: subprocess.Popen[str] | None = None
+    output: List[str] = []
+    try:
+        proc = subprocess.Popen(
+            [node, entrypoint],
+            cwd=project_dir,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        health: Dict[str, Any] | None = None
+        deadline = time.time() + 6
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                break
+            try:
+                health = _http_json_request(port, "GET", "/health")
+                if health.get("status") == 200:
+                    break
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+                time.sleep(0.15)
+        if not health or health.get("status") != 200 or health.get("body", {}).get("status") != "ok":
+            tail = ""
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    tail, _ = proc.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    tail, _ = proc.communicate(timeout=1)
+            elif proc and proc.stdout:
+                tail = proc.stdout.read(4000)
+            return {
+                "probe_type": "api_service",
+                "passed": False,
+                "returncode": proc.poll() if proc else None,
+                "output_tail": (tail or "GET /health did not return status ok.")[-4000:],
+                "blocked_by_environment": False,
+                "entrypoint": entrypoint,
+            }
+
+        agents = _http_json_request(port, "GET", "/api/agents")
+        route = _http_json_request(port, "POST", "/api/route", {"task": "browser api mcp quality"})
+        report = _http_json_request(port, "GET", "/api/report")
+        output.extend([
+            f"GET /health -> {health.get('status')}",
+            f"GET /api/agents -> {agents.get('status')}",
+            f"POST /api/route -> {route.get('status')}",
+            f"GET /api/report -> {report.get('status')}",
+        ])
+        agent_body = agents.get("body") or {}
+        agent_rows = agent_body.get("agents") if isinstance(agent_body, dict) else None
+        route_body = route.get("body") or {}
+        report_body = report.get("body") or {}
+        failures: List[str] = []
+        if not isinstance(agent_rows, list) or len(agent_rows) < 5:
+            failures.append("/api/agents must return at least five agents")
+        if not any(str(row.get("kind") or "").lower() == "local" for row in agent_rows or []):
+            failures.append("/api/agents must include local agents")
+        if not any(str(row.get("kind") or "").lower() == "cloud" for row in agent_rows or []):
+            failures.append("/api/agents must include cloud LLMs")
+        if not (route_body.get("selectedAgent") or route_body.get("selected_agent")):
+            failures.append("/api/route must return a selected agent")
+        if not (route_body.get("reason") or route_body.get("rationale")):
+            failures.append("/api/route must return a reason or rationale")
+        if "required_failed_count" not in report_body or not (report_body.get("gateResults") or report_body.get("gate_results")):
+            failures.append(
+                "/api/report must return readiness metrics and gate results: "
+                "required_failed_count, manual_required_count, skipped_required_count, "
+                "and gateResults or gate_results. camelCase-only metric keys are insufficient."
+            )
+        return {
+            "probe_type": "api_service",
+            "passed": not failures,
+            "returncode": 0 if not failures else 1,
+            "output_tail": "\n".join(output + failures)[-4000:],
+            "blocked_by_environment": False,
+            "entrypoint": entrypoint,
+        }
+    except (FileNotFoundError, subprocess.TimeoutExpired, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        return {
+            "probe_type": "api_service",
+            "passed": False,
+            "returncode": proc.poll() if proc else None,
+            "output_tail": str(exc)[-4000:],
+            "blocked_by_environment": isinstance(exc, FileNotFoundError),
+            "entrypoint": entrypoint,
+        }
+    finally:
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def _run_cli_generic_smoke(project_dir: str, contract: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    node = _node_probe_executable()
+    script = os.path.join(project_dir, "cli", "quality-check.mjs")
+    if not os.path.isfile(script):
+        return {
+            "probe_type": "cli_generic",
+            "passed": False,
+            "returncode": 1,
+            "output_tail": "No supported CLI smoke entrypoint found. Expected cli/quality-check.mjs.",
+            "blocked_by_environment": False,
+        }
+    if not node:
+        return {
+            "probe_type": "cli_generic",
+            "passed": False,
+            "returncode": None,
+            "output_tail": "Node.js executable was not found for CLI smoke.",
+            "blocked_by_environment": True,
+        }
+    try:
+        proc = subprocess.run(
+            [node, "cli/quality-check.mjs"],
+            cwd=project_dir,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        )
+        output = proc.stdout or ""
+        passed = proc.returncode == 0
+        try:
+            parsed = json.loads(output[output.find("{"): output.rfind("}") + 1])
+            if isinstance(parsed, dict) and parsed.get("passed") is False:
+                passed = False
+        except Exception:
+            pass
+        return {
+            "probe_type": "cli_generic",
+            "passed": passed,
+            "returncode": proc.returncode,
+            "output_tail": output[-4000:],
+            "blocked_by_environment": False,
+        }
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {
+            "probe_type": "cli_generic",
+            "passed": False,
+            "returncode": None,
+            "output_tail": str(exc),
+            "blocked_by_environment": isinstance(exc, FileNotFoundError),
+        }
+
+
+def _agent_mix_constraint_evidence(task: Any) -> Dict[str, Any]:
+    actual_agents: List[str] = []
+    for subtask in getattr(task, "subtasks", []) or []:
+        subtask_id = str(getattr(subtask, "subtask_id", "") or "")
+        if subtask_id.endswith("-decompose"):
+            continue
+        agent_id = str(getattr(subtask, "agent_id", "") or "").strip().lower()
+        if not agent_id or agent_id == "owner":
+            continue
+        status = getattr(getattr(subtask, "status", None), "value", getattr(subtask, "status", None))
+        if str(status or "").lower() not in {"completed", "completed_with_failures"}:
+            continue
+        if agent_id not in actual_agents:
+            actual_agents.append(agent_id)
+
+    local_agents = sorted(agent for agent in actual_agents if agent in LOCAL_AGENT_IDS)
+    cloud_agents = sorted(agent for agent in actual_agents if agent in CLOUD_AGENT_IDS)
+    return {
+        "actual_agents": actual_agents,
+        "local_agents": local_agents,
+        "cloud_agents": cloud_agents,
+    }
+
+
+def _check_agent_mix_constraint(task: Any, constraint: Dict[str, Any]) -> Dict[str, Any] | None:
+    value = constraint.get("value") or {}
+    if not isinstance(value, dict):
+        return None
+    min_distinct = int(value.get("min_distinct_agents") or 0)
+    min_local = int(value.get("min_local_agents") or 0)
+    min_cloud = int(value.get("min_cloud_agents") or 0)
+
+    evidence = _agent_mix_constraint_evidence(task)
+    actual_agents = evidence["actual_agents"]
+    local_agents = evidence["local_agents"]
+    cloud_agents = evidence["cloud_agents"]
+    failures: List[str] = []
+    if len(actual_agents) < min_distinct:
+        failures.append(f"expected at least {min_distinct} distinct agents, saw {len(actual_agents)}")
+    if len(local_agents) < min_local:
+        failures.append(f"expected at least {min_local} local agents, saw {len(local_agents)}")
+    if len(cloud_agents) < min_cloud:
+        failures.append(f"expected at least {min_cloud} cloud agents, saw {len(cloud_agents)}")
+    if not failures:
+        return None
+    return {
+        "id": constraint.get("id") or "constraint-agent-mix",
+        "constraint_type": "agent_mix",
+        "value": value,
+        "message": "; ".join(failures),
+        "evidence": evidence,
+    }
+
+
 def run_delivery_contract_acceptance(
     task: Any,
     contract: Dict[str, Any],
@@ -2792,6 +3110,7 @@ def run_delivery_contract_acceptance(
     produced_required: List[str] = []
     invalid_required: List[Dict[str, Any]] = []
     failed_constraints: List[Dict[str, Any]] = []
+    satisfied_agent_mix_constraints: List[Dict[str, Any]] = []
     evidence_gaps: List[Dict[str, Any]] = []
     probe_results: List[Dict[str, Any]] = []
     hygiene_report: Dict[str, Any] | None = None
@@ -2897,6 +3216,17 @@ def run_delivery_contract_acceptance(
                         "value": constraint.get("value") or "auth",
                         "evidence": auth_paths,
                     })
+            if constraint.get("constraint_type") == "agent_mix":
+                agent_mix_failure = _check_agent_mix_constraint(task, constraint)
+                if agent_mix_failure:
+                    failed_constraints.append(agent_mix_failure)
+                else:
+                    satisfied_agent_mix_constraints.append({
+                        "id": constraint.get("id") or "constraint-agent-mix",
+                        "constraint_type": "agent_mix",
+                        "value": constraint.get("value") or {},
+                        "evidence": _agent_mix_constraint_evidence(task),
+                    })
 
         hygiene_report = scan_workspace_hygiene(project_dir)
         if hygiene_report["noise_file_count"] > 0:
@@ -2949,6 +3279,14 @@ def run_delivery_contract_acceptance(
                 result = _run_browser_e2e(project_dir, task_description)
                 result["id"] = probe.get("id") or "probe-browser-e2e"
                 probe_results.append(result)
+            if probe.get("probe_type") == "api_service" and project_dir:
+                result = _run_api_service_smoke(project_dir, contract)
+                result["id"] = probe.get("id") or "probe-api-service"
+                probe_results.append(result)
+            if probe.get("probe_type") == "cli_generic" and project_dir:
+                result = _run_cli_generic_smoke(project_dir, contract)
+                result["id"] = probe.get("id") or "probe-cli-generic"
+                probe_results.append(result)
             if probe.get("probe_type") == "pytest" and project_dir:
                 result = _run_pytest(project_dir)
                 result["id"] = probe.get("id") or "probe-pytest"
@@ -2988,6 +3326,7 @@ def run_delivery_contract_acceptance(
             missing_required=missing_required,
             invalid_required=invalid_required,
             failed_constraints=failed_constraints,
+            satisfied_agent_mix_constraints=satisfied_agent_mix_constraints,
             evidence_gaps=evidence_gaps,
             probe_results=probe_results,
             hygiene_report=hygiene_report,
@@ -3013,6 +3352,7 @@ def _quality_gate_results_from_acceptance(
     missing_required: List[str],
     invalid_required: List[Dict[str, Any]],
     failed_constraints: List[Dict[str, Any]],
+    satisfied_agent_mix_constraints: List[Dict[str, Any]],
     evidence_gaps: List[Dict[str, Any]],
     probe_results: List[Dict[str, Any]],
     hygiene_report: Dict[str, Any] | None,
@@ -3047,9 +3387,13 @@ def _quality_gate_results_from_acceptance(
         item for item in failed_constraints
         if item.get("constraint_type") in {"forbidden_unrequested_auth"}
     ]
+    agent_mix_failures = [
+        item for item in failed_constraints
+        if item.get("constraint_type") == "agent_mix"
+    ]
     other_constraints = [
         item for item in failed_constraints
-        if item not in workspace_failures and item not in security_failures
+        if item not in workspace_failures and item not in security_failures and item not in agent_mix_failures
     ]
     if workspace_failures:
         results.append(QualityGateResult(
@@ -3085,6 +3429,24 @@ def _quality_gate_results_from_acceptance(
             status="passed",
             required=True,
             summary="No security or privacy constraint failures were detected.",
+        ))
+    if agent_mix_failures:
+        results.append(QualityGateResult(
+            gate_id="gate-agent-mix",
+            adapter_id="agent_mix",
+            status="failed",
+            required=True,
+            summary="Required cross-agent execution mix was not met.",
+            evidence={"failed_constraints": agent_mix_failures},
+        ))
+    elif satisfied_agent_mix_constraints:
+        results.append(QualityGateResult(
+            gate_id="gate-agent-mix",
+            adapter_id="agent_mix",
+            status="passed",
+            required=True,
+            summary="Required cross-agent execution mix was met.",
+            evidence={"satisfied_constraints": satisfied_agent_mix_constraints},
         ))
     if other_constraints:
         results.append(QualityGateResult(

@@ -775,6 +775,7 @@ class AgentCapabilityStore:
             matched_native_skill_ids: List[str] = []
             unavailable_native_skill_ids: List[str] = []
             native_skill_repair_suggestions: List[str] = []
+            routing_evidence: List[Dict[str, Any]] = []
             score = 0
             for skill_id in enabled_skill_ids:
                 skill = skills_by_id.get(skill_id)
@@ -785,6 +786,13 @@ class AgentCapabilityStore:
                 if hinted or text_matched:
                     matched_skill_ids.append(skill_id)
                     score += (3 if hinted else 0) + (1 if text_matched else 0)
+                    routing_evidence.append({
+                        "source": "platform_skill",
+                        "status": "matched",
+                        "skill_id": skill_id,
+                        "skill_name": skill.name,
+                        "reason": "keyword_hint" if hinted else "text_overlap",
+                    })
             matched_skill_ids = _dedupe_strings(matched_skill_ids)
             for native_skill in (
                 native_skills_by_agent.get(agent_id)
@@ -801,8 +809,26 @@ class AgentCapabilityStore:
                 if is_native_skill_available(native_skill):
                     matched_native_skill_ids.append(skill_id)
                     score += 4
+                    routing_evidence.append({
+                        "source": "native_skill",
+                        "status": "available",
+                        "skill_id": skill_id,
+                        "skill_name": str(native_skill.get("name") or skill_id),
+                        "reason": "native_skill_name_match",
+                    })
                     continue
                 unavailable_native_skill_ids.append(skill_id)
+                routing_evidence.append({
+                    "source": "native_skill",
+                    "status": "unavailable",
+                    "skill_id": skill_id,
+                    "skill_name": str(native_skill.get("name") or skill_id),
+                    "reason": str(native_skill.get("unavailable_reason") or "missing requirements"),
+                    "repair_suggestions": [
+                        str(suggestion)
+                        for suggestion in native_skill.get("repair_suggestions") or []
+                    ],
+                })
                 for suggestion in native_skill.get("repair_suggestions") or []:
                     native_skill_repair_suggestions.append(str(suggestion))
             configured_count = (
@@ -838,6 +864,7 @@ class AgentCapabilityStore:
                     "matched_native_skill_ids": _dedupe_strings(matched_native_skill_ids),
                     "unavailable_native_skill_ids": _dedupe_strings(unavailable_native_skill_ids),
                     "native_skill_repair_suggestions": _dedupe_strings(native_skill_repair_suggestions),
+                    "routing_evidence": routing_evidence,
                     "configured_count": configured_count,
                     "warnings": profile_warnings,
                 }

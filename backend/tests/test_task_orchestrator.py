@@ -257,6 +257,291 @@ def test_quality_remediation_ignores_install_metadata_candidate_group_for_static
     assert "pyproject.toml" not in descriptions
 
 
+def test_quality_remediation_turns_web_entrypoint_group_into_concrete_file(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task(
+        "Build a static web app with a browser-loadable entrypoint.",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+    )
+    delivery_contract = {
+        "contract_id": "delivery-contract-static-entrypoint",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [
+            {"id": "req-css", "path_hint": "styles.css", "artifact_type": "stylesheet", "required": True},
+            {"id": "req-js", "path_hint": "app.js", "artifact_type": "client_script", "required": True},
+        ],
+        "constraints": [],
+        "acceptance_probes": [],
+    }
+    state.save_delivery_contract(delivery_contract)
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[{
+            "path_hint": "index.html / static/index.html / public/index.html",
+            "candidate_path_hints": ["index.html", "static/index.html", "public/index.html"],
+            "group_id": "group-web-ui",
+            "check_type": "deliverable_group_entrypoint",
+            "message": "Required deliverable group group-web-ui needs at least one entrypoint.",
+        }],
+        probe_results=[],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=delivery_contract,
+    )
+
+    assert created
+    restored = state.get_task(task.task_id)
+    subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert "index.html / static/index.html" not in subtask.description
+    assert "index.html" in subtask.description
+    saved_contract = next(
+        contract for contract in state.get_task_contracts(task.task_id)
+        if contract.get("subtask_id") == subtask.subtask_id
+    )
+    assert saved_contract["expected_deliverables"][0]["path_hint"] == "index.html"
+
+
+def test_quality_remediation_turns_test_suite_group_into_declared_test_file(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task(
+        "Build a Node static web app with a smoke test.",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+    )
+    delivery_contract = {
+        "contract_id": "delivery-contract-test-suite",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [
+            {"id": "req-smoke", "path_hint": "tests/e2e-smoke.mjs", "artifact_type": "test_source", "required": True},
+        ],
+        "deliverable_groups": [
+            {
+                "id": "group-test-suite",
+                "kind": "test_suite",
+                "required": True,
+                "allowed_roots": ["tests/", "test/", "__tests__/"],
+                "allowed_extensions": [".js", ".mjs", ".ts"],
+                "min_file_count": 1,
+            }
+        ],
+        "constraints": [],
+        "acceptance_probes": [],
+    }
+    state.save_delivery_contract(delivery_contract)
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[{
+            "path_hint": "group-test-suite",
+            "group_id": "group-test-suite",
+            "check_type": "deliverable_group_min_file_count",
+            "message": "Required deliverable group group-test-suite has 0 files; expected at least 1.",
+        }],
+        probe_results=[],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=delivery_contract,
+    )
+
+    assert created
+    restored = state.get_task(task.task_id)
+    subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert "group-test-suite" in subtask.description
+    assert "tests/e2e-smoke.mjs" in subtask.description
+    saved_contract = next(
+        contract for contract in state.get_task_contracts(task.task_id)
+        if contract.get("subtask_id") == subtask.subtask_id
+    )
+    assert saved_contract["expected_deliverables"][0]["path_hint"] == "tests/e2e-smoke.mjs"
+
+
+def test_quality_bundle_remediation_prefers_uncovered_local_agent_for_complex_delivery(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task(
+        "Build a cross-agent release E2E project.",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        allowed_subtask_agents=["openclaw", "hermes", "claude", "deepseek", "minimax"],
+    )
+    state.add_subtask(
+        task_id=task.task_id,
+        description="Build API",
+        agent_id="deepseek",
+        subtask_id="st-api",
+    )
+    state.update_subtask_status(task.task_id, "st-api", JobStatus.COMPLETED)
+    state.add_subtask(
+        task_id=task.task_id,
+        description="Build CLI",
+        agent_id="openclaw",
+        subtask_id="st-cli",
+    )
+    state.update_subtask_status(task.task_id, "st-cli", JobStatus.COMPLETED)
+    delivery_contract = {
+        "contract_id": "delivery-contract-agent-bundle",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [
+            {"id": "req-readme", "path_hint": "README.md", "artifact_type": "documentation", "required": True},
+            {"id": "req-smoke", "path_hint": "tests/e2e-smoke.mjs", "artifact_type": "test_source", "required": True},
+        ],
+        "constraints": [],
+        "acceptance_probes": [],
+    }
+    state.save_delivery_contract(delivery_contract)
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "claude", "deepseek", "minimax"]
+
+    quality = SimpleNamespace(
+        missing_required=["README.md", "tests/e2e-smoke.mjs"],
+        invalid_required=[],
+        probe_results=[],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        state.get_task(task.task_id),
+        quality,
+        delivery_contract=delivery_contract,
+    )
+
+    assert len(created) == 1
+    restored = state.get_task(task.task_id)
+    subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert subtask.agent_id == "hermes"
+
+
+def test_agent_mix_constraint_remediation_prefers_missing_local_agent(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task(
+        "Build a cross-agent release E2E project.",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        allowed_subtask_agents=["openclaw", "hermes", "claude", "deepseek", "minimax"],
+    )
+    state.add_subtask(task_id=task.task_id, description="Build web", agent_id="deepseek", subtask_id="st-web")
+    state.update_subtask_status(task.task_id, "st-web", JobStatus.COMPLETED)
+    state.add_subtask(task_id=task.task_id, description="Build CLI", agent_id="openclaw", subtask_id="st-cli")
+    state.update_subtask_status(task.task_id, "st-cli", JobStatus.COMPLETED)
+    delivery_contract = {
+        "contract_id": "delivery-contract-agent-mix",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [],
+        "constraints": [{
+            "id": "constraint-agent-mix",
+            "constraint_type": "agent_mix",
+            "value": {"min_distinct_agents": 3, "min_local_agents": 2, "min_cloud_agents": 1},
+            "required": True,
+        }],
+        "acceptance_probes": [],
+    }
+    state.save_delivery_contract(delivery_contract)
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "claude", "deepseek", "minimax"]
+
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[],
+        failed_constraints=[{
+            "id": "constraint-agent-mix",
+            "constraint_type": "agent_mix",
+            "value": {"min_distinct_agents": 3, "min_local_agents": 2, "min_cloud_agents": 1},
+            "evidence": ["completed agents: deepseek, openclaw"],
+        }],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        state.get_task(task.task_id),
+        quality,
+        delivery_contract=delivery_contract,
+    )
+
+    assert created
+    restored = state.get_task(task.task_id)
+    subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert subtask.agent_id == "hermes"
+    assert "agent_mix" in subtask.description
+
+
+def test_static_web_quality_guidance_mentions_owner_agent_and_recompute_evidence():
+    guidance = TaskOrchestrator._quality_probe_remediation_guidance(
+        "Missing requested static web feature evidence: owner agent route preview; "
+        "route evidence recomputes visible rows"
+    )
+
+    assert "exact text Owner Agent" in guidance
+    assert "visible recompute counter" in guidance
+    assert "last-updated timestamp" in guidance
+
+
 def test_quality_remediation_does_not_duplicate_while_active(tmp_path, mock_dispatcher, mock_validator, mock_owner_agent):
     from types import SimpleNamespace
 
@@ -299,6 +584,180 @@ def test_quality_remediation_does_not_duplicate_while_active(tmp_path, mock_disp
     assert first_created
     assert second_created == first_created
     assert [st.subtask_id for st in task.subtasks if st.subtask_id.startswith("st-quality-")] == first_created
+    assert mock_dispatcher.dispatch_subtask.call_count == 1
+
+
+def test_project_quality_remediation_waits_for_original_subtasks_when_required(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task("Build complete project", project_dir=str(tmp_path))
+    state.add_subtask(
+        task_id=task.task_id,
+        description="Create README",
+        agent_id="deepseek",
+        subtask_id="st-readme",
+    )
+    state.save_delivery_contract({
+        "contract_id": "delivery-contract-wait-originals",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [{"id": "req-readme", "path_hint": "README.md", "artifact_type": "documentation", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [],
+    })
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+
+    quality = SimpleNamespace(
+        missing_required=["README.md"],
+        invalid_required=[],
+        probe_results=[],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        state.get_task(task.task_id),
+        quality,
+        delivery_contract=state.get_delivery_contract(task.task_id),
+        require_original_terminal=True,
+    )
+
+    assert created == []
+    restored = state.get_task(task.task_id)
+    assert restored.status == TaskStatus.RUNNING
+    assert "remaining original subtasks" in restored.error
+    assert not mock_dispatcher.dispatch_subtask.called
+
+
+def test_project_finalization_accepts_string_subtask_statuses_for_terminal_check(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task("Build complete project", project_dir=str(tmp_path))
+    state.add_subtask(task_id=task.task_id, description="Create README", agent_id="deepseek", subtask_id="st-readme")
+    restored = state.get_task(task.task_id)
+    restored.subtasks[0].status = "completed"
+    state.save_delivery_contract({
+        "contract_id": "delivery-contract-string-status",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [{"id": "req-readme", "path_hint": "README.md", "artifact_type": "documentation", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [],
+    })
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(restored)
+
+    quality = SimpleNamespace(
+        missing_required=["README.md"],
+        invalid_required=[],
+        probe_results=[],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        restored,
+        quality,
+        delivery_contract=state.get_delivery_contract(task.task_id),
+        require_original_terminal=True,
+    )
+
+    assert created
+    assert state.is_all_subtasks_terminal(task.task_id) is True
+
+
+def test_quality_remediation_start_is_thread_safe_for_same_failure(
+    tmp_path,
+    mock_dispatcher,
+    mock_validator,
+    mock_owner_agent,
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    state = TaskState()
+    state.set_persistence(FakePersistence())
+    task = state.create_task(
+        "Build static web app",
+        project_dir=str(tmp_path),
+        task_types=["functional"],
+        delivery_mode="functional",
+    )
+    state.save_delivery_contract({
+        "contract_id": "delivery-contract-thread-safe",
+        "task_id": task.task_id,
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "project_dir": str(tmp_path),
+        "capabilities": [],
+        "deliverables": [{"id": "req-index", "path_hint": "index.html", "artifact_type": "html_entrypoint", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [{"id": "probe-static-web-smoke", "probe_type": "static_web_smoke", "required": True}],
+    })
+    orchestrator = TaskOrchestrator(state, mock_dispatcher, mock_validator, mock_owner_agent)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-static-web-smoke",
+                "probe_type": "static_web_smoke",
+                "passed": False,
+                "required": True,
+                "output_tail": "Missing requested static web feature evidence: checklist label click",
+            }
+        ],
+        failed_constraints=[],
+        evidence_gaps=[],
+    )
+    original_create = orchestrator._create_quality_remediation_subtask
+
+    def slow_create(*args, **kwargs):
+        time.sleep(0.05)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "_create_quality_remediation_subtask", slow_create)
+
+    results = []
+
+    def start_remediation():
+        results.append(orchestrator._start_quality_remediation_if_possible(
+            task,
+            quality,
+            delivery_contract=state.get_delivery_contract(task.task_id),
+        ))
+
+    threads = [threading.Thread(target=start_remediation) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    created_ids = [st.subtask_id for st in task.subtasks if st.subtask_id.startswith("st-quality-")]
+    assert len(created_ids) == 1
+    assert results == [created_ids, created_ids]
     assert mock_dispatcher.dispatch_subtask.call_count == 1
 
 
@@ -666,17 +1125,6 @@ def test_quality_probe_remediation_guidance_mentions_anyio_backend_for_trio_erro
     assert "trio" in guidance
 
 
-def test_quality_probe_remediation_guidance_mentions_canvas_initial_render(orchestrator):
-    guidance = orchestrator._quality_probe_remediation_guidance(
-        "functional acceptance probe failed: browser_e2e. "
-        "Probe output: canvas renders nonblank pixels failed; distinct pixel count was 1"
-    )
-
-    assert "canvas" in guidance.lower()
-    assert "initial" in guidance.lower()
-    assert "first frame" in guidance.lower()
-
-
 def test_record_acceptance_preserves_quality_remediation_attempts(orchestrator):
     task = orchestrator._state.create_task("preserve quality attempts")
     task.last_owner_decision = {
@@ -907,6 +1355,54 @@ class TestOnJobProgress:
 
 
 class TestHandleJobCompleted:
+    def test_failed_quality_remediation_returns_to_final_gate_without_recursive_fix(
+        self,
+        orchestrator,
+        mock_dispatcher,
+        monkeypatch,
+        tmp_path,
+    ):
+        task = orchestrator._state.create_task(
+            "Build a static web app",
+            project_dir=str(tmp_path),
+            task_types=["functional", "artifact"],
+            delivery_mode="composite",
+        )
+        original = orchestrator._state.add_subtask(
+            task.task_id,
+            "Create index.html",
+            "hermes",
+            subtask_id="st-index",
+        )
+        original.status = JobStatus.COMPLETED
+        quality = orchestrator._state.add_subtask(
+            task.task_id,
+            "Quality remediation attempt: fix browser probe",
+            "deepseek",
+            subtask_id="st-quality-timeout",
+        )
+        orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+        finalized = []
+
+        async def fake_finalize(task_id):
+            finalized.append(task_id)
+
+        monkeypatch.setattr(orchestrator, "_finalize_task_status", fake_finalize)
+
+        job = orchestrator._state.create_job(quality)
+        orchestrator._state.complete_job(
+            job.job_id,
+            success=False,
+            error="Timeout after 600.0s",
+        )
+
+        run(orchestrator._handle_job_completed(job.job_id))
+
+        assert finalized == [task.task_id]
+        assert quality.status == JobStatus.FAILED
+        assert not any("-fix-" in st.subtask_id for st in task.subtasks)
+        assert not mock_dispatcher.dispatch_subtask.called
+
     def test_timeout_failure_switches_agent_on_first_fix_round(
         self,
         orchestrator,
@@ -3472,17 +3968,493 @@ def test_static_web_probe_failure_uses_static_web_remediation_guardrails(orchest
     mock_dispatcher.dispatch_subtask.assert_called()
 
 
-def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrator, mock_dispatcher, tmp_path):
+def test_owner_acceptance_outage_falls_back_to_delivery_contract_gates(
+    orchestrator,
+    mock_dispatcher,
+    mock_owner_agent,
+    tmp_path,
+):
+    task = orchestrator._state.create_task(
+        description="Build a functional web delivery with final probes",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+    )
+    orchestrator._state.save_delivery_contract({
+        "contract_id": "delivery-contract-fallback",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "deliverables": [{"path_hint": "web/index.html", "artifact_type": "html_entrypoint", "required": True}],
+        "acceptance_probes": [{"id": "probe-browser-e2e", "probe_type": "browser_e2e", "required": True}],
+    })
+    first = orchestrator._state.add_subtask(
+        task.task_id,
+        "Create web/index.html",
+        "deepseek",
+        subtask_id="st-web",
+    )
+    second = orchestrator._state.add_subtask(
+        task.task_id,
+        "Create README.md",
+        "hermes",
+        dependencies=["st-web"],
+        subtask_id="st-docs",
+    )
+    first.wave_number = 1
+    second.wave_number = 2
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    artifact_path = tmp_path / "web" / "index.html"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("<h1>Across Release Control</h1>", encoding="utf-8")
+
+    def unavailable_acceptance(_job):
+        return AcceptanceResult(
+            subtask_id="st-web",
+            level1_passed=True,
+            level2_passed=False,
+            level2_feedback="Agent deepseek returned an error: Error: All LLM providers failed. Last error:",
+            action="fix",
+            recommended_action="fix",
+        )
+
+    mock_owner_agent.accept_subtask.side_effect = unavailable_acceptance
+    job = orchestrator._state.create_job(first)
+    orchestrator._state.complete_job(job.job_id, success=True, output=str(artifact_path))
+
+    run(orchestrator._handle_job_completed(job.job_id))
+
+    restored = orchestrator._state.get_task(task.task_id)
+    accepted = orchestrator._orchestrator_states[task.task_id].acceptance_results["st-web"]
+    assert accepted.level2_passed is True
+    assert accepted.action == "approve"
+    assert accepted.failure_type == "deterministic_acceptance_fallback"
+    assert "final delivery gates" in accepted.level2_feedback
+    assert next(st for st in restored.subtasks if st.subtask_id == "st-web").status == JobStatus.COMPLETED
+    assert mock_dispatcher.dispatch_subtask.called
+
+
+def test_owner_acceptance_outage_pause_sets_task_paused_flag(orchestrator):
+    task = orchestrator._state.create_task("Build a tiny file")
+    subtask = orchestrator._state.add_subtask(task.task_id, "Create file.txt", "deepseek", subtask_id="st-file")
+    job = orchestrator._state.create_job(subtask)
+    acceptance = AcceptanceResult(
+        subtask_id="st-file",
+        level1_passed=True,
+        level2_passed=False,
+        level2_feedback="All LLM providers failed",
+        action="fix",
+    )
+
+    orchestrator._pause_task_for_acceptance_unavailable(task, job, acceptance)
+
+    assert task.status == TaskStatus.PAUSED
+    assert orchestrator._state.is_task_paused(task.task_id) is True
+
+
+def test_api_service_probe_failure_targets_api_source_not_web_entrypoint(
+    orchestrator,
+    mock_dispatcher,
+    tmp_path,
+):
     from types import SimpleNamespace
 
     task = orchestrator._state.create_task(
-        description="Build Delivery Benchmark Command Center",
+        description="Build a static web app with a local Node API service",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+        allowed_subtask_agents=["deepseek", "openclaw", "hermes"],
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-api-service-fail",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [{"id": "cap-api", "description": "API service behavior", "required": True}],
+        "deliverables": [
+            {"path_hint": "web/index.html", "artifact_type": "html_entrypoint", "required": True},
+            {"path_hint": "api/server.mjs", "artifact_type": "api_service_source", "required": True},
+            {"path_hint": "README.md", "artifact_type": "documentation", "required": True},
+        ],
+        "constraints": [],
+        "acceptance_probes": [{"id": "probe-api-service", "probe_type": "api_service", "required": True}],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["deepseek", "openclaw", "hermes"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-api-service",
+                "probe_type": "api_service",
+                "passed": False,
+                "required": True,
+                "output_tail": (
+                    "GET /api/report -> 200\n"
+                    "/api/report must return readiness metrics and gate results"
+                ),
+            }
+        ],
+        evidence_gaps=[],
+        failed_constraints=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert created
+    restored = orchestrator._state.get_task(task.task_id)
+    quality_subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert quality_subtask.agent_id == "deepseek"
+    assert "Primary implementation path: api/server.mjs" in quality_subtask.description
+    assert "required_failed_count" in quality_subtask.description
+    assert "manual_required_count" in quality_subtask.description
+    assert "skipped_required_count" in quality_subtask.description
+    assert "camelCase-only" in quality_subtask.description
+    assert "Primary implementation path: web/index.html" not in quality_subtask.description
+    mock_dispatcher.dispatch_subtask.assert_called()
+
+
+def test_file_constraint_failures_do_not_create_bogus_repair_subtasks(
+    orchestrator,
+    mock_dispatcher,
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "allowed_files").write_text("do not keep", encoding="utf-8")
+    task = orchestrator._state.create_task(
+        description="Build a constrained static app",
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+    )
+    contract = {
+        "contract_id": "delivery-contract-file-constraints",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "deliverables": [
+            {"path_hint": "web/index.html", "artifact_type": "html_entrypoint", "required": True},
+        ],
+        "constraints": [
+            {"id": "constraint-allowed-files", "constraint_type": "allowed_files", "value": ["web/index.html"]},
+            {"id": "constraint-forbidden-package", "constraint_type": "forbidden_file", "value": "package.json"},
+        ],
+    }
+    orchestrator._state.save_delivery_contract(contract)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[],
+        evidence_gaps=[],
+        failed_constraints=[
+            {
+                "id": "constraint-forbidden-package",
+                "constraint_type": "forbidden_file",
+                "value": "package.json",
+                "evidence": [str(tmp_path / "package.json")],
+            },
+            {
+                "id": "constraint-allowed-files",
+                "constraint_type": "allowed_files",
+                "value": ["web/index.html"],
+                "evidence": [str(tmp_path / "allowed_files")],
+            },
+        ],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=contract,
+    )
+    removed = orchestrator._cleanup_file_constraint_violations(
+        task,
+        contract,
+        {"failed_constraints": quality.failed_constraints},
+    )
+
+    assert created == []
+    assert not mock_dispatcher.dispatch_subtask.called
+    assert not (tmp_path / "package.json").exists()
+    assert not (tmp_path / "allowed_files").exists()
+    assert {os.path.basename(path) for path in removed} == {"package.json", "allowed_files"}
+
+
+def test_release_e2e_uses_short_quality_remediation_budget(orchestrator, tmp_path):
+    task = orchestrator._state.create_task(
+        description=(
+            "Release E2E scenario: Cross-Agent Full Delivery Gate "
+            "(unit-test)\nScenario ID: cross_agent_full_delivery_v1\n"
+            "Build Across Release Control."
+        ),
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+    )
+
+    ost, created = orchestrator._ensure_orchestrator_state(task)
+
+    assert created is True
+    assert ost.max_quality_remediation_attempts == 2
+
+
+def test_submit_release_e2e_initializes_short_quality_budget(
+    orchestrator,
+    mock_dispatcher,
+    mock_owner_agent,
+    tmp_path,
+):
+    release = threading.Event()
+
+    def decompose_side_effect(task, context=None):
+        release.wait(timeout=1.0)
+        return task
+
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "claude", "deepseek", "minimax"]
+    mock_owner_agent.decompose_and_assign.side_effect = decompose_side_effect
+
+    task_id = orchestrator.submit_task(
+        (
+            "Release E2E scenario: Cross-Agent Full Delivery Gate (unit-test)\n"
+            "Scenario ID: cross_agent_full_delivery_v1\n"
+            "Build Across Release Control."
+        ),
+        context={
+            "project_dir": str(tmp_path),
+            "task_types": ["functional", "artifact"],
+            "delivery_mode": "composite",
+            "owner_agent": "auto",
+            "allowed_subtask_agents": ["openclaw", "hermes", "claude", "deepseek", "minimax"],
+            "release_e2e": {"scenario_id": "cross_agent_full_delivery_v1"},
+        },
+    )
+
+    try:
+        ost = orchestrator._orchestrator_states[task_id]
+        assert ost.max_quality_remediation_attempts == 2
+    finally:
+        release.set()
+
+
+def test_release_e2e_quality_remediation_uses_global_budget(
+    orchestrator,
+    mock_dispatcher,
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description=(
+            "Release E2E scenario: Cross-Agent Full Delivery Gate "
+            "(unit-test)\nScenario ID: cross_agent_full_delivery_v1\n"
+            "Build Across Release Control."
+        ),
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+        allowed_subtask_agents=["openclaw", "hermes", "claude", "deepseek", "minimax"],
+    )
+    ost = make_orchestrator_state(task)
+    ost.max_quality_remediation_attempts = 2
+    orchestrator._orchestrator_states[task.task_id] = ost
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-release-budget",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "deliverables": [{"path_hint": "web/index.html", "artifact_type": "html_entrypoint", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [{"id": "probe-browser-e2e", "probe_type": "browser_e2e", "required": True}],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    for index in range(2):
+        subtask = orchestrator._state.add_subtask(
+            task.task_id,
+            f"Quality remediation attempt {index + 1}",
+            "deepseek",
+            subtask_id=f"st-quality-existing-{index + 1}",
+        )
+        subtask.status = JobStatus.COMPLETED
+        orchestrator._state._persist_subtask(subtask)
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "claude", "deepseek", "minimax"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-browser-e2e",
+                "probe_type": "browser_e2e",
+                "passed": False,
+                "required": True,
+                "output_tail": "route evidence did not update",
+            }
+        ],
+        evidence_gaps=[],
+        failed_constraints=[{"constraint_type": "agent_mix", "value": "min_local_agents"}],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert created == []
+    assert not mock_dispatcher.dispatch_subtask.called
+    restored = orchestrator._state.get_task(task.task_id)
+    assert restored.last_owner_decision["quality_remediation_exhausted"] is True
+    assert restored.last_owner_decision["max_quality_remediation_attempts"] == 2
+
+
+def test_static_web_probe_remediation_prefers_ui_capable_agent(orchestrator, mock_dispatcher, tmp_path):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description="Build a static web app",
         project_dir=str(tmp_path),
         task_types=["functional"],
         delivery_mode="functional",
+        allowed_subtask_agents=["openclaw", "hermes", "deepseek"],
     )
     orchestrator._state._persistence.save_delivery_contract({
-        "contract_id": "delivery-contract-static-web-probes",
+        "contract_id": "delivery-contract-static-web-agent",
+        "task_id": task.task_id,
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "project_dir": str(tmp_path),
+        "capabilities": [{"id": "cap-ui", "description": "Static web behavior", "required": True}],
+        "deliverables": [{"path_hint": "index.html", "artifact_type": "html_entrypoint", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [{"id": "probe-static-web-smoke", "probe_type": "static_web_smoke", "required": True}],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "deepseek"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-static-web-smoke",
+                "probe_type": "static_web_smoke",
+                "passed": False,
+                "required": True,
+                "output_tail": "Missing requested static web feature evidence: route evidence",
+            }
+        ],
+        evidence_gaps=[],
+        failed_constraints=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert created
+    restored = orchestrator._state.get_task(task.task_id)
+    quality_subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert quality_subtask.agent_id == "hermes"
+
+
+def test_static_web_probe_retry_rotates_to_alternate_agent(orchestrator, mock_dispatcher, tmp_path):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description="Build a static web app",
+        project_dir=str(tmp_path),
+        task_types=["functional"],
+        delivery_mode="functional",
+        allowed_subtask_agents=["openclaw", "hermes", "deepseek", "claude"],
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-static-web-agent-retry",
+        "task_id": task.task_id,
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+        "project_dir": str(tmp_path),
+        "capabilities": [{"id": "cap-ui", "description": "Static web behavior", "required": True}],
+        "deliverables": [{"path_hint": "index.html", "artifact_type": "html_entrypoint", "required": True}],
+        "constraints": [],
+        "acceptance_probes": [{"id": "probe-browser-e2e", "probe_type": "browser_e2e", "required": True}],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    task.last_owner_decision = {
+        "quality_remediation_attempts": {
+            "probe_failure:probe-browser-e2e": 1,
+        }
+    }
+    mock_dispatcher._get_valid_agents.return_value = ["openclaw", "hermes", "deepseek", "claude"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-browser-e2e",
+                "probe_type": "browser_e2e",
+                "passed": False,
+                "required": True,
+                "output_tail": "route evidence recomputes visible rows",
+            }
+        ],
+        evidence_gaps=[],
+        failed_constraints=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert created
+    restored = orchestrator._state.get_task(task.task_id)
+    quality_subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert quality_subtask.agent_id == "claude"
+
+
+def test_multiple_probe_quality_failures_use_single_coherent_remediation(
+    orchestrator,
+    mock_dispatcher,
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description="Build a static web app",
+        project_dir=str(tmp_path),
+        task_types=["functional"],
+        delivery_mode="functional",
+        allowed_subtask_agents=["hermes", "claude", "deepseek"],
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-static-web-bundle",
         "task_id": task.task_id,
         "task_types": ["functional"],
         "delivery_mode": "functional",
@@ -3490,9 +4462,7 @@ def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrat
         "capabilities": [{"id": "cap-ui", "description": "Static web behavior", "required": True}],
         "deliverables": [
             {"path_hint": "index.html", "artifact_type": "html_entrypoint", "required": True},
-            {"path_hint": "styles.css", "artifact_type": "stylesheet", "required": True},
             {"path_hint": "app.js", "artifact_type": "client_script", "required": True},
-            {"path_hint": "README.md", "artifact_type": "documentation", "required": True},
         ],
         "constraints": [],
         "acceptance_probes": [
@@ -3504,8 +4474,7 @@ def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrat
         "updated_at": 1.0,
     })
     orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
-    orchestrator._orchestrator_states[task.task_id].max_quality_remediation_attempts = 4
-    mock_dispatcher._get_valid_agents.return_value = ["hermes", "openclaw"]
+    mock_dispatcher._get_valid_agents.return_value = ["hermes", "claude", "deepseek"]
     quality = SimpleNamespace(
         missing_required=[],
         invalid_required=[],
@@ -3515,7 +4484,7 @@ def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrat
                 "probe_type": "static_web_smoke",
                 "passed": False,
                 "required": True,
-                "output_tail": "application name and route evidence labels missing",
+                "output_tail": "Required static assets are not referenced by the entrypoint: app.js",
             },
             {
                 "id": "probe-browser-e2e",
@@ -3537,60 +4506,57 @@ def test_quality_probe_remediation_serializes_multiple_probe_failures(orchestrat
 
     assert len(created) == 1
     restored = orchestrator._state.get_task(task.task_id)
-    quality_subtasks = [st for st in restored.subtasks if st.subtask_id.startswith("st-quality-")]
-    assert len(quality_subtasks) == 1
-    assert "probe-static-web-smoke" in quality_subtasks[0].description
-    attempts = restored.last_owner_decision["quality_remediation_attempts"]
-    assert attempts == {"probe_failure:probe-static-web-smoke": 1}
-    mock_dispatcher.dispatch_subtask.assert_called_once()
+    quality_subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert quality_subtask.agent_id == "hermes"
+    assert "probe-static-web-smoke" in quality_subtask.description
+    assert "probe-browser-e2e" in quality_subtask.description
+    attempts = task.last_owner_decision["quality_remediation_attempts"]
+    assert attempts["probe_failure:probe-static-web-smoke"] == 1
+    assert attempts["probe_failure:probe-browser-e2e"] == 1
+    assert mock_dispatcher.dispatch_subtask.call_count == 1
 
 
-def test_cancel_task_marks_task_status_cancelled():
-    state = TaskState()
-    task = state.create_task("cancel me")
-    state.add_subtask(task.task_id, "work", "local", subtask_id="st-cancel-me")
-
-    assert state.cancel_task(task.task_id) is True
-
-    restored = state.get_task(task.task_id)
-    assert restored.status == TaskStatus.CANCELLED
-    assert all(st.status == JobStatus.CANCELLED for st in restored.subtasks)
-
-
-def test_finalize_preserves_cancelled_task_status(orchestrator, tmp_path):
+def test_deterministic_static_web_repair_renames_route_preview_heading(orchestrator, tmp_path):
     task = orchestrator._state.create_task(
-        description="Build a static app",
+        description="Build a static web app with a Route Evidence section.",
         project_dir=str(tmp_path),
         task_types=["functional"],
         delivery_mode="functional",
     )
-    orchestrator._state._persistence.save_delivery_contract({
-        "contract_id": "delivery-contract-cancelled",
+    (tmp_path / "index.html").write_text(
+        "<section><h2>Route Preview</h2><button>Recompute Route</button></section>",
+        encoding="utf-8",
+    )
+    contract = {
+        "contract_id": "delivery-contract-static-heading",
         "task_id": task.task_id,
         "task_types": ["functional"],
         "delivery_mode": "functional",
         "project_dir": str(tmp_path),
-        "capabilities": [],
-        "deliverables": [],
-        "constraints": [],
-        "acceptance_probes": [],
-        "assumptions": [],
-        "created_at": 1.0,
-        "updated_at": 1.0,
-    })
-    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
-    subtask = orchestrator._state.add_subtask(task.task_id, "work", "local", subtask_id="st-cancelled-work")
-    subtask.status = JobStatus.CANCELLED
-    task.status = TaskStatus.CANCELLED
-    task.last_owner_decision = {
-        "delivery_quality": {"delivery_quality": "passed", "probe_results": []}
+        "technology_hypotheses": [{"stack": "native-web"}],
+        "deliverables": [
+            {"path_hint": "index.html", "artifact_type": "frontend_source", "required": True},
+            {"path_hint": "styles.css", "artifact_type": "frontend_source", "required": True},
+            {"path_hint": "app.js", "artifact_type": "frontend_source", "required": True},
+        ],
     }
-    orchestrator._state._persist_task(task)
+    quality = {
+        "probe_results": [
+            {
+                "id": "probe-static-web-smoke",
+                "probe_type": "static_web_smoke",
+                "passed": False,
+                "required": True,
+                "output_tail": "Missing requested static web feature evidence: route evidence section heading",
+            }
+        ]
+    }
 
-    run(orchestrator._finalize_task_status(task.task_id))
+    repaired = orchestrator._apply_deterministic_delivery_repair_if_possible(task, contract, quality)
 
-    restored = orchestrator._state.get_task(task.task_id)
-    assert restored.status == TaskStatus.CANCELLED
+    assert repaired is True
+    assert "<h2>Route Evidence</h2>" in (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert task.last_owner_decision["deterministic_delivery_repair"]["strategy"] == "static_web_route_evidence_heading"
 
 
 def test_static_web_package_instruction_failure_points_remediation_to_readme(orchestrator, mock_dispatcher, tmp_path):

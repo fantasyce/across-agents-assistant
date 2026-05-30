@@ -40,6 +40,10 @@ Before publishing binaries, generate a locked dependency report from the exact
 build environment and preserve license texts required by the resolved versions
 and their transitive dependencies.
 
+Recent Release Evaluation, quality-gate, native-skill readiness, MCP safety,
+and task-observability work uses existing Python dependencies and does not add
+new direct package-manager dependencies.
+
 ## Direct Swift Dependencies
 
 The macOS client declares direct Swift Package Manager dependencies in

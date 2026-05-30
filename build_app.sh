@@ -184,6 +184,8 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSQuitAlwaysKeepsWindows</key>
+    <false/>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Across Agents Assistant needs screen capture permission so AI can understand the current screen when you explicitly request it.</string>
     <key>NSMicrophoneUsageDescription</key>

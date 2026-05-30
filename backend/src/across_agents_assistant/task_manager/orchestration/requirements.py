@@ -48,6 +48,8 @@ IGNORED_FILELIKE_WORDS = {
     "uvicorn",
     "pytest",
     "httpx",
+    "node",
+    "node.js",
 }
 
 KNOWN_FILE_EXTENSIONS = {
@@ -351,6 +353,10 @@ def extract_forbidden_path_hints(description: str) -> List[str]:
                 continue
             if _is_positive_runtime_entrypoint_before_negative_context(clause, path_hint):
                 continue
+            if _is_positive_deliverable_before_negative_context(clause, path_hint):
+                continue
+            if _is_validation_manifest_reference_before_negative_context(clause, path_hint):
+                continue
             if _is_final_deliverable_status_negation(clause, path_hint):
                 continue
             if _is_content_restriction_subject(clause, path_hint):
@@ -361,6 +367,72 @@ def extract_forbidden_path_hints(description: str) -> List[str]:
                 seen.add(path_hint)
                 forbidden.append(path_hint)
     return dedupe_requirement_path_hints(forbidden)
+
+
+def _is_positive_deliverable_before_negative_context(clause: str, path_hint: str) -> bool:
+    """True when a requested output path appears before unrelated constraints.
+
+    Example: ``Create web/app.js ... without fetch`` requires ``web/app.js``;
+    the negative constraint targets runtime behavior, not the file path.
+    """
+    if not clause or not path_hint:
+        return False
+    lowered = clause.lower()
+    normalized = normalize_path_hint(path_hint or "").lower()
+    if not normalized:
+        return False
+    terms = sorted({normalized, os.path.basename(normalized)}, key=len, reverse=True)
+    negative_matches = list(NEGATIVE_PATH_CONTEXT_RE.finditer(lowered))
+    if not negative_matches:
+        return False
+
+    for term in terms:
+        index = lowered.find(term)
+        if index < 0:
+            continue
+        if any(match.start() < index for match in negative_matches):
+            continue
+        if not any(match.start() > index for match in negative_matches):
+            continue
+        before = lowered[max(0, index - 120):index]
+        if re.search(r"\b(create|write|produce|deliver|output|generate|implement|build|add|update)\b", before):
+            return True
+    return False
+
+
+def _is_validation_manifest_reference_before_negative_context(clause: str, path_hint: str) -> bool:
+    """True when a manifest item is referenced before unrelated negatives.
+
+    Example: ``Check the exact manifest (README.md, web/app.js) ... no external
+    packages`` references manifest members; the negative targets dependencies.
+    """
+    if not clause or not path_hint:
+        return False
+    lowered = clause.lower()
+    normalized = normalize_path_hint(path_hint or "").lower()
+    if not normalized:
+        return False
+    terms = sorted({normalized, os.path.basename(normalized)}, key=len, reverse=True)
+    negative_matches = list(NEGATIVE_PATH_CONTEXT_RE.finditer(lowered))
+    if not negative_matches:
+        return False
+
+    for term in terms:
+        index = lowered.find(term)
+        if index < 0:
+            continue
+        if any(match.start() < index for match in negative_matches):
+            continue
+        if not any(match.start() > index for match in negative_matches):
+            continue
+        before = lowered[max(0, index - 220):index]
+        if re.search(
+            r"\b(check|checks|validate|validates|verify|verifies)\b.{0,180}"
+            r"\b(exact|manifest|required\s+files?|file\s+manifest|seven[-\s]*file|7[-\s]*file)\b",
+            before,
+        ):
+            return True
+    return False
 
 
 def _is_positive_runtime_entrypoint_before_negative_context(clause: str, path_hint: str) -> bool:
@@ -405,7 +477,8 @@ def _is_positive_runtime_entrypoint_before_negative_context(clause: str, path_hi
         negative_targets_tooling = bool(
             re.search(
                 r"\b(?:package\s+managers?|external\s+cdn|generated\s+dependencies|dependencies|"
-                r"node_modules|frameworks?|dev\s+servers?|server|build\s+(?:commands?|steps?))\b",
+                r"node_modules|frameworks?|dev\s+servers?|server|build\s+(?:commands?|steps?|process(?:es)?)|"
+                r"build\s*step|build)\b",
                 negative_tail,
             )
         )

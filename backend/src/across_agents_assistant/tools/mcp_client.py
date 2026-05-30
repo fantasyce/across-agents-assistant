@@ -280,5 +280,57 @@ class MCPClientManager:
                 })
         return all_tools
 
+    def get_safety_report(self) -> Dict[str, Any]:
+        """Return an auditable MCP server safety summary for UI and task context."""
+        servers: List[Dict[str, Any]] = []
+        sandbox_settings = getattr(self, "_sandbox_settings", {})
+        for server_id in sorted(set(self.server_tools.keys()) | set(self.server_configs.keys()) | set(sandbox_settings.keys())):
+            tools = list(self.server_tools.get(server_id) or [])
+            sandbox = sandbox_settings.get(server_id, {})
+            risk_counts = {"high": 0, "low": 0, "medium": 0, "unknown": 0}
+            write_capable = 0
+            highest_risk = "low"
+            for tool in tools:
+                original_name = tool.get("original_name") or str(tool.get("name") or "").split("__", 1)[-1]
+                risk = self._higher_risk_level(
+                    tool.get("risk_level"),
+                    self._infer_tool_risk_level(server_id, original_name, tool.get("description", "")),
+                )
+                risk_counts[risk] = risk_counts.get(risk, 0) + 1
+                highest_risk = self._higher_risk_level(highest_risk, risk)
+                if self._is_write_operation(original_name, {}):
+                    write_capable += 1
+
+            warnings: List[str] = []
+            if risk_counts.get("high", 0):
+                warnings.append("High-risk MCP tools require approval.")
+            if sandbox.get("readonly") and write_capable:
+                warnings.append("Readonly mode blocks write-capable tools at call time.")
+            if not sandbox.get("readonly") and write_capable and not sandbox.get("allowed_paths"):
+                warnings.append("Write-capable MCP tools are not path-scoped.")
+
+            servers.append({
+                "server_id": server_id,
+                "connected": server_id in self.sessions,
+                "tool_count": len(tools),
+                "write_capable_tool_count": write_capable,
+                "risk_counts": risk_counts,
+                "highest_risk": highest_risk if tools else "unknown",
+                "requires_approval_count": risk_counts.get("high", 0) + risk_counts.get("medium", 0),
+                "sandbox": {
+                    "allowed_paths": list(sandbox.get("allowed_paths") or []),
+                    "readonly": bool(sandbox.get("readonly", False)),
+                },
+                "warnings": warnings,
+            })
+
+        return {
+            "servers": servers,
+            "server_count": len(servers),
+            "connected_server_count": sum(1 for item in servers if item["connected"]),
+            "high_risk_tool_count": sum(item["risk_counts"].get("high", 0) for item in servers),
+            "write_capable_tool_count": sum(item["write_capable_tool_count"] for item in servers),
+        }
+
 # Global instance
 mcp_manager = MCPClientManager()

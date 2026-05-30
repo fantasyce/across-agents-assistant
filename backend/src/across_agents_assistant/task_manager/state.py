@@ -52,6 +52,10 @@ def _canonical_subtask_id(subtask_id: str) -> str:
         base = new_base
 
 
+def _status_value(status: Any) -> str:
+    return str(getattr(status, "value", status) or "").lower()
+
+
 def _is_remediation_subtask_id(subtask_id: str) -> bool:
     if subtask_id.endswith("-decompose"):
         return False
@@ -908,12 +912,16 @@ class TaskState:
             ]
             if not original:
                 return False
-            terminal_states = (JobStatus.COMPLETED, JobStatus.CANCELLED, JobStatus.FAILED)
-            result = all(st.status in terminal_states for st in original)
+            terminal_states = {
+                JobStatus.COMPLETED.value,
+                JobStatus.CANCELLED.value,
+                JobStatus.FAILED.value,
+            }
+            result = all(_status_value(st.status) in terminal_states for st in original)
             if result:
-                completed = sum(1 for st in original if st.status == JobStatus.COMPLETED)
-                failed = sum(1 for st in original if st.status == JobStatus.FAILED)
-                cancelled = sum(1 for st in original if st.status == JobStatus.CANCELLED)
+                completed = sum(1 for st in original if _status_value(st.status) == JobStatus.COMPLETED.value)
+                failed = sum(1 for st in original if _status_value(st.status) == JobStatus.FAILED.value)
+                cancelled = sum(1 for st in original if _status_value(st.status) == JobStatus.CANCELLED.value)
                 total = len(original)
 
                 # Issue 31: If any original subtask is CANCELLED, task should be FAILED

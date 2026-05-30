@@ -66,6 +66,9 @@ func testPreflightResponseFindsBestRecommendation() {
                 agentId: "hermes",
                 score: 6,
                 matchedSkillIds: ["frontend_design", "custom_accessibility_review"],
+                matchedNativeSkillIds: ["swiftui-layout-review"],
+                unavailableNativeSkillIds: [],
+                nativeSkillRepairSuggestions: [],
                 configuredCount: 4,
                 warnings: []
             ),
@@ -73,6 +76,9 @@ func testPreflightResponseFindsBestRecommendation() {
                 agentId: "deepseek",
                 score: 1,
                 matchedSkillIds: ["data_modeling"],
+                matchedNativeSkillIds: [],
+                unavailableNativeSkillIds: ["apple-notes"],
+                nativeSkillRepairSuggestions: ["Install required binary `memo` and make it available on PATH."],
                 configuredCount: 3,
                 warnings: []
             )
@@ -83,6 +89,8 @@ func testPreflightResponseFindsBestRecommendation() {
 
     assert(preflight.bestRecommendedAgentId == "hermes", "Preflight should expose the first recommended agent")
     assert(preflight.bestSummary?.matchedSkillIds.contains("custom_accessibility_review") == true, "Best summary should keep matched skills")
+    assert(preflight.bestSummary?.matchedNativeSkillIds.contains("swiftui-layout-review") == true, "Best summary should keep matched native skills")
+    assert(preflight.agentSummaries[1].nativeSkillRepairSuggestions.count == 1, "Preflight should keep native skill repair guidance")
 }
 
 func testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest() throws {
@@ -105,6 +113,7 @@ func testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest() throws {
           "availability": "unavailable",
           "unavailable_reason": "Missing requirements: bins: memo",
           "missing_requirements": ["bins: memo"],
+          "repair_suggestions": ["Install required binary `memo` and make it available on PATH."],
           "source": "user",
           "managed_by_app": true,
           "supports_uninstall": true
@@ -132,10 +141,42 @@ func testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest() throws {
     assert(state.skills.first?.availability == "unavailable", "Native skill should expose availability")
     assert(state.skills.first?.unavailableReason == "Missing requirements: bins: memo", "Native skill should decode unavailable reason")
     assert(state.skills.first?.missingRequirements == ["bins: memo"], "Native skill should decode missing requirements")
+    assert(state.skills.first?.repairSuggestions == ["Install required binary `memo` and make it available on PATH."], "Native skill should decode repair suggestions")
     assert(state.skills.first?.isActive == false, "Unavailable native skill should not count as active")
     assert(state.installedCount == 0, "Native skill state should count only available skills")
     assert(encoded?["project_dir"] == nil, "Nil optional fields should be omitted")
     assert(encoded?["scope"] as? String == "user", "Native install request should encode snake-case fields")
+}
+
+func testReleaseEvaluationSummaryDecodesBackendPayload() throws {
+    let json = """
+    {
+      "release_readiness": "attention",
+      "evaluated_task_count": 2,
+      "terminal_task_count": 3,
+      "passed_task_count": 1,
+      "blocked_task_count": 0,
+      "manual_task_count": 1,
+      "skipped_task_count": 0,
+      "pass_rate": 0.5,
+      "average_final_quality_score": 78,
+      "total_remediation_count": 2,
+      "recommendation": "Manual gate requires review.",
+      "top_risks": [
+        {"kind": "manual_or_skipped_gate", "severity": "medium", "count": 1, "message": "Manual gate requires review."}
+      ],
+      "recent_evaluations": [
+        {"task_id": "task-release", "description": "Build release evidence", "status": "completed", "quality_gate": "passed", "final_quality_score": 88}
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let summary = try JSONDecoder().decode(ReleaseEvaluationSummary.self, from: json)
+
+    assert(summary.releaseReadiness == "attention", "Release readiness should decode from snake case")
+    assert(summary.evaluatedTaskCount == 2, "Evaluated count should decode")
+    assert(summary.topRisks.first?.kind == "manual_or_skipped_gate", "Top risks should decode")
+    assert(summary.recentEvaluations.first?.taskId == "task-release", "Recent evaluations should decode")
 }
 
 @main
@@ -147,6 +188,7 @@ struct AgentCapabilityBehavior {
         try! testSkillDefinitionMarksCustomSkills()
         testPreflightResponseFindsBestRecommendation()
         try! testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest()
+        try! testReleaseEvaluationSummaryDecodesBackendPayload()
         print("AgentCapabilityBehavior passed")
     }
 }

@@ -35,6 +35,7 @@ ADAPTER_DIMENSIONS = {
     "browser_e2e": "user_e2e",
     "pytest": "automated_tests",
     "contract_coverage": "contract_coverage",
+    "agent_mix": "contract_coverage",
     "artifact_integrity": "artifact_integrity",
     "unknown_stack": "contract_coverage",
 }

@@ -11,6 +11,34 @@ from across_agents_assistant.workspace_hygiene import is_workspace_noise_path
 from .requirements import is_runtime_data_path_hint
 
 
+API_SOURCE_EXTENSIONS = (
+    ".py",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".java",
+    ".kt",
+)
+TEST_SOURCE_EXTENSIONS = (
+    ".py",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".swift",
+    ".go",
+    ".rs",
+)
+
+
 @dataclass
 class ValidationError:
     error_type: str
@@ -271,7 +299,7 @@ class ContractValidator:
         if artifact_type == "macos_app_bundle":
             return has_ref(lambda path: path.endswith(".app") and os.path.exists(path))
         if artifact_type == "api_service_source":
-            return has_ref(lambda path: path.endswith(".py") and os.path.exists(path))
+            return has_ref(lambda path: path.endswith(API_SOURCE_EXTENSIONS) and os.path.exists(path))
         if artifact_type == "dockerfile":
             return has_ref(
                 lambda path: os.path.basename(path).lower() in {"dockerfile", "containerfile"}
@@ -283,20 +311,31 @@ class ContractValidator:
                 and os.path.exists(path)
             )
         if artifact_type == "test_suite":
-            return has_ref(
-                lambda path: (
-                    os.path.basename(path).startswith("test_")
-                    and path.endswith(".py")
-                    and os.path.exists(path)
-                )
-                or (
-                    os.path.basename(path).lower() in {"conftest.py", "pytest.ini"}
-                    and os.path.exists(path)
-                )
-            )
+            return has_ref(self._looks_like_test_source_path)
         if artifact_type == "file":
             return bool(refs)
         return False
+
+    @staticmethod
+    def _looks_like_test_source_path(path: str) -> bool:
+        if not os.path.exists(path):
+            return False
+        basename = os.path.basename(path).lower()
+        if basename in {"conftest.py", "pytest.ini"}:
+            return True
+        if not path.endswith(TEST_SOURCE_EXTENSIONS):
+            return False
+        parts = {part.lower() for part in os.path.normpath(path).split(os.sep)}
+        if parts & {"tests", "test", "__tests__"}:
+            return True
+        return (
+            basename.startswith("test_")
+            or basename.endswith("_test.py")
+            or basename.endswith(".test.js")
+            or basename.endswith(".test.mjs")
+            or basename.endswith(".spec.js")
+            or basename.endswith(".spec.mjs")
+        )
 
     @staticmethod
     def _is_workspace_metadata_path(path: str, project_dir: Optional[str]) -> bool:

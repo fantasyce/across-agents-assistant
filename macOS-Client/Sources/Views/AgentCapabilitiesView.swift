@@ -592,7 +592,7 @@ struct AgentCapabilitiesView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(skill.isActive ? lineColor : Color.orange.opacity(0.30), lineWidth: 1)
         )
-        .help(skill.unavailableReason ?? nativeSkillMeta(skill))
+        .help(nativeSkillHelp(skill))
     }
 
     private func nativeSkillInstallPanel(agent: CapabilityAgentOption, state: NativeSkillAgentState?) -> some View {
@@ -1056,6 +1056,19 @@ struct AgentCapabilitiesView: View {
             return "\(source) · \(skill.status) · \(version)"
         }
         return "\(source) · \(skill.status)"
+    }
+
+    private func nativeSkillHelp(_ skill: NativeSkillDefinition) -> String {
+        var parts: [String] = []
+        if let reason = skill.unavailableReason, !reason.isEmpty {
+            parts.append(reason)
+        } else {
+            parts.append(nativeSkillMeta(skill))
+        }
+        if !skill.repairSuggestions.isEmpty {
+            parts.append(skill.repairSuggestions.joined(separator: "\n"))
+        }
+        return parts.joined(separator: "\n")
     }
 
     private func skillIconName(_ skill: NativeSkillDefinition) -> String {

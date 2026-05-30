@@ -109,6 +109,12 @@ from .task_manager.models import TaskType, JobStatus, TaskStatus
 from .task_manager.orchestration.orchestrator import TaskOrchestrator
 from .task_manager.orchestration.owner_agent import OwnerAgent
 from .task_manager.orchestration.validator import ContractValidator
+from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
+from .task_manager.orchestration.release_e2e import (
+    RELEASE_E2E_SCENARIO_ID,
+    build_release_e2e_scenarios,
+    build_release_e2e_task_request,
+)
 from .paths import backend_socket_path, data_file, log_dir as app_log_dir
 
 # Global Task Manager instances
@@ -503,6 +509,12 @@ async def get_mcp_contexts():
             status="connected"
         ))
     return contexts
+
+
+@app.get("/api/mcp/safety")
+async def get_mcp_safety_report():
+    """Return MCP server risk, sandbox, and approval metadata."""
+    return mcp_manager.get_safety_report()
 
 class ContextPack(BaseModel):
     frontmost_app: Optional[str] = None
@@ -2465,9 +2477,172 @@ class TaskInfo(BaseModel):
     requirement_manifest: Optional[Dict[str, Any]] = None
     quality_health: Dict[str, Any] = Field(default_factory=dict)
     delivery_report: Dict[str, Any] = Field(default_factory=dict)
+    observability: Dict[str, Any] = Field(default_factory=dict)
 
 def _pydantic_dump(model: BaseModel, **kwargs: Any) -> Dict[str, Any]:
     return model.model_dump(**kwargs) if hasattr(model, "model_dump") else model.dict(**kwargs)
+
+
+def _read_obj_value(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _status_text(value: Any) -> str:
+    return str(getattr(value, "value", value) or "")
+
+
+def _extract_quality_report_from_decision(decision: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(decision, dict):
+        return {}
+    delivery_quality = decision.get("delivery_quality")
+    if not isinstance(delivery_quality, dict):
+        return {}
+    report = delivery_quality.get("quality_report")
+    return report if isinstance(report, dict) else {}
+
+
+def _extract_agent_mix_from_gates(gate_results: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    empty = {"actual_agents": [], "local_agents": [], "cloud_agents": []}
+    for gate in gate_results:
+        if gate.get("adapter_id") != "agent_mix" and gate.get("gate_id") != "gate-agent-mix":
+            continue
+        evidence = gate.get("evidence") or {}
+        constraints = evidence.get("satisfied_constraints") or []
+        for constraint in constraints:
+            details = (constraint or {}).get("evidence") or {}
+            if isinstance(details, dict):
+                return {
+                    "actual_agents": list(details.get("actual_agents") or []),
+                    "local_agents": list(details.get("local_agents") or []),
+                    "cloud_agents": list(details.get("cloud_agents") or []),
+                }
+    return empty
+
+
+def _build_task_observability_snapshot(
+    *,
+    task_id: str,
+    description: str,
+    status: str,
+    subtasks: List[Any],
+    waves: List[Any],
+    last_owner_decision: Optional[Dict[str, Any]],
+    created_at: Optional[float] = None,
+    updated_at: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Build a compact, read-only evidence timeline for task details.
+
+    The snapshot intentionally derives only from already-loaded task state. It
+    never resumes tasks, runs probes, or touches the project directory.
+    """
+    decision = last_owner_decision if isinstance(last_owner_decision, dict) else {}
+    quality_report = _extract_quality_report_from_decision(decision)
+    gate_results = [
+        dict(item)
+        for item in (quality_report.get("gate_results") or [])
+        if isinstance(item, dict)
+    ]
+    quality_gates = [
+        {
+            "gate_id": str(gate.get("gate_id") or gate.get("id") or ""),
+            "adapter_id": str(gate.get("adapter_id") or gate.get("probe_type") or "unknown"),
+            "status": str(gate.get("status") or "unknown"),
+            "required": bool(gate.get("required", True)),
+            "summary": str(gate.get("summary") or gate.get("output_tail") or "")[:300],
+        }
+        for gate in gate_results
+    ]
+    timeline: List[Dict[str, Any]] = [
+        {
+            "kind": "task_created",
+            "label": "Task created",
+            "task_id": task_id,
+            "status": status,
+            "at": created_at,
+            "summary": description[:180],
+        }
+    ]
+
+    for wave in sorted(waves or [], key=lambda item: int(_read_obj_value(item, "wave_number", 0) or 0)):
+        wave_number = int(_read_obj_value(wave, "wave_number", 0) or 0)
+        governance = str(_read_obj_value(wave, "governance_status", "") or "")
+        wave_status = _status_text(_read_obj_value(wave, "status", ""))
+        is_blocked = bool(_read_obj_value(wave, "is_blocked", False))
+        if governance == "approved":
+            kind = "wave_approved"
+        elif is_blocked or governance == "blocked":
+            kind = "wave_blocked"
+        elif governance == "revalidating" or bool(_read_obj_value(wave, "is_revalidating", False)):
+            kind = "wave_revalidating"
+        else:
+            kind = "wave_status"
+        timeline.append({
+            "kind": kind,
+            "label": f"Wave {wave_number}",
+            "wave_number": wave_number,
+            "status": governance or wave_status or "pending",
+        })
+
+    for subtask in sorted(
+        subtasks or [],
+        key=lambda item: (
+            int(_read_obj_value(item, "wave_number", 0) or 0),
+            str(_read_obj_value(item, "subtask_id", "")),
+        ),
+    ):
+        subtask_status = _status_text(_read_obj_value(subtask, "status", "pending"))
+        if subtask_status not in {"running", "completed", "failed", "cancelled"}:
+            continue
+        kind = {
+            "running": "subtask_running",
+            "completed": "subtask_completed",
+            "failed": "subtask_failed",
+            "cancelled": "subtask_cancelled",
+        }.get(subtask_status, "subtask_status")
+        timeline.append({
+            "kind": kind,
+            "label": str(_read_obj_value(subtask, "description", ""))[:120],
+            "subtask_id": str(_read_obj_value(subtask, "subtask_id", "")),
+            "agent_id": str(_read_obj_value(subtask, "agent_id", "")),
+            "wave_number": int(_read_obj_value(subtask, "wave_number", 1) or 1),
+            "status": subtask_status,
+        })
+
+    for gate in quality_gates:
+        status_text = gate["status"]
+        timeline.append({
+            "kind": f"quality_gate_{status_text}",
+            "label": gate["adapter_id"],
+            "gate_id": gate["gate_id"],
+            "status": status_text,
+            "required": gate["required"],
+            "summary": gate["summary"],
+        })
+
+    remediation_attempts = dict(decision.get("quality_remediation_attempts") or {})
+    if remediation_attempts:
+        timeline.append({
+            "kind": "remediation_attempted",
+            "label": "Quality remediation",
+            "status": "attempted",
+            "attempts_by_requirement": remediation_attempts,
+        })
+
+    return {
+        "timeline": timeline,
+        "quality_gates": quality_gates,
+        "agent_mix": _extract_agent_mix_from_gates(gate_results),
+        "remediation": {
+            "attempted": bool(remediation_attempts),
+            "attempts_by_requirement": remediation_attempts,
+            "max_attempts": decision.get("max_quality_remediation_attempts", 4),
+            "deterministic_repair_attempted": bool(decision.get("deterministic_delivery_repair_attempted")),
+        },
+        "quality_score": quality_report.get("final_quality_score"),
+        "updated_at": updated_at,
+    }
 
 class TaskSummaryInfo(BaseModel):
     task_id: str
@@ -3169,6 +3344,14 @@ def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
         total_count,
         state.get_task_progress(task.task_id),
     )
+    delivery_report = build_delivery_report(
+        task=task,
+        manifest=requirement_manifest,
+        artifact_records=artifact_records,
+        acceptance_records=acceptance_records,
+        quality_health=quality_health,
+        final_status=status,
+    )
 
     return TaskInfo(
         task_id=task.task_id,
@@ -3191,13 +3374,16 @@ def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
         direct_response=task.direct_response,
         requirement_manifest=requirement_manifest,
         quality_health=quality_health,
-        delivery_report=build_delivery_report(
-            task=task,
-            manifest=requirement_manifest,
-            artifact_records=artifact_records,
-            acceptance_records=acceptance_records,
-            quality_health=quality_health,
-            final_status=status,
+        delivery_report=delivery_report,
+        observability=_build_task_observability_snapshot(
+            task_id=task.task_id,
+            description=task.description,
+            status=status,
+            subtasks=task.subtasks,
+            waves=task.waves,
+            last_owner_decision=getattr(task, "last_owner_decision", None),
+            created_at=task.created_at,
+            updated_at=task.updated_at,
         ),
         progress=progress,
         completed_count=completed_count,
@@ -3571,6 +3757,16 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
         requirement_manifest=requirement_manifest,
         quality_health=quality_health,
         delivery_report=delivery_report,
+        observability=_build_task_observability_snapshot(
+            task_id=task_id,
+            description=task_dict.get('description', ''),
+            status=status,
+            subtasks=db_subtasks,
+            waves=db_waves,
+            last_owner_decision=task_dict.get("last_owner_decision"),
+            created_at=task_dict.get('created_at') or 0.0,
+            updated_at=task_dict.get('updated_at') or 0.0,
+        ),
         progress=progress,
         completed_count=completed_count,
         total_count=total_count,
@@ -3772,6 +3968,64 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+def _task_row_for_release_evaluation(task: "Task") -> Dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "description": task.description,
+        "status": getattr(task.status, "value", task.status),
+        "progress": getattr(task, "progress", 0.0),
+        "completed_count": getattr(task, "completed_count", 0),
+        "total_count": getattr(task, "total_count", 0),
+        "created_at": getattr(task, "created_at", 0.0),
+        "updated_at": getattr(task, "updated_at", 0.0),
+        "project_dir": getattr(task, "project_dir", None),
+        "owner_agent": getattr(task, "owner_agent", None),
+        "allowed_subtask_agents": list(getattr(task, "allowed_subtask_agents", []) or []),
+        "task_types": list(getattr(task, "task_types", []) or []),
+        "delivery_mode": getattr(task, "delivery_mode", "legacy") or "legacy",
+        "last_owner_decision": getattr(task, "last_owner_decision", None) or {},
+    }
+
+
+@app.get("/api/release/evaluation")
+async def get_release_evaluation(limit: int = 100):
+    """Return a lightweight release-candidate quality summary.
+
+    The endpoint only reads cached task rows and stored quality reports. It
+    intentionally avoids hydrating full task details, running probes, repairing
+    dispatch, or resuming historical work.
+    """
+    try:
+        safe_limit = max(1, min(int(limit or 100), 500))
+        rows: List[Dict[str, Any]] = []
+        seen_task_ids: set[str] = set()
+
+        persistence = getattr(_task_state, "_persistence", None)
+        if persistence and hasattr(persistence, "get_task_summaries"):
+            persisted_rows, _total = persistence.get_task_summaries(limit=safe_limit, offset=0)
+        elif persistence and hasattr(persistence, "get_all_tasks"):
+            persisted_rows = persistence.get_all_tasks()[:safe_limit]
+        else:
+            persisted_rows = []
+
+        for row in persisted_rows:
+            task_id = row.get("task_id")
+            if task_id and task_id not in seen_task_ids:
+                rows.append(dict(row))
+                seen_task_ids.add(task_id)
+
+        for task in _task_state.get_all_tasks():
+            row = _task_row_for_release_evaluation(task)
+            task_id = row.get("task_id")
+            if task_id and task_id not in seen_task_ids:
+                rows.append(row)
+                seen_task_ids.add(task_id)
+
+        return build_release_evaluation_summary(rows[:safe_limit])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tasks/{task_id}", response_model=TaskInfo)
 async def get_task(task_id: str):
     """Get task details and progress.
@@ -3904,6 +4158,26 @@ class AutoTaskResponse(BaseModel):
     message: str
 
 
+class ReleaseE2EScenarioListResponse(BaseModel):
+    scenarios: List[Dict[str, Any]]
+
+
+class ReleaseE2ETaskRequest(BaseModel):
+    scenario_id: str = RELEASE_E2E_SCENARIO_ID
+    project_dir: Optional[str] = None
+    run_label: Optional[str] = None
+
+
+class ReleaseE2ETaskResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+    scenario_id: str
+    project_dir: str
+    complexity_score: int
+    required_files: List[str]
+
+
 def _normalize_request_task_types(task_types: List[str]) -> tuple:
     allowed = {"functional", "artifact"}
     values: List[str] = []
@@ -3918,17 +4192,12 @@ def _normalize_request_task_types(task_types: List[str]) -> tuple:
     return values, values[0] if len(values) == 1 else "composite"
 
 
-@app.post("/api/tasks/auto", response_model=AutoTaskResponse)
-async def auto_task(req: AutoTaskRequest):
-    """Auto-orchestrated task submission.
-
-    Creates a task, decomposes it via the OwnerAgent, and dispatches ready subtasks automatically.
-
-    Before submission, checks that LLM providers have API keys configured.
-    If keys are missing, returns a clear 412 error listing the missing providers
-    rather than letting the orchestrator fail with an opaque LLM error.
-    """
-    # Fail early if no LLM providers have keys — avoids opaque "No API key found" errors
+async def _submit_auto_orchestrated_task(
+    req: AutoTaskRequest,
+    *,
+    success_message: str = "Task submitted for auto-orchestration",
+    extra_context: Optional[Dict[str, Any]] = None,
+) -> AutoTaskResponse:
     missing_providers = _check_llm_provider_readiness()
     if missing_providers:
         raise HTTPException(
@@ -3963,16 +4232,80 @@ async def auto_task(req: AutoTaskRequest):
             capability_agent_ids or None,
             req.description,
         )
+        if extra_context:
+            context.update(extra_context)
         task_id = await asyncio.to_thread(orchestrator.submit_task, req.description, context)
         return AutoTaskResponse(
             task_id=task_id,
             status="created",
-            message="Task submitted for auto-orchestration"
+            message=success_message
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/release/e2e/scenarios", response_model=ReleaseE2EScenarioListResponse)
+async def get_release_e2e_scenarios():
+    return ReleaseE2EScenarioListResponse(scenarios=build_release_e2e_scenarios())
+
+
+@app.post("/api/release/e2e/tasks", response_model=ReleaseE2ETaskResponse)
+async def create_release_e2e_task(req: ReleaseE2ETaskRequest):
+    try:
+        task_request = build_release_e2e_task_request(
+            scenario_id=req.scenario_id,
+            project_dir=req.project_dir,
+            run_label=req.run_label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    auto_req = AutoTaskRequest(
+        description=task_request["description"],
+        task_types=task_request["task_types"],
+        owner_agent=task_request["owner_agent"],
+        allowed_subtask_agents=task_request["allowed_subtask_agents"],
+        project_dir=task_request["project_dir"],
+        strict_dependency=task_request["strict_dependency"],
+        enable_wave_gate=task_request["enable_wave_gate"],
+    )
+    result = await _submit_auto_orchestrated_task(
+        auto_req,
+        success_message="Release E2E task submitted for auto-orchestration",
+        extra_context={
+            "release_e2e": {
+                "scenario_id": task_request["scenario_id"],
+                "scenario_title": task_request["scenario_title"],
+                "complexity_score": task_request["complexity_score"],
+                "required_files": task_request["required_files"],
+                "required_quality_gates": task_request["required_quality_gates"],
+            }
+        },
+    )
+    return ReleaseE2ETaskResponse(
+        task_id=result.task_id,
+        status=result.status,
+        message=result.message,
+        scenario_id=task_request["scenario_id"],
+        project_dir=task_request["project_dir"],
+        complexity_score=task_request["complexity_score"],
+        required_files=task_request["required_files"],
+    )
+
+
+@app.post("/api/tasks/auto", response_model=AutoTaskResponse)
+async def auto_task(req: AutoTaskRequest):
+    """Auto-orchestrated task submission.
+
+    Creates a task, decomposes it via the OwnerAgent, and dispatches ready subtasks automatically.
+
+    Before submission, checks that LLM providers have API keys configured.
+    If keys are missing, returns a clear 412 error listing the missing providers
+    rather than letting the orchestrator fail with an opaque LLM error.
+    """
+    return await _submit_auto_orchestrated_task(req)
 
 
 @app.get("/api/tasks/{task_id}/status")

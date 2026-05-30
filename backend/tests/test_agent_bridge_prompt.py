@@ -2,6 +2,8 @@ import concurrent.futures
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from across_agents_assistant.agent_bridge.agent import AgentSession
 from across_agents_assistant.tools import builtin_tools  # noqa: F401 - registers built-in tools
 
@@ -21,6 +23,37 @@ def test_execution_prompt_discourages_clarifying_questions():
     assert "Design FastAPI backend architecture" in prompt
 
 
+def test_execution_prompt_lists_local_agent_writable_assignment():
+    session = AgentSession(agent_id="claude", client=object())
+
+    prompt = session._build_execution_prompt(
+        "Build dashboard JavaScript",
+        "/tmp/demo-project",
+        context={"allowed_writable_files": ["web/app.js", "/tmp/outside"]},
+    )
+
+    assert "Writable file assignment:" in prompt
+    assert "- web/app.js" in prompt
+    assert "/tmp/outside" not in prompt
+    assert "Do not create or edit any other files" in prompt
+
+
+def test_local_agent_invocation_forwards_bridge_timeout_to_client():
+    captured = {}
+
+    class FakeClient:
+        def send(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="done")
+
+    session = AgentSession(agent_id="hermes", client=FakeClient())
+
+    response = session.invoke("Repair quality gates", timeout=37.0, project_dir="/tmp/demo-project")
+
+    assert response.success is True
+    assert captured["timeout"] == 37.0
+
+
 def test_cloud_tool_prompt_instructs_chunked_large_file_writes():
     session = AgentSession(agent_id="deepseek", client=object())
 
@@ -29,6 +62,22 @@ def test_cloud_tool_prompt_instructs_chunked_large_file_writes():
     assert "split the content across multiple write_file calls" in prompt
     assert "append=false for the first chunk" in prompt
     assert "append=true for later chunks" in prompt
+
+
+def test_cloud_tool_prompt_lists_writable_file_assignment():
+    session = AgentSession(agent_id="deepseek", client=object())
+
+    prompt = session._build_cloud_tool_prompt(
+        "Build app behavior",
+        "/tmp/demo-project",
+        allowed_writable_files=["web/app.js", "../ignored", "/tmp/outside.txt"],
+    )
+
+    assert "Writable file assignment:" in prompt
+    assert "- web/app.js" in prompt
+    assert "../ignored" not in prompt
+    assert "/tmp/outside.txt" not in prompt
+    assert "Do not create or edit any other files" in prompt
 
 
 def test_workspace_write_file_tool_description_warns_about_large_arguments(tmp_path):
@@ -42,6 +91,41 @@ def test_workspace_write_file_tool_description_warns_about_large_arguments(tmp_p
     assert write_tool is not None
     assert "below about 6000 characters" in write_tool.description
     assert "append=true" in write_tool.description
+
+
+def test_workspace_write_guard_rejects_unassigned_files(tmp_path):
+    session = AgentSession(agent_id="deepseek", client=object())
+    project_dir = tmp_path / "workspace"
+    project_dir.mkdir()
+
+    registry = session._build_workspace_tool_registry(
+        str(project_dir),
+        allowed_writable_files=["web/app.js"],
+    )
+    write_tool = registry.get_tool("write_file")
+
+    with pytest.raises(ValueError) as exc:
+        write_tool.handler(path="cli/quality-check.mjs", content="bad")
+
+    assert "outside this subtask's writable file assignment" in str(exc.value)
+    assert not (project_dir / "cli" / "quality-check.mjs").exists()
+
+
+def test_workspace_write_guard_allows_assigned_file(tmp_path):
+    session = AgentSession(agent_id="deepseek", client=object())
+    project_dir = tmp_path / "workspace"
+    project_dir.mkdir()
+
+    registry = session._build_workspace_tool_registry(
+        str(project_dir),
+        allowed_writable_files=["web/app.js"],
+    )
+    write_tool = registry.get_tool("write_file")
+
+    result = write_tool.handler(path="web/app.js", content="console.log('ok')\n")
+
+    assert "Successfully wrote" in result["output"]
+    assert (project_dir / "web" / "app.js").read_text(encoding="utf-8") == "console.log('ok')\n"
 
 
 def test_cloud_tool_outcome_treats_iteration_limit_with_artifacts_as_success():

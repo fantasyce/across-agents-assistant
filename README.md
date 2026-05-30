@@ -76,6 +76,7 @@ The app also includes a light Simplified Chinese interface.
 - Native skill readiness checks mark missing binaries, environment variables, or config as unavailable; unavailable native skills stay visible for repair but are not used as strong routing signals.
 - Task capability preflight that recommends the best-fit agent mix before submission and shows which skills matched the request.
 - Delivery quality gates for exact file contracts, workspace hygiene, runnable probes, and static web feature evidence when UI behavior is requested.
+- Built-in release E2E gate that can submit a fixed high-complexity cross-agent task covering exact artifact delivery, Web UI, Node API, CLI checks, browser verification, and quality-gate evidence.
 - Unified model surface for local agents such as OpenClaw, Hermes, and Claude Code, plus cloud LLMs such as DeepSeek and MiniMax.
 - Project-scoped chat with a real directory tree, session history, file attachments, screenshots, and context-aware prompts.
 - Single-agent mode for sending a complex task to one chosen agent when collaboration is unnecessary.
@@ -102,6 +103,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is source-first: the repository is intended for local building and inspection, not notarized binary distribution.
 
+Recent quality work has focused on making complex agent deliveries easier to inspect and harder to overclaim:
+
+- Release Evaluation summarizes recent task evidence into a local readiness signal without rerunning expensive probes or restoring old tasks automatically.
+- Task details expose execution evidence, quality gates, remediation history, quality score, and local/cloud agent mix.
+- Complex Release E2E validates an exact multi-file Web/API/CLI delivery through static checks, API probes, CLI checks, browser evidence, workspace hygiene, security/privacy scans, and cross-agent coverage.
+- Native skill readiness and MCP safety information now participate in task preflight so unavailable skills stay visible for repair but do not become strong routing signals.
+- The packaged app defaults to a faster backend bundle layout and avoids reopening duplicate main windows on launch.
+
 ## Quick Start
 
 Clone the repository:
@@ -115,6 +124,12 @@ Build the local macOS app bundle:
 
 ```bash
 bash build_app.sh
+```
+
+The default packaging mode uses an unpacked backend bundle for faster app startup. For troubleshooting only, you can compare the older single-file backend mode:
+
+```bash
+BACKEND_BUNDLE_MODE=onefile bash build_app.sh
 ```
 
 Open the app from the generated bundle:
@@ -190,6 +205,8 @@ curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
 The benchmark fails if required probes fail, expected files drift, the quality
 gate is not passed, required checks are skipped, active remediation remains, or
 the final score falls below the requested threshold.
+
+When changing task orchestration, delivery contracts, capability routing, native skills, MCP safety, or release evaluation, also run the focused tests for the touched area and verify the packaged app path before considering the change release-ready.
 
 ## macOS Client Development
 

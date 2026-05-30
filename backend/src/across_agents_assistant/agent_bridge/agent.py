@@ -64,6 +64,18 @@ class AgentSession:
                 )
             )
 
+    def _client_send_accepts_timeout(self) -> bool:
+        try:
+            import inspect
+
+            parameters = inspect.signature(self._client.send).parameters
+            return "timeout" in parameters or any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in parameters.values()
+            )
+        except (TypeError, ValueError, AttributeError):
+            return False
+
     def invoke(self, message: str, context: Optional[Dict[str, Any]] = None, timeout: float = 120.0, project_dir: Optional[str] = None) -> AgentResponse:
         """
         Invoke the agent with a message.
@@ -102,14 +114,16 @@ class AgentSession:
     def _invoke_local_agent(self, message: str, context: Optional[Dict[str, Any]], timeout: float, request_id: str, start_time: float, project_dir: Optional[str] = None) -> AgentResponse:
         """Invoke a local CLI agent via UniversalAgentClient."""
         try:
-            reply = self._client.send(
-                message=self._build_execution_prompt(message, project_dir),
-                session_id=None,
-                use_current=True,
-                target_agent=self.agent_id,
-                project_dir=project_dir,
-                timeout=timeout,
-            )
+            send_kwargs = {
+                "message": self._build_execution_prompt(message, project_dir, context=context),
+                "session_id": None,
+                "use_current": True,
+                "target_agent": self.agent_id,
+                "project_dir": project_dir,
+            }
+            if self._client_send_accepts_timeout():
+                send_kwargs["timeout"] = timeout
+            reply = self._client.send(**send_kwargs)
 
             elapsed = time.time() - start_time
 
@@ -261,19 +275,29 @@ class AgentSession:
         project_dir: str,
     ) -> AgentResponse:
         before_snapshot = self._snapshot_project_files(project_dir)
+        allowed_writable_files = self._normalize_allowed_writable_files(
+            context.get("allowed_writable_files") or []
+        )
         llm_adapter = LLMGatewayAdapter(self._llm_gateway, provider_id=self.agent_id)
-        tool_registry = self._build_workspace_tool_registry(project_dir)
+        tool_registry = self._build_workspace_tool_registry(
+            project_dir,
+            allowed_writable_files=allowed_writable_files,
+        )
         tool_executor = ToolExecutor(tool_registry, approval_service=None)
         llm_adapter.set_tools(tool_registry)
 
         loop = AgentLoop(
             llm_client=llm_adapter,
             tool_registry=tool_registry,
-            config=LoopConfig(max_iterations=40),
+            config=LoopConfig(max_iterations=8),
             tool_executor=tool_executor,
         )
         result = await loop.run(
-            user_message=self._build_cloud_tool_prompt(message, project_dir),
+            user_message=self._build_cloud_tool_prompt(
+                message,
+                project_dir,
+                allowed_writable_files=allowed_writable_files,
+            ),
             context={
                 "task_id": context.get("task_id", ""),
                 "subtask_id": context.get("subtask_id", ""),
@@ -331,6 +355,7 @@ class AgentSession:
                 "tool_failures": tool_failures,
                 "observed_created_files": observed_created,
                 "observed_modified_files": observed_modified,
+                "allowed_writable_files": allowed_writable_files,
             },
         )
 
@@ -398,14 +423,25 @@ class AgentSession:
         )
         return created, modified
 
-    def _build_workspace_tool_registry(self, project_dir: str) -> ToolRegistry:
+    def _build_workspace_tool_registry(
+        self,
+        project_dir: str,
+        allowed_writable_files: Optional[list[str]] = None,
+    ) -> ToolRegistry:
         workspace = os.path.abspath(os.path.expanduser(project_dir))
+        allowed_writable_files = self._normalize_allowed_writable_files(allowed_writable_files or [])
         local_registry = ToolRegistry()
         for tool_name in ("list_directory", "search_files", "read_file", "write_file", "edit_file"):
             tool = global_tool_registry.get_tool(tool_name)
             if not tool:
                 continue
             description = f"{tool.description} Restricted to project_dir: {workspace}"
+            if tool.name in {"write_file", "edit_file"} and allowed_writable_files:
+                description += (
+                    " This subtask may only write or edit these project-relative files: "
+                    + ", ".join(allowed_writable_files)
+                    + ". Reading other project files is allowed, but writing any other path is rejected."
+                )
             if tool.name == "write_file":
                 description += (
                     " For large files, keep each content argument below about 6000 characters: "
@@ -417,11 +453,22 @@ class AgentSession:
                 description=description,
                 parameters=tool.parameters,
                 risk_level="low",
-                handler=self._wrap_workspace_tool(tool.handler, workspace),
+                handler=self._wrap_workspace_tool(
+                    tool.handler,
+                    workspace,
+                    allowed_writable_files=allowed_writable_files,
+                ),
             ))
         return local_registry
 
-    def _wrap_workspace_tool(self, handler: Any, workspace: str):
+    def _wrap_workspace_tool(
+        self,
+        handler: Any,
+        workspace: str,
+        allowed_writable_files: Optional[list[str]] = None,
+    ):
+        allowed_paths = self._absolute_allowed_writable_paths(workspace, allowed_writable_files or [])
+
         def wrapped(**params):
             if "raw_arguments" in params:
                 raw_arguments = params.pop("raw_arguments")
@@ -440,6 +487,12 @@ class AgentSession:
             original_path = params.get("path")
             if "path" in params:
                 params["path"] = self._resolve_workspace_path(params["path"], workspace)
+                if handler.__name__ in {"write_file", "edit_file"} and allowed_paths:
+                    self._assert_writable_path_allowed(
+                        params["path"],
+                        allowed_paths,
+                        original_path or params["path"],
+                    )
             result = handler(**params)
             resolved_path = params.get("path")
             if resolved_path:
@@ -464,10 +517,59 @@ class AgentSession:
             raise ValueError(f"Path outside project_dir is not allowed: {candidate}")
         return resolved
 
-    def _build_cloud_tool_prompt(self, message: str, project_dir: str) -> str:
+    @staticmethod
+    def _normalize_allowed_writable_files(files: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in files or []:
+            text = str(item or "").replace("\\", "/").strip()
+            if not text or os.path.isabs(text):
+                continue
+            cleaned = os.path.normpath(text).replace("\\", "/").strip("/")
+            if cleaned in {"", "."} or cleaned == ".." or cleaned.startswith("../"):
+                continue
+            if cleaned not in normalized:
+                normalized.append(cleaned)
+        return normalized
+
+    @classmethod
+    def _absolute_allowed_writable_paths(cls, workspace: str, files: list[str]) -> set[str]:
+        workspace_root = os.path.abspath(os.path.expanduser(workspace))
+        allowed: set[str] = set()
+        for rel_path in cls._normalize_allowed_writable_files(files):
+            resolved = os.path.abspath(os.path.join(workspace_root, rel_path))
+            if resolved == workspace_root or resolved.startswith(workspace_root + os.sep):
+                allowed.add(resolved)
+        return allowed
+
+    @staticmethod
+    def _assert_writable_path_allowed(candidate: str, allowed_paths: set[str], original_path: Any) -> None:
+        resolved = os.path.abspath(os.path.expanduser(candidate))
+        if resolved not in allowed_paths:
+            allowed_display = ", ".join(sorted(allowed_paths))
+            raise ValueError(
+                "Path is outside this subtask's writable file assignment: "
+                f"{original_path}. Allowed files: {allowed_display}"
+            )
+
+    def _build_cloud_tool_prompt(
+        self,
+        message: str,
+        project_dir: str,
+        allowed_writable_files: Optional[list[str]] = None,
+    ) -> str:
+        allowed_writable_files = self._normalize_allowed_writable_files(allowed_writable_files or [])
+        writable_scope = ""
+        if allowed_writable_files:
+            writable_scope = (
+                "Writable file assignment:\n"
+                + "\n".join(f"- {path}" for path in allowed_writable_files)
+                + "\nDo not create or edit any other files for this subtask. "
+                "If another file looks necessary, mention it in the final summary instead of writing it.\n\n"
+            )
         return (
             "You are a coding agent that must use tools to complete the task.\n"
             f"Project directory: {project_dir}\n"
+            f"{writable_scope}"
             "Rules:\n"
             "1. Use the available tools to inspect and modify files inside the project directory.\n"
             "2. Do not claim files were created unless a tool actually created or edited them.\n"
@@ -481,7 +583,12 @@ class AgentSession:
             f"Task:\n{message}"
         )
 
-    def _build_execution_prompt(self, message: str, project_dir: Optional[str]) -> str:
+    def _build_execution_prompt(
+        self,
+        message: str,
+        project_dir: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         lines = [
             "You are executing a subtask inside an orchestrated multi-agent workflow.",
             "You must produce a concrete deliverable for this subtask now.",
@@ -493,6 +600,16 @@ class AgentSession:
         ]
         if project_dir:
             lines.append(f"Project directory: {project_dir}")
+        allowed_writable_files = self._normalize_allowed_writable_files(
+            (context or {}).get("allowed_writable_files") or []
+        )
+        if allowed_writable_files:
+            lines.extend([
+                "",
+                "Writable file assignment:",
+                *[f"- {path}" for path in allowed_writable_files],
+                "Do not create or edit any other files for this subtask. If another file looks necessary, mention it in the final summary instead of writing it.",
+            ])
         lines.append("")
         lines.append("Subtask:")
         lines.append(message)

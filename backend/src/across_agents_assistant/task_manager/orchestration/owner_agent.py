@@ -42,6 +42,129 @@ from .project_acceptance import first_existing_candidate
 logger = logging.getLogger("across_agents_assistant.task_manager")
 
 
+_AGENT_CAPABILITY_LABEL_RE = re.compile(
+    r"\b(?:openclaw|hermes|claude(?:\s+code)?|deepseek|minimax)\s*:\s*[^.;)\n]+",
+    re.IGNORECASE,
+)
+
+_SUBTASK_OUTPUT_VERB_RE = re.compile(
+    r"\b(create|write|produce|deliver|output|generate|implement|build|add|update|modify|repair|fix)\b",
+    re.IGNORECASE,
+)
+
+_SUBTASK_REFERENCE_CONTEXT_RE = re.compile(
+    r"\b("
+    r"validates?|verif(?:y|ies)|checks?|tests?|starts?|runs?|launch(?:es)?|opens?|loads?|"
+    r"references?|imports?|href|src|stylesheet|script|manifest|smoke[-\s]*test|how\s+to|"
+    r"explaining|document(?:ing)?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_PATH_TOKEN_RE = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+"
+    r"|\b[A-Za-z0-9_-]+\.[A-Za-z0-9][A-Za-z0-9_.-]*\b"
+)
+
+
+def _strip_agent_capability_label_context(text: str) -> str:
+    """Remove UI copy that lists agent skills, such as ``DeepSeek: Backend API``."""
+    return _AGENT_CAPABILITY_LABEL_RE.sub(" ", text or "")
+
+
+def _is_static_frontend_file_scope(description: str, path_hints: List[str]) -> bool:
+    """Detect static-web subtasks where backend words are UI labels, not backend scope."""
+    basenames = {os.path.basename(path).lower() for path in path_hints if path}
+    frontend_exts = (".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte")
+    backend_exts = (".py", ".go", ".rs", ".rb", ".php", ".java", ".kt", ".swift")
+    has_frontend_asset = any(name.endswith(frontend_exts) for name in basenames)
+    has_backend_asset = any(name.endswith(backend_exts) for name in basenames) or any(
+        name in {"server.js", "server.ts", "api.js", "api.ts"} for name in basenames
+    )
+    if not has_frontend_asset or has_backend_asset:
+        return False
+
+    text = (description or "").lower()
+    return (
+        "static web" in text
+        or "open directly" in text
+        or "no build" in text
+        or "index.html" in basenames
+        or "styles.css" in basenames
+        or "app.js" in basenames
+    )
+
+
+def _path_hint_terms(path_hint: str) -> List[str]:
+    normalized = normalize_path_hint(path_hint or "") or ""
+    basename = os.path.basename(normalized)
+    terms = [term.lower() for term in (normalized, basename) if term]
+    unique: List[str] = []
+    for term in sorted(terms, key=len, reverse=True):
+        if term not in unique:
+            unique.append(term)
+    return unique
+
+
+def _path_hint_occurrences(description: str, path_hint: str) -> List[int]:
+    lowered = (description or "").lower()
+    indexes: List[int] = []
+    seen: set[int] = set()
+    for term in _path_hint_terms(path_hint):
+        start = 0
+        while True:
+            index = lowered.find(term, start)
+            if index < 0:
+                break
+            if index not in seen:
+                seen.add(index)
+                indexes.append(index)
+            start = index + len(term)
+    return sorted(indexes)
+
+
+def _contains_other_path_token(text: str, path_hint: str) -> bool:
+    expected = set(_path_hint_terms(path_hint))
+    for match in _PATH_TOKEN_RE.finditer(text or ""):
+        token = (normalize_path_hint(match.group(0)) or match.group(0)).lower()
+        basename = os.path.basename(token)
+        if token not in expected and basename not in expected:
+            return True
+    return False
+
+
+def _has_direct_output_context(description: str, path_hint: str) -> bool:
+    lowered = (description or "").lower()
+    for index in _path_hint_occurrences(description, path_hint):
+        window = lowered[max(0, index - 180):index]
+        output_matches = list(_SUBTASK_OUTPUT_VERB_RE.finditer(window))
+        for match in reversed(output_matches):
+            between = window[match.end():]
+            if _SUBTASK_REFERENCE_CONTEXT_RE.search(between):
+                continue
+            if _contains_other_path_token(between, path_hint):
+                continue
+            return True
+    return False
+
+
+def _is_subtask_reference_only_path_hint(description: str, path_hint: str) -> bool:
+    if _has_direct_output_context(description, path_hint):
+        return False
+    lowered = (description or "").lower()
+    for index in _path_hint_occurrences(description, path_hint):
+        before = lowered[max(0, index - 220):index]
+        after = lowered[index:index + 120]
+        if _SUBTASK_REFERENCE_CONTEXT_RE.search(before):
+            return True
+        if re.search(r"^\s*(?:[,，)]|and\b|or\b)", after, re.IGNORECASE) and re.search(
+            r"\bmanifest\b|\bvalidate|\bverify|\bcheck|\brun|\bopen|\bstart",
+            before,
+        ):
+            return True
+    return False
+
+
 class IntegrationResult:
     """Structured result for integration testing."""
 
@@ -137,6 +260,8 @@ You MUST output a JSON object with this exact structure:
 7. For functional tasks, deliverables should be implementation source/tests/docs that prove behavior.
    Do NOT make runtime data files (todo.json, cache.db, local sqlite files), placeholder package markers
    (__init__.py), or setup scaffolding the final deliverable unless the user explicitly requested those files.
+8. Do NOT create standalone directory-structure/scaffolding subtasks. Directory creation is implicit in
+   the file-producing implementation subtasks.
 """
 
     ACCEPTANCE_SYSTEM_PROMPT = """You are a senior technical lead performing code and output acceptance review.
@@ -549,25 +674,36 @@ You MUST output a JSON object with this exact structure:
             available_agents = [agent for agent in available_agents if agent["id"] in allowed_set]
         if not available_agents:
             raise ValueError("No available subtask agents match this task's selected agent pool")
-        system_prompt = self._build_system_prompt(available_agents, context=context)
         available_agent_ids = [a["id"] for a in available_agents]
-        user_message = self._build_decomposition_message(task, context)
+        release_e2e_context = (context or {}).get("release_e2e") or {}
+        if release_e2e_context.get("scenario_id") == "cross_agent_full_delivery_v1":
+            from .release_e2e import build_release_e2e_subtasks
 
-        logger.info(f"Starting task decomposition for {task.task_id}...")
-        try:
-            import time
-            t0 = time.time()
-            response = self._llm(
-                system_prompt=system_prompt,
-                message=user_message,
-                temperature=0.3,
+            decomposition = {"subtasks": build_release_e2e_subtasks(available_agent_ids)}
+            logger.info(
+                "Using deterministic release E2E decomposition for %s with %d subtasks",
+                task.task_id,
+                len(decomposition["subtasks"]),
             )
-            elapsed = time.time() - t0
-            logger.info(f"LLM decomposition response received in {elapsed:.1f}s for task {task.task_id}")
-            decomposition = self._parse_decomposition(response.text)
-        except Exception as e:
-            logger.error(f"LLM decomposition failed for task {task.task_id}: {e}")
-            raise RuntimeError(f"LLM decomposition failed: {e}") from e
+        else:
+            system_prompt = self._build_system_prompt(available_agents, context=context)
+            user_message = self._build_decomposition_message(task, context)
+
+            logger.info(f"Starting task decomposition for {task.task_id}...")
+            try:
+                import time
+                t0 = time.time()
+                response = self._llm(
+                    system_prompt=system_prompt,
+                    message=user_message,
+                    temperature=0.3,
+                )
+                elapsed = time.time() - t0
+                logger.info(f"LLM decomposition response received in {elapsed:.1f}s for task {task.task_id}")
+                decomposition = self._parse_decomposition(response.text)
+            except Exception as e:
+                logger.error(f"LLM decomposition failed for task {task.task_id}: {e}")
+                raise RuntimeError(f"LLM decomposition failed: {e}") from e
 
         if not decomposition.get("subtasks"):
             fallback_subtasks = self._build_deterministic_fallback_decomposition(task, available_agent_ids)
@@ -627,6 +763,17 @@ You MUST output a JSON object with this exact structure:
                     skipped_dependencies[llm_id] = list(st_data.get("dependencies", []) or [])
                 logger.info(
                     "Skipping disallowed documentation/planning subtask for %s: %s",
+                    task.task_id,
+                    st_data.get("description", "")[:120],
+                )
+                continue
+            if self._is_structure_only_subtask(st_data, task.project_dir):
+                llm_id = st_data.get("id", "")
+                if llm_id:
+                    skipped_llm_ids.add(llm_id)
+                    skipped_dependencies[llm_id] = list(st_data.get("dependencies", []) or [])
+                logger.info(
+                    "Skipping structure-only subtask for %s: %s",
                     task.task_id,
                     st_data.get("description", "")[:120],
                 )
@@ -928,6 +1075,64 @@ You MUST output a JSON object with this exact structure:
                 text,
             )
         )
+
+    def _is_structure_only_subtask(
+        self,
+        subtask_data: Dict[str, Any],
+        project_dir: Optional[str] = None,
+    ) -> bool:
+        description = str(subtask_data.get("description") or "")
+        text = description.lower()
+        if not re.search(
+            r"\b(directory structure|project structure|folder structure|subdirectories|folders?|directories|scaffold(?:ing)?|skeleton)\b",
+            text,
+        ):
+            return False
+
+        raw_deliverables = subtask_data.get("deliverables") or subtask_data.get("expected_deliverables") or []
+        source_exts = (
+            ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html", ".css", ".go", ".rs", ".swift", ".md",
+        )
+        for item in raw_deliverables:
+            if not isinstance(item, dict):
+                continue
+            artifact_type = str(item.get("artifact_type") or "").lower()
+            path_hint = str(item.get("path_hint") or "").strip()
+            if artifact_type in {"api_service_source", "frontend_source", "test_suite", "documentation"}:
+                return False
+            if path_hint and os.path.basename(path_hint).lower().endswith(source_exts):
+                return False
+
+        path_hints = self._extract_path_hints(description, project_dir)
+        forbidden_keys = {
+            canonical_requirement_key(path_hint)
+            for path_hint in extract_forbidden_path_hints(description)
+        }
+        concrete_path_hints = [
+            path_hint
+            for path_hint in path_hints
+            if canonical_requirement_key(path_hint) not in forbidden_keys
+            and os.path.basename(path_hint).lower().endswith(source_exts)
+        ]
+        if concrete_path_hints:
+            return False
+
+        implementation_terms = (
+            "api server",
+            "backend api",
+            "frontend",
+            "fastapi",
+            "sqlite",
+            "database",
+            "endpoint",
+            "component",
+            "style",
+            "stylesheet",
+            "test suite",
+            "smoke test",
+            "readme",
+        )
+        return not any(term in text for term in implementation_terms)
 
     def _is_validation_only_subtask(self, subtask_data: Dict[str, Any]) -> bool:
         """Drop final QA/checking tasks from the agent DAG.
@@ -1263,6 +1468,17 @@ You MUST output a JSON object with this exact structure:
             re.search(r'\b(sample|fixture|test data|data file)\b.{0,80}\b(csv|json|yaml|yml)\b', text)
             or re.search(r'\btests?/[\w./-]+\.(csv|json|yaml|yml)\b', text)
         )
+        is_planning_only_task = bool(
+            not re.search(
+                r"\b(create|write|produce|deliver|output|generate|implement|build|add|update|modify|repair|fix)\b",
+                text,
+            )
+            and re.search(
+                r"\b(review|plan|planning|define|analy[sz]e|analysis|architecture|api contracts?|data flow|"
+                r"capability matrix|requirements?)\b",
+                text,
+            )
+        )
 
         test_suite_intent = (
             not is_structure_only_task
@@ -1282,10 +1498,27 @@ You MUST output a JSON object with this exact structure:
             )
         )
 
+        pre_path_hints = self._extract_path_hints(semantic_description, project_dir)
+        forbidden_pre_path_keys = {
+            canonical_requirement_key(path_hint)
+            for path_hint in extract_forbidden_path_hints(semantic_description)
+        }
+        pre_path_hints = [
+            path_hint for path_hint in pre_path_hints
+            if canonical_requirement_key(path_hint) not in forbidden_pre_path_keys
+            and not is_runtime_data_path_hint(semantic_description, path_hint)
+        ]
+        backend_detection_text = _strip_agent_capability_label_context(text)
+        static_frontend_file_scope = _is_static_frontend_file_scope(semantic_description, pre_path_hints)
+
         if test_suite_intent:
             add("test_suite", "Automated test suite files must be produced.")
             add_check("test_suite_exists", "Verify that concrete automated tests exist.")
-        elif not is_dependency_manifest_task and _mentions_api_service(text):
+        elif (
+            not is_dependency_manifest_task
+            and _mentions_api_service(backend_detection_text)
+            and not static_frontend_file_scope
+        ):
             add("api_service_source", "Backend API service implementation files must be produced.")
             add_check("api_source_exists", "Verify that concrete API service implementation files exist.")
         elif has_container_delivery_intent(text) or re.search(r'\b(deploy|nginx|ci)\b', text):
@@ -1319,6 +1552,9 @@ You MUST output a JSON object with this exact structure:
         if not deliverables:
             if is_structure_only_task:
                 add_check("project_structure_exists", "Verify that requested project directories were created.")
+                return deliverables, checks
+            if is_planning_only_task:
+                add_check("planning_review_completed", "Verify that the planning or review summary was completed.")
                 return deliverables, checks
             path_hint = path_hints[0] if path_hints else None
             add("file", f"Output file must be produced: {path_hint or description[:60]}", path_hint=path_hint)
@@ -1373,6 +1609,8 @@ You MUST output a JSON object with this exact structure:
 
                 for expanded in expand_path_hint_alternatives(candidate):
                     if not is_probable_deliverable_path(expanded):
+                        continue
+                    if _is_subtask_reference_only_path_hint(description, expanded):
                         continue
                     if expanded in seen:
                         continue
@@ -1955,10 +2193,10 @@ You MUST output a JSON object with this exact structure:
         Tries multiple extraction strategies:
         1. Direct JSON parse
         2. Code block extraction (```json ... ```)
-        3. Bracket extraction (first {...})
+        3. Balanced object extraction (first valid {...})
         4. Key-value pattern extraction (passed: true/false, action: approve/fix)
         """
-        text = response_text.strip()
+        text = self._strip_thinking_blocks(response_text.strip())
 
         try:
             return json.loads(text)
@@ -1972,12 +2210,13 @@ You MUST output a JSON object with this exact structure:
             except json.JSONDecodeError:
                 pass
 
-        obj_match = re.search(r"\{[\s\S]*\}", text)
-        if obj_match:
+        for candidate in self._balanced_json_object_candidates(text):
             try:
-                return json.loads(obj_match.group(0))
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
-                pass
+                continue
 
         # Strategy 4: Extract key fields via regex patterns
         result: Dict[str, Any] = {}
@@ -2004,6 +2243,44 @@ You MUST output a JSON object with this exact structure:
 
         logger.warning(f"Failed to parse JSON from LLM response, raw text (first 500 chars): {text[:500]}")
         return {}
+
+    @staticmethod
+    def _strip_thinking_blocks(text: str) -> str:
+        """Remove model reasoning wrappers before parsing strict JSON."""
+        return re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
+
+    @staticmethod
+    def _balanced_json_object_candidates(text: str) -> List[str]:
+        candidates: List[str] = []
+        start: Optional[int] = None
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for index, char in enumerate(text):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+                continue
+            if char == "{":
+                if depth == 0:
+                    start = index
+                depth += 1
+                continue
+            if char == "}" and depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(text[start:index + 1])
+                    start = None
+        return candidates
 
     def _resolve_dependency_by_text(self, dep_text: str, task: Task) -> List[str]:
         """Fallback: match a dependency text to existing subtask IDs by description."""
@@ -3243,8 +3520,41 @@ You MUST output a JSON object with this exact structure:
             token in text
             for token in ("react", "vue", "angular", "frontend", "front-end", "typescript", "dashboard", "web ui", "user interface")
         )
-        backend_intent = bool(
-            re.search(r"\b(rest\s*api|fastapi|flask|django|backend|api\s+service|service\s+api)\b", text)
+        backend_detection_text = _strip_agent_capability_label_context(text)
+        try:
+            from .delivery_contract import _mentions_api_service
+        except Exception:
+            _mentions_api_service = lambda value: bool(  # type: ignore
+                re.search(
+                    r"\b(rest\s*api|fastapi|flask|django|backend|api\s+service|"
+                    r"service\s+api|endpoint|endpoints|controller|handler|server)\b",
+                    value,
+                )
+            )
+        api_path_intent = any(
+            (
+                path.replace("\\", "/").lstrip("./").startswith("api/")
+                and os.path.basename(path).lower()
+                in {"server.mjs", "server.js", "index.mjs", "index.js", "main.py"}
+            )
+            for path in deliverable_explicit_paths
+        )
+        node_http_intent = bool(
+            re.search(
+                r"\b(node(?:\.js)?\s+(?:built-in\s+)?http|built-in\s+http\s+module|http\s+module)\b",
+                backend_detection_text,
+            )
+        )
+        endpoint_intent = bool(re.search(r"\b(get|post|put|patch|delete)\s+/", backend_detection_text))
+        raw_backend_intent = (
+            bool(_mentions_api_service(backend_detection_text))
+            or api_path_intent
+            or node_http_intent
+            or endpoint_intent
+        )
+        backend_intent = raw_backend_intent and not _is_static_frontend_file_scope(
+            semantic_description,
+            deliverable_explicit_paths,
         )
         negative_container_intent = has_negative_container_constraint(semantic_description)
         container_intent = has_container_delivery_intent(semantic_description) or any(
@@ -3521,7 +3831,12 @@ You MUST output a JSON object with this exact structure:
         if artifact_type == "macos_app_bundle":
             return has_ref(lambda path: path.endswith(".app") and os.path.exists(path))
         if artifact_type == "api_service_source":
-            return has_ref(lambda path: path.endswith(".py") and os.path.exists(path))
+            return has_ref(
+                lambda path: path.endswith((
+                    ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".rb", ".php", ".java", ".kt",
+                ))
+                and os.path.exists(path)
+            )
         if artifact_type == "dockerfile":
             return has_ref(
                 lambda path: os.path.basename(path).lower() in {"dockerfile", "containerfile"}

@@ -11,6 +11,12 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var errorMessage: String?
     @Published var backendConnectionState: BackendConnectionState = .unknown
+    @Published var releaseEvaluation: ReleaseEvaluationSummary?
+    @Published var isLoadingReleaseEvaluation = false
+    @Published var releaseEvaluationError: String?
+    @Published var releaseE2EScenarios: [ReleaseE2EScenario] = []
+    @Published var isStartingReleaseE2E = false
+    @Published var releaseE2EError: String?
     private let taskPageSize = 50
     private var taskListOffset = 0
 
@@ -219,6 +225,26 @@ class TaskOrchestrationViewModel: ObservableObject {
             }
         }
 
+        struct QualityReport: Decodable {
+            let qualityGate: String?
+            let canComplete: Bool?
+            let generatedQualityScore: Int?
+            let finalQualityScore: Int?
+            let requiredFailedCount: Int?
+            let manualRequiredCount: Int?
+            let skippedRequiredCount: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case qualityGate = "quality_gate"
+                case canComplete = "can_complete"
+                case generatedQualityScore = "generated_quality_score"
+                case finalQualityScore = "final_quality_score"
+                case requiredFailedCount = "required_failed_count"
+                case manualRequiredCount = "manual_required_count"
+                case skippedRequiredCount = "skipped_required_count"
+            }
+        }
+
         let qualityGate: String?
         let finalStatus: String?
         let summary: String?
@@ -228,6 +254,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         let failedConstraints: [String]
         let nextAction: String?
         let consistency: Consistency?
+        let qualityReport: QualityReport?
 
         enum CodingKeys: String, CodingKey {
             case qualityGate = "quality_gate"
@@ -239,6 +266,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             case failedConstraints = "failed_constraints"
             case nextAction = "next_action"
             case consistency
+            case qualityReport = "quality_report"
         }
 
         init(
@@ -250,7 +278,8 @@ class TaskOrchestrationViewModel: ObservableObject {
             missingRequired: [String] = [],
             failedConstraints: [String] = [],
             nextAction: String? = nil,
-            consistency: Consistency? = nil
+            consistency: Consistency? = nil,
+            qualityReport: QualityReport? = nil
         ) {
             self.qualityGate = qualityGate
             self.finalStatus = finalStatus
@@ -261,6 +290,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             self.failedConstraints = failedConstraints
             self.nextAction = nextAction
             self.consistency = consistency
+            self.qualityReport = qualityReport
         }
 
         init(from decoder: Decoder) throws {
@@ -274,6 +304,99 @@ class TaskOrchestrationViewModel: ObservableObject {
             failedConstraints = (try? container.decode([String].self, forKey: .failedConstraints)) ?? []
             nextAction = try container.decodeIfPresent(String.self, forKey: .nextAction)
             consistency = try container.decodeIfPresent(Consistency.self, forKey: .consistency)
+            qualityReport = try container.decodeIfPresent(QualityReport.self, forKey: .qualityReport)
+        }
+    }
+
+    struct TaskObservability: Decodable {
+        struct TimelineEvent: Decodable, Identifiable {
+            let kind: String
+            let label: String?
+            let status: String?
+            let agentId: String?
+            let subtaskId: String?
+            let gateId: String?
+            let waveNumber: Int?
+            let summary: String?
+
+            var id: String {
+                [kind, agentId, subtaskId, gateId, waveNumber.map(String.init)]
+                    .compactMap { $0 }
+                    .joined(separator: ":")
+            }
+
+            enum CodingKeys: String, CodingKey {
+                case kind, label, status, summary
+                case agentId = "agent_id"
+                case subtaskId = "subtask_id"
+                case gateId = "gate_id"
+                case waveNumber = "wave_number"
+            }
+        }
+
+        struct QualityGate: Decodable, Identifiable {
+            let gateId: String
+            let adapterId: String
+            let status: String
+            let required: Bool
+            let summary: String?
+
+            var id: String { gateId.isEmpty ? adapterId : gateId }
+
+            enum CodingKeys: String, CodingKey {
+                case gateId = "gate_id"
+                case adapterId = "adapter_id"
+                case status, required, summary
+            }
+        }
+
+        struct AgentMix: Decodable {
+            let actualAgents: [String]
+            let localAgents: [String]
+            let cloudAgents: [String]
+
+            enum CodingKeys: String, CodingKey {
+                case actualAgents = "actual_agents"
+                case localAgents = "local_agents"
+                case cloudAgents = "cloud_agents"
+            }
+        }
+
+        struct Remediation: Decodable {
+            let attempted: Bool
+            let attemptsByRequirement: [String: Int]
+            let maxAttempts: Int?
+            let deterministicRepairAttempted: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case attempted
+                case attemptsByRequirement = "attempts_by_requirement"
+                case maxAttempts = "max_attempts"
+                case deterministicRepairAttempted = "deterministic_repair_attempted"
+            }
+        }
+
+        let timeline: [TimelineEvent]
+        let qualityGates: [QualityGate]
+        let agentMix: AgentMix?
+        let remediation: Remediation?
+        let qualityScore: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case timeline
+            case qualityGates = "quality_gates"
+            case agentMix = "agent_mix"
+            case remediation
+            case qualityScore = "quality_score"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            timeline = (try? container.decode([TimelineEvent].self, forKey: .timeline)) ?? []
+            qualityGates = (try? container.decode([QualityGate].self, forKey: .qualityGates)) ?? []
+            agentMix = try container.decodeIfPresent(AgentMix.self, forKey: .agentMix)
+            remediation = try container.decodeIfPresent(Remediation.self, forKey: .remediation)
+            qualityScore = try container.decodeIfPresent(Int.self, forKey: .qualityScore)
         }
     }
 
@@ -297,6 +420,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         let hasRequirementManifest: Bool
         let qualityHealth: QualityHealth?
         let deliveryReport: DeliveryReport?
+        let observability: TaskObservability?
 
         enum CodingKeys: String, CodingKey {
             case taskId = "task_id"
@@ -318,6 +442,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             case requirementManifest = "requirement_manifest"
             case qualityHealth = "quality_health"
             case deliveryReport = "delivery_report"
+            case observability
         }
 
         init(
@@ -339,7 +464,8 @@ class TaskOrchestrationViewModel: ObservableObject {
             error: String?,
             hasRequirementManifest: Bool = false,
             qualityHealth: QualityHealth? = nil,
-            deliveryReport: DeliveryReport? = nil
+            deliveryReport: DeliveryReport? = nil,
+            observability: TaskObservability? = nil
         ) {
             self.taskId = taskId
             self.description = description
@@ -360,6 +486,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             self.hasRequirementManifest = hasRequirementManifest
             self.qualityHealth = qualityHealth
             self.deliveryReport = deliveryReport
+            self.observability = observability
         }
 
         init(from decoder: Decoder) throws {
@@ -385,6 +512,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 && ((try? container.decodeNil(forKey: .requirementManifest)) == false)
             qualityHealth = try container.decodeIfPresent(QualityHealth.self, forKey: .qualityHealth)
             deliveryReport = try container.decodeIfPresent(DeliveryReport.self, forKey: .deliveryReport)
+            observability = try container.decodeIfPresent(TaskObservability.self, forKey: .observability)
         }
     }
 
@@ -859,6 +987,150 @@ class TaskOrchestrationViewModel: ObservableObject {
 
     func loadTasks() {
         loadTaskPage(reset: true)
+        loadReleaseEvaluation()
+        loadReleaseE2EScenarios()
+    }
+
+    func loadReleaseEvaluation() {
+        Task { @MainActor in
+            guard let baseURL = baseURL else {
+                releaseEvaluation = nil
+                releaseEvaluationError = "Server URL not configured"
+                return
+            }
+
+            isLoadingReleaseEvaluation = true
+            releaseEvaluationError = nil
+
+            do {
+                let url = baseURL.appendingPathComponent("api/release/evaluation")
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 10
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+
+                releaseEvaluation = try JSONDecoder().decode(ReleaseEvaluationSummary.self, from: data)
+                isLoadingReleaseEvaluation = false
+            } catch {
+                releaseEvaluation = nil
+                releaseEvaluationError = error.localizedDescription
+                isLoadingReleaseEvaluation = false
+            }
+        }
+    }
+
+    func loadReleaseE2EScenarios() {
+        Task { @MainActor in
+            guard let baseURL = baseURL else {
+                releaseE2EScenarios = []
+                return
+            }
+
+            do {
+                let url = baseURL.appendingPathComponent("api/release/e2e/scenarios")
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 10
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    return
+                }
+
+                releaseE2EScenarios = try JSONDecoder().decode(ReleaseE2EScenarioListResponse.self, from: data).scenarios
+            } catch {
+                releaseE2EScenarios = []
+            }
+        }
+    }
+
+    func startReleaseE2E() {
+        Task { @MainActor in
+            guard !isStartingReleaseE2E else { return }
+            guard let baseURL = baseURL else {
+                releaseE2EError = "Server URL not configured"
+                return
+            }
+
+            isStartingReleaseE2E = true
+            releaseE2EError = nil
+            errorMessage = nil
+
+            do {
+                let url = baseURL.appendingPathComponent("api/release/e2e/tasks")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+                let scenarioId = releaseE2EScenarios.first?.id ?? "cross_agent_full_delivery_v1"
+                let runLabel = Self.releaseE2ERunLabel()
+                request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "scenario_id": scenarioId,
+                    "run_label": runLabel
+                ])
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    releaseE2EError = Self.backendErrorMessage(from: data)
+                        ?? "Failed to start release E2E (HTTP \(httpResponse.statusCode))"
+                    isStartingReleaseE2E = false
+                    return
+                }
+
+                let result = try JSONDecoder().decode(ReleaseE2ETaskResponse.self, from: data)
+                viewMode = .detail
+                selectTask(result.taskId)
+                loadTasks()
+                startInitialPolling(for: result.taskId)
+                isStartingReleaseE2E = false
+            } catch {
+                releaseE2EError = error.localizedDescription
+                isStartingReleaseE2E = false
+            }
+        }
+    }
+
+    private static func releaseE2ERunLabel() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "ui-\(formatter.string(from: Date()))"
+    }
+
+    private static func backendErrorMessage(from data: Data) -> String? {
+        guard !data.isEmpty else { return nil }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let detail = json["detail"] {
+            if let text = detail as? String, !text.isEmpty {
+                return text
+            }
+            if let object = detail as? [String: Any] {
+                var parts: [String] = []
+                if let message = object["message"] as? String, !message.isEmpty {
+                    parts.append(message)
+                }
+                if let missing = object["missing_providers"] as? [String], !missing.isEmpty {
+                    parts.append("Missing: \(missing.joined(separator: ", "))")
+                }
+                if !parts.isEmpty {
+                    return parts.joined(separator: " ")
+                }
+            }
+        }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func loadMoreTasks() {
