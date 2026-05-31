@@ -33,10 +33,7 @@ jobs:
         env:
           PYTHONPATH: backend/src
         run: |
-          pytest -q backend/tests \
-            --ignore=backend/tests/e2e/test_e2e_complex_multi_wave.py \
-            --ignore=backend/tests/e2e/test_e2e_minimal_task.py \
-            --ignore=backend/tests/e2e/test_e2e_rest_api.py
+          pytest -q backend/tests --ignore=backend/tests/e2e
 
       - name: Swift build
         run: swift build --package-path macOS-Client --skip-update

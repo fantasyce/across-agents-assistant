@@ -18,24 +18,44 @@ if [[ -n "$forbidden_tracked" ]]; then
 fi
 
 echo "== sensitive text scan =="
-sensitive_hits="$(
-  rg -n --hidden \
-    --glob '!.git/**' \
-    --glob '!backend/.venv/**' \
-    --glob '!docs/**' \
-    --glob '!build/**' \
-    --glob '!dist/**' \
-    --glob '!macOS-Client/.build/**' \
-    --glob '!macOS-Client/build/**' \
-    --glob '!scripts/open_source_check.sh' \
-    --glob '!assets/readme/*.png' \
-    --glob '!*.icns' \
-    --glob '!*.png' \
-    --glob '!*.jpg' \
-    --glob '!*.jpeg' \
-    --glob '!*.webp' \
-    '(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|OPENAI_API_KEY=|ANTHROPIC_API_KEY=|DEEPSEEK_API_KEY=|MINIMAX_API_KEY=|/Users/fanhcy|BEGIN (RSA|OPENSSH|PRIVATE) KEY|Apple Developer|com\.apple\.developer\.team-identifier' . || true
-)"
+SENSITIVE_PATTERN='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|OPENAI_API_KEY=|ANTHROPIC_API_KEY=|DEEPSEEK_API_KEY=|MINIMAX_API_KEY=|/Users/fanhcy|BEGIN (RSA|OPENSSH|PRIVATE) KEY|Apple Developer|com\.apple\.developer\.team-identifier'
+if command -v rg >/dev/null 2>&1; then
+  sensitive_hits="$(
+    rg -n --hidden \
+      --glob '!.git/**' \
+      --glob '!backend/.venv/**' \
+      --glob '!docs/**' \
+      --glob '!build/**' \
+      --glob '!dist/**' \
+      --glob '!macOS-Client/.build/**' \
+      --glob '!macOS-Client/build/**' \
+      --glob '!scripts/open_source_check.sh' \
+      --glob '!assets/readme/*.png' \
+      --glob '!*.icns' \
+      --glob '!*.png' \
+      --glob '!*.jpg' \
+      --glob '!*.jpeg' \
+      --glob '!*.webp' \
+      "$SENSITIVE_PATTERN" . || true
+  )"
+else
+  sensitive_hits="$(
+    git grep -n -E -I "$SENSITIVE_PATTERN" -- \
+      . \
+      ':(exclude)docs/**' \
+      ':(exclude)build/**' \
+      ':(exclude)dist/**' \
+      ':(exclude)macOS-Client/.build/**' \
+      ':(exclude)macOS-Client/build/**' \
+      ':(exclude)scripts/open_source_check.sh' \
+      ':(exclude)assets/readme/*.png' \
+      ':(exclude)*.icns' \
+      ':(exclude)*.png' \
+      ':(exclude)*.jpg' \
+      ':(exclude)*.jpeg' \
+      ':(exclude)*.webp' || true
+  )"
+fi
 if [[ -n "$sensitive_hits" ]]; then
   echo "$sensitive_hits"
   echo "Potential secret, private path, or signing metadata found in publishable files." >&2
