@@ -1,0 +1,42 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  open-source-and-regression:
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Open-source repository check
+        run: bash scripts/open_source_check.sh
+
+      - name: Backend regression
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          pytest -q backend/tests \
+            --ignore=backend/tests/e2e/test_e2e_complex_multi_wave.py \
+            --ignore=backend/tests/e2e/test_e2e_minimal_task.py \
+            --ignore=backend/tests/e2e/test_e2e_rest_api.py
+
+      - name: Swift build
+        run: swift build --package-path macOS-Client --skip-update

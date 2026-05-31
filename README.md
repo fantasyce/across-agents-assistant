@@ -106,9 +106,15 @@ This project is under active development. More local agents, more cloud LLMs, st
 Recent quality work has focused on making complex agent deliveries easier to inspect and harder to overclaim:
 
 - Release Evaluation summarizes recent task evidence into a local readiness signal without rerunning expensive probes or restoring old tasks automatically.
+- Release Evaluation now includes a readiness checklist, recent score trend, required probe coverage, local/cloud agent-mix coverage, benchmark status, and per-task audit traces so release quality can be compared across versions instead of judged from one task row.
 - Task details expose execution evidence, quality gates, remediation history, quality score, and local/cloud agent mix.
+- Agent Cards include native-skill health, tool-risk summaries, strict-scope warnings, and repair hints for unavailable native skills. A non-secret `/api/agent-cards` export provides an A2A-like internal capability card for each supported agent.
 - Complex Release E2E validates an exact multi-file Web/API/CLI delivery through static checks, API probes, CLI checks, browser evidence, workspace hygiene, security/privacy scans, and cross-agent coverage.
+- Complex Release E2E remediation now reports actual remediation subtask count and gives agents targeted patch plans for Route Evidence failures, reducing false benchmark failures and broad rewrite attempts.
+- Delivery quality benchmarks and evidence bundles support both live in-memory tasks and lazily loaded persisted task records, so historical task details can be rechecked from the packaged app without restoring or restarting the task.
+- Delivery contract extraction filters local absolute temp paths such as `/tmp/...` and `/var/folders/...` so project directories do not become phantom deliverables.
 - Native skill readiness and MCP safety information now participate in task preflight so unavailable skills stay visible for repair but do not become strong routing signals.
+- GitHub Actions and `scripts/open_source_check.sh` protect the public repository from private docs, local runtime data, signing artifacts, missing README assets, whitespace issues, and common secret patterns.
 - The packaged app defaults to a faster backend bundle layout and avoids reopening duplicate main windows on launch.
 
 ## Quick Start
@@ -206,7 +212,34 @@ The benchmark fails if required probes fail, expected files drift, the quality
 gate is not passed, required checks are skipped, active remediation remains, or
 the final score falls below the requested threshold.
 
+For a broader release audit, export the task evidence bundle. It is read-only,
+redacts credential-shaped values, includes the delivery contract, requirement
+manifest, owner decision, quality health, artifacts, acceptance records, and a
+benchmark result in one local JSON payload:
+
+```bash
+curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+  "http://backend/api/tasks/<task-id>/evidence-bundle?expected_files=index.html,styles.css,app.js,README.md&required_probes=static_web_smoke,browser_e2e&min_quality_score=70"
+```
+
+Agent capability cards can also be exported without secrets:
+
+```bash
+curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+  "http://backend/api/agent-cards"
+```
+
 When changing task orchestration, delivery contracts, capability routing, native skills, MCP safety, or release evaluation, also run the focused tests for the touched area and verify the packaged app path before considering the change release-ready.
+
+## Open-Source Quality Checks
+
+Run the public repository guard locally before publishing changes:
+
+```bash
+bash scripts/open_source_check.sh
+```
+
+The check verifies whitespace, forbidden tracked artifacts, common secret patterns, README image assets, and basic build-script syntax. GitHub Actions also runs the open-source check, backend regression tests, and a Swift build on pushes to `main` and pull requests.
 
 ## macOS Client Development
 

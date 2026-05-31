@@ -306,6 +306,66 @@ def test_exact_static_web_contract_keeps_index_when_no_build_step_is_forbidden()
     assert allowed[0]["value"] == ["index.html", "styles.css", "app.js", "README.md"]
 
 
+def test_release_e2e_contract_ignores_absolute_project_directory_path():
+    project_dir = "/var/folders/mk/example/T/across-v040-e2e.XXXXXX.run123"
+    description = (
+        "Build a dependency-free console in this exact project directory:\n"
+        f"{project_dir}\n\n"
+        "Deliver exactly these files and no others:\n"
+        "- README.md\n"
+        "- web/index.html\n"
+        "- web/styles.css\n"
+        "- web/app.js\n"
+        "- api/server.mjs\n"
+        "- cli/quality-check.mjs\n"
+        "- tests/e2e-smoke.mjs\n"
+    )
+
+    paths = extract_required_path_hints(description)
+
+    assert "var/folders/mk/example/T/across-v040-e2e.XXXXXX.run123" not in paths
+    assert set(paths) == {
+        "README.md",
+        "web/index.html",
+        "web/styles.css",
+        "web/app.js",
+        "api/server.mjs",
+        "cli/quality-check.mjs",
+        "tests/e2e-smoke.mjs",
+    }
+    assert len(paths) == 7
+
+
+def test_release_e2e_contract_ignores_tmp_project_directory_path():
+    project_dir = "/tmp/across-remaining-e2e.PYXfyz"
+    description = (
+        "Build a dependency-free console in this exact project directory:\n"
+        f"{project_dir}\n\n"
+        "Deliver exactly these files and no others:\n"
+        "- README.md\n"
+        "- web/index.html\n"
+        "- web/styles.css\n"
+        "- web/app.js\n"
+        "- api/server.mjs\n"
+        "- cli/quality-check.mjs\n"
+        "- tests/e2e-smoke.mjs\n"
+    )
+
+    paths = extract_required_path_hints(description)
+
+    assert "tmp/across-remaining-e2e.PYXfyz" not in paths
+    assert set(paths) == {
+        "README.md",
+        "web/index.html",
+        "web/styles.css",
+        "web/app.js",
+        "api/server.mjs",
+        "cli/quality-check.mjs",
+        "tests/e2e-smoke.mjs",
+    }
+    assert len(paths) == 7
+
+
 def test_functional_contract_records_allowed_files_when_user_requests_exact_file_set():
     manifest = {
         "deliverables": [

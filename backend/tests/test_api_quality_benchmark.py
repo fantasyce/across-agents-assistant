@@ -54,3 +54,57 @@ def test_task_quality_benchmark_endpoint_evaluates_current_task(monkeypatch):
     assert body["status"] == "passed"
     assert body["scenarios"][0]["task_id"] == "task-good"
     assert body["scenarios"][0]["checks"]["browser_e2e_passed"] is True
+
+
+def test_task_quality_benchmark_endpoint_accepts_persisted_task_model(monkeypatch):
+    async def fake_get_task_status(task_id):
+        return api_server.TaskInfo(
+            task_id=task_id,
+            description="persisted task",
+            status="completed",
+            task_types=["functional", "artifact"],
+            delivery_mode="composite",
+            subtasks=[],
+            progress=1.0,
+            created_at=1.0,
+            updated_at=2.0,
+            quality_health={
+                "quality_gate": "passed",
+                "delivery_quality_report": {
+                    "produced_required": [
+                        {"path_hint": "README.md"},
+                        {"path_hint": "web/index.html"},
+                    ],
+                    "probe_results": [
+                        {"probe_type": "static_web_smoke", "passed": True, "required": True},
+                    ],
+                    "quality_report": {
+                        "quality_gate": "passed",
+                        "final_quality_score": 78,
+                        "required_failed_count": 0,
+                        "manual_required_count": 0,
+                        "required_skipped_count": 0,
+                    },
+                },
+            },
+            delivery_report={
+                "quality_gate": "passed",
+                "final_status": "completed",
+                "remediation": {"subtask_count": 0, "active_subtasks": []},
+            },
+        )
+
+    monkeypatch.setattr(api_server, "get_task_status", fake_get_task_status)
+
+    response = TestClient(app).get(
+        "/api/tasks/task-from-db/quality-benchmark",
+        params={
+            "expected_files": "README.md,web/index.html",
+            "required_probes": "static_web_smoke",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "passed"
+    assert body["scenarios"][0]["task_id"] == "task-from-db"

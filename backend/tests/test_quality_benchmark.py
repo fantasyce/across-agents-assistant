@@ -92,3 +92,31 @@ def test_delivery_benchmark_fails_when_browser_e2e_or_file_inventory_is_bad():
     assert scenario["checks"]["expected_file_inventory"] is False
     assert "browser_e2e" in " ".join(scenario["failures"])
     assert "debug.log" in " ".join(scenario["failures"])
+
+
+def test_delivery_benchmark_counts_bundled_remediation_subtasks_once():
+    payload = _passing_task_payload()
+    payload["task_id"] = "task-bundled-remediation"
+    payload["delivery_report"]["remediation"]["attempts_by_requirement"] = {
+        "probe_failure:probe-static-web-smoke": 2,
+        "probe_failure:probe-browser-e2e": 2,
+    }
+    payload["subtasks"] = [
+        {"subtask_id": "st-web", "status": "completed"},
+        {"subtask_id": "st-quality-first", "status": "completed"},
+        {"subtask_id": "st-quality-second", "status": "completed"},
+    ]
+
+    report = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id="release-0.3.0",
+        expected_files=["index.html", "styles.css", "app.js", "README.md"],
+        required_probes=["static_web_smoke", "browser_e2e"],
+        min_quality_score=70,
+        max_remediation_attempts=2,
+    )
+
+    assert report["status"] == "passed"
+    scenario = report["scenarios"][0]
+    assert scenario["remediation_attempts"] == 2
+    assert scenario["checks"]["remediation_budget"] is True

@@ -4516,6 +4516,94 @@ def test_multiple_probe_quality_failures_use_single_coherent_remediation(
     assert mock_dispatcher.dispatch_subtask.call_count == 1
 
 
+def test_route_evidence_remediation_prompt_contains_patch_plan(
+    orchestrator,
+    mock_dispatcher,
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    task = orchestrator._state.create_task(
+        description=(
+            "Release E2E scenario: Cross-Agent Full Delivery Gate (unit-test)\n"
+            "Scenario ID: cross_agent_full_delivery_v1\n"
+            "Build Across Release Control with Route Evidence."
+        ),
+        project_dir=str(tmp_path),
+        task_types=["functional", "artifact"],
+        delivery_mode="composite",
+        allowed_subtask_agents=["hermes", "claude", "deepseek"],
+    )
+    orchestrator._state._persistence.save_delivery_contract({
+        "contract_id": "delivery-contract-release-route-remediation",
+        "task_id": task.task_id,
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "project_dir": str(tmp_path),
+        "capabilities": [{"id": "cap-ui", "description": "Static web behavior", "required": True}],
+        "deliverables": [
+            {"path_hint": "web/index.html", "artifact_type": "html_entrypoint", "required": True},
+            {"path_hint": "web/styles.css", "artifact_type": "stylesheet", "required": True},
+            {"path_hint": "web/app.js", "artifact_type": "client_script", "required": True},
+        ],
+        "constraints": [],
+        "acceptance_probes": [
+            {"id": "probe-static-web-smoke", "probe_type": "static_web_smoke", "required": True},
+            {"id": "probe-browser-e2e", "probe_type": "browser_e2e", "required": True},
+        ],
+        "assumptions": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    })
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["hermes", "claude", "deepseek"]
+    quality = SimpleNamespace(
+        missing_required=[],
+        invalid_required=[],
+        probe_results=[
+            {
+                "id": "probe-static-web-smoke",
+                "probe_type": "static_web_smoke",
+                "passed": False,
+                "required": True,
+                "output_tail": (
+                    "route evidence label: selected agent; "
+                    "route evidence label: matched native skill; "
+                    "route evidence label: mcp risk; "
+                    "route evidence runtime row missing: reason"
+                ),
+            },
+            {
+                "id": "probe-browser-e2e",
+                "probe_type": "browser_e2e",
+                "passed": False,
+                "required": True,
+                "output_tail": "route evidence recomputes visible rows",
+            },
+        ],
+        evidence_gaps=[],
+        failed_constraints=[],
+    )
+
+    created = orchestrator._start_quality_remediation_if_possible(
+        task,
+        quality,
+        delivery_contract=orchestrator._state.get_delivery_contract(task.task_id),
+    )
+
+    assert len(created) == 1
+    restored = orchestrator._state.get_task(task.task_id)
+    quality_subtask = next(st for st in restored.subtasks if st.subtask_id == created[0])
+    assert "PATCH PLAN" in quality_subtask.description
+    assert "#route-evidence" in quality_subtask.description
+    assert "#evidence-list" in quality_subtask.description
+    assert "#recompute-btn" in quality_subtask.description
+    assert "Selected Agent" in quality_subtask.description
+    assert "Matched Native Skill" in quality_subtask.description
+    assert "MCP Risk" in quality_subtask.description
+    assert "Reason" in quality_subtask.description
+
+
 def test_deterministic_static_web_repair_renames_route_preview_heading(orchestrator, tmp_path):
     task = orchestrator._state.create_task(
         description="Build a static web app with a Route Evidence section.",

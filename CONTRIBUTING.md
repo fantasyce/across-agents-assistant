@@ -43,9 +43,11 @@ Before opening a pull request:
 3. Update public root documentation when user-facing setup, configuration, permissions, or APIs change.
 4. Run the relevant backend tests, Swift build, and packaged app check for changes that affect app startup or task delivery.
 5. Run complex Release E2E before release-candidate changes to task orchestration, delivery contracts, capability routing, native skills, MCP tools, or quality gates.
-6. Run `git diff --check` and scan the changed tree for credentials, personal paths, private organization names, generated logs, and local runtime files.
+6. Run `bash scripts/open_source_check.sh`; it includes `git diff --check`, forbidden tracked-file checks, common secret scans, README asset checks, and build-script syntax validation.
 7. Do not commit generated build output, local databases, local model files, logs, credentials, screenshots with private data, or machine-specific config.
 8. Follow the project [Code of Conduct](CODE_OF_CONDUCT.md).
+
+The public CI workflow in `.github/workflows/quality.yml` runs the same open-source check, backend regression suite, and Swift build on pull requests and pushes to `main`.
 
 By contributing, you agree that your contribution is provided under the
 project's GNU Affero General Public License v3.0.

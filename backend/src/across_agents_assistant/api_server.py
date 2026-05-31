@@ -1296,13 +1296,57 @@ def _native_skills_for_preflight(
 async def list_agent_capabilities():
     store = get_agent_capability_store()
     available_tools = _runtime_tool_schemas()
+    native_skill_states = get_native_skill_manager().list_all_agent_skills()
+    native_skills_by_agent = {
+        agent_id: [
+            skill
+            for skill in (state.get("skills") if isinstance(state, dict) else []) or []
+            if isinstance(skill, dict)
+        ]
+        for agent_id, state in native_skill_states.items()
+    }
     return {
         "skills": store.skill_catalog(),
         "profiles": store.get_profiles(),
         "available_tools": available_tools,
         "agent_cards": store.build_agent_cards(
             tool_schemas=available_tools,
+            native_skills_by_agent=native_skills_by_agent,
         ),
+    }
+
+
+@app.get("/api/agent-cards")
+async def export_agent_cards():
+    """Export public, non-secret internal agent cards for orchestration audits."""
+    store = get_agent_capability_store()
+    available_tools = _runtime_tool_schemas()
+    native_skill_states = get_native_skill_manager().list_all_agent_skills()
+    native_skills_by_agent = {
+        agent_id: [
+            skill
+            for skill in (state.get("skills") if isinstance(state, dict) else []) or []
+            if isinstance(skill, dict)
+        ]
+        for agent_id, state in native_skill_states.items()
+    }
+    base_cards = store.build_agent_cards(
+        tool_schemas=available_tools,
+        native_skills_by_agent=native_skills_by_agent,
+    )
+    return {
+        "schema_version": "1.0",
+        "protocol": "a2a-like",
+        "generated_at": time.time(),
+        "security": {
+            "secrets_included": False,
+            "custom_instructions_included": False,
+            "credential_fields_redacted": True,
+        },
+        "cards": [
+            _public_agent_card(card, native_skills_by_agent.get(card.get("agent_id"), []))
+            for card in base_cards
+        ],
     }
 
 
@@ -2481,6 +2525,156 @@ class TaskInfo(BaseModel):
 
 def _pydantic_dump(model: BaseModel, **kwargs: Any) -> Dict[str, Any]:
     return model.model_dump(**kwargs) if hasattr(model, "model_dump") else model.dict(**kwargs)
+
+
+SENSITIVE_EVIDENCE_KEY_RE = re.compile(
+    r"(api[_-]?key|secret|token|password|credential|authorization|private[_-]?key|access[_-]?key)",
+    re.IGNORECASE,
+)
+
+
+def _redact_sensitive_evidence(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: Dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if SENSITIVE_EVIDENCE_KEY_RE.search(key_text):
+                sanitized[key_text] = "[redacted]"
+            else:
+                sanitized[key_text] = _redact_sensitive_evidence(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_redact_sensitive_evidence(item) for item in value]
+    if isinstance(value, str) and re.search(r"((?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16})", value):
+        return "[redacted]"
+    return value
+
+
+def _public_native_skill(skill: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": str(skill.get("id") or skill.get("name") or ""),
+        "name": str(skill.get("name") or skill.get("id") or ""),
+        "description": str(skill.get("description") or ""),
+        "source": str(skill.get("source") or "native"),
+        "status": str(skill.get("status") or "unknown"),
+        "availability": str(skill.get("availability") or "unknown"),
+        "available": bool(is_native_skill_available(skill)),
+    }
+
+
+def _public_agent_card(card: Dict[str, Any], native_skills: List[Dict[str, Any]]) -> Dict[str, Any]:
+    agent_id = str(card.get("agent_id") or "")
+    display_name = str(card.get("display_name") or agent_id)
+    agent_type = str(card.get("agent_type") or "local")
+    warnings = list(card.get("warnings") or [])
+    return {
+        "agent_id": agent_id,
+        "name": display_name,
+        "description": f"{display_name} {agent_type} agent profile for Across Agents Assistant routing.",
+        "kind": agent_type,
+        "endpoint": {
+            "kind": "internal",
+            "capability_route": f"/api/agent-capabilities/{agent_id}",
+        },
+        "capabilities": {
+            "configured_skill_ids": list(card.get("configured_skill_ids") or []),
+            "configured_skills": list(card.get("configured_skill_names") or []),
+            "native_skill_health": dict(card.get("native_skill_health") or {}),
+            "tool_count": len(card.get("enabled_tool_names") or []),
+        },
+        "skills": [
+            _public_native_skill(skill)
+            for skill in native_skills
+            if isinstance(skill, dict)
+        ],
+        "tools": {
+            "enabled": list(card.get("enabled_tool_names") or []),
+            "risk_summary": dict(card.get("tool_risk_summary") or {}),
+        },
+        "routing": {
+            "strict_tool_scope": bool(card.get("strict_tool_scope", False)),
+            "warnings": warnings,
+            "unavailable_native_skills_block_routing": True,
+        },
+        "security": {
+            "secrets_included": False,
+            "custom_instructions_included": False,
+        },
+    }
+
+
+def _load_task_info_read_only(task_id: str) -> "TaskInfo":
+    task = _task_state.get_task(task_id)
+    if task:
+        return _task_to_info(task, _task_state)
+    persistence = getattr(_task_state, "_persistence", None)
+    if persistence:
+        full_task = persistence.get_full_task(task_id)
+        if full_task:
+            return _task_info_from_db(full_task)
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+
+def _path_hints_from_required(value: Any) -> List[str]:
+    paths: List[str] = []
+    if not isinstance(value, list):
+        return paths
+    for item in value:
+        if isinstance(item, str):
+            hint = item.strip()
+        elif isinstance(item, dict):
+            hint = str(
+                item.get("path_hint")
+                or item.get("path")
+                or item.get("name")
+                or ""
+            ).strip()
+        else:
+            hint = ""
+        if hint and hint not in paths:
+            paths.append(hint)
+    return paths
+
+
+def _probe_types_from_payload(payload: Dict[str, Any]) -> List[str]:
+    delivery_quality = (
+        (payload.get("quality_health") or {}).get("delivery_quality_report")
+        or (payload.get("last_owner_decision") or {}).get("delivery_quality")
+        or {}
+    )
+    quality_report = delivery_quality.get("quality_report") or {}
+    probes: List[Dict[str, Any]] = []
+    for item in delivery_quality.get("probe_results") or []:
+        if isinstance(item, dict):
+            probes.append(item)
+    for item in quality_report.get("gate_results") or []:
+        if isinstance(item, dict):
+            probes.append(item)
+    probe_types: List[str] = []
+    for item in probes:
+        probe_type = str(
+            item.get("probe_type")
+            or item.get("adapter_id")
+            or item.get("gate_id")
+            or item.get("id")
+            or ""
+        ).strip()
+        if probe_type and probe_type not in probe_types:
+            probe_types.append(probe_type)
+    return probe_types
+
+
+def _expected_files_from_payload(payload: Dict[str, Any]) -> List[str]:
+    delivery_quality = (
+        (payload.get("quality_health") or {}).get("delivery_quality_report")
+        or (payload.get("last_owner_decision") or {}).get("delivery_quality")
+        or {}
+    )
+    paths = _path_hints_from_required(delivery_quality.get("produced_required"))
+    if paths:
+        return paths
+    contract = payload.get("owner_delivery_contract") or {}
+    return _path_hints_from_required(contract.get("deliverables"))
 
 
 def _read_obj_value(obj: Any, key: str, default: Any = None) -> Any:
@@ -4495,6 +4689,8 @@ async def get_task_quality_benchmark(
     from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
 
     payload = await get_task_status(task_id)
+    if isinstance(payload, BaseModel):
+        payload = _pydantic_dump(payload)
     report = evaluate_delivery_benchmark(
         [payload],
         benchmark_id=benchmark_id or f"task-{task_id}-release-{__version__}",
@@ -4505,6 +4701,64 @@ async def get_task_quality_benchmark(
     )
     report["app_version"] = __version__
     return report
+
+
+@app.get("/api/tasks/{task_id}/evidence-bundle")
+async def get_task_evidence_bundle(
+    task_id: str,
+    expected_files: Optional[str] = None,
+    required_probes: Optional[str] = None,
+    min_quality_score: int = 70,
+    max_remediation_attempts: int = 2,
+    benchmark_id: Optional[str] = None,
+):
+    """Return a read-only, sanitized audit bundle for a task delivery."""
+    from . import __version__
+    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+
+    task_info = _load_task_info_read_only(task_id)
+    payload = _pydantic_dump(task_info) if isinstance(task_info, BaseModel) else dict(task_info)
+    expected = _comma_separated_values(expected_files) or _expected_files_from_payload(payload)
+    probes = _comma_separated_values(required_probes) or _probe_types_from_payload(payload)
+    benchmark = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id=benchmark_id or f"task-{task_id}-evidence-{__version__}",
+        expected_files=expected,
+        required_probes=probes,
+        min_quality_score=min_quality_score,
+        max_remediation_attempts=max_remediation_attempts,
+    )
+    benchmark["app_version"] = __version__
+    sanitized = _redact_sensitive_evidence(payload)
+    return {
+        "schema_version": "1.0",
+        "app_version": __version__,
+        "generated_at": time.time(),
+        "task_id": sanitized.get("task_id"),
+        "description": sanitized.get("description"),
+        "task_status": sanitized.get("status"),
+        "task_types": sanitized.get("task_types") or [],
+        "delivery_mode": sanitized.get("delivery_mode") or "legacy",
+        "project_dir": sanitized.get("project_dir"),
+        "owner_agent": sanitized.get("owner_agent"),
+        "allowed_subtask_agents": sanitized.get("allowed_subtask_agents") or [],
+        "delivery_contract": sanitized.get("owner_delivery_contract") or {},
+        "requirement_manifest": sanitized.get("requirement_manifest") or {},
+        "last_owner_decision": sanitized.get("last_owner_decision") or {},
+        "quality_health": sanitized.get("quality_health") or {},
+        "delivery_report": sanitized.get("delivery_report") or {},
+        "observability": sanitized.get("observability") or {},
+        "artifacts": sanitized.get("artifacts") or [],
+        "acceptance_records": sanitized.get("acceptance_records") or [],
+        "benchmark": _redact_sensitive_evidence(benchmark),
+        "audit": {
+            "read_only": True,
+            "repair_or_resume_triggered": False,
+            "secrets_redacted": True,
+            "expected_files": expected,
+            "required_probes": probes,
+        },
+    }
 
 @app.get("/api/tasks/{task_id}/stream")
 async def task_stream(task_id: str):

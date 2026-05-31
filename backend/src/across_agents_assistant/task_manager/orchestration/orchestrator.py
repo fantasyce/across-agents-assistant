@@ -3091,6 +3091,21 @@ class TaskOrchestrator:
                 "after task text changes, for example by updating the selected row, a visible recompute counter, "
                 "or a visible last-updated timestamp inside the panel."
             )
+            if (
+                "selected agent" in text
+                or "matched native skill" in text
+                or "mcp risk" in text
+                or "runtime row missing" in text
+                or "recomputes visible rows" in text
+            ):
+                guidance.append(
+                    "PATCH PLAN: patch only the existing static web files, normally web/index.html and web/app.js. "
+                    "In #route-evidence, render #evidence-list rows with these exact visible labels: Selected Agent, "
+                    "Matched Native Skill, MCP Risk, and Reason. Put #recompute-btn inside #route-evidence or make it "
+                    "update #route-evidence directly. On every click, recompute from #task-text, update a visible "
+                    "route version/timestamp or selected agent row, and persist the latest route state in localStorage. "
+                    "Do not replace the whole app or add dependencies; make the smallest DOM and event-handler patch."
+                )
         if "owner agent route preview" in text or "owner agent" in text:
             guidance.append(
                 "If the failure mentions Owner Agent, add a visible Owner Agent selector or route preview label "

@@ -11,6 +11,7 @@ final class AgentCapabilityViewModel: ObservableObject {
     @Published var skillCatalog: [AgentSkillDefinition] = []
     @Published var profiles: [String: AgentCapabilityProfile] = [:]
     @Published var availableTools: [AgentCapabilityToolSchema] = []
+    @Published var agentCards: [String: AgentCapabilityAgentCard] = [:]
     @Published var nativeSkillAgents: [String: NativeSkillAgentState] = [:]
     @Published var isLoading = false
     @Published var isSaving = false
@@ -39,6 +40,7 @@ final class AgentCapabilityViewModel: ObservableObject {
             skillCatalog = decoded.skills
             profiles = decoded.profiles
             availableTools = decoded.availableTools.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            agentCards = Dictionary(uniqueKeysWithValues: decoded.agentCards.map { ($0.agentId, $0) })
             await loadNativeSkills()
         } catch {
             errorMessage = error.localizedDescription
@@ -53,6 +55,11 @@ final class AgentCapabilityViewModel: ObservableObject {
     func nativeSkillState(for agentId: String) -> NativeSkillAgentState? {
         let normalized = AgentIDs.normalized(agentId) ?? agentId
         return nativeSkillAgents[normalized]
+    }
+
+    func agentCard(for agentId: String) -> AgentCapabilityAgentCard? {
+        let normalized = AgentIDs.normalized(agentId) ?? agentId
+        return agentCards[normalized]
     }
 
     func setSkill(_ skillId: String, enabled: Bool, for agentId: String) {

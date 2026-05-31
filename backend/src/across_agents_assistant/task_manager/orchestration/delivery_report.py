@@ -58,10 +58,13 @@ def build_delivery_report(
         getattr(task, "status", None), "value", getattr(task, "status", None)
     )
 
+    quality_remediation_subtasks = [
+        st for st in getattr(task, "subtasks", [])
+        if str(getattr(st, "subtask_id", "") or "").startswith("st-quality-")
+    ]
     active_quality = [
-        st.subtask_id for st in getattr(task, "subtasks", [])
-        if st.subtask_id.startswith("st-quality-")
-        and getattr(getattr(st, "status", None), "value", getattr(st, "status", None)) in {"pending", "dispatched", "running"}
+        st.subtask_id for st in quality_remediation_subtasks
+        if getattr(getattr(st, "status", None), "value", getattr(st, "status", None)) in {"pending", "dispatched", "running"}
     ]
     attempted = bool(attempts) or bool(active_quality)
 
@@ -104,6 +107,7 @@ def build_delivery_report(
         "remediation": {
             "attempted": attempted,
             "attempts_by_requirement": attempts,
+            "subtask_count": len(quality_remediation_subtasks),
             "max_attempts": decision.get("max_quality_remediation_attempts", 4),
             "active_subtasks": active_quality,
             "exhausted": decision.get("blocked_reason") == "quality_failed",

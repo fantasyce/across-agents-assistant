@@ -766,6 +766,8 @@ def is_probable_deliverable_path(candidate: str) -> bool:
         parts = [part for part in candidate.split("/") if part]
         if not parts:
             return False
+        if _looks_like_absolute_system_path(parts):
+            return False
         basename = parts[-1]
         if basename in SPECIAL_FILENAMES or basename in SPECIAL_DOTFILES:
             return True
@@ -773,6 +775,23 @@ def is_probable_deliverable_path(candidate: str) -> bool:
             return bool(re.search(r"\.[A-Za-z0-9][A-Za-z0-9_.-]*$", basename))
         return False
     return bool(re.search(r"\.[A-Za-z0-9][A-Za-z0-9_.-]*$", candidate))
+
+
+def _looks_like_absolute_system_path(parts: List[str]) -> bool:
+    """Reject absolute local paths after regex extraction drops the leading slash."""
+    if len(parts) < 2:
+        return False
+    first = parts[0].lower()
+    second = parts[1].lower() if len(parts) > 1 else ""
+    if first == "tmp":
+        return True
+    if first == "var" and second == "folders":
+        return True
+    if first == "private" and second in {"tmp", "var"}:
+        return True
+    if first in {"users", "volumes", "applications", "system", "library", "usr", "opt", "etc"}:
+        return True
+    return False
 
 
 # -- Artifact-type inference --------------------------------------------------

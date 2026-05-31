@@ -73,10 +73,7 @@ def _evaluate_scenario(
         or []
     )
     remediation = dict(delivery_report.get("remediation") or {})
-    remediation_attempts = sum(
-        int(value or 0)
-        for value in dict(remediation.get("attempts_by_requirement") or {}).values()
-    )
+    remediation_attempts = _remediation_attempt_count(payload, remediation)
     active_remediation = list(remediation.get("active_subtasks") or quality_health.get("active_quality_remediation") or [])
     quality_score = int(quality_report.get("final_quality_score") or 0)
     quality_gate = (
@@ -151,6 +148,35 @@ def _probe_passed(probe_results: Sequence[Dict[str, Any]], probe_type: str) -> b
         and bool(probe.get("passed"))
         for probe in probe_results
     )
+
+
+def _remediation_attempt_count(payload: Dict[str, Any], remediation: Dict[str, Any]) -> int:
+    explicit_count = remediation.get("subtask_count")
+    if explicit_count is not None:
+        try:
+            return max(0, int(explicit_count))
+        except (TypeError, ValueError):
+            pass
+
+    subtasks = payload.get("subtasks")
+    if isinstance(subtasks, list):
+        count = sum(
+            1
+            for item in subtasks
+            if isinstance(item, dict)
+            and str(item.get("subtask_id") or "").startswith("st-quality-")
+        )
+        if count:
+            return count
+
+    attempts_by_requirement = dict(remediation.get("attempts_by_requirement") or {})
+    rounds: List[int] = []
+    for value in attempts_by_requirement.values():
+        try:
+            rounds.append(max(0, int(value or 0)))
+        except (TypeError, ValueError):
+            continue
+    return max(rounds, default=0)
 
 
 def _failure_messages(

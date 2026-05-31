@@ -233,6 +233,7 @@ struct AgentCapabilitiesView: View {
     private func agentRow(_ agent: CapabilityAgentOption) -> some View {
         let isSelected = selectedAgent?.id == agent.id
         let profile = viewModel.profile(for: agent.id)
+        let agentCard = viewModel.agentCard(for: agent.id)
         return Button {
             selectedAgentId = agent.id
         } label: {
@@ -255,6 +256,12 @@ struct AgentCapabilitiesView: View {
 
                 Spacer(minLength: 8)
 
+                if case .local = agent.kind,
+                   let health = agentCard?.nativeSkillHealth,
+                   health.total > 0 {
+                    nativeHealthChip(health)
+                }
+
                 Text("\(AgentCapabilityCatalog.configuredCapabilityCount(profile))")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(isSelected ? accentColor : .secondary)
@@ -271,6 +278,22 @@ struct AgentCapabilitiesView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func nativeHealthChip(_ health: AgentCapabilityNativeSkillHealth) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(health.unavailable == 0 ? Color(hex: "30d158") : Color(hex: "ff9f0a"))
+                .frame(width: 5, height: 5)
+            Text("\(health.available)/\(health.total)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .background(softColor)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .help(appPreferences.text("capabilities.nativeSkills.health"))
     }
 
     private func profileEditor(agent: CapabilityAgentOption, profile: AgentCapabilityProfile) -> some View {

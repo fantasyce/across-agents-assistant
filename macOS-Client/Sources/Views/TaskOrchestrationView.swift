@@ -256,6 +256,21 @@ struct ReleaseEvaluationCard: View {
                 }
 
                 HStack(spacing: 8) {
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.trend"),
+                        localizedTrend(summary.qualityTrend?.direction ?? "no_data")
+                    )
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.delta"),
+                        summary.trendDeltaText
+                    )
+                    releaseMetric(
+                        appPreferences.text("tasks.releaseEvaluation.agentMix"),
+                        agentMixText(summary.agentMixSummary)
+                    )
+                }
+
+                HStack(spacing: 8) {
                     Text(String(format: appPreferences.text("tasks.releaseEvaluation.evaluated"), summary.evaluatedTaskCount))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.secondary)
@@ -263,6 +278,43 @@ struct ReleaseEvaluationCard: View {
                         Text(String(format: appPreferences.text("tasks.releaseEvaluation.remediations"), summary.totalRemediationCount))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(Color(hex: "#ff9f0a"))
+                    }
+                }
+
+                if !summary.readinessChecks.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(summary.readinessChecks.prefix(2)) { check in
+                            HStack(alignment: .top, spacing: 5) {
+                                Circle()
+                                    .fill(checkColor(check.status))
+                                    .frame(width: 6, height: 6)
+                                    .padding(.top, 4)
+                                Text(check.message)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+
+                if let latest = summary.recentEvaluations.first {
+                    HStack(spacing: 8) {
+                        Text(String(format: appPreferences.text("tasks.releaseEvaluation.latest"), shortTaskId(latest.taskId)))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        Text(latest.benchmarkStatus ?? latest.qualityGate ?? "-")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(checkColor(latest.benchmarkStatus ?? latest.qualityGate ?? "unknown"))
+                            .lineLimit(1)
+                        if let auditTrace = latest.auditTrace {
+                            Text(String(format: appPreferences.text("tasks.releaseEvaluation.probes"), auditTrace.passedProbeCount, auditTrace.failedProbeCount))
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
 
@@ -354,6 +406,31 @@ struct ReleaseEvaluationCard: View {
 
     private func localizedReadiness(_ readiness: String) -> String {
         appPreferences.text("tasks.releaseEvaluation.readiness.\(readiness)")
+    }
+
+    private func localizedTrend(_ trend: String) -> String {
+        appPreferences.text("tasks.releaseEvaluation.trend.\(trend)")
+    }
+
+    private func agentMixText(_ mix: ReleaseEvaluationAgentMixSummary?) -> String {
+        guard let mix else { return "-" }
+        return "\(mix.localAgentCount)L/\(mix.cloudAgentCount)C"
+    }
+
+    private func shortTaskId(_ taskId: String) -> String {
+        if taskId.count <= 12 { return taskId }
+        return String(taskId.prefix(12))
+    }
+
+    private func checkColor(_ status: String) -> Color {
+        switch status {
+        case "passed", "ready":
+            return Color(hex: "#30d158")
+        case "failed", "blocked":
+            return Color(hex: "#FF453A")
+        default:
+            return Color(hex: "#ff9f0a")
+        }
     }
 
     private func readinessColor(_ readiness: String) -> Color {

@@ -149,9 +149,28 @@ def test_preflight_prioritizes_frontend_agent_for_static_web_canvas_task(tmp_pat
 
 def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
     store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+
+    class FakeNativeSkillManager:
+        def list_all_agent_skills(self):
+            return {
+                "openclaw": {
+                    "agent_id": "openclaw",
+                    "skills": [
+                        {"id": "filesystem-review", "status": "enabled", "availability": "available"},
+                        {"id": "apple-notes", "status": "unavailable", "availability": "unavailable"},
+                    ],
+                },
+                "hermes": {"agent_id": "hermes", "skills": []},
+                "claude": {"agent_id": "claude", "skills": []},
+            }
+
     monkeypatch.setattr(
         "across_agents_assistant.api_server.get_agent_capability_store",
         lambda: store,
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_native_skill_manager",
+        lambda: FakeNativeSkillManager(),
     )
     monkeypatch.setattr(
         "across_agents_assistant.api_server._runtime_tool_schemas",
@@ -188,6 +207,12 @@ def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
     assert body["available_tools"][0]["name"] == "read_file"
     assert body["agent_cards"][0]["agent_id"] == "openclaw"
     assert "tool_risk_summary" in body["agent_cards"][0]
+    assert body["agent_cards"][0]["native_skill_health"] == {
+        "available": 1,
+        "unavailable": 1,
+        "total": 2,
+    }
+    assert "Unavailable native skills need repair before routing." in body["agent_cards"][0]["warnings"]
 
 
 def test_agent_capabilities_api_custom_skill_and_preflight(monkeypatch, tmp_path):

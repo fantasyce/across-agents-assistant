@@ -35,6 +35,39 @@ struct AgentCapabilityToolSchema: Codable, Identifiable, Equatable {
     }
 }
 
+struct AgentCapabilityNativeSkillHealth: Codable, Equatable {
+    let available: Int
+    let unavailable: Int
+    let total: Int
+}
+
+struct AgentCapabilityAgentCard: Codable, Identifiable, Equatable {
+    var id: String { agentId }
+    let agentId: String
+    let displayName: String
+    let agentType: String
+    let configuredSkillIds: [String]
+    let configuredSkillNames: [String]
+    let enabledPluginIds: [String]
+    let enabledToolNames: [String]
+    let strictToolScope: Bool
+    let nativeSkillHealth: AgentCapabilityNativeSkillHealth?
+    let warnings: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case displayName = "display_name"
+        case agentType = "agent_type"
+        case configuredSkillIds = "configured_skill_ids"
+        case configuredSkillNames = "configured_skill_names"
+        case enabledPluginIds = "enabled_plugin_ids"
+        case enabledToolNames = "enabled_tool_names"
+        case strictToolScope = "strict_tool_scope"
+        case nativeSkillHealth = "native_skill_health"
+        case warnings
+    }
+}
+
 struct AgentCapabilityProfile: Codable, Identifiable, Equatable {
     var id: String { agentId }
     var agentId: String
@@ -94,11 +127,21 @@ struct AgentCapabilityListResponse: Decodable {
     let skills: [AgentSkillDefinition]
     let profiles: [String: AgentCapabilityProfile]
     let availableTools: [AgentCapabilityToolSchema]
+    let agentCards: [AgentCapabilityAgentCard]
 
     enum CodingKeys: String, CodingKey {
         case skills
         case profiles
         case availableTools = "available_tools"
+        case agentCards = "agent_cards"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        skills = try container.decodeIfPresent([AgentSkillDefinition].self, forKey: .skills) ?? []
+        profiles = try container.decodeIfPresent([String: AgentCapabilityProfile].self, forKey: .profiles) ?? [:]
+        availableTools = try container.decodeIfPresent([AgentCapabilityToolSchema].self, forKey: .availableTools) ?? []
+        agentCards = try container.decodeIfPresent([AgentCapabilityAgentCard].self, forKey: .agentCards) ?? []
     }
 }
 
