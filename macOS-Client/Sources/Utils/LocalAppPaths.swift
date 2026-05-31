@@ -25,6 +25,10 @@ enum LocalAppPaths {
         return url
     }
 
+    static var evidenceExportsDir: URL {
+        subdir("evidence")
+    }
+
     static var backendSocketPath: String {
         runDir.appendingPathComponent("across-agents.sock").path
     }

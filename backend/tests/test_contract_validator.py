@@ -385,14 +385,14 @@ class TestContractValidator:
     def test_extract_declared_files_ignores_dot_prefixed_project_directory(self):
         text = (
             "All files MUST be written to this directory: "
-            "/Users/example/.across_agents/workspace/e2e-secret-clean-20260522-001 "
+            "/example-app-home/workspace/e2e-secret-clean "
             "Do NOT create files in any other location. "
             "Create file requirements.txt and save output to .env.example."
         )
 
         candidates = ContractValidator._extract_declared_files(text)
 
-        assert "/Users/example/.across_agents" not in candidates
+        assert "/example-app-home" not in candidates
         assert "requirements.txt" in candidates
         assert ".env.example" in candidates
 

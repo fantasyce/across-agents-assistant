@@ -169,6 +169,40 @@ struct ReleaseEvaluationAgentMixSummary: Decodable {
     }
 }
 
+struct ReleaseEvaluationProbeCoverage: Decodable {
+    let passed: [String: Int]
+    let failed: [String: Int]
+    let skipped: [String: Int]
+    let manualRequired: [String: Int]
+    let unknown: [String: Int]
+    let requiredProbeTypes: [String]
+    let missingRequiredProbeTypes: [String]
+    let satisfiesReleaseProbeCoverage: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case passed
+        case failed
+        case skipped
+        case manualRequired = "manual_required"
+        case unknown
+        case requiredProbeTypes = "required_probe_types"
+        case missingRequiredProbeTypes = "missing_required_probe_types"
+        case satisfiesReleaseProbeCoverage = "satisfies_release_probe_coverage"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        passed = try container.decodeIfPresent([String: Int].self, forKey: .passed) ?? [:]
+        failed = try container.decodeIfPresent([String: Int].self, forKey: .failed) ?? [:]
+        skipped = try container.decodeIfPresent([String: Int].self, forKey: .skipped) ?? [:]
+        manualRequired = try container.decodeIfPresent([String: Int].self, forKey: .manualRequired) ?? [:]
+        unknown = try container.decodeIfPresent([String: Int].self, forKey: .unknown) ?? [:]
+        requiredProbeTypes = try container.decodeIfPresent([String].self, forKey: .requiredProbeTypes) ?? []
+        missingRequiredProbeTypes = try container.decodeIfPresent([String].self, forKey: .missingRequiredProbeTypes) ?? []
+        satisfiesReleaseProbeCoverage = try container.decodeIfPresent(Bool.self, forKey: .satisfiesReleaseProbeCoverage) ?? false
+    }
+}
+
 struct ReleaseEvaluationReadinessCheck: Decodable, Identifiable {
     let id: String
     let status: String
@@ -179,6 +213,7 @@ struct ReleaseEvaluationReadinessCheck: Decodable, Identifiable {
 
 struct ReleaseEvaluationSummary: Decodable {
     let releaseReadiness: String
+    let generatedAt: Double?
     let evaluatedTaskCount: Int
     let terminalTaskCount: Int
     let passedTaskCount: Int
@@ -193,10 +228,15 @@ struct ReleaseEvaluationSummary: Decodable {
     let recentEvaluations: [ReleaseEvaluationRecentTask]
     let qualityTrend: ReleaseEvaluationQualityTrend?
     let agentMixSummary: ReleaseEvaluationAgentMixSummary?
+    let probeCoverage: ReleaseEvaluationProbeCoverage?
     let readinessChecks: [ReleaseEvaluationReadinessCheck]
+    let gateBreakdown: [String: Int]
+    let stackCoverage: [String: Int]
+    let agentCoverage: [String: Int]
 
     enum CodingKeys: String, CodingKey {
         case releaseReadiness = "release_readiness"
+        case generatedAt = "generated_at"
         case evaluatedTaskCount = "evaluated_task_count"
         case terminalTaskCount = "terminal_task_count"
         case passedTaskCount = "passed_task_count"
@@ -211,12 +251,17 @@ struct ReleaseEvaluationSummary: Decodable {
         case recentEvaluations = "recent_evaluations"
         case qualityTrend = "quality_trend"
         case agentMixSummary = "agent_mix_summary"
+        case probeCoverage = "probe_coverage"
         case readinessChecks = "readiness_checks"
+        case gateBreakdown = "gate_breakdown"
+        case stackCoverage = "stack_coverage"
+        case agentCoverage = "agent_coverage"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         releaseReadiness = try container.decode(String.self, forKey: .releaseReadiness)
+        generatedAt = try container.decodeIfPresent(Double.self, forKey: .generatedAt)
         evaluatedTaskCount = try container.decodeIfPresent(Int.self, forKey: .evaluatedTaskCount) ?? 0
         terminalTaskCount = try container.decodeIfPresent(Int.self, forKey: .terminalTaskCount) ?? 0
         passedTaskCount = try container.decodeIfPresent(Int.self, forKey: .passedTaskCount) ?? 0
@@ -231,7 +276,11 @@ struct ReleaseEvaluationSummary: Decodable {
         recentEvaluations = try container.decodeIfPresent([ReleaseEvaluationRecentTask].self, forKey: .recentEvaluations) ?? []
         qualityTrend = try container.decodeIfPresent(ReleaseEvaluationQualityTrend.self, forKey: .qualityTrend)
         agentMixSummary = try container.decodeIfPresent(ReleaseEvaluationAgentMixSummary.self, forKey: .agentMixSummary)
+        probeCoverage = try container.decodeIfPresent(ReleaseEvaluationProbeCoverage.self, forKey: .probeCoverage)
         readinessChecks = try container.decodeIfPresent([ReleaseEvaluationReadinessCheck].self, forKey: .readinessChecks) ?? []
+        gateBreakdown = try container.decodeIfPresent([String: Int].self, forKey: .gateBreakdown) ?? [:]
+        stackCoverage = try container.decodeIfPresent([String: Int].self, forKey: .stackCoverage) ?? [:]
+        agentCoverage = try container.decodeIfPresent([String: Int].self, forKey: .agentCoverage) ?? [:]
     }
 
     var passRatePercent: Int {
@@ -246,6 +295,225 @@ struct ReleaseEvaluationSummary: Decodable {
         guard let delta = qualityTrend?.delta else { return "-" }
         if delta > 0 { return "+\(delta)" }
         return "\(delta)"
+    }
+}
+
+struct TaskQualityBenchmarkScenario: Decodable, Identifiable {
+    let taskId: String
+    let status: String
+    let qualityGate: String?
+    let finalStatus: String?
+    let qualityScore: Int
+    let remediationAttempts: Int
+    let producedFiles: [String]
+    let checks: [String: Bool]
+    let failures: [String]
+
+    var id: String { taskId }
+
+    enum CodingKeys: String, CodingKey {
+        case taskId = "task_id"
+        case status
+        case qualityGate = "quality_gate"
+        case finalStatus = "final_status"
+        case qualityScore = "quality_score"
+        case remediationAttempts = "remediation_attempts"
+        case producedFiles = "produced_files"
+        case checks
+        case failures
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        taskId = try container.decodeIfPresent(String.self, forKey: .taskId) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        qualityGate = try container.decodeIfPresent(String.self, forKey: .qualityGate)
+        finalStatus = try container.decodeIfPresent(String.self, forKey: .finalStatus)
+        qualityScore = try container.decodeIfPresent(Int.self, forKey: .qualityScore) ?? 0
+        remediationAttempts = try container.decodeIfPresent(Int.self, forKey: .remediationAttempts) ?? 0
+        producedFiles = try container.decodeIfPresent([String].self, forKey: .producedFiles) ?? []
+        checks = try container.decodeIfPresent([String: Bool].self, forKey: .checks) ?? [:]
+        failures = try container.decodeIfPresent([String].self, forKey: .failures) ?? []
+    }
+}
+
+struct TaskQualityBenchmarkSummary: Decodable {
+    let scenarioCount: Int
+    let passedScenarios: Int
+    let failedScenarios: Int
+    let minQualityScore: Int
+    let maxRemediationAttempts: Int
+
+    enum CodingKeys: String, CodingKey {
+        case scenarioCount = "scenario_count"
+        case passedScenarios = "passed_scenarios"
+        case failedScenarios = "failed_scenarios"
+        case minQualityScore = "min_quality_score"
+        case maxRemediationAttempts = "max_remediation_attempts"
+    }
+
+    init(
+        scenarioCount: Int = 0,
+        passedScenarios: Int = 0,
+        failedScenarios: Int = 0,
+        minQualityScore: Int = 0,
+        maxRemediationAttempts: Int = 0
+    ) {
+        self.scenarioCount = scenarioCount
+        self.passedScenarios = passedScenarios
+        self.failedScenarios = failedScenarios
+        self.minQualityScore = minQualityScore
+        self.maxRemediationAttempts = maxRemediationAttempts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scenarioCount = try container.decodeIfPresent(Int.self, forKey: .scenarioCount) ?? 0
+        passedScenarios = try container.decodeIfPresent(Int.self, forKey: .passedScenarios) ?? 0
+        failedScenarios = try container.decodeIfPresent(Int.self, forKey: .failedScenarios) ?? 0
+        minQualityScore = try container.decodeIfPresent(Int.self, forKey: .minQualityScore) ?? 0
+        maxRemediationAttempts = try container.decodeIfPresent(Int.self, forKey: .maxRemediationAttempts) ?? 0
+    }
+}
+
+struct TaskQualityBenchmark: Decodable {
+    let benchmarkId: String
+    let benchmarkVersion: String?
+    let appVersion: String?
+    let status: String
+    let summary: TaskQualityBenchmarkSummary
+    let scenarios: [TaskQualityBenchmarkScenario]
+
+    enum CodingKeys: String, CodingKey {
+        case benchmarkId = "benchmark_id"
+        case benchmarkVersion = "benchmark_version"
+        case appVersion = "app_version"
+        case status
+        case summary
+        case scenarios
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        benchmarkId = try container.decodeIfPresent(String.self, forKey: .benchmarkId) ?? ""
+        benchmarkVersion = try container.decodeIfPresent(String.self, forKey: .benchmarkVersion)
+        appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        summary = try container.decodeIfPresent(TaskQualityBenchmarkSummary.self, forKey: .summary) ?? TaskQualityBenchmarkSummary()
+        scenarios = try container.decodeIfPresent([TaskQualityBenchmarkScenario].self, forKey: .scenarios) ?? []
+    }
+}
+
+struct TaskEvidenceAudit: Decodable {
+    let readOnly: Bool
+    let repairOrResumeTriggered: Bool
+    let secretsRedacted: Bool
+    let expectedFiles: [String]
+    let requiredProbes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case readOnly = "read_only"
+        case repairOrResumeTriggered = "repair_or_resume_triggered"
+        case secretsRedacted = "secrets_redacted"
+        case expectedFiles = "expected_files"
+        case requiredProbes = "required_probes"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+        repairOrResumeTriggered = try container.decodeIfPresent(Bool.self, forKey: .repairOrResumeTriggered) ?? false
+        secretsRedacted = try container.decodeIfPresent(Bool.self, forKey: .secretsRedacted) ?? false
+        expectedFiles = try container.decodeIfPresent([String].self, forKey: .expectedFiles) ?? []
+        requiredProbes = try container.decodeIfPresent([String].self, forKey: .requiredProbes) ?? []
+    }
+}
+
+struct TaskEvidenceBundle: Decodable, Identifiable {
+    static let releaseE2EExpectedFiles = [
+        "README.md",
+        "web/index.html",
+        "web/styles.css",
+        "web/app.js",
+        "api/server.mjs",
+        "cli/quality-check.mjs",
+        "tests/e2e-smoke.mjs"
+    ]
+
+    static let releaseE2ERequiredProbes = [
+        "static_web_smoke",
+        "browser_e2e",
+        "api_service",
+        "cli_generic"
+    ]
+
+    let schemaVersion: String
+    let appVersion: String?
+    let generatedAt: Double?
+    let taskId: String
+    let description: String?
+    let taskStatus: String
+    let taskTypes: [String]
+    let deliveryMode: String
+    let projectDir: String?
+    let ownerAgent: String?
+    let allowedSubtaskAgents: [String]
+    let benchmark: TaskQualityBenchmark
+    let audit: TaskEvidenceAudit
+
+    var id: String { taskId }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case appVersion = "app_version"
+        case generatedAt = "generated_at"
+        case taskId = "task_id"
+        case description
+        case taskStatus = "task_status"
+        case taskTypes = "task_types"
+        case deliveryMode = "delivery_mode"
+        case projectDir = "project_dir"
+        case ownerAgent = "owner_agent"
+        case allowedSubtaskAgents = "allowed_subtask_agents"
+        case benchmark
+        case audit
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? "unknown"
+        appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
+        generatedAt = try container.decodeIfPresent(Double.self, forKey: .generatedAt)
+        taskId = try container.decodeIfPresent(String.self, forKey: .taskId) ?? ""
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        taskStatus = try container.decodeIfPresent(String.self, forKey: .taskStatus) ?? "unknown"
+        taskTypes = try container.decodeIfPresent([String].self, forKey: .taskTypes) ?? []
+        deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode) ?? "legacy"
+        projectDir = try container.decodeIfPresent(String.self, forKey: .projectDir)
+        ownerAgent = try container.decodeIfPresent(String.self, forKey: .ownerAgent)
+        allowedSubtaskAgents = try container.decodeIfPresent([String].self, forKey: .allowedSubtaskAgents) ?? []
+        benchmark = try container.decode(TaskQualityBenchmark.self, forKey: .benchmark)
+        audit = try container.decode(TaskEvidenceAudit.self, forKey: .audit)
+    }
+
+    var releaseReadinessSummary: String {
+        let score = benchmark.scenarios.first?.qualityScore ?? benchmark.summary.minQualityScore
+        let repairs = benchmark.scenarios.first?.remediationAttempts ?? benchmark.summary.maxRemediationAttempts
+        let repairWord = repairs == 1 ? "repair" : "repairs"
+        return "\(benchmark.status) · score \(score) · \(repairs) \(repairWord)"
+    }
+
+    var usesReleaseE2EBenchmark: Bool {
+        Set(audit.expectedFiles) == Set(Self.releaseE2EExpectedFiles)
+            && Set(audit.requiredProbes) == Set(Self.releaseE2ERequiredProbes)
+    }
+
+    static func exportFileName(taskId: String) -> String {
+        let cleaned = taskId
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(cleaned.isEmpty ? "task" : cleaned)-evidence-bundle.json"
     }
 }
 

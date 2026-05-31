@@ -17,6 +17,10 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var releaseE2EScenarios: [ReleaseE2EScenario] = []
     @Published var isStartingReleaseE2E = false
     @Published var releaseE2EError: String?
+    @Published var selectedEvidenceBundle: TaskEvidenceBundle?
+    @Published var isLoadingTaskEvidence = false
+    @Published var taskEvidenceError: String?
+    @Published var exportedEvidenceBundleURL: URL?
     private let taskPageSize = 50
     private var taskListOffset = 0
 
@@ -24,6 +28,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         case empty
         case detail
         case createForm
+        case releaseCenter
     }
 
     enum BackendConnectionState: Equatable {
@@ -991,6 +996,17 @@ class TaskOrchestrationViewModel: ObservableObject {
         loadReleaseE2EScenarios()
     }
 
+    func openReleaseCenter() {
+        viewMode = .releaseCenter
+        loadReleaseEvaluation()
+    }
+
+    func closeEvidenceBundle() {
+        selectedEvidenceBundle = nil
+        exportedEvidenceBundleURL = nil
+        taskEvidenceError = nil
+    }
+
     func loadReleaseEvaluation() {
         Task { @MainActor in
             guard let baseURL = baseURL else {
@@ -1023,6 +1039,94 @@ class TaskOrchestrationViewModel: ObservableObject {
                 isLoadingReleaseEvaluation = false
             }
         }
+    }
+
+    func loadTaskEvidenceBundle(_ taskId: String, releaseGate: Bool = false) {
+        Task { @MainActor in
+            guard let baseURL = baseURL else {
+                taskEvidenceError = "Server URL not configured"
+                return
+            }
+
+            isLoadingTaskEvidence = true
+            taskEvidenceError = nil
+            exportedEvidenceBundleURL = nil
+
+            do {
+                let data = try await Self.fetchEvidenceBundleData(baseURL: baseURL, taskId: taskId, releaseGate: releaseGate)
+                selectedEvidenceBundle = try JSONDecoder().decode(TaskEvidenceBundle.self, from: data)
+                isLoadingTaskEvidence = false
+            } catch {
+                taskEvidenceError = error.localizedDescription
+                isLoadingTaskEvidence = false
+            }
+        }
+    }
+
+    func exportTaskEvidenceBundle(_ taskId: String, releaseGate: Bool = false) {
+        Task { @MainActor in
+            guard let baseURL = baseURL else {
+                taskEvidenceError = "Server URL not configured"
+                return
+            }
+
+            isLoadingTaskEvidence = true
+            taskEvidenceError = nil
+
+            do {
+                let data = try await Self.fetchEvidenceBundleData(baseURL: baseURL, taskId: taskId, releaseGate: releaseGate)
+                selectedEvidenceBundle = try JSONDecoder().decode(TaskEvidenceBundle.self, from: data)
+                let exportURL = LocalAppPaths.evidenceExportsDir
+                    .appendingPathComponent(TaskEvidenceBundle.exportFileName(taskId: taskId))
+                let prettyData = Self.prettyPrintedJSONData(from: data) ?? data
+                try prettyData.write(to: exportURL, options: [.atomic])
+                exportedEvidenceBundleURL = exportURL
+                isLoadingTaskEvidence = false
+            } catch {
+                taskEvidenceError = error.localizedDescription
+                isLoadingTaskEvidence = false
+            }
+        }
+    }
+
+    private static func fetchEvidenceBundleData(baseURL: URL, taskId: String, releaseGate: Bool) async throws -> Data {
+        var components = URLComponents(
+            url: baseURL
+            .appendingPathComponent("api/tasks")
+            .appendingPathComponent(taskId)
+            .appendingPathComponent("evidence-bundle"),
+            resolvingAgainstBaseURL: false
+        )
+        if releaseGate {
+            components?.queryItems = [
+                URLQueryItem(name: "expected_files", value: TaskEvidenceBundle.releaseE2EExpectedFiles.joined(separator: ",")),
+                URLQueryItem(name: "required_probes", value: TaskEvidenceBundle.releaseE2ERequiredProbes.joined(separator: ",")),
+                URLQueryItem(name: "min_quality_score", value: "70"),
+                URLQueryItem(name: "max_remediation_attempts", value: "2")
+            ]
+        }
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return data
+    }
+
+    private static func prettyPrintedJSONData(from data: Data) -> Data? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object) else {
+            return nil
+        }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     }
 
     func loadReleaseE2EScenarios() {

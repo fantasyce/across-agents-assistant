@@ -3,6 +3,7 @@ import SwiftUI
 import AppKit
 
 enum SettingsHubTab: String, CaseIterable, Identifiable {
+    case diagnostics
     case models
     case capabilities
     case mcp
@@ -13,6 +14,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
 
     var iconName: String {
         switch self {
+        case .diagnostics: return "stethoscope"
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .mcp: return "square.grid.2x2"
@@ -24,6 +26,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     @MainActor
     func title(preferences: AppPreferences) -> String {
         switch self {
+        case .diagnostics: return preferences.text("settings.diagnostics")
         case .models: return preferences.text("settings.models")
         case .capabilities: return preferences.text("settings.capabilities")
         case .mcp: return preferences.text("settings.mcp")
@@ -117,6 +120,9 @@ struct SettingsHubView: View {
     @ViewBuilder
     private var content: some View {
         switch selectedTab {
+        case .diagnostics:
+            StartupDiagnosticsView(settingsViewModel: settingsViewModel)
+                .environmentObject(preferences)
         case .models:
             ModelSettingsView(viewModel: settingsViewModel, onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)

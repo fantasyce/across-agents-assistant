@@ -101,18 +101,21 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is source-first: the repository is intended for local building and inspection, not notarized binary distribution.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-Recent quality work has focused on making complex agent deliveries easier to inspect and harder to overclaim:
+The `0.4.0` quality work focuses on making complex agent deliveries easier to inspect and harder to overclaim:
 
 - Release Evaluation summarizes recent task evidence into a local readiness signal without rerunning expensive probes or restoring old tasks automatically.
 - Release Evaluation now includes a readiness checklist, recent score trend, required probe coverage, local/cloud agent-mix coverage, benchmark status, and per-task audit traces so release quality can be compared across versions instead of judged from one task row.
+- Release Evidence Center turns those backend audit signals into an in-app review surface with readiness checks, probe coverage, recent task evidence, per-task Evidence Bundle viewing, and local JSON export.
+- Startup Diagnostics adds a first-run and packaged-app health surface for backend status, provider readiness, app data paths, logs, socket, database, task persistence, and local evidence exports.
+- RC Verification adds a one-click release report in Settings -> Diagnostics. It combines startup diagnostics, the latest fixed Release E2E benchmark, release-evaluation context, and local JSON/Markdown report files under the app data directory.
 - Task details expose execution evidence, quality gates, remediation history, quality score, and local/cloud agent mix.
 - Agent Cards include native-skill health, tool-risk summaries, strict-scope warnings, and repair hints for unavailable native skills. A non-secret `/api/agent-cards` export provides an A2A-like internal capability card for each supported agent.
 - Complex Release E2E validates an exact multi-file Web/API/CLI delivery through static checks, API probes, CLI checks, browser evidence, workspace hygiene, security/privacy scans, and cross-agent coverage.
 - Complex Release E2E remediation now reports actual remediation subtask count and gives agents targeted patch plans for Route Evidence failures, reducing false benchmark failures and broad rewrite attempts.
 - Delivery quality benchmarks and evidence bundles support both live in-memory tasks and lazily loaded persisted task records, so historical task details can be rechecked from the packaged app without restoring or restarting the task.
-- Delivery contract extraction filters local absolute temp paths such as `/tmp/...` and `/var/folders/...` so project directories do not become phantom deliverables.
+- Delivery contract extraction filters system temporary project-directory hints so local scratch directories do not become phantom deliverables.
 - Native skill readiness and MCP safety information now participate in task preflight so unavailable skills stay visible for repair but do not become strong routing signals.
 - GitHub Actions and `scripts/open_source_check.sh` protect the public repository from private docs, local runtime data, signing artifacts, missing README assets, whitespace issues, and common secret patterns.
 - The packaged app defaults to a faster backend bundle layout and avoids reopening duplicate main windows on launch.
@@ -154,6 +157,7 @@ open -n "/Applications/Across Agents Assistant.app"
 
 On first launch:
 
+- Open Settings -> Diagnostics to confirm backend health, local runtime paths, provider readiness, and task persistence before starting a complex task.
 - Open Model Settings.
 - Configure at least one cloud LLM API key, or install/configure one local agent.
 - Supported local agent integrations currently include OpenClaw, Hermes, and Claude Code.
@@ -229,7 +233,21 @@ curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
   "http://backend/api/agent-cards"
 ```
 
-When changing task orchestration, delivery contracts, capability routing, native skills, MCP safety, or release evaluation, also run the focused tests for the touched area and verify the packaged app path before considering the change release-ready.
+Startup diagnostics can be checked from the packaged app or from the socket:
+
+```bash
+curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+  "http://backend/api/diagnostics/startup"
+```
+
+RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across_agents/release-reports/`:
+
+```bash
+curl --request POST --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+  "http://backend/api/release/verification"
+```
+
+When changing startup, task orchestration, delivery contracts, capability routing, native skills, MCP safety, or release evaluation, also run the focused tests for the touched area and verify the packaged app path before considering the change release-ready.
 
 ## Open-Source Quality Checks
 

@@ -35,6 +35,22 @@ func testLocalizedStringsFallbackToEnglish() {
         "English labels should be available"
     )
     assert(
+        AppPreferences.localizedString("settings.diagnostics", localeIdentifier: "zh-Hans") == "诊断",
+        "Diagnostics tab should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("diagnostics.status.warning", localeIdentifier: "en") == "Warning",
+        "Diagnostics status labels should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("releaseVerification.run", localeIdentifier: "en") == "Run RC Check",
+        "RC verification action should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("releaseVerification.run", localeIdentifier: "zh-Hans") == "运行 RC 验收",
+        "RC verification action should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )

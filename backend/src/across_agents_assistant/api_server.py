@@ -115,7 +115,7 @@ from .task_manager.orchestration.release_e2e import (
     build_release_e2e_scenarios,
     build_release_e2e_task_request,
 )
-from .paths import backend_socket_path, data_file, log_dir as app_log_dir
+from .paths import app_home, app_subdir, backend_socket_path, data_file, log_dir as app_log_dir, run_dir, tmp_dir
 
 # Global Task Manager instances
 _task_state = TaskState()
@@ -844,6 +844,172 @@ def _build_key_readiness() -> Dict[str, Any]:
     }
 
 
+def _path_check(check_id: str, title: str, path: Path, *, expect_file: bool = False) -> Dict[str, Any]:
+    """Build a non-secret startup diagnostic check for a local path."""
+    try:
+        target = path if expect_file else path
+        parent = target.parent if expect_file else target
+        exists = target.exists()
+        writable_target = parent if parent.exists() else parent.parent
+        writable = os.access(writable_target, os.W_OK) if writable_target.exists() else False
+        if expect_file:
+            status = "passed" if exists and writable else "warning"
+            detail = (
+                f"{title} exists and its parent is writable."
+                if status == "passed"
+                else f"{title} was not found or its parent is not writable: {path}"
+            )
+        else:
+            status = "passed" if exists and path.is_dir() and writable else "failed"
+            detail = (
+                f"{title} is available and writable."
+                if status == "passed"
+                else f"{title} is missing or not writable: {path}"
+            )
+        remediation = None if status == "passed" else "Check local app data directory permissions."
+        return {
+            "id": check_id,
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "remediation": remediation,
+            "metadata": {"path": str(path)},
+        }
+    except Exception as exc:
+        return {
+            "id": check_id,
+            "title": title,
+            "status": "failed",
+            "detail": f"Unable to inspect {title}: {exc}",
+            "remediation": "Check local app data directory permissions.",
+            "metadata": {"path": str(path)},
+        }
+
+
+def _diagnostic_summary(checks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    failed = sum(1 for check in checks if check.get("status") == "failed")
+    warnings = sum(1 for check in checks if check.get("status") == "warning")
+    passed = sum(1 for check in checks if check.get("status") == "passed")
+    if failed:
+        status = "blocked"
+    elif warnings:
+        status = "attention"
+    else:
+        status = "ready"
+    return {
+        "status": status,
+        "passed": passed,
+        "warnings": warnings,
+        "failed": failed,
+        "check_count": len(checks),
+    }
+
+
+def _build_startup_diagnostics() -> Dict[str, Any]:
+    """Return a read-only startup report for packaged-app and first-run checks."""
+    from . import __version__
+
+    key_readiness = _build_key_readiness()
+    app_root = app_home()
+    logs = app_log_dir()
+    run = run_dir()
+    tmp = tmp_dir()
+    evidence = app_subdir("evidence")
+    socket_path = Path(backend_socket_path())
+
+    persistence_obj = getattr(_task_state, "_persistence", None)
+    db_obj = getattr(persistence_obj, "db", None)
+    db_path = getattr(db_obj, "db_path", None)
+    if db_path is None:
+        db_path = data_file("assistant.db")
+    db_path = Path(db_path)
+
+    try:
+        known_tasks = len(_task_state.get_all_tasks())
+    except Exception:
+        known_tasks = 0
+
+    checks: List[Dict[str, Any]] = [
+        {
+            "id": "backend_health",
+            "title": "Backend process",
+            "status": "passed",
+            "detail": f"Backend process {os.getpid()} is serving API requests.",
+            "remediation": None,
+            "metadata": {"pid": os.getpid(), "uptime_sec": max(0, time.time() - _server_started_at)},
+        },
+        _path_check("app_home", "App data directory", app_root),
+        _path_check("logs_dir", "Logs directory", logs),
+        _path_check("run_dir", "Runtime directory", run),
+        _path_check("tmp_dir", "Temporary directory", tmp),
+        _path_check("evidence_dir", "Evidence export directory", evidence),
+        _path_check("backend_socket", "Backend Unix socket", socket_path, expect_file=True),
+        _path_check("database", "Task database", db_path, expect_file=True),
+    ]
+
+    checks.append({
+        "id": "provider_keys",
+        "title": "Cloud provider readiness",
+        "status": "passed" if key_readiness.get("has_any_key") else "warning",
+        "detail": (
+            "At least one cloud LLM provider is configured."
+            if key_readiness.get("has_any_key")
+            else "No cloud LLM provider is configured; task submission will be blocked until one is saved."
+        ),
+        "remediation": None if key_readiness.get("has_any_key") else "Configure at least one cloud LLM provider in Model Settings.",
+        "metadata": {"providers": key_readiness.get("providers", {})},
+    })
+
+    task_runtime_status = "passed" if _task_persistence_initialized else "warning"
+    checks.append({
+        "id": "task_runtime",
+        "title": "Task runtime",
+        "status": task_runtime_status,
+        "detail": (
+            "Task persistence is initialized."
+            if task_runtime_status == "passed"
+            else "Task persistence has not initialized yet; task history may be unavailable."
+        ),
+        "remediation": None if task_runtime_status == "passed" else "Restart the app if task history does not load.",
+        "metadata": {
+            "known_tasks": known_tasks,
+            "orchestrator_initialized": _task_orchestrator is not None,
+            "dispatcher_initialized": _task_dispatcher is not None,
+            "persistence_initialized": _task_persistence_initialized,
+        },
+    })
+
+    summary = _diagnostic_summary(checks)
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return {
+        "schema_version": "1.0",
+        "app_version": __version__,
+        "generated_at": generated_at,
+        "status": summary["status"],
+        "summary": summary,
+        "paths": {
+            "app_home": str(app_root),
+            "logs_dir": str(logs),
+            "run_dir": str(run),
+            "tmp_dir": str(tmp),
+            "evidence_dir": str(evidence),
+            "socket_path": str(socket_path),
+            "database_path": str(db_path),
+        },
+        "runtime": {
+            "pid": os.getpid(),
+            "started_at": _server_started_at,
+            "uptime_sec": max(0, time.time() - _server_started_at),
+            "known_tasks": known_tasks,
+            "persistence_initialized": _task_persistence_initialized,
+            "orchestrator_initialized": _task_orchestrator is not None,
+            "dispatcher_initialized": _task_dispatcher is not None,
+        },
+        "keys": key_readiness,
+        "checks": checks,
+    }
+
+
 @app.get("/api/readiness")
 async def get_readiness():
     key_readiness = _build_key_readiness()
@@ -853,6 +1019,12 @@ async def get_readiness():
         "orchestrator_initialized": _task_orchestrator is not None,
         "dispatcher_initialized": _task_dispatcher is not None,
     }
+
+
+@app.get("/api/diagnostics/startup")
+async def get_startup_diagnostics():
+    """Return a non-secret first-run and packaged-app startup diagnostic report."""
+    return _build_startup_diagnostics()
 
 
 @app.get("/api/health")
@@ -4182,6 +4354,245 @@ def _task_row_for_release_evaluation(task: "Task") -> Dict[str, Any]:
     }
 
 
+RELEASE_E2E_DESCRIPTION_MARKER = "Release E2E scenario:"
+RELEASE_VERIFICATION_EXPECTED_FILES = [
+    "README.md",
+    "web/index.html",
+    "web/styles.css",
+    "web/app.js",
+    "api/server.mjs",
+    "cli/quality-check.mjs",
+    "tests/e2e-smoke.mjs",
+]
+RELEASE_VERIFICATION_REQUIRED_PROBES = [
+    "static_web_smoke",
+    "browser_e2e",
+    "api_service",
+    "cli_generic",
+]
+
+
+def _collect_release_task_rows(safe_limit: int = 100) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+
+    persistence = getattr(_task_state, "_persistence", None)
+    if persistence and hasattr(persistence, "get_task_summaries"):
+        persisted_rows, _total = persistence.get_task_summaries(limit=safe_limit, offset=0)
+    elif persistence and hasattr(persistence, "get_all_tasks"):
+        persisted_rows = persistence.get_all_tasks()[:safe_limit]
+    else:
+        persisted_rows = []
+
+    for row in persisted_rows:
+        task_id = row.get("task_id")
+        if task_id and task_id not in seen_task_ids:
+            rows.append(dict(row))
+            seen_task_ids.add(task_id)
+
+    for task in _task_state.get_all_tasks():
+        row = _task_row_for_release_evaluation(task)
+        task_id = row.get("task_id")
+        if task_id and task_id not in seen_task_ids:
+            rows.append(row)
+            seen_task_ids.add(task_id)
+
+    return rows[:safe_limit]
+
+
+def _latest_release_e2e_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    release_rows = [
+        dict(row)
+        for row in rows
+        if RELEASE_E2E_DESCRIPTION_MARKER.lower() in str(row.get("description") or "").lower()
+    ]
+    if not release_rows:
+        return None
+    return sorted(
+        release_rows,
+        key=lambda row: row.get("updated_at") or row.get("created_at") or 0,
+        reverse=True,
+    )[0]
+
+
+def _release_verification_status(
+    startup_status: str,
+    latest_release_e2e: Optional[Dict[str, Any]],
+) -> Tuple[str, List[str]]:
+    remediations: List[str] = []
+    if startup_status == "blocked":
+        remediations.append("Resolve failed startup diagnostics before release approval.")
+
+    if latest_release_e2e is None:
+        remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
+    else:
+        benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
+        if benchmark_status != "passed":
+            remediations.append("Review the latest Release E2E benchmark failures and rerun remediation.")
+
+    if startup_status == "blocked":
+        return "blocked", remediations
+    if latest_release_e2e is not None:
+        benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
+        if benchmark_status != "passed":
+            return "blocked", remediations
+    if startup_status == "attention" or latest_release_e2e is None:
+        return "attention", remediations
+    return "ready", remediations
+
+
+def _build_latest_release_e2e_verification(row: Dict[str, Any]) -> Dict[str, Any]:
+    from . import __version__
+    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+
+    task_id = row.get("task_id")
+    if not task_id:
+        raise ValueError("release E2E row does not include a task_id")
+    task_info = _load_task_info_read_only(str(task_id))
+    payload = _pydantic_dump(task_info) if isinstance(task_info, BaseModel) else dict(task_info)
+    benchmark = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id=f"task-{task_id}-rc-verification-{__version__}",
+        expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
+        required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
+        min_quality_score=70,
+        max_remediation_attempts=2,
+    )
+    benchmark["app_version"] = __version__
+    sanitized_benchmark = _redact_sensitive_evidence(benchmark)
+    scenario = (sanitized_benchmark.get("scenarios") or [{}])[0]
+    return {
+        "task_id": str(task_id),
+        "description": payload.get("description") or row.get("description") or "",
+        "task_status": payload.get("status") or row.get("status") or "unknown",
+        "project_dir": payload.get("project_dir"),
+        "updated_at": row.get("updated_at") or payload.get("updated_at"),
+        "benchmark": sanitized_benchmark,
+        "summary": {
+            "status": sanitized_benchmark.get("status") or "unknown",
+            "quality_score": scenario.get("quality_score"),
+            "remediation_attempts": scenario.get("remediation_attempts", 0),
+            "failed_scenarios": (sanitized_benchmark.get("summary") or {}).get("failed_scenarios", 0),
+        },
+    }
+
+
+def _release_verification_markdown(report: Dict[str, Any]) -> str:
+    startup_summary = report.get("startup", {}).get("summary", {})
+    latest = report.get("latest_release_e2e")
+    lines = [
+        "# Across Agents Assistant RC Verification",
+        "",
+        f"Status: {report.get('status')}",
+        f"App version: {report.get('app_version')}",
+        f"Generated at: {report.get('generated_at')}",
+        "",
+        "## Startup Diagnostics",
+        (
+            f"Status {startup_summary.get('status')} · "
+            f"{startup_summary.get('passed', 0)} passed · "
+            f"{startup_summary.get('warnings', 0)} warnings · "
+            f"{startup_summary.get('failed', 0)} failed"
+        ),
+        "",
+        "## Latest Release E2E",
+    ]
+    if latest:
+        scenario = (latest.get("benchmark", {}).get("scenarios") or [{}])[0]
+        lines.extend([
+            f"Task: {latest.get('task_id')}",
+            f"Task status: {latest.get('task_status')}",
+            f"Benchmark: {latest.get('benchmark', {}).get('status')}",
+            f"Quality score: {scenario.get('quality_score')}",
+            f"Remediation attempts: {scenario.get('remediation_attempts', 0)}",
+        ])
+        failures = scenario.get("failures") or []
+        if failures:
+            lines.extend(["", "Failures:"])
+            lines.extend([f"- {failure}" for failure in failures])
+    else:
+        lines.append("No Release E2E evidence was found.")
+
+    remediations = report.get("remediations") or []
+    lines.extend(["", "## Remediation"])
+    if remediations:
+        lines.extend([f"- {item}" for item in remediations])
+    else:
+        lines.append("No remediation required.")
+
+    audit = report.get("audit") or {}
+    lines.extend([
+        "",
+        "## Audit",
+        f"Read only: {audit.get('read_only')}",
+        f"Repair or resume triggered: {audit.get('repair_or_resume_triggered')}",
+        f"Secrets redacted: {audit.get('secrets_redacted')}",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _write_release_verification_report(report: Dict[str, Any]) -> Dict[str, str]:
+    generated_at = str(report.get("generated_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    safe_stamp = generated_at.replace("-", "").replace(":", "").replace(".", "").replace("+", "Z")
+    safe_stamp = safe_stamp.replace("T", "T").replace("Z", "Z")
+    report_dir = app_subdir("release-reports")
+    report_dir.mkdir(parents=True, exist_ok=True)
+    json_name = f"rc-verification-{safe_stamp}.json"
+    markdown_name = f"rc-verification-{safe_stamp}.md"
+    json_path = report_dir / json_name
+    markdown_path = report_dir / markdown_name
+    report["report_files"] = {
+        "directory": str(report_dir),
+        "json_name": json_name,
+        "json_path": str(json_path),
+        "markdown_name": markdown_name,
+        "markdown_path": str(markdown_path),
+    }
+    json_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_path.write_text(_release_verification_markdown(report), encoding="utf-8")
+    return report["report_files"]
+
+
+def _build_release_verification_report(*, write_report: bool = True) -> Dict[str, Any]:
+    from . import __version__
+
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    startup = _build_startup_diagnostics()
+    rows = _collect_release_task_rows(100)
+    release_evaluation = build_release_evaluation_summary(rows)
+    latest_row = _latest_release_e2e_row(rows)
+    latest_release_e2e = None
+    if latest_row:
+        latest_release_e2e = _build_latest_release_e2e_verification(latest_row)
+
+    status, remediations = _release_verification_status(
+        str(startup.get("status") or "attention"),
+        latest_release_e2e,
+    )
+    report: Dict[str, Any] = {
+        "schema_version": "1.0",
+        "app_version": __version__,
+        "generated_at": generated_at,
+        "status": status,
+        "startup": startup,
+        "release_evaluation": _redact_sensitive_evidence(release_evaluation),
+        "latest_release_e2e": latest_release_e2e,
+        "remediations": remediations,
+        "report_files": {},
+        "audit": {
+            "read_only": True,
+            "repair_or_resume_triggered": False,
+            "secrets_redacted": True,
+            "expected_files": RELEASE_VERIFICATION_EXPECTED_FILES,
+            "required_probes": RELEASE_VERIFICATION_REQUIRED_PROBES,
+        },
+    }
+    if write_report:
+        _write_release_verification_report(report)
+    return report
+
+
 @app.get("/api/release/evaluation")
 async def get_release_evaluation(limit: int = 100):
     """Return a lightweight release-candidate quality summary.
@@ -4192,31 +4603,16 @@ async def get_release_evaluation(limit: int = 100):
     """
     try:
         safe_limit = max(1, min(int(limit or 100), 500))
-        rows: List[Dict[str, Any]] = []
-        seen_task_ids: set[str] = set()
+        return build_release_evaluation_summary(_collect_release_task_rows(safe_limit))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        persistence = getattr(_task_state, "_persistence", None)
-        if persistence and hasattr(persistence, "get_task_summaries"):
-            persisted_rows, _total = persistence.get_task_summaries(limit=safe_limit, offset=0)
-        elif persistence and hasattr(persistence, "get_all_tasks"):
-            persisted_rows = persistence.get_all_tasks()[:safe_limit]
-        else:
-            persisted_rows = []
 
-        for row in persisted_rows:
-            task_id = row.get("task_id")
-            if task_id and task_id not in seen_task_ids:
-                rows.append(dict(row))
-                seen_task_ids.add(task_id)
-
-        for task in _task_state.get_all_tasks():
-            row = _task_row_for_release_evaluation(task)
-            task_id = row.get("task_id")
-            if task_id and task_id not in seen_task_ids:
-                rows.append(row)
-                seen_task_ids.add(task_id)
-
-        return build_release_evaluation_summary(rows[:safe_limit])
+@app.post("/api/release/verification")
+async def run_release_verification():
+    """Create a non-secret release-candidate verification report."""
+    try:
+        return _build_release_verification_report(write_report=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

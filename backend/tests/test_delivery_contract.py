@@ -307,7 +307,7 @@ def test_exact_static_web_contract_keeps_index_when_no_build_step_is_forbidden()
 
 
 def test_release_e2e_contract_ignores_absolute_project_directory_path():
-    project_dir = "/var/folders/mk/example/T/across-v040-e2e.XXXXXX.run123"
+    project_dir = "/private/tmp/across-v040-e2e.run123"
     description = (
         "Build a dependency-free console in this exact project directory:\n"
         f"{project_dir}\n\n"
@@ -323,7 +323,7 @@ def test_release_e2e_contract_ignores_absolute_project_directory_path():
 
     paths = extract_required_path_hints(description)
 
-    assert "var/folders/mk/example/T/across-v040-e2e.XXXXXX.run123" not in paths
+    assert "private/tmp/across-v040-e2e.run123" not in paths
     assert set(paths) == {
         "README.md",
         "web/index.html",

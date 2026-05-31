@@ -1,0 +1,162 @@
+import Foundation
+
+func assert(_ condition: @autoclosure () -> Bool, _ message: String) {
+    if !condition() {
+        fatalError(message)
+    }
+}
+
+func testReleaseVerificationDecodeAndSummary() throws {
+    let json = """
+    {
+      "schema_version": "1.0",
+      "app_version": "0.4.0",
+      "generated_at": "2026-05-31T12:00:00Z",
+      "status": "ready",
+      "startup": {
+        "schema_version": "1.0",
+        "app_version": "0.4.0",
+        "generated_at": "2026-05-31T12:00:00Z",
+        "status": "ready",
+        "summary": {"status": "ready", "passed": 10, "warnings": 0, "failed": 0, "check_count": 10},
+        "paths": {"app_home": "/tmp/a", "logs_dir": "/tmp/l", "run_dir": "/tmp/r", "tmp_dir": "/tmp/t", "evidence_dir": "/tmp/e", "socket_path": "/tmp/s", "database_path": "/tmp/db"},
+        "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 1, "persistence_initialized": true, "orchestrator_initialized": true, "dispatcher_initialized": true},
+        "keys": {"has_any_key": true, "providers": {"deepseek": "configured", "minimax": "not_configured"}, "readiness_blockers": []},
+        "checks": []
+      },
+      "release_evaluation": {
+        "release_readiness": "ready",
+        "generated_at": 1780000000.0,
+        "evaluated_task_count": 4,
+        "terminal_task_count": 4,
+        "passed_task_count": 4,
+        "blocked_task_count": 0,
+        "manual_task_count": 0,
+        "skipped_task_count": 0,
+        "pass_rate": 1.0,
+        "top_risks": [],
+        "recent_evaluations": [],
+        "readiness_checks": [],
+        "gate_breakdown": {},
+        "stack_coverage": {},
+        "agent_coverage": {}
+      },
+      "latest_release_e2e": {
+        "task_id": "task-rc",
+        "description": "Release E2E scenario: web api cli",
+        "task_status": "completed",
+        "project_dir": "/tmp/release",
+        "updated_at": 20.0,
+        "benchmark": {
+          "benchmark_id": "task-task-rc-rc-verification-0.4.0",
+          "benchmark_version": "1.0",
+          "app_version": "0.4.0",
+          "status": "passed",
+          "summary": {"scenario_count": 1, "passed_scenarios": 1, "failed_scenarios": 0, "min_quality_score": 70, "max_remediation_attempts": 2},
+          "scenarios": [
+            {"task_id": "task-rc", "status": "passed", "quality_gate": "passed", "final_status": "completed", "quality_score": 91, "remediation_attempts": 1, "produced_files": ["README.md"], "checks": {"browser_e2e_passed": true}, "failures": []}
+          ]
+        },
+        "summary": {"status": "passed", "quality_score": 91, "remediation_attempts": 1, "failed_scenarios": 0}
+      },
+      "remediations": [],
+      "report_files": {
+        "directory": "/tmp/release-reports",
+        "json_name": "rc-verification.json",
+        "json_path": "/tmp/release-reports/rc-verification.json",
+        "markdown_name": "rc-verification.md",
+        "markdown_path": "/tmp/release-reports/rc-verification.md"
+      },
+      "audit": {
+        "read_only": true,
+        "repair_or_resume_triggered": false,
+        "secrets_redacted": true,
+        "expected_files": ["README.md", "web/index.html"],
+        "required_probes": ["static_web_smoke", "browser_e2e"]
+      }
+    }
+    """.data(using: .utf8)!
+
+    let report = try JSONDecoder().decode(ReleaseVerificationReport.self, from: json)
+
+    assert(report.id == "release-verification-2026-05-31T12:00:00Z", "Report id should be stable")
+    assert(report.status == .ready, "Status should decode")
+    assert(report.latestReleaseE2E?.taskId == "task-rc", "Latest Release E2E task should decode")
+    assert(report.latestReleaseE2E?.summary.qualityScore == 91, "Quality score should decode")
+    assert(report.latestReleaseE2E?.compactDescription == "Release E2E scenario: web api cli", "Compact description should use the first task line")
+    assert(report.reportFiles.markdownPath.hasSuffix(".md"), "Markdown report path should decode")
+    assert(report.audit.readOnly, "Audit should decode read-only flag")
+    assert(report.audit.secretsRedacted, "Audit should decode redaction flag")
+    assert(report.readyHeadline == "Ready · Release E2E passed · score 91", "Headline should summarize RC readiness")
+}
+
+func testReleaseVerificationAttentionSummaryWithoutE2E() throws {
+    let json = """
+    {
+      "schema_version": "1.0",
+      "app_version": "0.4.0",
+      "generated_at": "2026-05-31T12:00:00Z",
+      "status": "attention",
+      "startup": {
+        "schema_version": "1.0",
+        "app_version": "0.4.0",
+        "generated_at": "2026-05-31T12:00:00Z",
+        "status": "ready",
+        "summary": {"status": "ready", "passed": 10, "warnings": 0, "failed": 0, "check_count": 10},
+        "paths": {"app_home": "/tmp/a", "logs_dir": "/tmp/l", "run_dir": "/tmp/r", "tmp_dir": "/tmp/t", "evidence_dir": "/tmp/e", "socket_path": "/tmp/s", "database_path": "/tmp/db"},
+        "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 1, "persistence_initialized": true, "orchestrator_initialized": true, "dispatcher_initialized": true},
+        "keys": {"has_any_key": true, "providers": {"deepseek": "configured"}, "readiness_blockers": []},
+        "checks": []
+      },
+      "release_evaluation": {"release_readiness": "no_evidence", "evaluated_task_count": 0, "terminal_task_count": 0, "passed_task_count": 0, "blocked_task_count": 0, "manual_task_count": 0, "skipped_task_count": 0, "pass_rate": 0, "top_risks": [], "recent_evaluations": [], "readiness_checks": [], "gate_breakdown": {}, "stack_coverage": {}, "agent_coverage": {}},
+      "latest_release_e2e": null,
+      "remediations": ["Run the fixed Release E2E scenario from the frontend and wait for passing evidence."],
+      "report_files": {"directory": "/tmp/release-reports", "json_name": "rc.json", "json_path": "/tmp/release-reports/rc.json", "markdown_name": "rc.md", "markdown_path": "/tmp/release-reports/rc.md"},
+      "audit": {"read_only": true, "repair_or_resume_triggered": false, "secrets_redacted": true, "expected_files": [], "required_probes": []}
+    }
+    """.data(using: .utf8)!
+
+    let report = try JSONDecoder().decode(ReleaseVerificationReport.self, from: json)
+
+    assert(report.status == .attention, "Attention status should decode")
+    assert(report.latestReleaseE2E == nil, "Missing latest Release E2E should decode as nil")
+    assert(report.readyHeadline == "Attention · Release E2E missing", "Headline should call out missing E2E evidence")
+    assert(report.primaryRemediation?.contains("Release E2E") == true, "Primary remediation should be available")
+}
+
+func testReleaseVerificationCompactsLongTaskDescriptions() throws {
+    let longDescription = """
+    Release E2E scenario: Cross-Agent Full Delivery Gate
+    Scenario ID: cross_agent_full_delivery_v1
+    Build a dependency-free cross-agent operations console with a very long task prompt that should not dominate diagnostics UI.
+    """
+    let json = """
+    {
+      "task_id": "task-long",
+      "description": "\(longDescription.replacingOccurrences(of: "\n", with: "\\n"))",
+      "task_status": "completed",
+      "project_dir": "/tmp/release",
+      "updated_at": 20.0,
+      "benchmark": {"benchmark_id": "b", "status": "passed", "summary": {"scenario_count": 1, "passed_scenarios": 1, "failed_scenarios": 0, "min_quality_score": 70, "max_remediation_attempts": 2}, "scenarios": []},
+      "summary": {"status": "passed", "quality_score": 90, "remediation_attempts": 0, "failed_scenarios": 0}
+    }
+    """.data(using: .utf8)!
+
+    let latest = try JSONDecoder().decode(ReleaseVerificationLatestE2E.self, from: json)
+
+    assert(latest.compactDescription == "Release E2E scenario: Cross-Agent Full Delivery Gate", "Compact description should not include later prompt lines")
+}
+
+@main
+struct ReleaseVerificationBehavior {
+    static func main() {
+        do {
+            try testReleaseVerificationDecodeAndSummary()
+            try testReleaseVerificationAttentionSummaryWithoutE2E()
+            try testReleaseVerificationCompactsLongTaskDescriptions()
+            print("ReleaseVerificationBehavior passed")
+        } catch {
+            fatalError("ReleaseVerificationBehavior failed: \(error)")
+        }
+    }
+}

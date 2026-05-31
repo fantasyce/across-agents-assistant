@@ -92,6 +92,12 @@ final class SettingsViewModel: ObservableObject {
     @Published var lastErrorMessage: String? = nil
     @Published var availabilityBootstrapState: AvailabilityBootstrapState = .loading
     @Published var localAgentDetectionFeedback: [String: AgentDetectionFeedback] = [:]
+    @Published var startupDiagnostics: StartupDiagnosticsReport? = nil
+    @Published var isLoadingStartupDiagnostics: Bool = false
+    @Published var startupDiagnosticsError: String? = nil
+    @Published var releaseVerificationReport: ReleaseVerificationReport? = nil
+    @Published var isRunningReleaseVerification: Bool = false
+    @Published var releaseVerificationError: String? = nil
 
     private var cancellables = Set<AnyCancellable>()
     @Published var apiKeyStatusCache: [String: String] = [:]
@@ -155,6 +161,17 @@ final class SettingsViewModel: ObservableObject {
         refreshAvailabilityState()
     }
 
+    func applyStartupDiagnosticsReport(_ report: StartupDiagnosticsReport) {
+        startupDiagnostics = report
+        startupDiagnosticsError = nil
+    }
+
+    func applyReleaseVerificationReport(_ report: ReleaseVerificationReport) {
+        releaseVerificationReport = report
+        startupDiagnostics = report.startup
+        releaseVerificationError = nil
+    }
+
     init(bootstrapOnInit: Bool = true, loadPersisted: Bool = true) {
         if loadPersisted {
             loadPersistedSettings()
@@ -207,7 +224,60 @@ final class SettingsViewModel: ObservableObject {
             }
             await refreshBackendKeyStatus()
             await detectAgentsFromBackend(force: false)
+            await refreshStartupDiagnostics()
             completeAvailabilityBootstrap()
+        }
+    }
+
+    func refreshStartupDiagnostics() async {
+        await MainActor.run {
+            isLoadingStartupDiagnostics = true
+            startupDiagnosticsError = nil
+        }
+        do {
+            let url = URL(string: "\(backendBase)/api/diagnostics/startup")!
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let report = try JSONDecoder().decode(StartupDiagnosticsReport.self, from: data)
+            await MainActor.run {
+                applyStartupDiagnosticsReport(report)
+                isLoadingStartupDiagnostics = false
+            }
+        } catch {
+            await MainActor.run {
+                startupDiagnosticsError = "Unable to load startup diagnostics: \(error.localizedDescription)"
+                isLoadingStartupDiagnostics = false
+            }
+        }
+    }
+
+    func runReleaseVerification() async {
+        await MainActor.run {
+            isRunningReleaseVerification = true
+            releaseVerificationError = nil
+        }
+        do {
+            let url = URL(string: "\(backendBase)/api/release/verification")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let report = try JSONDecoder().decode(ReleaseVerificationReport.self, from: data)
+            await MainActor.run {
+                applyReleaseVerificationReport(report)
+                isRunningReleaseVerification = false
+            }
+        } catch {
+            await MainActor.run {
+                releaseVerificationError = "Unable to run release verification: \(error.localizedDescription)"
+                isRunningReleaseVerification = false
+            }
         }
     }
 
@@ -453,6 +523,7 @@ final class SettingsViewModel: ObservableObject {
         // main UI leave startup loading when a cloud provider is configured.
         await refreshBackendKeyStatus()
         completeBackendReadyAvailabilityBootstrap()
+        await refreshStartupDiagnostics()
 
         Task { [weak self] in
             await self?.refreshLocalAgentsAfterStartup()
