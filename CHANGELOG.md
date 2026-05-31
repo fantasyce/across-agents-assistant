@@ -54,3 +54,67 @@ notarization outside this repository.
   profiles, private maintainer notes, local databases, logs, or generated
   runtime data.
 - The local app bundle is ad-hoc signed unless `SIGNING_IDENTITY` is provided.
+
+## 0.3.1 - 2026-05-31
+
+### Added
+
+- Release-evaluation audit workflow with readiness signals exposed in the task
+  orchestration surface.
+- Task Evidence Bundle API for read-only review of delivery contracts,
+  requirement manifests, owner decisions, quality health, artifacts, acceptance
+  records, and benchmark results.
+- Non-secret Agent Cards export for capability, native-skill health, tool-risk,
+  MCP scope, strict-scope, and repair-hint review.
+- Public open-source guard script and GitHub Actions Quality workflow for
+  release hygiene.
+
+### Improved
+
+- Delivery quality benchmarks can use persisted task evidence, not only live
+  in-memory task state.
+- Release-evaluation output includes benchmark status, probe coverage, agent
+  mix, and per-task audit traces.
+- Task details surface richer execution evidence, quality gates, remediation
+  history, and final quality metrics.
+
+## 0.3.0 - 2026-05-31
+
+### Added
+
+- Release Evaluation summary for comparing recent quality-gated tasks.
+- Fixed high-complexity Release E2E scenario for cross-agent Web/API/CLI
+  delivery, route evidence, quality gates, browser checks, remediation trace,
+  MCP safety audit, and native skill routing evidence.
+- Stronger delivery quality gates for exact file contracts, workspace hygiene,
+  runnable probes, API service checks, CLI checks, static web behavior, browser
+  evidence, and local/cloud agent-mix coverage.
+- Capability preflight and routing signals that account for native local-agent
+  skills and MCP safety information.
+
+### Improved
+
+- Owner-led orchestration can produce targeted remediation work when required
+  deliverables or quality probes fail.
+- Native skill readiness keeps unavailable skills visible with repair context
+  while preventing them from being used as strong routing evidence.
+- Main-window behavior and packaged startup paths were hardened for release
+  validation.
+
+## 0.2.0 - 2026-05-29
+
+### Added
+
+- Delivery Quality Benchmark API for completed complex tasks.
+- Exact deliverable contract checks, requirement-manifest validation, and
+  quality score reporting.
+- Static web and browser-oriented acceptance probes for UI tasks.
+- Benchmark support for expected files, required probes, minimum quality score,
+  remediation state, skipped checks, and workspace hygiene.
+
+### Improved
+
+- Owner review and final task state now retain delivery-quality evidence for
+  later inspection.
+- Build metadata and backend version reporting were aligned for source-first
+  release validation.

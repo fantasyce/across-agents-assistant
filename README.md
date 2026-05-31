@@ -68,6 +68,17 @@ The app also includes a light Simplified Chinese interface.
 | --- | --- |
 | <img src="assets/readme/zh-light-tool-permissions.png" alt="浅色中文工具权限"> | <img src="assets/readme/zh-light-settings.png" alt="浅色中文语音和偏好设置"> |
 
+## What's New Since 0.2.0
+
+The screenshots above are still the primary entry points: project chat, task orchestration, complex task creation, model settings, MCP plugins, tool permissions, and preferences. The newer releases mainly make those workflows more inspectable, safer to route, and easier to validate before release.
+
+| Version | User-visible capability |
+| --- | --- |
+| `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
+| `0.3.1` | Evidence Bundle export for completed tasks, non-secret Agent Cards, richer release-evaluation audit traces, persisted task quality rechecks, and public repository guards for private docs, local data, signing files, README assets, and secret patterns. |
+| `0.3.0` | Release Evaluation summary, fixed high-complexity cross-agent Release E2E scenario, stronger delivery quality gates, capability preflight, native skill readiness, MCP safety signals, and targeted quality-remediation feedback. |
+| `0.2.0` | Delivery Quality Benchmark, exact deliverable contracts, project/workspace hygiene checks, static web and browser probes, quality score reporting, and benchmark APIs for comparing complex task delivery across versions. |
+
 ## Core Capabilities
 
 - Cross-agent task orchestration with an owner agent, subtask agents, waves, status tracking, delivery health, and acceptance-oriented review.
