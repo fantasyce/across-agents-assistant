@@ -110,7 +110,7 @@ struct ModelSettingsView: View {
                     },
                     onAutoDetect: { agentId in
                         viewModel.autoDetectAgent(agentId)
-                    },
+                    }
                 )
             }
         }
