@@ -68,6 +68,18 @@ The app also includes a light Simplified Chinese interface.
 | --- | --- |
 | <img src="assets/readme/zh-light-tool-permissions.png" alt="浅色中文工具权限"> | <img src="assets/readme/zh-light-settings.png" alt="浅色中文语音和偏好设置"> |
 
+### Release Quality Surfaces
+
+Recent releases added visible quality and readiness workflows directly inside the app, so users can inspect complex task delivery instead of trusting a text-only status.
+
+| Release evidence center | Release evaluation and E2E gate |
+| --- | --- |
+| <img src="assets/readme/zh-dark-release-evidence-center.png" alt="Dark release evidence center with readiness status, risks, checklist, and quality trend"> | <img src="assets/readme/zh-dark-release-evaluation.png" alt="Dark task orchestration release evaluation card with quality-gated tasks and complex E2E action"> |
+
+| Startup diagnostics and RC check | Agent capabilities and native skills |
+| --- | --- |
+| <img src="assets/readme/zh-dark-startup-diagnostics.png" alt="Dark startup diagnostics with backend, provider, path, and packaged app readiness checks"> | <img src="assets/readme/zh-dark-agent-capabilities.png" alt="Dark agent capability settings with local agents, cloud LLMs, native skills, MCP plugins, and tool scope"> |
+
 ## What's New Since 0.2.0
 
 The screenshots above are still the primary entry points: project chat, task orchestration, complex task creation, model settings, MCP plugins, tool permissions, and preferences. The newer releases mainly make those workflows more inspectable, safer to route, and easier to validate before release.
