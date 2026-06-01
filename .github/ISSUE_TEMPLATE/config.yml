@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and troubleshooting
+    url: https://github.com/fantasyce/across-agents-assistant/discussions/categories/q-a
+    about: Ask for setup help, agent configuration advice, or troubleshooting that is not yet a reproducible bug.
+  - name: Ideas and roadmap discussion
+    url: https://github.com/fantasyce/across-agents-assistant/discussions/categories/ideas
+    about: Discuss early ideas before turning them into scoped feature requests.
+  - name: General community discussion
+    url: https://github.com/fantasyce/across-agents-assistant/discussions/categories/general
+    about: Share workflows, product questions, and broader feedback with the community.
+  - name: Security reporting
+    url: https://github.com/fantasyce/across-agents-assistant/blob/main/SECURITY.md
+    about: Please do not report vulnerabilities, secrets, tokens, or private data in public issues.

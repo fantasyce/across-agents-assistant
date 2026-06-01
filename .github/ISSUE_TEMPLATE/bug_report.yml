@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a reproducible app, backend, routing, or release-quality problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Across Agents Assistant. For setup questions, troubleshooting, or open-ended product discussion, use GitHub Discussions instead of Issues.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions before opening this report.
+          required: true
+        - label: I removed API keys, tokens, local paths, private project names, and other sensitive data.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - macOS app
+        - Python backend
+        - Agent orchestration
+        - Model or provider setup
+        - MCP tools or permissions
+        - Release Evidence / diagnostics / E2E
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Use the app version, release tag, or commit SHA if you know it.
+      placeholder: "v0.4.0"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest reproducible sequence.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. Run ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include macOS version, build method, Python/Swift versions, local agent names, and provider names when relevant.
+      placeholder: |
+        macOS:
+        Build method:
+        Python:
+        Swift:
+        Local agents:
+        Cloud providers:
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste only sanitized logs or attach screenshots with private paths and secrets removed.
+      render: text

@@ -1,0 +1,23 @@
+title: "[Q&A]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use Q&A for setup help, configuration questions, and troubleshooting that is not yet a confirmed bug.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to figure out?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include commands, app screens, or docs you checked. Please remove private paths and secrets.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Optional. Include macOS version, app version, build method, and relevant local agents/providers.

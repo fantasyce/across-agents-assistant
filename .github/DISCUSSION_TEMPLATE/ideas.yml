@@ -1,0 +1,23 @@
+title: "[Idea]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use Ideas for early product directions. If the idea becomes scoped and actionable, maintainers may convert it into a feature issue.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: What should Across Agents Assistant make possible?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow or user story
+      description: Describe who benefits and what they are trying to do.
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs or risks
+      description: Optional. Mention complexity, privacy, security, local-agent reliability, or release-quality concerns.

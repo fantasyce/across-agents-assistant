@@ -1,0 +1,30 @@
+title: "[General]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this space for community discussion, workflow sharing, and product questions that do not need issue triage yet.
+  - type: textarea
+    id: topic
+    attributes:
+      label: Topic
+      description: What would you like to discuss?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Add relevant app version, workflow, or screenshots if useful. Please remove private data first.
+  - type: dropdown
+    id: intent
+    attributes:
+      label: What kind of discussion is this?
+      options:
+        - Product question
+        - Workflow sharing
+        - Community feedback
+        - Maintainer question
+        - Other
+    validations:
+      required: true

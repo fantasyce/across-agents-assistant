@@ -1,0 +1,48 @@
+name: Product feedback
+description: Share actionable feedback that is not yet a bug report or feature request.
+title: "[Feedback]: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing feedback. If you want back-and-forth discussion, use GitHub Discussions. Use this form when you want maintainers to triage a concrete product signal.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I checked whether this belongs in Discussions instead.
+          required: true
+        - label: I removed private paths, tokens, screenshots with sensitive data, and private project details.
+          required: true
+  - type: dropdown
+    id: feedback_type
+    attributes:
+      label: Feedback type
+      options:
+        - Usability
+        - Documentation clarity
+        - Agent quality
+        - Setup friction
+        - Release confidence
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What were you trying to do, and what happened?
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How did this affect your workflow or confidence in the app?
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested next step
+      description: Optional. What would make this better?

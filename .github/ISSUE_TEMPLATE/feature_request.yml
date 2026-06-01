@@ -1,0 +1,58 @@
+name: Feature request
+description: Request a scoped product, agent, tool, or documentation improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for scoped, actionable requests. For early ideas or broad roadmap discussion, start in GitHub Discussions first.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions before opening this request.
+          required: true
+        - label: This request does not include private data, secrets, or local-only paths.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Task orchestration
+        - Agent capabilities and routing
+        - Local agent integration
+        - Cloud LLM integration
+        - MCP tools or permissions
+        - Release quality and diagnostics
+        - macOS app UX
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What user workflow is blocked, slow, risky, or confusing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, UI, API, or documentation change you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention current workarounds or designs you rejected.
+  - type: textarea
+    id: validation
+    attributes:
+      label: How would we validate it?
+      description: Optional. Mention expected tests, screenshots, E2E coverage, or acceptance criteria.

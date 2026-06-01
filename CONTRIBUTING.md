@@ -49,6 +49,18 @@ Before opening a pull request:
 
 The public CI workflow in `.github/workflows/quality.yml` runs the same open-source check, backend regression suite, and Swift build on pull requests and pushes to `main`.
 
+## Community Support and Feedback
+
+Use the right public channel so feedback stays useful and searchable:
+
+- Ask setup questions, troubleshooting questions, and open-ended product questions in [GitHub Discussions](https://github.com/fantasyce/across-agents-assistant/discussions).
+- Start early product ideas in the [Ideas discussion category](https://github.com/fantasyce/across-agents-assistant/discussions/categories/ideas) before turning them into scoped feature requests.
+- Open a [bug report](https://github.com/fantasyce/across-agents-assistant/issues/new?template=bug_report.yml) for reproducible app, backend, agent-routing, or release-quality failures.
+- Open a [feature request](https://github.com/fantasyce/across-agents-assistant/issues/new?template=feature_request.yml) for scoped, actionable improvements.
+- Open [product feedback](https://github.com/fantasyce/across-agents-assistant/issues/new?template=product_feedback.yml) when the signal is concrete but not yet a bug or feature request.
+
+Do not post API keys, tokens, private screenshots, local paths, private project names, or security vulnerabilities in public issues or discussions.
+
 By contributing, you agree that your contribution is provided under the
 project's GNU Affero General Public License v3.0.
 
