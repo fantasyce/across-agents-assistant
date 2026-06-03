@@ -745,6 +745,7 @@ class TestDecomposeAndAssign:
 
         llm = MockLLMGateway(llm_response)
         owner = OwnerAgent(llm, state)
+        owner._get_available_agents = _all_agents
 
         result = owner.decompose_and_assign(task)
 
@@ -767,6 +768,7 @@ class TestDecomposeAndAssign:
 
         llm = MockLLMGateway(llm_response)
         owner = OwnerAgent(llm, state)
+        owner._get_available_agents = _all_agents
 
         owner.decompose_and_assign(task)
 
@@ -783,6 +785,7 @@ class TestDecomposeAndAssign:
 
         llm = MockLLMGateway("not valid json")
         owner = OwnerAgent(llm, state)
+        owner._get_available_agents = _all_agents
 
         with pytest.raises(RuntimeError, match="no subtasks generated"):
             owner.decompose_and_assign(task)
@@ -798,6 +801,7 @@ class TestDecomposeAndAssign:
 
         llm = MockLLMGateway(llm_response)
         owner = OwnerAgent(llm, state)
+        owner._get_available_agents = _all_agents
 
         result = owner.decompose_and_assign(task)
 
@@ -2373,7 +2377,9 @@ def fake_task_state():
 @pytest.fixture
 def fake_owner_agent(fake_task_state):
     from across_agents_assistant.task_manager.orchestration.owner_agent import OwnerAgent
-    return OwnerAgent(lambda **kwargs: type("Resp", (), {"text": '{"subtasks":[]}'})(), fake_task_state)
+    owner = OwnerAgent(lambda **kwargs: type("Resp", (), {"text": '{"subtasks":[]}'})(), fake_task_state)
+    owner._get_available_agents = _all_agents
+    return owner
 
 
 class TestSubtaskAcceptanceOverrides:
