@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import mimetypes
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -20,6 +19,13 @@ SUPPORTED_IMAGE_MIME_TYPES = {
     "image/webp",
     "image/gif",
 }
+
+
+def _safe_local_path(raw_path: Any) -> Optional[Path]:
+    value = str(raw_path or "").strip()
+    if not value or "\x00" in value or "\r" in value or "\n" in value:
+        return None
+    return Path(value).expanduser().resolve(strict=False)
 
 
 def _field(attachment: Any, name: str, default: Any = None) -> Any:
@@ -106,7 +112,8 @@ def build_image_attachment_context(
 
         path: Optional[Path] = None
         if raw_path:
-            path = Path(os.path.expanduser(str(raw_path)))
+            path = _safe_local_path(raw_path)
+        if path:
             if include_paths:
                 lines.append(f"Local path: {path}")
             if path.exists():
@@ -328,7 +335,9 @@ def build_openai_user_content(
         if not raw_path:
             continue
 
-        path = Path(os.path.expanduser(str(raw_path)))
+        path = _safe_local_path(raw_path)
+        if not path:
+            continue
         if not path.is_file():
             continue
 
@@ -337,7 +346,7 @@ def build_openai_user_content(
             if size > max_image_bytes:
                 blocks.append({
                     "type": "text",
-                    "text": f"[Image attachment omitted because it is larger than {max_image_bytes} bytes: {path}]",
+                    "text": f"[Image attachment omitted because it is larger than {max_image_bytes} bytes: {path.name}]",
                 })
                 continue
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")

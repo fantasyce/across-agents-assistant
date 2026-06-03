@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
+from urllib.parse import urlparse
 
 from .agent_ids import LOCAL_AGENT_ID, normalize_agent_id
 from .paths import data_file
@@ -65,6 +66,18 @@ DEFAULT_CONFIG = {
     }
 }
 
+
+def _url_host(base_url: str) -> str:
+    try:
+        return (urlparse(base_url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_minimax_io_endpoint(base_url: str) -> bool:
+    host = _url_host(base_url)
+    return host == "minimax.io" or host.endswith(".minimax.io")
+
 class AgentManager:
     def __init__(self):
         self.config = self._load_config()
@@ -94,7 +107,7 @@ class AgentManager:
                     current = agents[agent_id]
                     url = (current.get("base_url") or "").lower()
                     if current.get("type") == "anthropic" or "/anthropic" in url:
-                        if "minimax.io" in url:
+                        if _is_minimax_io_endpoint(url):
                             current["base_url"] = "https://api.minimax.io/v1"
                         else:
                             current["base_url"] = "https://api.minimaxi.com/v1"

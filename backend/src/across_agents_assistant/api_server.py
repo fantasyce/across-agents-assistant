@@ -27,6 +27,22 @@ _shutdown_requested = False
 _finalization_repairs_inflight: set[str] = set()
 
 
+def _safe_error_message(operation: str) -> str:
+    return f"{operation} failed. See local backend logs for details."
+
+
+def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
+    logger.exception("%s failed", operation)
+    return HTTPException(status_code=500, detail=_safe_error_message(operation))
+
+
+def _normalize_local_path(path: str) -> str:
+    value = str(path or "").strip()
+    if not value or "\x00" in value or "\r" in value or "\n" in value:
+        raise ValueError("Invalid local path")
+    return os.path.realpath(os.path.abspath(os.path.expanduser(value)))
+
+
 def _is_original_business_subtask_id(subtask_id: str) -> bool:
     if subtask_id.endswith("-decompose"):
         return False
@@ -1255,7 +1271,7 @@ async def create_blank_project(req: CreateBlankProjectRequest):
 @app.post("/api/projects/from-folder", response_model=ProjectInfo)
 async def create_folder_project(req: CreateFolderProjectRequest):
     try:
-        path = os.path.realpath(os.path.expanduser(req.path))
+        path = _normalize_local_path(req.path)
         if not os.path.isdir(path):
             raise HTTPException(status_code=400, detail=f"Project path is not a directory: {path}")
         project = persistence.create_project(
@@ -1267,7 +1283,7 @@ async def create_folder_project(req: CreateFolderProjectRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Create folder project", e)
 
 @app.patch("/api/projects/{project_id}/pin", response_model=ProjectInfo)
 async def pin_project(project_id: str, req: PinRequest):
@@ -1280,7 +1296,7 @@ async def pin_project(project_id: str, req: PinRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get task status", e)
 
 @app.get("/api/sessions", response_model=SessionListResponse)
 async def list_sessions(limit: int = 50, offset: int = 0, project_id: Optional[str] = None):
@@ -2484,7 +2500,8 @@ async def chat_stream_endpoint(req: ChatRequest):
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            logger.exception("agent stream failed")
+            yield f"data: {json.dumps({'type': 'error', 'content': _safe_error_message('Agent stream')})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

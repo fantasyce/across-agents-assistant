@@ -1,6 +1,7 @@
 import base64
 
 from across_agents_assistant.attachments import (
+    _safe_local_path,
     append_image_attachment_context,
     build_image_attachment_context,
     build_openai_user_content,
@@ -30,6 +31,11 @@ def test_build_openai_user_content_encodes_image_attachment(tmp_path):
     assert content[1]["image_url"]["url"] == (
         "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
     )
+
+
+def test_safe_local_path_rejects_control_characters():
+    assert _safe_local_path("/tmp/screen.png\nsecret") is None
+    assert _safe_local_path("/tmp/screen.png\x00secret") is None
 
 
 def test_has_image_attachments_ignores_non_image_files(tmp_path):

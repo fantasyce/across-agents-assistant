@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from .attachments import convert_openai_content_to_anthropic
 
 logger = logging.getLogger("across_agents_assistant")
@@ -15,6 +16,26 @@ class OrchestratorClient:
     def __init__(self, config_manager):
         self.manager = config_manager
 
+    @staticmethod
+    def _url_host(base_url: str) -> str:
+        try:
+            return (urlparse(base_url).hostname or "").lower()
+        except ValueError:
+            return ""
+
+    @classmethod
+    def _is_provider_host(cls, base_url: str, domains: set[str]) -> bool:
+        host = cls._url_host(base_url)
+        return any(host == domain or host.endswith(f".{domain}") for domain in domains)
+
+    @classmethod
+    def _is_minimax_endpoint(cls, base_url: str) -> bool:
+        return cls._is_provider_host(base_url, {"minimaxi.com", "minimax.io"})
+
+    @classmethod
+    def _is_deepseek_endpoint(cls, base_url: str) -> bool:
+        return cls._is_provider_host(base_url, {"deepseek.com"})
+
     def _get_openai_client(self, agent_config):
         import httpx
         from openai import AsyncOpenAI
@@ -23,9 +44,9 @@ class OrchestratorClient:
         agent_id = agent_config.get("id", "")
 
         if not api_key:
-            if "minimax" in base_url or agent_id == "minimax":
+            if self._is_minimax_endpoint(base_url) or agent_id == "minimax":
                 api_key = os.environ.get("MINIMAX_API_KEY", "")
-            elif "deepseek" in base_url or agent_id == "deepseek":
+            elif self._is_deepseek_endpoint(base_url) or agent_id == "deepseek":
                 api_key = os.environ.get("DEEPSEEK_API_KEY", "")
             else:
                 api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -53,7 +74,7 @@ class OrchestratorClient:
         agent_id = agent_config.get("id", "")
 
         if not api_key:
-            if "minimax" in base_url or agent_id == "minimax":
+            if self._is_minimax_endpoint(base_url) or agent_id == "minimax":
                 api_key = os.environ.get("MINIMAX_API_KEY", "")
             else:
                 api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -66,7 +87,7 @@ class OrchestratorClient:
     def _is_minimax_anthropic(config: Dict[str, Any]) -> bool:
         base = (config.get("base_url") or "").lower()
         aid = (config.get("id") or "").lower()
-        return "minimaxi.com" in base or "minimax.io" in base or aid == "minimax"
+        return OrchestratorClient._is_minimax_endpoint(base) or aid == "minimax"
 
     async def chat(self, agent_id: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> OrchestratorResponse:
         agent_config = self.manager.get_agent_config(agent_id)

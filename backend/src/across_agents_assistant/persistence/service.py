@@ -19,6 +19,13 @@ logger = logging.getLogger("across_agents_assistant.persistence")
 DEFAULT_DB_PATH = os.environ.get("ACROSS_AGENTS_DB_PATH", str(data_file("assistant.db")))
 
 
+def _normalize_local_path(path: str) -> str:
+    value = str(path or "").strip()
+    if not value or "\x00" in value or "\r" in value or "\n" in value:
+        raise ValueError("Invalid local path")
+    return os.path.realpath(os.path.abspath(os.path.expanduser(value)))
+
+
 class PersistenceService:
     """统一持久化服务入口。
 
@@ -67,7 +74,7 @@ class PersistenceService:
         project_id: Optional[str] = None,
         assign_unscoped_sessions: bool = False,
     ) -> Dict[str, Any]:
-        normalized = os.path.realpath(os.path.expanduser(path))
+        normalized = _normalize_local_path(path)
         os.makedirs(normalized, exist_ok=True)
         safe_name = (name or os.path.basename(normalized) or "Project").strip()
         safe_kind = kind if kind in {"blank", "folder"} else "folder"
