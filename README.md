@@ -289,7 +289,7 @@ The check verifies whitespace, forbidden tracked artifacts, common secret patter
 
 GitHub security automation is also enabled:
 
-- The Security workflow runs CodeQL for the Python backend and Swift macOS client on pull requests, pushes to `main`, scheduled weekly runs, and manual dispatches.
+- The Security workflow runs CodeQL for the Python backend on pull requests, pushes to `main`, scheduled weekly runs, and manual dispatches. The Quality workflow separately verifies the Swift macOS client build.
 - Dependabot monitors GitHub Actions, Python requirements, and Swift Package Manager dependencies.
 - Repository secret scanning and push protection are enabled for the public repository.
 
