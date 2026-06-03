@@ -27,6 +27,8 @@ class LLMProviderConfig:
     name: str
     api_key_env: str
     endpoint: str
+    provider_type: str = "openai_compatible"
+    models_endpoint: Optional[str] = None
     models: List[ModelInfo] = field(default_factory=list)
     enabled: bool = True
 
@@ -44,45 +46,27 @@ LEGACY_CONFIG_FILE = Path.home() / "Library/Application Support/AcrossAgentsAssi
 
 
 def _default_config() -> LLMConfig:
-    """Return default configuration with MiniMax, Bailian, Deepseek providers."""
+    """Return default configuration from the provider registry."""
+    from .provider_registry import get_default_provider_definitions
+
+    providers = []
+    for provider in get_default_provider_definitions():
+        providers.append(
+            LLMProviderConfig(
+                provider_id=provider.provider_id,
+                name=provider.name,
+                api_key_env=provider.api_key_env,
+                endpoint=provider.endpoint,
+                provider_type=provider.provider_type,
+                models_endpoint=provider.models_endpoint,
+                models=list(provider.default_models),
+                enabled=provider.enabled,
+            )
+        )
     return LLMConfig(
-        providers=[
-            LLMProviderConfig(
-                provider_id="minimax",
-                name="MiniMax",
-                api_key_env="MINIMAX_API_KEY",
-                endpoint="https://api.minimaxi.com/v1",
-                models=[
-                    ModelInfo(model_id="MiniMax-M2.7", name="MiniMax M2.7", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                ],
-                enabled=True,
-            ),
-            LLMProviderConfig(
-                provider_id="bailian",
-                name="Bailian (Alibaba)",
-                api_key_env="BAILIAN_API_KEY",
-                endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                models=[
-                    ModelInfo(model_id="qwen-plus", name="Qwen Plus", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                    ModelInfo(model_id="qwen-max", name="Qwen Max", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                    ModelInfo(model_id="qwen-turbo", name="Qwen Turbo", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                ],
-                enabled=True,
-            ),
-            LLMProviderConfig(
-                provider_id="deepseek",
-                name="Deepseek",
-                api_key_env="DEEPSEEK_API_KEY",
-                endpoint="https://api.deepseek.com/v1",
-                models=[
-                    ModelInfo(model_id="deepseek-chat", name="DeepSeek Chat", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                    ModelInfo(model_id="deepseek-coder", name="DeepSeek Coder", supports_vision=False, supports_function_calling=True, max_tokens=8192),
-                ],
-                enabled=True,
-            ),
-        ],
+        providers=providers,
         primary_provider="minimax",
-        fallback_providers=["bailian", "deepseek"],
+        fallback_providers=["deepseek", "openai", "bailian"],
     )
 
 
@@ -96,6 +80,8 @@ def _parse_config(data: Dict) -> LLMConfig:
             name=p["name"],
             api_key_env=p["api_key_env"],
             endpoint=p["endpoint"],
+            provider_type=p.get("provider_type", p.get("type", "openai_compatible")),
+            models_endpoint=p.get("models_endpoint"),
             models=models,
             enabled=p.get("enabled", True),
         ))
@@ -133,6 +119,8 @@ def save_llm_config(config: LLMConfig) -> None:
                 "name": p.name,
                 "api_key_env": p.api_key_env,
                 "endpoint": p.endpoint,
+                "provider_type": p.provider_type,
+                "models_endpoint": p.models_endpoint,
                 "models": [vars(m) for m in p.models],
                 "enabled": p.enabled,
             }

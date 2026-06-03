@@ -117,7 +117,7 @@ class UniversalAgentClient:
 
         agent_id = normalize_agent_id(target_agent or self.manager.get_active_agent()) or LOCAL_AGENT_ID
         config = self.manager.get_agent_config(agent_id) or {}
-        from ..local_agent_health import resolve_local_agent_executable
+        from ..local_agent_health import get_configured_agent_model, resolve_local_agent_executable
 
         executable_path = resolve_local_agent_executable(agent_id)
 
@@ -143,6 +143,16 @@ class UniversalAgentClient:
                 args_template = ["chat", "-q", "{message}", "-Q", "--yolo"]
             elif agent_id == "claude":
                 args_template = ["-p", "--permission-mode", "acceptEdits", "--output-format", "json", "{message}"]
+            elif agent_id == "codex":
+                args_template = [
+                    "exec",
+                    "--ask-for-approval",
+                    "never",
+                    "--sandbox",
+                    "workspace-write",
+                    "--skip-git-repo-check",
+                    "{message}",
+                ]
             elif agent_id == LOCAL_AGENT_ID:
                 # The gateway-compatible local CLI requires --agent, --to, or
                 # --session-id. Use --to with a fixed E.164 number for task
@@ -159,6 +169,25 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
+        configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
+        if configured_model:
+            if agent_id == "codex" and "exec" in args:
+                exec_index = args.index("exec")
+                args[exec_index + 1:exec_index + 1] = ["--model", configured_model]
+            elif agent_id == "hermes" and "chat" in args:
+                chat_index = args.index("chat")
+                args[chat_index + 1:chat_index + 1] = ["--model", configured_model]
+            elif agent_id == "claude":
+                args[1:1] = ["--model", configured_model]
+            elif agent_id == LOCAL_AGENT_ID and "agent" in args:
+                agent_index = args.index("agent")
+                args[agent_index + 1:agent_index + 1] = ["--model", configured_model]
+
+        if agent_id == "codex":
+            if project_dir and os.path.isdir(project_dir):
+                prompt_index = len(args) - 1
+                args[prompt_index:prompt_index] = ["--cd", project_dir]
+
         # Add session id logic for OpenClaw (override --to if session_id provided)
         if agent_id == LOCAL_AGENT_ID and session_id and not use_current:
             # Remove --to and its value if present, then add --session-id
@@ -170,9 +199,6 @@ class UniversalAgentClient:
             args.extend(["--session-id", session_id])
 
         try:
-            import os
-            import re
-
             default_workspace = str(default_local_agent_workspace())
             os.makedirs(default_workspace, exist_ok=True)
 
@@ -486,7 +512,7 @@ class UniversalAgentClient:
 
         # For Claude/Hermes, use streaming mode
         config = self.manager.get_agent_config(agent_id) or {}
-        from ..local_agent_health import resolve_local_agent_executable
+        from ..local_agent_health import get_configured_agent_model, resolve_local_agent_executable
 
         executable_path = resolve_local_agent_executable(agent_id)
 
@@ -536,6 +562,16 @@ class UniversalAgentClient:
                 args.extend(["--resume", self.hermes_sessions[session_id]])
             args.extend(["chat", "-q", message, "--output-format", "stream-json", "--include-partial-messages", "--yolo"])
             stream_cwd = workspace_dir
+        elif agent_id == "codex":
+            configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
+            args.extend(["exec"])
+            if configured_model:
+                args.extend(["--model", configured_model])
+            args.extend(["--ask-for-approval", "never", "--sandbox", "workspace-write", "--skip-git-repo-check"])
+            if project_dir:
+                args.extend(["--cd", project_dir])
+            args.append(message)
+            stream_cwd = project_dir if is_task_scenario else workspace_dir
         else:
             stream_cwd = workspace_dir
 

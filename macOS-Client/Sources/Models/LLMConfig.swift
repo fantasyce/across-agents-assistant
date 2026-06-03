@@ -6,6 +6,9 @@ struct LLMConfig: Identifiable {
     var apiKey: String?
     var endpoint: String?
     var model: String?
+    var providerType: String = "openai_compatible"
+    var modelsEndpoint: String? = nil
+    var availableModels: [String]? = nil
     var temperature: Double = 0.7
     var maxTokens: Int = 8192
 
@@ -16,16 +19,36 @@ struct LLMConfig: Identifiable {
     static let deepSeek = LLMConfig(
         id: "deepseek",
         name: "DeepSeek",
-        endpoint: "https://api.deepseek.com",
-        model: "deepseek-chat"
+        endpoint: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        modelsEndpoint: "https://api.deepseek.com/v1/models",
+        availableModels: ["deepseek-chat", "deepseek-reasoner"]
     )
 
     static let miniMax = LLMConfig(
         id: "minimax",
         name: "MiniMax",
         endpoint: "https://api.minimaxi.com/v1",
-        model: "MiniMax-M2.7"
+        model: "MiniMax-M2.7",
+        modelsEndpoint: "https://api.minimaxi.com/v1/models",
+        availableModels: ["MiniMax-M2.7", "MiniMax-M3"]
     )
+
+    static let allDefaults: [LLMConfig] = [
+        LLMConfig(id: "openai", name: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-5.1", modelsEndpoint: "https://api.openai.com/v1/models", availableModels: ["gpt-5.1", "gpt-5-codex"]),
+        LLMConfig(id: "anthropic", name: "Anthropic", endpoint: "https://api.anthropic.com/v1", model: "claude-sonnet-4-6", providerType: "anthropic", modelsEndpoint: "https://api.anthropic.com/v1/models", availableModels: ["claude-sonnet-4-6", "claude-opus-4-1"]),
+        .deepSeek,
+        .miniMax,
+        LLMConfig(id: "bailian", name: "Alibaba Bailian / Qwen", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", modelsEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/models", availableModels: ["qwen-plus", "qwen-max", "qwen-turbo"]),
+        LLMConfig(id: "moonshot", name: "Moonshot / Kimi", endpoint: "https://api.moonshot.cn/v1", model: "kimi-k2-0711-preview", modelsEndpoint: "https://api.moonshot.cn/v1/models", availableModels: ["kimi-k2-0711-preview", "moonshot-v1-32k"]),
+        LLMConfig(id: "zhipu", name: "Zhipu GLM", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.5", modelsEndpoint: "https://open.bigmodel.cn/api/paas/v4/models", availableModels: ["glm-4.5", "glm-4.5-air"]),
+        LLMConfig(id: "volcengine", name: "Volcengine Ark / Doubao", endpoint: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-seed-1-6", modelsEndpoint: "https://ark.cn-beijing.volces.com/api/v3/models", availableModels: ["doubao-seed-1-6"]),
+        LLMConfig(id: "google", name: "Google Gemini", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-pro", modelsEndpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models", availableModels: ["gemini-2.5-pro", "gemini-2.5-flash"]),
+        LLMConfig(id: "xai", name: "xAI", endpoint: "https://api.x.ai/v1", model: "grok-4", modelsEndpoint: "https://api.x.ai/v1/models", availableModels: ["grok-4", "grok-4-mini"]),
+        LLMConfig(id: "mistral", name: "Mistral AI", endpoint: "https://api.mistral.ai/v1", model: "mistral-large-latest", modelsEndpoint: "https://api.mistral.ai/v1/models", availableModels: ["mistral-large-latest", "codestral-latest"]),
+        LLMConfig(id: "groq", name: "Groq", endpoint: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", modelsEndpoint: "https://api.groq.com/openai/v1/models", availableModels: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]),
+        LLMConfig(id: "cohere", name: "Cohere", endpoint: "https://api.cohere.com/compatibility/v1", model: "command-a-03-2025", modelsEndpoint: "https://api.cohere.com/compatibility/v1/models", availableModels: ["command-a-03-2025"])
+    ]
 }
 
 
@@ -36,6 +59,9 @@ struct PersistedLLMConfig: Codable {
     var name: String
     var endpoint: String?
     var model: String?
+    var providerType: String
+    var modelsEndpoint: String?
+    var availableModels: [String]?
     var temperature: Double
     var maxTokens: Int
 
@@ -44,8 +70,24 @@ struct PersistedLLMConfig: Codable {
         self.name = config.name
         self.endpoint = config.endpoint
         self.model = config.model
+        self.providerType = config.providerType
+        self.modelsEndpoint = config.modelsEndpoint
+        self.availableModels = config.availableModels
         self.temperature = config.temperature
         self.maxTokens = config.maxTokens
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        providerType = try container.decodeIfPresent(String.self, forKey: .providerType) ?? "openai_compatible"
+        modelsEndpoint = try container.decodeIfPresent(String.self, forKey: .modelsEndpoint)
+        availableModels = try container.decodeIfPresent([String].self, forKey: .availableModels)
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7
+        maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 8192
     }
 }
 
@@ -56,6 +98,9 @@ extension LLMConfig {
         self.apiKey = nil  // Secrets are not persisted in UserDefaults
         self.endpoint = persisted.endpoint
         self.model = persisted.model
+        self.providerType = persisted.providerType
+        self.modelsEndpoint = persisted.modelsEndpoint
+        self.availableModels = persisted.availableModels
         self.temperature = persisted.temperature
         self.maxTokens = persisted.maxTokens
     }

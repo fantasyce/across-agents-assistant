@@ -27,9 +27,12 @@ def isolated_local_agent_config(monkeypatch, tmp_path):
     local_agent_health.clear_local_agent_health_cache()
 
 
-def test_openclaw_is_first_class_agent_id_and_local_is_legacy_alias():
+def test_openclaw_is_first_class_agent_id_without_legacy_local_alias():
     assert normalize_agent_id("openclaw") == "openclaw"
-    assert normalize_agent_id("local") == "openclaw"
+    assert normalize_agent_id("local") == "local"
+    assert "local" not in local_agent_health.LOCAL_AGENT_SPECS
+    with pytest.raises(ValueError):
+        local_agent_health.save_configured_agent_path("local", "/usr/local/bin/openclaw")
 
 
 def test_detect_agents_marks_installed_but_unresponsive_agent_unavailable(monkeypatch):
@@ -163,6 +166,38 @@ def test_claude_detection_does_not_run_prompt_probe(monkeypatch):
     )
 
 
+def test_codex_detection_is_lightweight_and_does_not_run_prompt(monkeypatch):
+    local_agent_health.clear_local_agent_health_cache()
+    calls = []
+
+    def fake_which(name):
+        return f"/usr/local/bin/{name}"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd == ["/bin/zsh", "-l", "-c", "echo $PATH"]:
+            return _Completed(stdout="/usr/local/bin\n")
+        if cmd[-1] in {"--version", "version"}:
+            return _Completed(stdout=f"{cmd[0]} 1.2.3\n")
+        if cmd == ["/usr/local/bin/openclaw", "gateway", "status"]:
+            return _Completed(stdout="Runtime: running\nConnectivity probe: ok\n")
+        if cmd == ["/usr/local/bin/hermes", "status"]:
+            return _Completed(stdout="Provider: MiniMax\nMiniMax ✓ configured\n")
+        return _Completed(stdout="OK\n")
+
+    monkeypatch.setattr(local_agent_health.shutil, "which", fake_which)
+    monkeypatch.setattr(local_agent_health.subprocess, "run", fake_run)
+
+    detected = local_agent_health.detect_local_agents(force=True)
+
+    assert detected["codex"]["available"] is True
+    assert ["/usr/local/bin/codex", "--version"] in calls
+    assert not any(
+        cmd[:2] == ["/usr/local/bin/codex", "exec"]
+        for cmd in calls
+    )
+
+
 def test_configured_path_takes_priority_without_scanning_home(monkeypatch, tmp_path):
     calls = []
     configured = tmp_path / "bin" / "claude"
@@ -192,18 +227,17 @@ def test_configured_path_takes_priority_without_scanning_home(monkeypatch, tmp_p
     assert ("which", "claude") not in calls
 
 
-def test_legacy_local_agent_config_migrates_to_openclaw(tmp_path):
+def test_legacy_local_agent_config_is_ignored_not_migrated(tmp_path):
     config_file = local_agent_health.LOCAL_AGENT_CONFIG_FILE
     config_file.write_text(
         '{"agents":{"local":{"executable_path":"/usr/local/bin/openclaw"}}}',
         encoding="utf-8",
     )
 
-    assert local_agent_health.get_configured_agent_path("openclaw") == "/usr/local/bin/openclaw"
-    assert local_agent_health.get_configured_agent_path("local") == "/usr/local/bin/openclaw"
-    migrated = json.loads(config_file.read_text(encoding="utf-8"))
-    assert "openclaw" in migrated["agents"]
-    assert "local" not in migrated["agents"]
+    assert local_agent_health.get_configured_agent_path("openclaw") is None
+    assert local_agent_health.get_configured_agent_path("local") is None
+    persisted = json.loads(config_file.read_text(encoding="utf-8"))
+    assert "local" in persisted["agents"]
 
 
 def test_missing_agent_does_not_return_fake_candidate_paths(monkeypatch):
@@ -250,6 +284,13 @@ def test_dispatcher_valid_agents_excludes_unresponsive_local_agent(monkeypatch):
                 "path": None,
                 "version": None,
             },
+            "codex": {
+                "found": True,
+                "available": True,
+                "status": "available",
+                "path": "/usr/local/bin/codex",
+                "version": "codex-cli 1.0",
+            },
         },
     )
 
@@ -271,4 +312,4 @@ def test_owner_agent_available_agents_excludes_unresponsive_local_agent(monkeypa
 
     assert owner._is_agent_available("hermes") is True
     assert owner._is_agent_available("openclaw") is False
-    assert owner._is_agent_available("local") is False
+    assert owner._is_agent_available("codex") is False

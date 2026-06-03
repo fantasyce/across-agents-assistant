@@ -29,6 +29,8 @@ from across_agents_assistant.task_manager.models import (
     WaveLifecycleStatus,
 )
 from across_agents_assistant.task_manager.state import TaskState
+from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
 from across_agents_assistant.workspace_hygiene import (
     IGNORED_DIR_NAMES,
     RUNTIME_DATA_DIR_NAMES,
@@ -47,8 +49,8 @@ class TaskOrchestrator:
     running validation, acceptance, fix cycles, and integration acceptance.
     """
 
-    _LOCAL_AGENT_IDS = ("openclaw", "hermes", "claude")
-    _CLOUD_AGENT_IDS = ("deepseek", "minimax")
+    _LOCAL_AGENT_IDS = LOCAL_CLI_AGENT_IDS
+    _CLOUD_AGENT_IDS = get_default_provider_ids()
 
     def __init__(
         self,

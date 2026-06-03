@@ -12,13 +12,13 @@ from across_agents_assistant.api_server import app
 from across_agents_assistant.agent_capabilities import AgentCapabilityStore
 
 
-def test_store_normalizes_legacy_local_agent_and_merges_defaults(tmp_path):
+def test_store_does_not_normalize_legacy_local_agent_alias(tmp_path):
     store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
 
     profile = store.get_profile("local")
 
-    assert profile["agent_id"] == "openclaw"
-    assert "general_execution" in profile["enabled_skill_ids"]
+    assert profile["agent_id"] == "local"
+    assert profile["enabled_skill_ids"] == []
     assert profile["enabled_plugin_ids"] == []
     assert profile["enabled_tool_names"] == []
 
@@ -59,7 +59,7 @@ def test_store_builds_prompt_context_for_selected_agents(tmp_path):
         },
     )
 
-    payload = store.build_task_context(["deepseek", "local"])
+    payload = store.build_task_context(["deepseek", "openclaw"])
 
     assert set(payload["profiles"].keys()) == {"deepseek", "openclaw"}
     assert "deepseek" in payload["prompt"]
@@ -185,7 +185,7 @@ def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
 
     client = TestClient(app)
     response = client.put(
-        "/api/agent-capabilities/local",
+        "/api/agent-capabilities/openclaw",
         json={
             "enabled_skill_ids": ["macos_automation"],
             "enabled_plugin_ids": ["filesystem"],

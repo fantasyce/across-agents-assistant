@@ -15,6 +15,8 @@ import urllib.request
 from typing import Any, Dict, List
 
 from across_agents_assistant.workspace_hygiene import IGNORED_DIR_NAMES, scan_workspace_hygiene
+from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
 
 from .project_acceptance import (
     _check_requested_framework_alignment,
@@ -24,8 +26,8 @@ from .project_acceptance import (
 from .quality_gates import QualityGateResult, build_quality_report
 
 
-LOCAL_AGENT_IDS = {"openclaw", "hermes", "claude"}
-CLOUD_AGENT_IDS = {"deepseek", "minimax"}
+LOCAL_AGENT_IDS = set(LOCAL_CLI_AGENT_IDS)
+CLOUD_AGENT_IDS = set(get_default_provider_ids())
 
 
 def _python_probe_executable() -> str:
@@ -2575,7 +2577,7 @@ function includesAll(text, terms) {
         return {
           buttonExists: !!button,
           changed: beforeInput !== afterInput || afterInput !== after,
-          hasSelectedAgent: lowered.includes('selected agent') || /(openclaw|hermes|claude code|deepseek|minimax)/.test(lowered),
+          hasSelectedAgent: lowered.includes('selected agent') || /(openclaw|hermes|claude code|codex|openai|anthropic|deepseek|minimax|bailian|moonshot|zhipu|volcengine|google|xai|mistral|groq|cohere)/.test(lowered),
           hasMatched: lowered.includes('matched') || /\b(skill|capability|backend api|schema|research|review)\b/.test(lowered),
           hasMcpRisk: lowered.includes('mcp risk') || /\b(low|medium|high)\b/.test(lowered),
           hasReason: lowered.includes('reason') || /\b(primary|because|domain|quality|discovery|review|integration|specialist)\b/.test(lowered),

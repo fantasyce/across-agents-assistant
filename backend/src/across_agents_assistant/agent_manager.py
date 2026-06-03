@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from .agent_ids import LEGACY_LOCAL_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
+from .agent_ids import LOCAL_AGENT_ID, normalize_agent_id
 from .paths import data_file
 
 AGENTS_CONFIG_FILE = data_file("llm_agents.json")
@@ -55,6 +55,12 @@ DEFAULT_CONFIG = {
             "base_url": "",
             "api_key": "",
             "model": "claude-3-5-sonnet-20241022"
+        },
+        "codex": {
+            "type": "local_cli",
+            "base_url": "",
+            "api_key": "",
+            "model": "gpt-5-codex"
         }
     }
 }
@@ -79,13 +85,6 @@ class AgentManager:
             if "agents" not in user_config:
                 user_config["agents"] = {}
             agents = user_config["agents"]
-            if isinstance(agents, dict) and LEGACY_LOCAL_AGENT_ID in agents:
-                agents.setdefault(LOCAL_AGENT_ID, agents[LEGACY_LOCAL_AGENT_ID])
-                agents.pop(LEGACY_LOCAL_AGENT_ID, None)
-                needs_save = True
-            if user_config.get("active_agent") == LEGACY_LOCAL_AGENT_ID:
-                user_config["active_agent"] = LOCAL_AGENT_ID
-                needs_save = True
 
             for agent_id, agent_data in DEFAULT_CONFIG["agents"].items():
                 if agent_id not in agents:

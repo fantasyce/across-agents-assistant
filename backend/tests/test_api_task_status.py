@@ -602,7 +602,7 @@ def test_quality_health_active_quality_remediation_next_action():
 
     task = Task.new("quality remediation")
     task.status = TaskStatus.RUNNING
-    st = SubTask(task_id=task.task_id, subtask_id="st-quality-1234", description="fix readme", agent_id="local")
+    st = SubTask(task_id=task.task_id, subtask_id="st-quality-1234", description="fix readme", agent_id="openclaw")
     st.status = JobStatus.RUNNING
     task.subtasks.append(st)
 
@@ -851,7 +851,7 @@ def test_running_task_with_active_remediation_reports_recovering_health():
     state = TaskState()
     task = state.create_task("running fix")
     task.status = TaskStatus.RUNNING
-    original = SubTask(subtask_id="st-cli", description="CLI", agent_id="local")
+    original = SubTask(subtask_id="st-cli", description="CLI", agent_id="openclaw")
     original.status = JobStatus.FAILED
     fix = SubTask(subtask_id="st-cli-fix-1", description="Fix CLI", agent_id="deepseek")
     fix.status = JobStatus.RUNNING

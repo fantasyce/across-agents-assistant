@@ -12,6 +12,7 @@ from ..agent_bridge.result import SubtaskResult, ResultStatus
 from ..approval.service import ApprovalService
 from ..approval.executor import ToolExecutor
 from ..approval.models import RiskLevel, ApprovalStatus, ApprovalRequest
+from ..llm_gateway.provider_registry import get_default_provider_ids
 from ..persistence.permissions import ToolPermissionStore
 from ..tools.tool_registry import registry
 from .models import Job, JobStatus, SubTask, Task, JobResult, ProgressUpdate
@@ -67,7 +68,7 @@ class TaskDispatcher:
             )
             if is_available:
                 available.append(agent_id)
-        for llm_id in ("deepseek", "minimax"):
+        for llm_id in get_default_provider_ids():
             is_configured = self._is_cloud_llm_configured(llm_id)
             logger.info(f"Cloud LLM availability check: {llm_id} -> {'configured' if is_configured else 'not configured'}")
             if is_configured:

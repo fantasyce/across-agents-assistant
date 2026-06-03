@@ -11,9 +11,11 @@ private struct AgentDetectResult: Decodable {
     let version: String?
     let error: String?
     let configuredPath: String?
+    let configuredModel: String?
     let source: String?
     let detectionMethod: String?
     let candidatePaths: [String]?
+    let defaultModels: [String]?
 
     enum CodingKeys: String, CodingKey {
         case found
@@ -25,19 +27,23 @@ private struct AgentDetectResult: Decodable {
         case version
         case error
         case configuredPath = "configured_path"
+        case configuredModel = "configured_model"
         case source
         case detectionMethod = "detection_method"
         case candidatePaths = "candidate_paths"
+        case defaultModels = "default_models"
     }
 }
 
 private struct AgentConfigRequest: Encodable {
     let agentId: String
     let executablePath: String?
+    let model: String?
 
     enum CodingKeys: String, CodingKey {
         case agentId = "agent_id"
         case executablePath = "executable_path"
+        case model
     }
 }
 
@@ -65,6 +71,34 @@ private struct KeyValueResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case providerId = "provider_id"
         case apiKey = "api_key"
+    }
+}
+
+private struct LLMProviderModelResponse: Decodable {
+    let modelId: String
+    let name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case modelId = "model_id"
+        case name
+    }
+}
+
+private struct LLMProviderResponse: Decodable {
+    let providerId: String
+    let name: String
+    let endpoint: String
+    let providerType: String
+    let modelsEndpoint: String?
+    let models: [LLMProviderModelResponse]
+
+    enum CodingKeys: String, CodingKey {
+        case providerId = "provider_id"
+        case name
+        case endpoint
+        case providerType = "provider_type"
+        case modelsEndpoint = "models_endpoint"
+        case models
     }
 }
 
@@ -103,12 +137,19 @@ final class SettingsViewModel: ObservableObject {
     @Published var apiKeyStatusCache: [String: String] = [:]
 
     private let backendBase = "http://backend"
-    private let localAgentIds: Set<String> = [AgentIDs.openclaw, "hermes", "claude"]
-    private let cloudLLMIds: Set<String> = ["deepseek", "minimax"]
+    private var localAgentIds: Set<String> {
+        Set(localAgents.map { AgentIDs.normalized($0.id) ?? $0.id })
+    }
+
+    private var cloudLLMIds: Set<String> {
+        Set(cloudLLMs.map(\.id))
+    }
     private var didStartBootstrap = false
     private var didCompleteAvailabilityBootstrap = false
     private var didRefreshLocalAgentsThisSession = false
     private var isRefreshingLocalAgents = false
+
+    private static let defaultLocalAgents: [AgentConfig] = [.localAgent, .hermes, .claude, .codex]
 
     func isKeyConfigured(_ providerId: String) -> Bool {
         return apiKeyStatusCache[providerId] == "configured"
@@ -176,8 +217,8 @@ final class SettingsViewModel: ObservableObject {
         if loadPersisted {
             loadPersistedSettings()
         } else {
-            localAgents = [.localAgent, .hermes, .claude]
-            cloudLLMs = [.deepSeek, .miniMax]
+            localAgents = Self.defaultLocalAgents
+            cloudLLMs = LLMConfig.allDefaults
             apiKeyStatusCache = [:]
         }
 
@@ -222,6 +263,7 @@ final class SettingsViewModel: ObservableObject {
                 failAvailabilityBootstrap("Unable to connect to the backend. Please restart the app.")
                 return
             }
+            await refreshCloudProvidersFromBackend()
             await refreshBackendKeyStatus()
             await detectAgentsFromBackend(force: false)
             await refreshStartupDiagnostics()
@@ -490,9 +532,9 @@ final class SettingsViewModel: ObservableObject {
         // Decode PersistedLLMConfig (no apiKey) from UserDefaults
         if let data = UserDefaults.standard.data(forKey: "cloudLLMs"),
            let saved = try? JSONDecoder().decode([PersistedLLMConfig].self, from: data) {
-            cloudLLMs = saved.map { LLMConfig(from: $0) }
+            cloudLLMs = mergeCloudLLMDefaults(saved.map { LLMConfig(from: $0) })
         } else {
-            cloudLLMs = [.deepSeek, .miniMax]
+            cloudLLMs = LLMConfig.allDefaults
         }
 
         // apiKeyStatusCache is built from backend status, NOT from persisted settings.
@@ -504,7 +546,7 @@ final class SettingsViewModel: ObservableObject {
             localAgents = mergeLocalAgentDefaults(saved)
             persistLocalAgentSettings()
         } else {
-            localAgents = [.localAgent, .hermes, .claude]
+            localAgents = Self.defaultLocalAgents
         }
 
         // Rewrite any legacy persisted cloud settings in the current secret-free format.
@@ -521,6 +563,7 @@ final class SettingsViewModel: ObservableObject {
 
         // Query backend-owned credential state first; this is enough to let the
         // main UI leave startup loading when a cloud provider is configured.
+        await refreshCloudProvidersFromBackend()
         await refreshBackendKeyStatus()
         completeBackendReadyAvailabilityBootstrap()
         await refreshStartupDiagnostics()
@@ -532,6 +575,69 @@ final class SettingsViewModel: ObservableObject {
         if !apiKeyStatusCache.values.contains("configured") {
             // No configured providers from backend or elsewhere.
             // The UI will show "not configured" until the user saves a key.
+        }
+    }
+
+    private func refreshCloudProvidersFromBackend() async {
+        guard let url = URL(string: "\(backendBase)/api/llm/providers") else { return }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return
+            }
+            let providers = try JSONDecoder().decode([LLMProviderResponse].self, from: data)
+            let refreshed = providers.map { provider in
+                var config = LLMConfig(
+                    id: provider.providerId,
+                    name: provider.name,
+                    endpoint: provider.endpoint,
+                    model: provider.models.first?.modelId,
+                    providerType: provider.providerType,
+                    modelsEndpoint: provider.modelsEndpoint,
+                    availableModels: provider.models.map(\.modelId)
+                )
+                if let existing = cloudLLMs.first(where: { $0.id == provider.providerId }) {
+                    config.apiKey = existing.apiKey
+                    config.temperature = existing.temperature
+                    config.maxTokens = existing.maxTokens
+                    if let model = existing.model, !model.isEmpty {
+                        config.model = model
+                    }
+                }
+                return config
+            }
+            cloudLLMs = mergeCloudLLMDefaults(refreshed)
+            persistCloudSettings()
+            refreshAvailabilityState()
+        } catch {
+            print("Failed to refresh cloud providers from backend: \(error)")
+        }
+    }
+
+    func refreshCloudModels(providerId: String) async {
+        guard let escaped = providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(backendBase)/api/llm/models/\(escaped)?refresh=true") else {
+            return
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return
+            }
+            let models = try JSONDecoder().decode([LLMProviderModelResponse].self, from: data).map(\.modelId)
+            guard !models.isEmpty,
+                  let index = cloudLLMs.firstIndex(where: { $0.id == providerId }) else {
+                return
+            }
+            cloudLLMs[index].availableModels = models
+            if cloudLLMs[index].model?.isEmpty != false {
+                cloudLLMs[index].model = models.first
+            }
+            persistCloudSettings()
+        } catch {
+            print("Failed to refresh models for \(providerId): \(error)")
         }
     }
 
@@ -644,7 +750,13 @@ final class SettingsViewModel: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(AgentConfigRequest(agentId: config.id, executablePath: config.configuredPath))
+            request.httpBody = try JSONEncoder().encode(
+                AgentConfigRequest(
+                    agentId: config.id,
+                    executablePath: config.configuredPath,
+                    model: config.selectedModel
+                )
+            )
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
@@ -703,6 +815,11 @@ final class SettingsViewModel: ObservableObject {
         updated.detectionMethod = result.detectionMethod
         updated.error = result.error
         updated.candidatePaths = result.candidatePaths
+        updated.selectedModel = result.configuredModel ?? updated.selectedModel
+        let detectedModels = result.defaultModels ?? []
+        if !detectedModels.isEmpty {
+            updated.availableModels = detectedModels
+        }
 
         if result.found, result.available ?? result.found, result.path != nil {
             updated.status = .installed
@@ -719,9 +836,9 @@ final class SettingsViewModel: ObservableObject {
     }
 
     private func mergeLocalAgentDefaults(_ saved: [AgentConfig]) -> [AgentConfig] {
-        let defaults: [AgentConfig] = [.localAgent, .hermes, .claude]
+        let defaults: [AgentConfig] = Self.defaultLocalAgents
         return defaults.map { defaultAgent in
-            guard var savedAgent = saved.first(where: { AgentIDs.normalized($0.id) == defaultAgent.id }) else {
+            guard var savedAgent = saved.first(where: { (AgentIDs.normalized($0.id) ?? $0.id) == defaultAgent.id }) else {
                 return defaultAgent
             }
             if savedAgent.id != defaultAgent.id {
@@ -734,13 +851,53 @@ final class SettingsViewModel: ObservableObject {
                 migrated.detectionMethod = savedAgent.detectionMethod
                 migrated.error = savedAgent.error
                 migrated.candidatePaths = savedAgent.candidatePaths
+                migrated.selectedModel = savedAgent.selectedModel
+                migrated.availableModels = savedAgent.availableModels
                 savedAgent = migrated
             }
             if savedAgent.name.isEmpty {
                 savedAgent.name = defaultAgent.name
             }
+            if savedAgent.availableModels?.isEmpty != false {
+                savedAgent.availableModels = defaultAgent.availableModels
+            }
+            if savedAgent.selectedModel?.isEmpty != false {
+                savedAgent.selectedModel = defaultAgent.selectedModel
+            }
             return savedAgent
         }
+    }
+
+    private func mergeCloudLLMDefaults(_ saved: [LLMConfig]) -> [LLMConfig] {
+        let savedById = Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+        var merged = LLMConfig.allDefaults.map { defaultConfig -> LLMConfig in
+            guard var savedConfig = savedById[defaultConfig.id] else {
+                return defaultConfig
+            }
+            if savedConfig.name.isEmpty {
+                savedConfig.name = defaultConfig.name
+            }
+            if savedConfig.endpoint?.isEmpty != false {
+                savedConfig.endpoint = defaultConfig.endpoint
+            }
+            if savedConfig.model?.isEmpty != false {
+                savedConfig.model = defaultConfig.model
+            }
+            if savedConfig.modelsEndpoint?.isEmpty != false {
+                savedConfig.modelsEndpoint = defaultConfig.modelsEndpoint
+            }
+            if savedConfig.availableModels?.isEmpty != false {
+                savedConfig.availableModels = defaultConfig.availableModels
+            }
+            if savedConfig.providerType.isEmpty {
+                savedConfig.providerType = defaultConfig.providerType
+            }
+            return savedConfig
+        }
+        for config in saved where !merged.contains(where: { $0.id == config.id }) {
+            merged.append(config)
+        }
+        return merged
     }
 
     private func pingBackend() async -> Bool {
@@ -808,15 +965,16 @@ final class SettingsViewModel: ObservableObject {
 
     private func agentDisplayName(_ id: String, fallback: String) -> String {
         switch id {
-        case "openclaw", "local": return "OpenClaw"
+        case "openclaw": return "OpenClaw"
         case "hermes": return "Hermes"
-        case "claude": return "Claude"
+        case "claude": return "Claude Code"
+        case "codex": return "Codex"
         default: return fallback
         }
     }
 
     private func providerDisplayName(_ id: String) -> String {
-        return id == "deepseek" ? "Deepseek" : "MiniMax"
+        return cloudLLMs.first(where: { $0.id == id })?.name ?? id
     }
 
     private func checkUnconfiguredProviders() async -> [String] {
@@ -887,18 +1045,9 @@ final class SettingsViewModel: ObservableObject {
     func deleteLLMConfig(_ providerId: String) {
         guard let index = cloudLLMs.firstIndex(where: { $0.id == providerId }) else { return }
 
-        // Reset config to default (clear apiKey, endpoint, model)
-        var defaultConfig: LLMConfig
-        switch providerId {
-        case "deepseek":
-            defaultConfig = .deepSeek
-        case "minimax":
-            defaultConfig = .miniMax
-        default:
-            return
-        }
+        // Reset config to default metadata and clear secret/user model values.
+        var defaultConfig = LLMConfig.allDefaults.first(where: { $0.id == providerId }) ?? cloudLLMs[index]
         defaultConfig.apiKey = nil
-        defaultConfig.endpoint = nil
         defaultConfig.model = nil
         cloudLLMs[index] = defaultConfig
         persistCloudSettings()

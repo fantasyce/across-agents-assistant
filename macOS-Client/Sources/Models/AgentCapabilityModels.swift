@@ -478,8 +478,20 @@ enum AgentCapabilityCatalog {
         "openclaw": ["general_execution", "macos_automation", "test_authoring"],
         "hermes": ["frontend_design", "interaction_design", "test_authoring"],
         "claude": ["architecture_review", "code_review", "test_strategy"],
+        "codex": ["general_execution", "code_review", "test_authoring"],
+        "openai": ["backend_api", "code_review"],
+        "anthropic": ["backend_api", "code_review"],
         "deepseek": ["backend_api", "data_modeling", "code_review"],
-        "minimax": ["devops_release", "integration_smoke", "test_strategy"]
+        "minimax": ["devops_release", "integration_smoke", "test_strategy"],
+        "bailian": ["backend_api", "code_review"],
+        "moonshot": ["backend_api", "code_review"],
+        "zhipu": ["backend_api", "code_review"],
+        "volcengine": ["backend_api", "code_review"],
+        "google": ["backend_api", "code_review"],
+        "xai": ["backend_api", "code_review"],
+        "mistral": ["backend_api", "code_review"],
+        "groq": ["backend_api", "code_review"],
+        "cohere": ["backend_api", "code_review"]
     ]
 
     static func defaultSkillIds(for agentId: String) -> [String] {

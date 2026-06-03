@@ -7,19 +7,24 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .agent_ids import LOCAL_CLI_AGENT_IDS, normalize_agent_id
+from .llm_gateway.provider_registry import get_default_provider_definitions, get_default_provider_ids
 from .native_agent_skills import is_native_skill_available
 from .paths import data_file
 
 
-CLOUD_AGENT_IDS = ("deepseek", "minimax")
+CLOUD_AGENT_IDS = get_default_provider_ids()
 DEFAULT_AGENT_IDS = (*LOCAL_CLI_AGENT_IDS, *CLOUD_AGENT_IDS)
 AGENT_DISPLAY_NAMES: Dict[str, str] = {
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "claude": "Claude Code",
+    "codex": "Codex",
     "deepseek": "DeepSeek",
     "minimax": "MiniMax",
 }
+AGENT_DISPLAY_NAMES.update(
+    {provider.provider_id: provider.name for provider in get_default_provider_definitions()}
+)
 
 
 @dataclass(frozen=True)
@@ -134,9 +139,12 @@ DEFAULT_SKILLS_BY_AGENT: Dict[str, List[str]] = {
     "openclaw": ["general_execution", "macos_automation", "test_authoring"],
     "hermes": ["frontend_design", "interaction_design", "test_authoring"],
     "claude": ["architecture_review", "code_review", "test_strategy"],
+    "codex": ["general_execution", "code_review", "test_authoring"],
     "deepseek": ["backend_api", "data_modeling", "code_review"],
     "minimax": ["devops_release", "integration_smoke", "test_strategy"],
 }
+for _provider_id in CLOUD_AGENT_IDS:
+    DEFAULT_SKILLS_BY_AGENT.setdefault(_provider_id, ["backend_api", "code_review"])
 
 
 def skill_catalog() -> List[Dict[str, Any]]:

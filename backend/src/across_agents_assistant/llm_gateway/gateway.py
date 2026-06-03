@@ -8,6 +8,8 @@ from .config import LLMConfig, LLMProviderConfig, load_llm_config, save_llm_conf
 from .minimax_adapter import MiniMaxAdapter
 from .bailian_adapter import BailianAdapter
 from .deepseek_adapter import DeepseekAdapter
+from .openai_compatible_adapter import OpenAICompatibleAdapter
+from .anthropic_adapter import AnthropicAdapter
 
 logger = logging.getLogger("across_agents_assistant.llm_gateway")
 
@@ -20,6 +22,8 @@ class LLMGateway:
         "minimax": MiniMaxAdapter,
         "bailian": BailianAdapter,
         "deepseek": DeepseekAdapter,
+        "openai_compatible": OpenAICompatibleAdapter,
+        "anthropic": AnthropicAdapter,
     }
 
     def __init__(self, config: Optional[LLMConfig] = None):
@@ -32,7 +36,10 @@ class LLMGateway:
     def _initialize_adapters(self):
         """Initialize all configured adapters."""
         for provider_config in self.config.providers:
-            adapter_class = self.ADAPTERS.get(provider_config.provider_id)
+            adapter_class = (
+                self.ADAPTERS.get(provider_config.provider_type)
+                or self.ADAPTERS.get(provider_config.provider_id)
+            )
             if adapter_class:
                 self._adapters[provider_config.provider_id] = adapter_class(provider_config)
                 logger.info(f"Initialized LLM adapter: {provider_config.provider_id}")
@@ -46,6 +53,17 @@ class LLMGateway:
         adapter = self._adapters.get(provider_id)
         if adapter:
             return adapter.list_models()
+        return []
+
+    async def fetch_models(self, provider_id: str) -> List[ModelInfo]:
+        """Fetch live models for a provider, falling back to configured models."""
+        adapter = self._adapters.get(provider_id)
+        if adapter:
+            try:
+                return await adapter.fetch_models()
+            except Exception as exc:
+                logger.warning("Live model discovery failed for %s: %s", provider_id, exc)
+                return adapter.list_models()
         return []
 
     def switch_provider(self, provider_id: str) -> bool:

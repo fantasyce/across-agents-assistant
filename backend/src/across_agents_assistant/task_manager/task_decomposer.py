@@ -5,7 +5,8 @@ import uuid
 from typing import Dict, Any, Optional
 
 from ..llm_gateway.gateway import LLMGateway
-from ..agent_ids import LOCAL_AGENT_ID, normalize_agent_id
+from ..agent_ids import LOCAL_AGENT_ID, LOCAL_CLI_AGENT_IDS, normalize_agent_id
+from ..llm_gateway.provider_registry import get_default_provider_ids
 from .models import Task, TaskType, SubTask, Wave, JobStatus
 
 logger = logging.getLogger("across_agents_assistant.task_manager")
@@ -18,8 +19,8 @@ Your role is to break down user requests into clear, actionable sub-tasks assign
 - openclaw: General purpose development and automation tasks (CLI-based, file I/O, shell commands)
 - hermes: Specific scenario development and conversational tasks (frontend, UI, React, Vue)
 - claude: Code/technical deep expertise and code reviews (architecture, design, review, audit)
-- deepseek: Cloud LLM provider option for backend/API/Python-heavy implementation tasks when configured
-- minimax: Cloud LLM provider option for DevOps/infrastructure/release tasks when configured
+- codex: Local Codex CLI coding agent for implementation, debugging, and repository-aware changes
+- Cloud providers from the configured provider registry, such as deepseek, minimax, openai, anthropic, bailian, moonshot, zhipu, volcengine, google, xai, mistral, groq, and cohere.
 
 **Task Types:**
 - research: Information gathering, web search, knowledge lookup
@@ -35,7 +36,7 @@ You MUST output a JSON object with this exact structure:
     "can_handle_directly": true|false,
     "direct_response": "..." (only if can_handle_directly is true),
     "subtasks": [
-        {"description": "...", "agent": "openclaw|hermes|claude|deepseek|minimax", "priority": 1, "dependencies": []}
+        {"description": "...", "agent": "openclaw|hermes|claude|codex|configured-cloud-provider-id", "priority": 1, "dependencies": []}
     ]
 }
 
@@ -52,7 +53,7 @@ You MUST output a JSON object with this exact structure:
 class TaskDecomposer:
     """Uses LLM to decompose user requests into subtasks."""
 
-    VALID_AGENTS = [LOCAL_AGENT_ID, "hermes", "claude", "deepseek", "minimax"]
+    VALID_AGENTS = [*LOCAL_CLI_AGENT_IDS, *get_default_provider_ids()]
     TASK_TYPES = ["research", "code_review", "automation", "simple_qa", "unknown"]
 
     def __init__(self, gateway: LLMGateway):
@@ -202,8 +203,7 @@ class TaskDecomposer:
         matched_keywords = []
         for agent_id, keywords in self.KEYWORD_AGENT_MAP.items():
             if agent_id not in self.VALID_AGENTS:
-                if agent_id not in ("deepseek", "minimax"):
-                    continue
+                continue
             for kw in keywords:
                 if kw in text:
                     keyword_agent = agent_id

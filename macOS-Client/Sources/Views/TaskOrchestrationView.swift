@@ -2674,7 +2674,10 @@ struct AgentIdentityBadge: View {
     }
 
     private var isCloudLLM: Bool {
-        resolvedAgentId == "deepseek" || resolvedAgentId == "minimax"
+        [
+            "openai", "anthropic", "deepseek", "minimax", "bailian", "moonshot",
+            "zhipu", "volcengine", "google", "xai", "mistral", "groq", "cohere"
+        ].contains(resolvedAgentId)
     }
 
     private var iconName: String {
@@ -2684,7 +2687,7 @@ struct AgentIdentityBadge: View {
     private var displayName: String {
         switch resolvedAgentId {
         case "auto": return appPreferences.text("tasks.auto")
-        case "openclaw", "local": return "OpenClaw"
+        case "openclaw": return "OpenClaw"
         case "hermes": return "Hermes"
         case "claude": return "Claude Code"
         case "deepseek": return "DeepSeek"

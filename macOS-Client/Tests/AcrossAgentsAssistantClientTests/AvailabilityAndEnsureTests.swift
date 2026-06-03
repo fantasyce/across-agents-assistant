@@ -6,7 +6,7 @@ struct AvailabilityAndEnsureTests {
     private func makeViewModel() -> SettingsViewModel {
         UnixSocketProtocol.register()
         let vm = SettingsViewModel(bootstrapOnInit: false, loadPersisted: false)
-        vm.localAgents = [.localAgent, .hermes, .claude]
+        vm.localAgents = [.localAgent, .hermes, .claude, .codex]
         vm.cloudLLMs = [.deepSeek, .miniMax]
         vm.apiKeyStatusCache = [:]
         vm.availabilityBootstrapState = .empty
@@ -37,11 +37,12 @@ struct AvailabilityAndEnsureTests {
         vm.localAgents[0].status = .installed
         vm.localAgents[1].status = .notInstalled
         vm.localAgents[2].status = .notInstalled
+        vm.localAgents[3].status = .notInstalled
 
         refreshAvailabilityState(for: vm)
 
         #expect(AgentIDs.normalized("openclaw") == "openclaw")
-        #expect(AgentIDs.normalized("local") == "openclaw")
+        #expect(AgentIDs.normalized("local") == "local")
         #expect(vm.availabilityBootstrapState == .ready)
         #expect(vm.hasAvailableLocalAgents)
         #expect(!vm.hasAvailableCloudLLMs)

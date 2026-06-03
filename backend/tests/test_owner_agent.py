@@ -37,7 +37,7 @@ class MockLLMGateway:
         return MockLLMResponse(self._response_text)
 
 
-AVAILABLE_AGENT_IDS = ["claude", "deepseek", "hermes", "minimax", "local"]
+AVAILABLE_AGENT_IDS = ["claude", "deepseek", "hermes", "minimax", "openclaw"]
 
 
 def test_parse_json_response_ignores_thinking_block_before_acceptance_json(fake_task_state):
@@ -85,7 +85,7 @@ def _all_agents():
         {"id": "deepseek", "name": "DeepSeek", "characteristics": "backend"},
         {"id": "hermes", "name": "Hermes", "characteristics": "frontend"},
         {"id": "minimax", "name": "MiniMax", "characteristics": "devops"},
-        {"id": "local", "name": "OpenClaw", "characteristics": "general"},
+        {"id": "openclaw", "name": "OpenClaw", "characteristics": "general"},
     ]
 
 
@@ -579,7 +579,7 @@ class TestDecomposeAndAssign:
             {"id": "backend", "description": "实现 FastAPI 后端 CRUD API", "agent": "deepseek", "priority": 2, "dependencies": ["design"], "deliverables": [
                 {"artifact_type": "api_service_source", "path_hint": "app/main.py", "required": true}
             ]},
-            {"id": "docs", "description": "创建 README.md 和 TESTING.md 文档", "agent": "local", "priority": 3, "dependencies": ["backend"], "deliverables": [
+            {"id": "docs", "description": "创建 README.md 和 TESTING.md 文档", "agent": "openclaw", "priority": 3, "dependencies": ["backend"], "deliverables": [
                 {"artifact_type": "documentation", "path_hint": "README.md", "required": true},
                 {"artifact_type": "documentation", "path_hint": "TESTING.md", "required": true}
             ]}
@@ -639,8 +639,8 @@ class TestDecomposeAndAssign:
             {"id": "tests", "description": "Write pytest tests covering API CRUD behavior", "agent": "deepseek", "priority": 2, "dependencies": ["backend"], "deliverables": [
                 {"artifact_type": "test_source", "path_hint": "tests/test_api.py", "required": true}
             ]},
-            {"id": "final-validation", "description": "Run the application, execute tests, verify all endpoints work correctly, fix any issues found", "agent": "local", "priority": 3, "dependencies": ["tests"], "deliverables": []},
-            {"id": "docs", "description": "Create README.md and TESTING.md documentation", "agent": "local", "priority": 4, "dependencies": ["final-validation"], "deliverables": [
+            {"id": "final-validation", "description": "Run the application, execute tests, verify all endpoints work correctly, fix any issues found", "agent": "openclaw", "priority": 3, "dependencies": ["tests"], "deliverables": []},
+            {"id": "docs", "description": "Create README.md and TESTING.md documentation", "agent": "openclaw", "priority": 4, "dependencies": ["final-validation"], "deliverables": [
                 {"artifact_type": "documentation", "path_hint": "README.md", "required": true},
                 {"artifact_type": "documentation", "path_hint": "TESTING.md", "required": true}
             ]}
@@ -717,7 +717,7 @@ class TestDecomposeAndAssign:
         )
 
         llm_response = """{"subtasks": [
-            {"id": "inspect", "description": "Check current state of project directory", "agent": "local", "priority": 1, "dependencies": [], "deliverables": []},
+            {"id": "inspect", "description": "Check current state of project directory", "agent": "openclaw", "priority": 1, "dependencies": [], "deliverables": []},
             {"id": "backend", "description": "Create project structure and backend core", "agent": "deepseek", "priority": 2, "dependencies": ["inspect"], "deliverables": [
                 {"artifact_type": "api_service_source", "path_hint": "app/main.py", "required": true}
             ]}
@@ -834,7 +834,7 @@ class TestSelectAgent:
             owner._select_agent(
                 {
                     "description": "Implement FastAPI backend with SQLite database.py and serve static/index.html at GET /",
-                    "agent": "local",
+                    "agent": "openclaw",
                 },
                 AVAILABLE_AGENT_IDS,
                 project_dir="/tmp/demo-project",
@@ -876,8 +876,8 @@ class TestSelectAgent:
         llm = MockLLMGateway('{"subtasks": []}')
         owner = OwnerAgent(llm, state)
 
-        assert owner._select_agent({"description": "Write documentation"}, ["local"]) == "openclaw"
-        assert owner._select_agent({"description": "Do some research"}, ["local"]) == "openclaw"
+        assert owner._select_agent({"description": "Write documentation"}, ["openclaw"]) == "openclaw"
+        assert owner._select_agent({"description": "Do some research"}, ["openclaw"]) == "openclaw"
 
     def test_trusts_llm_suggested_valid_agent(self):
         state = TaskState()
@@ -886,7 +886,7 @@ class TestSelectAgent:
 
         # When no keyword matches but LLM suggested a valid agent
         assert owner._select_agent({"description": "Write documentation", "agent": "claude"}, AVAILABLE_AGENT_IDS) == "claude"
-        assert owner._select_agent({"description": "Write documentation", "agent": "local"}, AVAILABLE_AGENT_IDS) == "openclaw"
+        assert owner._select_agent({"description": "Write documentation", "agent": "openclaw"}, AVAILABLE_AGENT_IDS) == "openclaw"
 
     def test_project_dir_architecture_keeps_claude_for_design_tasks(self):
         state = TaskState()
@@ -1638,8 +1638,7 @@ class TestInferSubtaskDeliverables:
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
 
         deliverables, checks = owner._infer_subtask_deliverables(
-            "Create project directory structure with proper folders for app, static, templates, tests, and docs.",
-            "local",
+            "Create project directory structure with proper folders for app, static, templates, tests, and docs.", "openclaw",
             project_dir="/tmp/project",
         )
 
@@ -1651,8 +1650,7 @@ class TestInferSubtaskDeliverables:
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
 
         deliverables, checks = owner._infer_subtask_deliverables(
-            "Create project directory structure: app/__init__.py, app/main.py, static/css/, static/js/, tests/, docs/",
-            "local",
+            "Create project directory structure: app/__init__.py, app/main.py, static/css/, static/js/, tests/, docs/", "openclaw",
             project_dir="/tmp/project",
         )
 
@@ -1668,8 +1666,7 @@ class TestInferSubtaskDeliverables:
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
 
         deliverables, checks = owner._infer_subtask_deliverables(
-            "Create requirements.txt with: fastapi, uvicorn, python-multipart, pytest, pytest-asyncio.",
-            "local",
+            "Create requirements.txt with: fastapi, uvicorn, python-multipart, pytest, pytest-asyncio.", "openclaw",
             project_dir="/tmp/project",
         )
 
@@ -1684,8 +1681,7 @@ class TestInferSubtaskDeliverables:
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
 
         deliverables, checks = owner._infer_subtask_deliverables(
-            "Create tests/sample.csv with sample expense data for testing CSV import.",
-            "local",
+            "Create tests/sample.csv with sample expense data for testing CSV import.", "openclaw",
             project_dir="/tmp/project",
         )
 
@@ -1699,8 +1695,7 @@ class TestInferSubtaskDeliverables:
         owner = OwnerAgent(llm_gateway=MagicMock(), state=state)
 
         deliverables, checks = owner._infer_subtask_deliverables(
-            "Create docs/TESTING.md: how to run tests, expected test output, and manual testing checklist.",
-            "local",
+            "Create docs/TESTING.md: how to run tests, expected test output, and manual testing checklist.", "openclaw",
             project_dir="/tmp/project",
         )
 
@@ -1843,7 +1838,7 @@ class TestInferSubtaskDeliverables:
 
         deliverables, checks = owner._sanitize_subtask_contract_specs(
             description="Create the project directory and an empty tests directory. Also create a placeholder __init__.py in tests.",
-            agent_id="local",
+            agent_id="openclaw",
             deliverables=[
                 DeliverableSpec(artifact_type="file", required=True, path_hint="__init__.py", description="placeholder"),
             ],
@@ -2208,7 +2203,7 @@ class TestWaveAcceptanceNormalization:
             subtask_id="st-docs",
             task_id=task.task_id,
             description="Create README.md and TESTING.md",
-            agent_id="local",
+            agent_id="openclaw",
             dependencies=[],
         )
         normal_subtask.wave_number = 5

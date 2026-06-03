@@ -121,8 +121,8 @@ class TestAcceptSubtask:
         llm = MockLLMGateway('{"passed": true, "feedback": "", "action": "approve"}')
         owner = OwnerAgent(llm, state)
 
-        subtask = SubTask(subtask_id="st-6", description="Test", agent_id="local")
-        job = Job.new(subtask, agent_id="local")
+        subtask = SubTask(subtask_id="st-6", description="Test", agent_id="openclaw")
+        job = Job.new(subtask, agent_id="openclaw")
 
         owner.accept_subtask(job)
 
@@ -233,8 +233,8 @@ class TestBuildAcceptanceContext:
         llm = MockLLMGateway('{"subtasks": []}')
         owner = OwnerAgent(llm, state)
 
-        subtask = SubTask(subtask_id="st-15", description="Test", agent_id="local")
-        job = Job.new(subtask, agent_id="local")
+        subtask = SubTask(subtask_id="st-15", description="Test", agent_id="openclaw")
+        job = Job.new(subtask, agent_id="openclaw")
 
         context = owner._build_acceptance_context(job)
 

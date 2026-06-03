@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 
 from ..agent_loop import AgentLoop, LoopConfig, LLMGatewayAdapter
 from ..approval.executor import ToolExecutor
+from ..llm_gateway.provider_registry import get_default_provider_ids
 from ..tools.tool_registry import ToolRegistry, ToolDefinition, registry as global_tool_registry
 from ..workspace_hygiene import is_workspace_noise_path
 from .protocol import AgentResponse, InvokeRequest
@@ -17,7 +18,7 @@ from .errors import AgentException, AgentError
 logger = logging.getLogger("across_agents_assistant.agent_bridge")
 
 # Cloud LLM agents that should be invoked via LLMGateway instead of local CLI
-CLOUD_LLM_AGENTS = {"deepseek", "minimax"}
+CLOUD_LLM_AGENTS = set(get_default_provider_ids())
 
 class AgentSession:
     """

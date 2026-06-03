@@ -131,3 +131,7 @@ class BaseLLMAdapter(ABC):
     def list_models(self) -> List[ModelInfo]:
         """List all available models for this provider."""
         return self._config.models.copy()
+
+    async def fetch_models(self) -> List[ModelInfo]:
+        """Fetch live models when supported; default to configured fallback list."""
+        return self.list_models()

@@ -5,6 +5,9 @@ from statistics import mean
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
+from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
+
 
 TERMINAL_STATUSES = {
     "completed",
@@ -16,8 +19,8 @@ TERMINAL_STATUSES = {
 PASSING_GATES = {"passed"}
 BLOCKING_GATES = {"failed", "inconsistent"}
 ATTENTION_GATES = {"manual_required", "partial"}
-LOCAL_AGENT_IDS = {"openclaw", "hermes", "claude"}
-CLOUD_AGENT_IDS = {"deepseek", "minimax"}
+LOCAL_AGENT_IDS = set(LOCAL_CLI_AGENT_IDS)
+CLOUD_AGENT_IDS = set(get_default_provider_ids())
 REQUIRED_RELEASE_PROBES = {
     "workspace_hygiene",
     "security_privacy",

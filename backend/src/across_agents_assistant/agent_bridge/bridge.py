@@ -8,12 +8,13 @@ from .protocol import AgentResponse, InvokeRequest, MessageType, AgentMessage
 from .agent import AgentSession
 from .result import TaskResult, SubtaskResult, ResultStatus
 from .errors import AgentException, AgentError
-from ..agent_ids import LOCAL_AGENT_ID, normalize_agent_id
+from ..agent_ids import LOCAL_CLI_AGENT_IDS, normalize_agent_id
+from ..llm_gateway.provider_registry import get_default_provider_ids
 
 logger = logging.getLogger("across_agents_assistant.agent_bridge")
 
 # Default agents
-DEFAULT_AGENTS = [LOCAL_AGENT_ID, "hermes", "claude", "deepseek", "minimax"]
+DEFAULT_AGENTS = [*LOCAL_CLI_AGENT_IDS, *get_default_provider_ids()]
 
 class AgentBridge:
     """

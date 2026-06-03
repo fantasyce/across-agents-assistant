@@ -94,6 +94,7 @@ from .harness import (
 # LLM Gateway imports
 from .llm_gateway.gateway import get_gateway, LLMGateway
 from .llm_gateway.config import load_llm_config
+from .llm_gateway.provider_registry import get_default_provider_ids
 from .attachments import (
     append_image_attachment_context,
     build_image_attachment_context,
@@ -170,7 +171,8 @@ def _effective_backend_key(provider_id: str) -> Optional[str]:
     2. Runtime cache (set by POST /api/keys or startup hydration)
     3. Credentials file (the primary durable store, loaded at startup)
     """
-    env_name = f"{provider_id.upper()}_API_KEY"
+    provider_config = next((p for p in load_llm_config().providers if p.provider_id == provider_id), None)
+    env_name = provider_config.api_key_env if provider_config else f"{provider_id.upper()}_API_KEY"
     env_key = _normalize_api_key(os.environ.get(env_name))
     if _is_usable_api_key(env_key):
         return env_key
@@ -236,9 +238,11 @@ def _hydrate_runtime_keys_from_store() -> None:
         store = _get_credential_store()
         store.ensure_permissions()
         creds = store.load_all()
+        provider_config_by_id = {p.provider_id: p for p in load_llm_config().providers}
         for pid, cred in creds.items():
             is_configured = _is_usable_api_key(cred.api_key)
-            env_name = f"{pid.upper()}_API_KEY"
+            provider_config = provider_config_by_id.get(pid)
+            env_name = provider_config.api_key_env if provider_config else f"{pid.upper()}_API_KEY"
             if is_configured and (pid not in _credential_cache or not _credential_cache.get(pid)):
                 _credential_cache[pid] = cred.api_key
             if is_configured and not os.environ.get(env_name):
@@ -618,6 +622,37 @@ def get_local_agent_client():
 class KeysRequest(BaseModel):
     deepseek: Optional[str] = None
     minimax: Optional[str] = None
+    openai: Optional[str] = None
+    anthropic: Optional[str] = None
+    bailian: Optional[str] = None
+    moonshot: Optional[str] = None
+    zhipu: Optional[str] = None
+    volcengine: Optional[str] = None
+    google: Optional[str] = None
+    xai: Optional[str] = None
+    mistral: Optional[str] = None
+    groq: Optional[str] = None
+    cohere: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+def _known_provider_ids() -> tuple[str, ...]:
+    return get_default_provider_ids()
+
+
+def _key_values_from_request(req: KeysRequest) -> Dict[str, str]:
+    try:
+        raw_values = req.model_dump(exclude_none=True)
+    except AttributeError:
+        raw_values = req.dict(exclude_none=True)
+    known = set(_known_provider_ids())
+    return {
+        provider_id: str(value)
+        for provider_id, value in raw_values.items()
+        if provider_id in known and value is not None
+    }
 
 class ActiveAgentRequest(BaseModel):
     agent_id: str
@@ -631,12 +666,7 @@ async def update_active_agent(req: ActiveAgentRequest):
 async def update_keys(req: KeysRequest):
     global _credential_cache
 
-    # Build the values dict for file storage (only non-None keys).
-    file_values: Dict[str, str] = {}
-    if req.deepseek is not None:
-        file_values["deepseek"] = req.deepseek
-    if req.minimax is not None:
-        file_values["minimax"] = req.minimax
+    file_values = _key_values_from_request(req)
 
     # Persist to credential store (the durable source of truth).
     try:
@@ -653,33 +683,36 @@ async def update_keys(req: KeysRequest):
         logger.warning("Failed to persist keys to credential store: %s", exc)
         saved = {}
 
-    if req.deepseek is not None:
-        deepseek_key = _normalize_api_key(req.deepseek)
-        if _is_usable_api_key(deepseek_key):
-            os.environ["DEEPSEEK_API_KEY"] = deepseek_key
-            _credential_cache["deepseek"] = deepseek_key
-            agent_manager.update_agent("deepseek", {**agent_manager.get_agent_config("deepseek"), "api_key": deepseek_key})
+    provider_config_by_id = {
+        provider.provider_id: provider
+        for provider in load_llm_config().providers
+    }
+    for provider_id, raw_key in file_values.items():
+        provider_config = provider_config_by_id.get(provider_id)
+        env_name = provider_config.api_key_env if provider_config else f"{provider_id.upper()}_API_KEY"
+        key = _normalize_api_key(raw_key)
+        agent_config = agent_manager.get_agent_config(provider_id) or {}
+        if _is_usable_api_key(key):
+            os.environ[env_name] = key
+            _credential_cache[provider_id] = key
+            if provider_config:
+                agent_config.update({
+                    "api_key": key,
+                    "type": provider_config.provider_type,
+                    "base_url": provider_config.endpoint,
+                    "model": (
+                        provider_config.models[0].model_id
+                        if provider_config.models
+                        else agent_config.get("model", "")
+                    ),
+                })
+                agent_manager.update_agent(provider_id, agent_config)
         else:
-            os.environ.pop("DEEPSEEK_API_KEY", None)
-            _credential_cache.pop("deepseek", None)
-            agent_manager.update_agent("deepseek", {**agent_manager.get_agent_config("deepseek"), "api_key": None})
-    if req.minimax is not None:
-        minimax_key = _normalize_api_key(req.minimax)
-        if _is_usable_api_key(minimax_key):
-            os.environ["MINIMAX_API_KEY"] = minimax_key
-            _credential_cache["minimax"] = minimax_key
-            minimax_config = agent_manager.get_agent_config("minimax") or {}
-            minimax_config.update({
-                "api_key": minimax_key,
-                "type": "openai_compatible",
-                "base_url": "https://api.minimaxi.com/v1",
-                "model": "MiniMax-M2.7"
-            })
-            agent_manager.update_agent("minimax", minimax_config)
-        else:
-            os.environ.pop("MINIMAX_API_KEY", None)
-            _credential_cache.pop("minimax", None)
-            agent_manager.update_agent("minimax", {**agent_manager.get_agent_config("minimax"), "api_key": None})
+            os.environ.pop(env_name, None)
+            _credential_cache.pop(provider_id, None)
+            if agent_config:
+                agent_config["api_key"] = None
+                agent_manager.update_agent(provider_id, agent_config)
     repair_result = None
     if _build_key_readiness()["has_any_key"]:
         try:
@@ -695,6 +728,8 @@ class DeleteKeyRequest(BaseModel):
 async def delete_key(req: DeleteKeyRequest):
     global _credential_cache
     provider_id = req.provider_id
+    if provider_id not in _known_provider_ids():
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
 
     # Delete from credential store (the durable source of truth).
     try:
@@ -703,16 +738,13 @@ async def delete_key(req: DeleteKeyRequest):
     except Exception as exc:
         logger.warning("Failed to delete key from credential store: %s", exc)
 
-    if provider_id == "deepseek":
-        os.environ.pop("DEEPSEEK_API_KEY", None)
-        _credential_cache.pop("deepseek", None)
-        agent_manager.update_agent("deepseek", {**agent_manager.get_agent_config("deepseek"), "api_key": None})
-    elif provider_id == "minimax":
-        os.environ.pop("MINIMAX_API_KEY", None)
-        _credential_cache.pop("minimax", None)
-        agent_manager.update_agent("minimax", {**agent_manager.get_agent_config("minimax"), "api_key": None})
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+    provider_config = next((p for p in load_llm_config().providers if p.provider_id == provider_id), None)
+    os.environ.pop(provider_config.api_key_env if provider_config else f"{provider_id.upper()}_API_KEY", None)
+    _credential_cache.pop(provider_id, None)
+    agent_config = agent_manager.get_agent_config(provider_id) or {}
+    if agent_config:
+        agent_config["api_key"] = None
+        agent_manager.update_agent(provider_id, agent_config)
     return {"status": "ok"}
 
 class KeysStatusResponse(BaseModel):
@@ -722,7 +754,7 @@ class KeysStatusResponse(BaseModel):
 async def get_keys_status():
     """返回各 provider 的 API key 配置状态（从本地凭据文件 + env + 运行时缓存）"""
     providers = {}
-    for pid in ["deepseek", "minimax"]:
+    for pid in _known_provider_ids():
         providers[pid] = "configured" if _provider_has_backend_key(pid) else "not_configured"
     return KeysStatusResponse(providers=providers)
 
@@ -737,7 +769,7 @@ async def get_key_value(provider_id: str):
     This endpoint is served by the app-local backend and reads only from the
     backend-managed credential sources.
     """
-    if provider_id not in ("deepseek", "minimax"):
+    if provider_id not in _known_provider_ids():
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
 
     return KeyValueResponse(provider_id=provider_id, api_key=_effective_backend_key(provider_id))
@@ -756,7 +788,7 @@ async def check_keys():
     global _credential_cache
     results = []
 
-    for pid in ("deepseek", "minimax"):
+    for pid in _known_provider_ids():
         if _cached_key_is_configured(pid):
             results.append(KeyCheckResult(provider_id=pid, status="configured"))
             continue
@@ -786,7 +818,9 @@ def _check_single_backend_credential(provider_id: str) -> KeyCheckResult:
     if _cached_key_is_configured(provider_id):
         return KeyCheckResult(provider_id=provider_id, status="configured")
 
-    env_key = _normalize_api_key(os.environ.get(f"{provider_id.upper()}_API_KEY"))
+    provider_config = next((p for p in load_llm_config().providers if p.provider_id == provider_id), None)
+    env_name = provider_config.api_key_env if provider_config else f"{provider_id.upper()}_API_KEY"
+    env_key = _normalize_api_key(os.environ.get(env_name))
     if _is_usable_api_key(env_key):
         _credential_cache[provider_id] = env_key
         return KeyCheckResult(provider_id=provider_id, status="configured")
@@ -810,7 +844,7 @@ def _check_llm_provider_readiness() -> List[str]:
     """Check whether at least one LLM provider has a backend-usable credential.
 
     Returns a list of *all* known provider IDs when none have a key,
-    or an empty list if at least one provider (deepseek or minimax) is configured.
+    or an empty list if at least one provider is configured.
     The gateway handles fallback between providers at runtime,
     so as long as *one* provider is available the task can proceed.
 
@@ -819,7 +853,7 @@ def _check_llm_provider_readiness() -> List[str]:
     otherwise task submission can be rejected even though the backend can
     already execute the request after a cold restart.
     """
-    known_providers = ("deepseek", "minimax")
+    known_providers = _known_provider_ids()
     has_any = any(_provider_has_backend_key(provider_id) for provider_id in known_providers)
     if has_any:
         return []
@@ -832,7 +866,7 @@ def _provider_has_backend_key(provider_id: str) -> bool:
 
 def _build_key_readiness() -> Dict[str, Any]:
     providers = {}
-    for provider_id in ("deepseek", "minimax"):
+    for provider_id in _known_provider_ids():
         providers[provider_id] = (
             "configured" if _provider_has_backend_key(provider_id) else "not_configured"
         )
@@ -1067,7 +1101,7 @@ async def check_single_key(provider_id: str):
     """Check a single provider's backend-managed credential."""
     global _credential_cache
 
-    if provider_id not in ("deepseek", "minimax"):
+    if provider_id not in _known_provider_ids():
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
 
     if _cached_key_is_configured(provider_id):
@@ -1079,6 +1113,7 @@ async def check_single_key(provider_id: str):
 class AgentConfigRequest(BaseModel):
     agent_id: str
     executable_path: Optional[str] = None
+    model: Optional[str] = None
 
 @app.post("/api/agents/config")
 async def save_agent_config(req: AgentConfigRequest):
@@ -1086,6 +1121,7 @@ async def save_agent_config(req: AgentConfigRequest):
     from .local_agent_health import (
         detect_local_agents,
         save_configured_agent_path,
+        save_configured_agent_model,
         LOCAL_AGENT_SPECS,
     )
 
@@ -1095,6 +1131,7 @@ async def save_agent_config(req: AgentConfigRequest):
 
     try:
         save_configured_agent_path(agent_id, req.executable_path)
+        save_configured_agent_model(agent_id, req.model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -1105,6 +1142,10 @@ async def save_agent_config(req: AgentConfigRequest):
         agent_config["executable_path"] = req.executable_path.strip()
     else:
         agent_config.pop("executable_path", None)
+    if req.model and req.model.strip():
+        agent_config["model"] = req.model.strip()
+    else:
+        agent_config.pop("model", None)
     agent_manager.update_agent(agent_id, agent_config)
 
     return {"status": "ok", "agent": detect_local_agents(force=True).get(agent_id)}
@@ -1854,6 +1895,9 @@ class LLMProviderResponse(BaseModel):
     name: str
     enabled: bool
     available: bool  # Has API key
+    endpoint: str
+    provider_type: str = "openai_compatible"
+    models_endpoint: Optional[str] = None
     models: List[Dict[str, Any]]
 
 class LLMModelInfo(BaseModel):
@@ -1881,6 +1925,9 @@ async def list_llm_providers():
                 name=provider.name,
                 enabled=provider.enabled,
                 available=available,
+                endpoint=provider.endpoint,
+                provider_type=provider.provider_type,
+                models_endpoint=provider.models_endpoint,
                 models=[
                     {
                         "model_id": m.model_id,
@@ -1896,12 +1943,14 @@ async def list_llm_providers():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/llm/models/{provider_id}", response_model=List[LLMModelInfo])
-async def list_llm_models(provider_id: str):
+async def list_llm_models(provider_id: str, refresh: bool = True):
     """List all models for a specific provider."""
     try:
         config = load_llm_config()
         gw = LLMGateway(config)
-        models = gw.list_models(provider_id)
+        if provider_id not in {provider.provider_id for provider in config.providers}:
+            raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+        models = await gw.fetch_models(provider_id) if refresh else gw.list_models(provider_id)
         return [
             LLMModelInfo(
                 model_id=m.model_id,

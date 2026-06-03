@@ -16,6 +16,11 @@ import pytest
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from across_agents_assistant.api_server import _check_llm_provider_readiness
+from across_agents_assistant.llm_gateway.config import load_llm_config
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
+
+
+ALL_PROVIDER_IDS = list(get_default_provider_ids())
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +35,8 @@ def reset_credential_cache(monkeypatch: pytest.MonkeyPatch):
     cache_before: Dict[str, Optional[str]] = dict(srv._credential_cache)
     get_store_before = srv._get_credential_store
     srv._credential_cache.clear()
+    for provider in load_llm_config().providers:
+        monkeypatch.delenv(provider.api_key_env, raising=False)
     monkeypatch.setattr(srv, "_get_credential_store", lambda: EmptyStore())
     yield
     srv._credential_cache.clear()
@@ -39,22 +46,18 @@ def reset_credential_cache(monkeypatch: pytest.MonkeyPatch):
 
 class TestLlmProviderReadiness:
     def test_both_providers_missing_returns_all(self, monkeypatch: pytest.MonkeyPatch):
-        """When neither deepseek nor minimax has a key, both are returned as missing."""
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        """When no provider has a key, all registry providers are returned as missing."""
         missing = _check_llm_provider_readiness()
-        assert missing == ["deepseek", "minimax"]
+        assert missing == ALL_PROVIDER_IDS
 
     def test_deepseek_configured_only(self, monkeypatch: pytest.MonkeyPatch):
         """Only DeepSeek has a key — readiness should pass (empty list)."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "unit-valid-deepseek-key")
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         missing = _check_llm_provider_readiness()
         assert missing == []
 
     def test_minimax_configured_only(self, monkeypatch: pytest.MonkeyPatch):
         """Only MiniMax has a key — readiness should pass (empty list)."""
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.setenv("MINIMAX_API_KEY", "unit-valid-minimax-key")
         missing = _check_llm_provider_readiness()
         assert missing == []
@@ -70,35 +73,28 @@ class TestLlmProviderReadiness:
         """Runtime credential cache entry for a single provider satisfies readiness."""
         import across_agents_assistant.api_server as srv
         srv._credential_cache["deepseek"] = "cached-ds-key"
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         missing = _check_llm_provider_readiness()
         assert missing == []
 
     def test_whitespace_env_key_not_accepted(self, monkeypatch: pytest.MonkeyPatch):
         """An env var set to whitespace-only should count as not configured."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "   ")
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         missing = _check_llm_provider_readiness()
-        assert missing == ["deepseek", "minimax"]
+        assert missing == ALL_PROVIDER_IDS
 
     def test_whitespace_credential_cache_not_accepted(self, monkeypatch: pytest.MonkeyPatch):
         """Whitespace-only key in cache should count as not configured."""
         import across_agents_assistant.api_server as srv
         srv._credential_cache["deepseek"] = "   "
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         missing = _check_llm_provider_readiness()
-        assert missing == ["deepseek", "minimax"]
+        assert missing == ALL_PROVIDER_IDS
 
     def test_placeholder_credential_cache_not_accepted(self, monkeypatch: pytest.MonkeyPatch):
         """Placeholder keys should not satisfy backend readiness."""
         import across_agents_assistant.api_server as srv
         srv._credential_cache["minimax"] = "placeholder-secret"
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         missing = _check_llm_provider_readiness()
-        assert missing == ["deepseek", "minimax"]
+        assert missing == ALL_PROVIDER_IDS
 
     def test_key_status_treats_whitespace_cache_as_not_configured(self):
         """get_keys_status should report whitespace-only cache entries as not_configured."""
@@ -125,8 +121,6 @@ class TestLlmProviderReadiness:
             def get(self, provider_id: str):
                 return "sk-from-file" if provider_id == "deepseek" else None
 
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
         srv._credential_cache.clear()
         monkeypatch.setattr(srv, "_get_credential_store", lambda: DummyStore())
 

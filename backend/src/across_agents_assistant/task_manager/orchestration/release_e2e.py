@@ -10,6 +10,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
+
 
 RELEASE_E2E_SCENARIO_ID = "cross_agent_full_delivery_v1"
 
@@ -32,8 +35,8 @@ _REQUIRED_QUALITY_GATES = [
     "browser_e2e",
 ]
 
-_LOCAL_AGENTS = ["openclaw", "hermes", "claude"]
-_CLOUD_AGENTS = ["deepseek", "minimax"]
+_LOCAL_AGENTS = list(LOCAL_CLI_AGENT_IDS)
+_CLOUD_AGENTS = list(get_default_provider_ids())
 _REQUIRED_AGENT_MIX = {
     "min_distinct_agents": 3,
     "min_local_agents": 2,

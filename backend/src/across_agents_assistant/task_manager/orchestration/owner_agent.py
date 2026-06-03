@@ -24,6 +24,8 @@ from across_agents_assistant.task_manager.models import (
 )
 from across_agents_assistant.task_manager.state import TaskState
 from across_agents_assistant.agent_ids import LOCAL_AGENT_ID, LOCAL_CLI_AGENT_IDS, normalize_agent_id
+from across_agents_assistant.llm_gateway.config import load_llm_config
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_definitions, get_default_provider_ids
 from across_agents_assistant.native_agent_skills import is_native_skill_available
 from .requirements import (
     canonical_requirement_key,
@@ -42,8 +44,10 @@ from .project_acceptance import first_existing_candidate
 logger = logging.getLogger("across_agents_assistant.task_manager")
 
 
+_CLOUD_AGENT_IDS = get_default_provider_ids()
+_AGENT_LABEL_ALIASES = ("openclaw", "hermes", "claude(?:\\s+code)?", "codex", *_CLOUD_AGENT_IDS)
 _AGENT_CAPABILITY_LABEL_RE = re.compile(
-    r"\b(?:openclaw|hermes|claude(?:\s+code)?|deepseek|minimax)\s*:\s*[^.;)\n]+",
+    rf"\b(?:{'|'.join(_AGENT_LABEL_ALIASES)})\s*:\s*[^.;)\n]+",
     re.IGNORECASE,
 )
 
@@ -214,10 +218,10 @@ Your job is to decompose a user request into well-defined subtasks with dependen
 
 **Available Agents and their strengths:**
 - claude: Deep technical architecture, OpenAPI spec design, database schema design
-- deepseek: Cloud LLM provider option for backend/API/Python-heavy implementation
 - hermes: React frontend, UI/UX, TypeScript components
-- minimax: Cloud LLM provider option for DevOps, deployment, containers, CI/CD
+- codex: Local Codex CLI coding agent for implementation, debugging, and repository-aware changes
 - openclaw: General purpose, fallback for anything else
+- configured cloud provider ids from the provider registry: backend/API, reasoning, implementation, DevOps, and fallback LLM tasks when their API keys are configured
 
 **Output Format:**
 You MUST output a JSON object with this exact structure:
@@ -226,7 +230,7 @@ You MUST output a JSON object with this exact structure:
         {
             "id": "short-name",
             "description": "Clear, actionable description of what to implement",
-            "agent": "claude|deepseek|hermes|minimax|openclaw",
+            "agent": "openclaw|hermes|claude|codex|configured-cloud-provider-id",
             "priority": 1,
             "dependencies": ["id-of-dependency-1", "id-of-dependency-2"],
             "deliverables": [
@@ -377,11 +381,18 @@ Rules:
     def _get_available_agents(self) -> List[Dict[str, Any]]:
         all_agents = [
             {"id": "claude", "name": "Claude Code", "characteristics": "Deep technical architecture, OpenAPI spec design, database schema design, system architecture. Best for: designing APIs, data models, and system layouts. Requires: claude CLI installed."},
-            {"id": "deepseek", "name": "DeepSeek", "characteristics": "Cloud LLM provider. Best for backend routes, data validation, Python implementation, and API logic when configured. Requires: API key configured."},
             {"id": "hermes", "name": "Hermes", "characteristics": "React frontend, UI/UX design, TypeScript components, HTML/CSS. Best for: building user interfaces, React components, and frontend styling. Requires: hermes CLI installed."},
-            {"id": "minimax", "name": "MiniMax", "characteristics": "Cloud LLM provider. Best for deployment scripts, containerization, CI/CD, nginx configuration, and infrastructure setup when configured. Requires: API key configured."},
+            {"id": "codex", "name": "Codex", "characteristics": "Local Codex CLI coding agent. Best for repository-aware implementation, debugging, tests, and code review tasks. Requires: codex CLI installed and authenticated."},
             {"id": LOCAL_AGENT_ID, "name": "OpenClaw", "characteristics": "General purpose coding, file operations, system commands, fallback for any task. Best for: generic code tasks, file manipulation, and any task other agents cannot handle. Requires: OpenClaw CLI installed."},
         ]
+        all_agents.extend(
+            {
+                "id": provider.provider_id,
+                "name": provider.name,
+                "characteristics": "Cloud LLM provider from the configured registry. Requires: API key configured.",
+            }
+            for provider in get_default_provider_definitions()
+        )
         available = []
         for agent in all_agents:
             if self._is_agent_available(agent["id"]):
@@ -1891,7 +1902,7 @@ You MUST output a JSON object with this exact structure:
             subtask_data.get("agent", ""),
         ]).lower()
         workspace_capable_agents = [
-            agent_id for agent_id in (LOCAL_AGENT_ID, "claude", "hermes", "deepseek", "minimax")
+            agent_id for agent_id in (*LOCAL_CLI_AGENT_IDS, *_CLOUD_AGENT_IDS)
             if agent_id in available_agent_ids
         ]
 
@@ -3688,13 +3699,10 @@ You MUST output a JSON object with this exact structure:
             from ...local_agent_health import is_local_agent_available
             return is_local_agent_available(agent_id)
 
-        env_var_map = {
-            "deepseek": "DEEPSEEK_API_KEY",
-            "minimax": "MINIMAX_API_KEY",
-        }
-        if agent_id in env_var_map:
+        provider_config = next((p for p in load_llm_config().providers if p.provider_id == agent_id), None)
+        if provider_config:
             import os
-            return bool(os.environ.get(env_var_map[agent_id], "").strip())
+            return bool(os.environ.get(provider_config.api_key_env, "").strip())
         return False
 
     def run_integration_test(self, task: Task) -> IntegrationResult:

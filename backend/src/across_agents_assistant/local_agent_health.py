@@ -17,15 +17,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Optional
 
-from .agent_ids import LEGACY_LOCAL_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
+from .agent_ids import LOCAL_AGENT_ID, normalize_agent_id
 from .paths import data_file
 
 
 LOCAL_AGENT_SPECS = {
     LOCAL_AGENT_ID: {
         "display_name": "OpenClaw",
-        # OpenClaw is a first-class local agent. Older installs may still
-        # persist it as "local"; agent_ids.normalize_agent_id handles that.
+        # OpenClaw is a first-class local agent; the old "local" alias is no
+        # longer normalized or migrated.
         "executable": "openclaw",
         "version_args": ["--version"],
         # OpenClaw is gateway-backed. A synthetic agent message is slower,
@@ -33,6 +33,8 @@ LOCAL_AGENT_SPECS = {
         "probe_args": ["gateway", "status"],
         "probe_kind": "gateway_status",
         "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.cargo/bin"],
+        "model_args": ["--model"],
+        "default_models": [],
     },
     "hermes": {
         "display_name": "Hermes",
@@ -41,6 +43,8 @@ LOCAL_AGENT_SPECS = {
         "probe_args": ["status"],
         "probe_kind": "hermes_status",
         "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": [],
     },
     "claude": {
         "display_name": "Claude Code",
@@ -52,6 +56,19 @@ LOCAL_AGENT_SPECS = {
         # lightweight installed-agent check.
         "probe_args": None,
         "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": ["sonnet", "opus", "claude-sonnet-4-6", "claude-opus-4-1"],
+    },
+    "codex": {
+        "display_name": "Codex",
+        "executable": "codex",
+        "version_args": ["--version"],
+        # Codex non-interactive execution is real work. Treat installation and
+        # auth/config validation as separate concerns from lightweight startup.
+        "probe_args": None,
+        "candidate_dirs": ["/Applications/Codex.app/Contents/Resources", "/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": ["gpt-5-codex", "gpt-5.1", "o3"],
     },
 }
 
@@ -70,9 +87,11 @@ class LocalAgentHealth:
     version: Optional[str] = None
     error: Optional[str] = None
     configured_path: Optional[str] = None
+    configured_model: Optional[str] = None
     source: Optional[str] = None
     detection_method: Optional[str] = None
     candidate_paths: Optional[list[str]] = None
+    default_models: Optional[list[str]] = None
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -85,9 +104,11 @@ class LocalAgentHealth:
             "version": self.version,
             "error": self.error,
             "configured_path": self.configured_path,
+            "configured_model": self.configured_model,
             "source": self.source,
             "detection_method": self.detection_method,
             "candidate_paths": self.candidate_paths or [],
+            "default_models": self.default_models or [],
         }
 
 
@@ -107,6 +128,8 @@ def list_local_agent_specs() -> Dict[str, Dict[str, object]]:
             "display_name": str(spec.get("display_name") or agent_id),
             "executable": str(spec["executable"]),
             "configured_path": get_configured_agent_path(agent_id),
+            "configured_model": get_configured_agent_model(agent_id),
+            "default_models": list(spec.get("default_models") or []),
             "candidate_dirs": list(spec.get("candidate_dirs") or []),
         }
         for agent_id, spec in LOCAL_AGENT_SPECS.items()
@@ -115,8 +138,22 @@ def list_local_agent_specs() -> Dict[str, Dict[str, object]]:
 
 def get_configured_agent_path(agent_id: str) -> Optional[str]:
     agent_id = normalize_agent_id(agent_id) or agent_id
+    if agent_id not in LOCAL_AGENT_SPECS:
+        return None
     config = _load_local_agent_config()
     value = ((config.get("agents") or {}).get(agent_id) or {}).get("executable_path")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def get_configured_agent_model(agent_id: str) -> Optional[str]:
+    agent_id = normalize_agent_id(agent_id) or agent_id
+    if agent_id not in LOCAL_AGENT_SPECS:
+        return None
+    config = _load_local_agent_config()
+    value = ((config.get("agents") or {}).get(agent_id) or {}).get("model")
     if not isinstance(value, str):
         return None
     value = value.strip()
@@ -137,6 +174,21 @@ def save_configured_agent_path(agent_id: str, executable_path: Optional[str]) ->
         agent_config.pop("executable_path", None)
     _save_local_agent_config(config)
     clear_local_agent_health_cache()
+
+
+def save_configured_agent_model(agent_id: str, model: Optional[str]) -> None:
+    agent_id = normalize_agent_id(agent_id) or agent_id
+    if agent_id not in LOCAL_AGENT_SPECS:
+        raise ValueError(f"Unknown local agent: {agent_id}")
+    config = _load_local_agent_config()
+    agents = config.setdefault("agents", {})
+    agent_config = agents.setdefault(agent_id, {})
+    model_value = (model or "").strip()
+    if model_value:
+        agent_config["model"] = model_value
+    else:
+        agent_config.pop("model", None)
+    _save_local_agent_config(config)
 
 
 def resolve_local_agent_executable(agent_id: str) -> Optional[str]:
@@ -205,6 +257,7 @@ def is_local_agent_available(agent_id: str) -> bool:
 def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
     executable = str(spec["executable"])
     configured_path = get_configured_agent_path(agent_id)
+    configured_model = get_configured_agent_model(agent_id)
     path, source, method, config_warning = _resolve_executable(agent_id, spec)
     candidate_paths = _existing_candidate_paths(spec)
     if not path:
@@ -216,9 +269,11 @@ def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
             available=False,
             status="invalid_path" if configured_path else "not_found",
             configured_path=configured_path,
+            configured_model=configured_model,
             source=source,
             detection_method=method,
             candidate_paths=candidate_paths,
+            default_models=list(spec.get("default_models") or []),
             error=config_warning,
         )
 
@@ -236,9 +291,11 @@ def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
             version=version,
             error=config_warning,
             configured_path=configured_path,
+            configured_model=configured_model,
             source=source,
             detection_method=method,
             candidate_paths=candidate_paths,
+            default_models=list(spec.get("default_models") or []),
         )
     probe = _run_probe(path, list(probe_args), str(spec.get("probe_kind") or "generic"))
     if probe is None:
@@ -253,9 +310,11 @@ def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
             version=version,
             error=config_warning,
             configured_path=configured_path,
+            configured_model=configured_model,
             source=source,
             detection_method=method,
             candidate_paths=candidate_paths,
+            default_models=list(spec.get("default_models") or []),
         )
     if config_warning:
         probe = f"{config_warning}; {probe}"
@@ -270,9 +329,11 @@ def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
         version=version,
         error=probe,
         configured_path=configured_path,
+        configured_model=configured_model,
         source=source,
         detection_method=method,
         candidate_paths=candidate_paths,
+        default_models=list(spec.get("default_models") or []),
     )
 
 
@@ -284,11 +345,6 @@ def _load_local_agent_config() -> Dict[str, object]:
             data = json.load(f)
         if isinstance(data, dict):
             data.setdefault("agents", {})
-            agents = data.get("agents")
-            if isinstance(agents, dict) and LEGACY_LOCAL_AGENT_ID in agents:
-                agents.setdefault(LOCAL_AGENT_ID, agents[LEGACY_LOCAL_AGENT_ID])
-                agents.pop(LEGACY_LOCAL_AGENT_ID, None)
-                _save_local_agent_config(data)
             return data
     except Exception:
         pass

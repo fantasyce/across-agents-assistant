@@ -35,7 +35,7 @@ class TestOrphanRecovery:
         """DISPATCHED orphans should be re-dispatched."""
         state = TaskState()
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
-        subtask = state.add_subtask(task.task_id, "Do something", "local")
+        subtask = state.add_subtask(task.task_id, "Do something", "openclaw")
 
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)
@@ -49,7 +49,7 @@ class TestOrphanRecovery:
         """RUNNING orphans with pinned_session_id should attempt resume."""
         state = TaskState()
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
-        subtask = state.add_subtask(task.task_id, "Do something", "local")
+        subtask = state.add_subtask(task.task_id, "Do something", "openclaw")
 
         job = state.create_job(subtask)
         job.pinned_session_id = "sess-abc-123"
@@ -63,7 +63,7 @@ class TestOrphanRecovery:
         """RUNNING orphans without pinned_session_id should be marked FAILED."""
         state = TaskState()
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
-        subtask = state.add_subtask(task.task_id, "Do something", "local")
+        subtask = state.add_subtask(task.task_id, "Do something", "openclaw")
 
         job = state.create_job(subtask)
         # No pinned_session_id
@@ -80,7 +80,7 @@ class TestOrphanRecovery:
         # Create jobs in different states
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
 
-        subtask1 = state.add_subtask(task.task_id, "Task 1", "local")
+        subtask1 = state.add_subtask(task.task_id, "Task 1", "openclaw")
         subtask2 = state.add_subtask(task.task_id, "Task 2", "claude")
         subtask3 = state.add_subtask(task.task_id, "Task 3", "hermes")
 
@@ -105,7 +105,7 @@ class TestOrphanRecovery:
         job = Job(
             job_id="job-test",
             subtask_id="st-test",
-            agent_id="local",
+            agent_id="openclaw",
             task_description="Test",
             attempt=0
         )
@@ -119,7 +119,7 @@ class TestOrphanRecovery:
         subtask = SubTask(
             subtask_id="st-test",
             description="Test",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         job.failure_reason = "timeout"
@@ -130,7 +130,7 @@ class TestOrphanRecovery:
         """Completing a job should update the corresponding subtask status."""
         state = TaskState()
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
-        subtask = state.add_subtask(task.task_id, "Do something", "local")
+        subtask = state.add_subtask(task.task_id, "Do something", "openclaw")
 
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.RUNNING)
@@ -147,7 +147,7 @@ class TestOrphanRecovery:
         subtask = SubTask(
             subtask_id="st-test",
             description="Test",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)

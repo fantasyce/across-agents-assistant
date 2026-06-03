@@ -12,7 +12,7 @@ struct SettingsViewModelStatusCacheBehavior {
     @MainActor
     static func main() {
         let vm = SettingsViewModel(bootstrapOnInit: false, loadPersisted: false)
-        vm.localAgents = [.localAgent, .hermes, .claude]
+        vm.localAgents = [.localAgent, .hermes, .claude, .codex]
         vm.cloudLLMs = [.deepSeek, .miniMax]
         vm.apiKeyStatusCache = [:]
 

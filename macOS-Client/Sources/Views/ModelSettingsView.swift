@@ -147,6 +147,9 @@ struct ModelSettingsView: View {
                     },
                     onLoadAPIKey: {
                         await viewModel.loadAPIKeyFromBackend(llm.id)
+                    },
+                    onRefreshModels: {
+                        await viewModel.refreshCloudModels(providerId: llm.id)
                     }
                 )
             }

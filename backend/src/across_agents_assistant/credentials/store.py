@@ -19,13 +19,14 @@ from typing import Dict, List, Optional
 
 from ..paths import data_file
 from .validation import is_usable_secret, normalize_secret
+from ..llm_gateway.provider_registry import get_default_provider_ids
 
 logger = logging.getLogger("across_agents_assistant.credentials")
 
 
 DEFAULT_CREDENTIALS_PATH = data_file("credentials.json")
 
-KNOWN_PROVIDER_IDS = {"deepseek", "minimax"}
+KNOWN_PROVIDER_IDS = set(get_default_provider_ids())
 
 
 @dataclass

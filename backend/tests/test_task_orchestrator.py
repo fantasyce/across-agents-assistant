@@ -1093,10 +1093,10 @@ def orchestrator(mock_dispatcher, mock_validator, mock_owner_agent):
 
 
 def test_quality_remediation_uses_allowed_valid_agent(orchestrator, mock_dispatcher):
-    mock_dispatcher._get_valid_agents = MagicMock(return_value=["local"])
+    mock_dispatcher._get_valid_agents = MagicMock(return_value=["openclaw"])
     task = orchestrator._state.create_task(
         "repair required deliverable",
-        allowed_subtask_agents=["local"],
+        allowed_subtask_agents=["openclaw"],
     )
 
     subtask = orchestrator._create_quality_remediation_subtask(
@@ -1112,7 +1112,7 @@ def test_quality_remediation_uses_allowed_valid_agent(orchestrator, mock_dispatc
     )
 
     assert subtask is not None
-    assert subtask.agent_id == "local"
+    assert subtask.agent_id == "openclaw"
 
 
 def test_quality_probe_remediation_guidance_mentions_anyio_backend_for_trio_errors(orchestrator):

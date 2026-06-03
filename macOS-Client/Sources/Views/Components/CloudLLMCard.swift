@@ -10,6 +10,7 @@ struct CloudLLMCard: View {
     let onSave: (LLMConfig) -> Void
     let onDelete: () -> Void
     let onLoadAPIKey: () async -> String?
+    let onRefreshModels: () async -> Void
 
     @State private var apiKey: String = ""
     @State private var endpoint: String = ""
@@ -20,6 +21,7 @@ struct CloudLLMCard: View {
     @State private var showDeleteConfirm: Bool = false
     @State private var isAPIKeyVisible: Bool = false
     @State private var isLoadingAPIKey: Bool = false
+    @State private var isRefreshingModels: Bool = false
 
     private var isSaveDisabled: Bool {
         apiKey.trimmingCharacters(in: .whitespaces).isEmpty ||
@@ -81,6 +83,9 @@ struct CloudLLMCard: View {
                 .task(id: isExpanded) {
                     guard isExpanded else { return }
                     await loadStoredAPIKeyIfNeeded()
+                    if llm.availableModels?.isEmpty != false {
+                        await refreshModels()
+                    }
                 }
             }
         }
@@ -177,13 +182,35 @@ struct CloudLLMCard: View {
                     .foregroundColor(.red)
             }
 
-            Picker("", selection: $model) {
-                ForEach(availableModels, id: \.self) { m in
-                    Text(m).tag(m)
+            HStack(spacing: 8) {
+                Picker("", selection: $model) {
+                    ForEach(availableModels, id: \.self) { m in
+                        Text(m).tag(m)
+                    }
                 }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: {
+                    Task {
+                        await refreshModels()
+                    }
+                }) {
+                    if isRefreshingModels {
+                        ProgressView()
+                            .scaleEffect(0.55)
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(valueTextColor.opacity(0.9))
+                            .frame(width: 20, height: 20)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(appPreferences.text("models.refreshModels"))
+                .disabled(isRefreshingModels)
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
             .background(fieldColor)
             .cornerRadius(8)
@@ -260,14 +287,14 @@ struct CloudLLMCard: View {
     }
 
     private var availableModels: [String] {
-        switch llm.id {
-        case "deepseek":
-            return ["deepseek-v4-flash", "deepseek-v4-pro"]
-        case "minimax":
-            return ["MiniMax-M2.7"]
-        default:
-            return []
+        var values = llm.availableModels ?? []
+        if !model.isEmpty, !values.contains(model) {
+            values.insert(model, at: 0)
         }
+        if values.isEmpty, let current = llm.model, !current.isEmpty {
+            values.append(current)
+        }
+        return values
     }
 
     private func loadStoredAPIKeyIfNeeded() async {
@@ -289,6 +316,13 @@ struct CloudLLMCard: View {
             await loadStoredAPIKeyIfNeeded()
         }
         isAPIKeyVisible.toggle()
+    }
+
+    private func refreshModels() async {
+        guard !isRefreshingModels else { return }
+        isRefreshingModels = true
+        await onRefreshModels()
+        isRefreshingModels = false
     }
 
     private func maskAPIKey(_ key: String) -> String {

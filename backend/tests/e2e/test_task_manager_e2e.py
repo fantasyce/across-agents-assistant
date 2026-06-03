@@ -14,7 +14,7 @@ class TestTaskState:
         subtask = SubTask(
             subtask_id="st-001",
             description="Test subtask",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         assert job.status == JobStatus.PENDING
@@ -31,7 +31,7 @@ class TestTaskState:
         subtask = SubTask(
             subtask_id="st-002",
             description="Test subtask",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)
@@ -44,7 +44,7 @@ class TestTaskState:
         subtask = SubTask(
             subtask_id="st-003",
             description="Test subtask",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)
@@ -60,7 +60,7 @@ class TestTaskState:
         subtask = SubTask(
             subtask_id="st-004",
             description="Test subtask",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)
@@ -72,7 +72,7 @@ class TestTaskState:
 
     def test_get_jobs_in_status(self):
         state = TaskState()
-        subtask1 = SubTask(subtask_id="st-005", description="Task 1", agent_id="local")
+        subtask1 = SubTask(subtask_id="st-005", description="Task 1", agent_id="openclaw")
         subtask2 = SubTask(subtask_id="st-006", description="Task 2", agent_id="claude")
 
         job1 = state.create_job(subtask1)
@@ -98,7 +98,7 @@ class TestTaskState:
         subtask = SubTask(
             subtask_id="st-007",
             description="Test subtask",
-            agent_id="local"
+            agent_id="openclaw"
         )
         job = state.create_job(subtask)
         state.update_job_status(job.job_id, JobStatus.DISPATCHED)
@@ -115,7 +115,7 @@ class TestTaskState:
         job = Job(
             job_id="job-test",
             subtask_id="st-test",
-            agent_id="local",
+            agent_id="openclaw",
             task_description="Test",
             attempt=2,
             pinned_session_id="sess-123",
@@ -132,7 +132,7 @@ class TestTaskLifecycle:
     def test_full_lifecycle_pending_dispatched_running_completed(self):
         state = TaskState()
         task = state.create_task("Test task", TaskType.SIMPLE_QA)
-        subtask = state.add_subtask(task.task_id, "Do something", "local")
+        subtask = state.add_subtask(task.task_id, "Do something", "openclaw")
 
         job = state.create_job(subtask)
         assert job.status == JobStatus.PENDING
@@ -153,7 +153,7 @@ class TestTaskLifecycle:
         state = TaskState()
         task = state.create_task("Multi-step task", TaskType.AUTOMATION)
 
-        subtask1 = state.add_subtask(task.task_id, "Step 1", "local")
+        subtask1 = state.add_subtask(task.task_id, "Step 1", "openclaw")
         subtask2 = state.add_subtask(
             task.task_id, "Step 2", "claude",
             dependencies=[subtask1.subtask_id]

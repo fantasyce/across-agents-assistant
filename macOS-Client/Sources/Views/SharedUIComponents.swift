@@ -293,10 +293,10 @@ struct AttachmentPreviewView: View {
     }
 }
 
-@MainActor
 class FileAttachment: NSTextAttachment {
     let attachedFile: AttachedFile
 
+    @MainActor
     init(file: AttachedFile) {
         self.attachedFile = file
         super.init(data: nil, ofType: nil)

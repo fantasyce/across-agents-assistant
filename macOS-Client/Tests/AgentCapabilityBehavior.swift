@@ -6,11 +6,11 @@ func assert(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
-func testProfileNormalizesLegacyLocalAgent() {
+func testProfileDoesNotNormalizeLegacyLocalAgentAlias() {
     let profile = AgentCapabilityProfile.defaultProfile(agentId: "local")
 
-    assert(profile.agentId == "openclaw", "Legacy local agent id should normalize to openclaw")
-    assert(profile.enabledSkillIds.contains("general_execution"), "OpenClaw should keep default general execution skill")
+    assert(profile.agentId == "local", "Legacy local agent id should remain separate")
+    assert(profile.enabledSkillIds.isEmpty, "Legacy local should not inherit OpenClaw defaults")
 }
 
 func testProfileTogglesSkillsPluginsAndTools() {
@@ -274,7 +274,7 @@ func testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter() throws {
 @main
 struct AgentCapabilityBehavior {
     static func main() {
-        testProfileNormalizesLegacyLocalAgent()
+        testProfileDoesNotNormalizeLegacyLocalAgentAlias()
         testProfileTogglesSkillsPluginsAndTools()
         testConfiguredCapabilityCountIsStable()
         try! testSkillDefinitionMarksCustomSkills()

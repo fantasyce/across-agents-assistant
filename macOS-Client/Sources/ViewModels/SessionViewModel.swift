@@ -300,9 +300,21 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: AgentIDs.openclaw, name: "OpenClaw", iconName: "agent.openclaw", color: "#d97757", type: .local),
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#d97757", type: .local),
         AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#d97757", type: .local),
+        AgentModel(id: "codex", name: "Codex", iconName: "agent.codex", color: "#d97757", type: .local),
         // Cloud LLMs
+        AgentModel(id: "openai", name: "OpenAI", iconName: "agent.openai", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "anthropic", name: "Anthropic", iconName: "agent.anthropic", color: "#4d6bfe", type: .cloudLLM),
         AgentModel(id: "deepseek", name: "DeepSeek", iconName: "agent.deepseek", color: "#4d6bfe", type: .cloudLLM),
-        AgentModel(id: "minimax", name: "MiniMax", iconName: "agent.minimax", color: "#4d6bfe", type: .cloudLLM)
+        AgentModel(id: "minimax", name: "MiniMax", iconName: "agent.minimax", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "bailian", name: "Alibaba Bailian / Qwen", iconName: "agent.bailian", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "moonshot", name: "Moonshot / Kimi", iconName: "agent.moonshot", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "zhipu", name: "Zhipu GLM", iconName: "agent.zhipu", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "volcengine", name: "Volcengine Ark / Doubao", iconName: "agent.volcengine", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "google", name: "Google Gemini", iconName: "agent.google", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "xai", name: "xAI", iconName: "agent.xai", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "mistral", name: "Mistral AI", iconName: "agent.mistral", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "groq", name: "Groq", iconName: "agent.groq", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "cohere", name: "Cohere", iconName: "agent.cohere", color: "#4d6bfe", type: .cloudLLM)
     ]
 
     @Published var fileTree: [FileItemModel] = [] {

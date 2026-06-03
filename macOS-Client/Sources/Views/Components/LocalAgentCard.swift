@@ -12,6 +12,7 @@ struct LocalAgentCard: View {
     let onAutoDetect: (String) -> Void
 
     @State private var selectedPath: String = ""
+    @State private var selectedModel: String = ""
     var body: some View {
         VStack(spacing: 0) {
             AgentCard(
@@ -34,6 +35,7 @@ struct LocalAgentCard: View {
                 .padding(.top, 0)
                 .onAppear {
                     selectedPath = agent.configuredPath ?? agent.executablePath ?? ""
+                    selectedModel = agent.selectedModel ?? ""
                 }
                 .onChange(of: agent.configuredPath) { _, newValue in
                     selectedPath = newValue ?? agent.executablePath ?? ""
@@ -42,6 +44,9 @@ struct LocalAgentCard: View {
                     if agent.configuredPath == nil {
                         selectedPath = newValue ?? ""
                     }
+                }
+                .onChange(of: agent.selectedModel) { _, newValue in
+                    selectedModel = newValue ?? ""
                 }
             }
         }
@@ -141,9 +146,39 @@ struct LocalAgentCard: View {
                 detectionFeedbackView
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text(appPreferences.text("models.model"))
+                    .font(.system(size: 11))
+                    .foregroundColor(labelTextColor)
+                    .textCase(.uppercase)
+
+                if availableModels.isEmpty {
+                    TextField(appPreferences.text("models.autoModel"), text: $selectedModel)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .foregroundColor(valueTextColor)
+                        .padding(10)
+                        .background(fieldColor)
+                        .cornerRadius(8)
+                } else {
+                    Picker("", selection: $selectedModel) {
+                        Text(appPreferences.text("models.autoModel")).tag("")
+                        ForEach(availableModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(fieldColor)
+                    .cornerRadius(8)
+                }
+            }
+
             HStack(spacing: 10) {
                 Button(appPreferences.text("system.cancel")) {
                     selectedPath = agent.configuredPath ?? agent.executablePath ?? ""
+                    selectedModel = agent.selectedModel ?? ""
                     isExpanded = false
                 }
                 .buttonStyle(SecondaryButtonStyle())
@@ -170,8 +205,10 @@ struct LocalAgentCard: View {
                 Button(appPreferences.text("system.save")) {
                     var updated = agent
                     let trimmed = selectedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let model = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
                     updated.configuredPath = trimmed.isEmpty ? nil : trimmed
                     updated.executablePath = trimmed.isEmpty ? nil : trimmed
+                    updated.selectedModel = model.isEmpty ? nil : model
                     onSave(updated)
                     isExpanded = false
                 }
@@ -238,6 +275,14 @@ struct LocalAgentCard: View {
             return String(format: appPreferences.text("models.configuredPath"), configured)
         }
         return appPreferences.text("models.noExecutable")
+    }
+
+    private var availableModels: [String] {
+        var values = agent.availableModels ?? []
+        if !selectedModel.isEmpty, !values.contains(selectedModel) {
+            values.insert(selectedModel, at: 0)
+        }
+        return values
     }
 
     private func chooseExecutable() {

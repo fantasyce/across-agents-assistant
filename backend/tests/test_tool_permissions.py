@@ -143,7 +143,7 @@ async def test_mcp_tool_approval_routes_to_matching_mcp_server(monkeypatch):
             decision="approve",
             tool_name="sqlite__sqlite_query",
             tool_args={"query": "select 1"},
-            agent_id="local",
+            agent_id="openclaw",
             tool_call_id="call-1",
         )
     )
