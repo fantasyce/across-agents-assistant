@@ -47,7 +47,7 @@ Before opening a pull request:
 7. Do not commit generated build output, local databases, local model files, logs, credentials, screenshots with private data, or machine-specific config.
 8. Follow the project [Code of Conduct](CODE_OF_CONDUCT.md).
 
-The public CI workflow in `.github/workflows/quality.yml` runs the same open-source check, backend regression suite, and Swift build on pull requests and pushes to `main`.
+The public CI workflow in `.github/workflows/quality.yml` runs the same open-source check, backend regression suite, and Swift build on pull requests and pushes to `main`. The Security workflow runs CodeQL analysis for the Python backend and Swift macOS client, while Dependabot monitors GitHub Actions, Python requirements, and Swift Package Manager dependencies.
 
 ## Community Support and Feedback
 

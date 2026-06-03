@@ -145,7 +145,7 @@ The `0.4.0` quality work focuses on making complex agent deliveries easier to in
 - Delivery quality benchmarks and evidence bundles support both live in-memory tasks and lazily loaded persisted task records, so historical task details can be rechecked from the packaged app without restoring or restarting the task.
 - Delivery contract extraction filters system temporary project-directory hints so local scratch directories do not become phantom deliverables.
 - Native skill readiness and MCP safety information now participate in task preflight so unavailable skills stay visible for repair but do not become strong routing signals.
-- GitHub Actions and `scripts/open_source_check.sh` protect the public repository from private docs, local runtime data, signing artifacts, missing README assets, whitespace issues, and common secret patterns.
+- GitHub Actions, CodeQL, Dependabot, secret scanning, and `scripts/open_source_check.sh` protect the public repository from private docs, local runtime data, signing artifacts, missing README assets, whitespace issues, dependency drift, and common secret patterns.
 - The packaged app defaults to a faster backend bundle layout and avoids reopening duplicate main windows on launch.
 
 ## Quick Start
@@ -286,6 +286,12 @@ bash scripts/open_source_check.sh
 ```
 
 The check verifies whitespace, forbidden tracked artifacts, common secret patterns, README image assets, and basic build-script syntax. GitHub Actions also runs the open-source check, backend regression tests, and a Swift build on pushes to `main` and pull requests.
+
+GitHub security automation is also enabled:
+
+- The Security workflow runs CodeQL for the Python backend and Swift macOS client on pull requests, pushes to `main`, scheduled weekly runs, and manual dispatches.
+- Dependabot monitors GitHub Actions, Python requirements, and Swift Package Manager dependencies.
+- Repository secret scanning and push protection are enabled for the public repository.
 
 ## macOS Client Development
 
