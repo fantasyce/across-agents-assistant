@@ -39,7 +39,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          queries: security-extended
 
       - name: Build Swift package
         if: matrix.language == 'swift'
