@@ -75,6 +75,8 @@ class PersistenceService:
         assign_unscoped_sessions: bool = False,
     ) -> Dict[str, Any]:
         normalized = _normalize_local_path(path)
+        # codeql[py/path-injection]: Projects are explicit user-selected local
+        # folders; the app creates/opens exactly that resolved local folder.
         os.makedirs(normalized, exist_ok=True)
         safe_name = (name or os.path.basename(normalized) or "Project").strip()
         safe_kind = kind if kind in {"blank", "folder"} else "folder"

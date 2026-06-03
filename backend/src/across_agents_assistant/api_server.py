@@ -36,6 +36,36 @@ def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=_safe_error_message(operation))
 
 
+_ERROR_DETAIL_KEYS = {
+    "error",
+    "error_message",
+    "exception",
+    "traceback",
+    "stack_trace",
+    "output_tail",
+}
+
+
+def _sanitize_public_error_text(value: Any) -> Any:
+    if value is None:
+        return None
+    text = str(value)
+    if "Traceback (most recent call last)" in text or "\n  File " in text:
+        return _safe_error_message("Internal operation")
+    return re.sub(r"[\r\n\t]+", " ", text).strip()[:2000]
+
+
+def _sanitize_public_payload(value: Any, key: str = "") -> Any:
+    lowered = key.lower()
+    if lowered in _ERROR_DETAIL_KEYS:
+        return _sanitize_public_error_text(value)
+    if isinstance(value, dict):
+        return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_public_payload(item, key) for item in value]
+    return value
+
+
 def _normalize_local_path(path: str) -> str:
     value = str(path or "").strip()
     if not value or "\x00" in value or "\r" in value or "\n" in value:
@@ -1271,6 +1301,8 @@ async def create_blank_project(req: CreateBlankProjectRequest):
 @app.post("/api/projects/from-folder", response_model=ProjectInfo)
 async def create_folder_project(req: CreateFolderProjectRequest):
     try:
+        # codeql[py/path-injection]: This endpoint imports a folder explicitly
+        # selected by the local desktop user after path normalization.
         path = _normalize_local_path(req.path)
         if not os.path.isdir(path):
             raise HTTPException(status_code=400, detail=f"Project path is not a directory: {path}")
@@ -5099,7 +5131,7 @@ async def get_task_status(task_id: str):
                     "owner_decision": getattr(wave, "owner_decision", None),
                 })
 
-        return {
+        return _sanitize_public_payload({
             "task_id": task_id,
             "progress": progress,
             "status": status,
@@ -5122,7 +5154,7 @@ async def get_task_status(task_id: str):
             ),
             "subtasks": subtasks_data,
             "waves": waves_data
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -5153,6 +5185,7 @@ async def get_task_quality_benchmark(
     payload = await get_task_status(task_id)
     if isinstance(payload, BaseModel):
         payload = _pydantic_dump(payload)
+    payload = _sanitize_public_payload(payload)
     report = evaluate_delivery_benchmark(
         [payload],
         benchmark_id=benchmark_id or f"task-{task_id}-release-{__version__}",

@@ -25,6 +25,8 @@ def _safe_local_path(raw_path: Any) -> Optional[Path]:
     value = str(raw_path or "").strip()
     if not value or "\x00" in value or "\r" in value or "\n" in value:
         return None
+    # codeql[py/path-injection]: The desktop app intentionally reads user-selected
+    # local attachments after rejecting control characters and resolving the path.
     return Path(value).expanduser().resolve(strict=False)
 
 

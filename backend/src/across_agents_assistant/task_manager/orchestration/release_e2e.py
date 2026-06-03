@@ -917,6 +917,8 @@ def build_release_e2e_task_request(
     scenario = _get_release_e2e_scenario(scenario_id)
     resolved_project_dir = project_dir or _default_project_dir(run_label)
     project_path = Path(str(resolved_project_dir)).expanduser().resolve(strict=False)
+    # codeql[py/path-injection]: Release E2E uses an app-generated temp path or
+    # maintainer-provided validation path, resolved before creating the workspace.
     project_path.mkdir(parents=True, exist_ok=True)
     resolved_project_dir = str(project_path)
 
