@@ -10,7 +10,7 @@ Do not post API keys, private logs, screenshots with secrets, credentials, or ex
 
 Preferred reporting path:
 
-1. Use GitHub Security Advisory for the repository if it is available.
+1. Use GitHub private vulnerability reporting or Security Advisory when available: https://github.com/fantasyce/across-agents-assistant/security/advisories/new
 2. If a private advisory channel is not available yet, contact the maintainers through the private channel configured on the repository or organization before posting details publicly.
 
 Please include:
