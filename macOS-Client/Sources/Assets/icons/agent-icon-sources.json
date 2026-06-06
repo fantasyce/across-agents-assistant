@@ -1,0 +1,389 @@
+{
+  "version": 3,
+  "policy": "Third-party marks are used only as descriptive identifiers for compatible agents and providers. They are not Across Agents Assistant branding.",
+  "visual_policy": "Official/library glyphs are not redrawn. Dark/light black-white backgrounds are project-owned UI containers used to normalize app presentation and preserve clear space.",
+  "local_override_directories": [
+    "~/Library/Application Support/AcrossAgentsAssistant/Icons",
+    "~/Library/Application Support/Across Agents Assistant/Icons"
+  ],
+  "runtime_app_icon_agents": {
+    "codex": [
+      "/Applications/Codex.app",
+      "~/Applications/Codex.app"
+    ],
+    "cursor": [
+      "/Applications/Cursor.app",
+      "~/Applications/Cursor.app"
+    ]
+  },
+  "runtime_preferred_app_icon_agents": [
+    "codex"
+  ],
+  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
+  "bundled_icons": [
+    {
+      "agent_id": "openclaw",
+      "display_name": "OpenClaw",
+      "asset_paths": [
+        "agent.openclaw.svg",
+        "agent.openclaw.light.svg"
+      ],
+      "source_type": "project-original",
+      "license": "Across Agents Assistant project asset",
+      "visual_treatment": "Built-in dark/light neutral tile background",
+      "redistribution_status": "project-owned"
+    },
+    {
+      "agent_id": "hermes",
+      "display_name": "Hermes",
+      "asset_paths": [
+        "agent.hermes.svg",
+        "agent.hermes.light.svg"
+      ],
+      "source_type": "project-original",
+      "license": "Across Agents Assistant project asset",
+      "visual_treatment": "Built-in dark/light neutral tile background",
+      "redistribution_status": "project-owned"
+    },
+    {
+      "agent_id": "opencode",
+      "display_name": "OpenCode",
+      "asset_paths": [
+        "agent.opencode.svg",
+        "agent.opencode.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "opencode.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark"
+    },
+    {
+      "agent_id": "claude",
+      "display_name": "Claude Code",
+      "asset_paths": [
+        "agent.claude.svg",
+        "agent.claude.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "claude-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Claude mark used for Claude Code local agent"
+    },
+    {
+      "agent_id": "codex",
+      "display_name": "Codex",
+      "asset_paths": [
+        "agent.codex.svg",
+        "agent.codex.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "openai.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Fallback OpenAI/library glyph embedded inside an Across-owned dark/light neutral tile; runtime uses the installed OpenAI-signed Codex.app icon when present",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Bundled fallback intentionally matches OpenAI provider icon; Codex.app icon is read at runtime from the user's machine and is not bundled"
+    },
+    {
+      "agent_id": "cursor",
+      "display_name": "Cursor Agent",
+      "asset_paths": [
+        "agent.cursor.svg",
+        "agent.cursor.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "cursor.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Bundled primary icon; installed Cursor.app icon is fallback-only to avoid macOS app-icon edge halos"
+    },
+    {
+      "agent_id": "openai",
+      "display_name": "OpenAI",
+      "asset_paths": [
+        "agent.openai.svg",
+        "agent.openai.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "openai.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "OpenAI cloud provider"
+    },
+    {
+      "agent_id": "anthropic",
+      "display_name": "Anthropic",
+      "asset_paths": [
+        "agent.anthropic.svg",
+        "agent.anthropic.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "anthropic.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Anthropic cloud provider"
+    },
+    {
+      "agent_id": "deepseek",
+      "display_name": "DeepSeek",
+      "asset_paths": [
+        "agent.deepseek.svg",
+        "agent.deepseek.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "deepseek-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "DeepSeek cloud provider"
+    },
+    {
+      "agent_id": "minimax",
+      "display_name": "MiniMax",
+      "asset_paths": [
+        "agent.minimax.svg",
+        "agent.minimax.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "minimax-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "MiniMax cloud provider"
+    },
+    {
+      "agent_id": "bailian",
+      "display_name": "Alibaba Bailian / Qwen",
+      "asset_paths": [
+        "agent.bailian.svg",
+        "agent.bailian.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "qwen-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Qwen mark used for Alibaba Bailian / Qwen cloud provider"
+    },
+    {
+      "agent_id": "moonshot",
+      "display_name": "Moonshot / Kimi",
+      "asset_paths": [
+        "agent.moonshot.svg",
+        "agent.moonshot.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "kimi-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Kimi mark used for Moonshot / Kimi cloud provider"
+    },
+    {
+      "agent_id": "zhipu",
+      "display_name": "Zhipu GLM",
+      "asset_paths": [
+        "agent.zhipu.svg",
+        "agent.zhipu.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "zhipu-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Zhipu cloud provider"
+    },
+    {
+      "agent_id": "volcengine",
+      "display_name": "Volcengine Ark / Doubao",
+      "asset_paths": [
+        "agent.volcengine.svg",
+        "agent.volcengine.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "doubao-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Doubao mark used for Volcengine Ark / Doubao cloud provider"
+    },
+    {
+      "agent_id": "google",
+      "display_name": "Google Gemini",
+      "asset_paths": [
+        "agent.google.svg",
+        "agent.google.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg-derived-stabilized-glyph",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "gemini-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Gemini sparkle glyph stabilized for AppKit SVG rendering inside an Across-owned dark/light neutral tile",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Gemini mark used for Google Gemini cloud provider; simplified to avoid CoreSVG gradient/rendering shrinkage"
+    },
+    {
+      "agent_id": "xai",
+      "display_name": "xAI",
+      "asset_paths": [
+        "agent.xai.svg",
+        "agent.xai.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "xai.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "xAI/Grok cloud provider"
+    },
+    {
+      "agent_id": "mistral",
+      "display_name": "Mistral AI",
+      "asset_paths": [
+        "agent.mistral.svg",
+        "agent.mistral.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "mistral-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Mistral AI cloud provider"
+    },
+    {
+      "agent_id": "groq",
+      "display_name": "Groq",
+      "asset_paths": [
+        "agent.groq.svg",
+        "agent.groq.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "groq.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Groq cloud provider"
+    },
+    {
+      "agent_id": "cohere",
+      "display_name": "Cohere",
+      "asset_paths": [
+        "agent.cohere.svg",
+        "agent.cohere.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "cohere-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Cohere cloud provider"
+    },
+    {
+      "agent_id": "openrouter",
+      "display_name": "OpenRouter",
+      "asset_paths": [
+        "agent.openrouter.svg",
+        "agent.openrouter.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "openrouter.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "OpenRouter cloud provider"
+    },
+    {
+      "agent_id": "together",
+      "display_name": "Together AI",
+      "asset_paths": [
+        "agent.together.svg",
+        "agent.together.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "together-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Together AI cloud provider"
+    },
+    {
+      "agent_id": "fireworks",
+      "display_name": "Fireworks AI",
+      "asset_paths": [
+        "agent.fireworks.svg",
+        "agent.fireworks.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "fireworks-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Fireworks AI cloud provider"
+    }
+  ],
+  "deferred_or_local_only": []
+}

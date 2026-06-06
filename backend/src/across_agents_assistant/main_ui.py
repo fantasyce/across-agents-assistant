@@ -79,7 +79,12 @@ class MainApi:
         import subprocess
         import shutil
         normalized_agent_id = normalize_agent_id(agent_id) or agent_id
-        executable_name = "openclaw" if normalized_agent_id == LOCAL_AGENT_ID else normalized_agent_id
+        from .local_agent_health import LOCAL_AGENT_SPECS
+
+        executable_name = str(
+            (LOCAL_AGENT_SPECS.get(normalized_agent_id) or {}).get("executable")
+            or ("openclaw" if normalized_agent_id == LOCAL_AGENT_ID else normalized_agent_id)
+        )
         path = shutil.which(executable_name)
         if not path:
             try:

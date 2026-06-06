@@ -117,6 +117,7 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
     def fake_popen(args, **kwargs):
         observed["args"] = args
         observed["cwd"] = kwargs.get("cwd")
+        observed["stdin"] = kwargs.get("stdin")
         return FakeProcess()
 
     monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
@@ -131,5 +132,117 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
 
     assert reply.text == "codex completed"
     assert observed["args"][:4] == ["/usr/local/bin/codex", "exec", "--model", "gpt-5-codex"]
+    assert "--ask-for-approval" not in observed["args"]
     assert "--cd" in observed["args"]
     assert str(tmp_path) in observed["args"]
+    assert observed["stdin"] is client_mod.subprocess.DEVNULL
+
+
+def test_universal_agent_client_passes_configured_model_to_opencode(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class OpenCodeManager:
+        def get_active_agent(self):
+            return "opencode"
+
+        def get_agent_config(self, agent_id):
+            return {"output_format": "raw"}
+
+    monkeypatch.setattr(
+        client_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"),
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "resolve_local_agent_executable",
+        lambda agent_id: "/usr/local/bin/opencode",
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "get_configured_agent_model",
+        lambda agent_id: "anthropic/claude-sonnet-4-5",
+    )
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("opencode completed", "")
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        observed["cwd"] = kwargs.get("cwd")
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+
+    client = UniversalAgentClient(OpenCodeManager())
+    reply = client.send(
+        "repair the delivery",
+        target_agent="opencode",
+        project_dir=str(tmp_path),
+        timeout=23.0,
+    )
+
+    assert reply.text == "opencode completed"
+    assert observed["args"][:4] == ["/usr/local/bin/opencode", "run", "--model", "anthropic/claude-sonnet-4-5"]
+    assert observed["cwd"] == str(tmp_path)
+
+
+def test_universal_agent_client_leaves_cursor_auto_model_to_cli(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class CursorManager:
+        def get_active_agent(self):
+            return "cursor"
+
+        def get_agent_config(self, agent_id):
+            return {"output_format": "raw"}
+
+    monkeypatch.setattr(
+        client_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"),
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "resolve_local_agent_executable",
+        lambda agent_id: "/usr/local/bin/cursor-agent",
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "get_configured_agent_model",
+        lambda agent_id: "auto",
+    )
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("cursor completed", "")
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        observed["cwd"] = kwargs.get("cwd")
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+
+    client = UniversalAgentClient(CursorManager())
+    reply = client.send(
+        "repair the delivery",
+        target_agent="cursor",
+        project_dir=str(tmp_path),
+        timeout=23.0,
+    )
+
+    assert reply.text == "cursor completed"
+    assert observed["args"] == ["/usr/local/bin/cursor-agent", "-p", "repair the delivery"]
+    assert observed["cwd"] == str(tmp_path)

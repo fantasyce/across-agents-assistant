@@ -115,21 +115,6 @@ struct AgentIconView: View {
     }
 
     private func loadSVGImage(named: String) -> NSImage? {
-        let candidates: [(String, String)]
-        if colorScheme == .light {
-            candidates = [(named + ".light", "svg"), (named, "svg"), (named, "png")]
-        } else {
-            candidates = isCloudLLM ? [(named, "png"), (named, "svg")] : [(named, "svg")]
-        }
-
-        for (assetName, ext) in candidates {
-            guard let url = bundledAssetURL(named: assetName, withExtension: ext, subdirectory: "Assets/icons") else {
-                continue
-            }
-            if let data = try? Data(contentsOf: url) {
-                return NSImage(data: data)
-            }
-        }
-        return nil
+        loadAgentIconSync(name: named, colorScheme: colorScheme)
     }
 }

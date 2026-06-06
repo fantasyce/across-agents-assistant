@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.4.1 - 2026-06-07
+
+This is a source-first patch release for the local-agent and cloud-provider
+catalog. It remains intended for local building and inspection; public binary
+distribution still requires Developer ID signing, hardened runtime, and
+notarization outside this repository.
+
+### Added
+
+- Official/library tile icons for the expanded cloud LLM catalog, including
+  OpenAI, Anthropic, Gemini, xAI, Mistral, Groq, Cohere, OpenRouter, Together
+  AI, Fireworks AI, and existing Chinese provider entries.
+- Agent icon provenance manifest, workflow documentation, preview artwork, and
+  third-party notice updates for the bundled icon set.
+- Runtime Codex app-icon support: installed OpenAI-signed `Codex.app` icons are
+  read from the user's machine when present, with the bundled OpenAI tile as
+  the fallback.
+
+### Changed
+
+- OpenCode now uses the LobeHub Icons `opencode.svg` source inside the
+  project-owned dark/light tile, avoiding release reliance on a Marketplace
+  image with unclear redistribution terms.
+- Cursor keeps the clean bundled tile first and only falls back to the local
+  app icon if no bundled asset is available, avoiding macOS icon halos in the
+  compact sidebar.
+- Unsupported local IDE integrations were removed from the local-agent catalog
+  until their CLI availability and setup flow can be supported reliably.
+- The open-source guard script now fails if bundled icon metadata still carries
+  a `review-before-release` redistribution status.
+- README product-tour screenshots and the agent icon preview were refreshed
+  from the `0.4.1` app surface with public-safe demo labels.
+
+### Validation
+
+- Focused backend regression for local-agent health, provider registry, icon
+  policy, and version consistency.
+- `bash scripts/open_source_check.sh`.
+- `swift build --package-path macOS-Client --skip-update`.
+- `./build_app.sh`.
+- `codesign --verify --deep --strict --verbose=2 "build/Across Agents Assistant.app"`.
+
 ## 0.4.0 - 2026-05-31
 
 This is a source-first release for local building and inspection. The packaged

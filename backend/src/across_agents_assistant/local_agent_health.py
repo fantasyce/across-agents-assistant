@@ -57,7 +57,7 @@ LOCAL_AGENT_SPECS = {
         "probe_args": None,
         "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
         "model_args": ["--model"],
-        "default_models": ["sonnet", "opus", "claude-sonnet-4-6", "claude-opus-4-1"],
+        "default_models": ["sonnet", "opus", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
     },
     "codex": {
         "display_name": "Codex",
@@ -68,7 +68,29 @@ LOCAL_AGENT_SPECS = {
         "probe_args": None,
         "candidate_dirs": ["/Applications/Codex.app/Contents/Resources", "/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
         "model_args": ["--model"],
-        "default_models": ["gpt-5-codex", "gpt-5.1", "o3"],
+        "default_models": ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"],
+    },
+    "opencode": {
+        "display_name": "OpenCode",
+        "executable": "opencode",
+        "version_args": ["--version"],
+        # opencode run is a real non-interactive agent invocation. Keep startup
+        # detection lightweight and leave auth/model validation to the CLI run.
+        "probe_args": None,
+        "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin", "~/.bun/bin", "~/.cargo/bin"],
+        "model_args": ["--model"],
+        "default_models": ["anthropic/claude-sonnet-4-5", "openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat"],
+    },
+    "cursor": {
+        "display_name": "Cursor Agent",
+        "executable": "cursor-agent",
+        "version_args": ["--version"],
+        # cursor-agent -p starts a real agent run, so installation detection
+        # should not execute a prompt during Refresh All.
+        "probe_args": None,
+        "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": ["auto", "gpt-5", "claude-sonnet-4.5", "claude-opus-4.1"],
     },
 }
 
@@ -278,6 +300,7 @@ def _detect_one(agent_id: str, spec: Dict[str, object]) -> LocalAgentHealth:
         )
 
     version = _read_version(path, list(spec["version_args"]))
+
     probe_args = spec.get("probe_args")
     if probe_args is None:
         return LocalAgentHealth(
@@ -344,7 +367,19 @@ def _load_local_agent_config() -> Dict[str, object]:
         with open(LOCAL_AGENT_CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            data.setdefault("agents", {})
+            agents = data.setdefault("agents", {})
+            if isinstance(agents, dict):
+                pruned_agents = {
+                    agent_id: agent_config
+                    for agent_id, agent_config in agents.items()
+                    if agent_id in LOCAL_AGENT_SPECS
+                }
+                if pruned_agents != agents:
+                    data["agents"] = pruned_agents
+                    _save_local_agent_config(data)
+            else:
+                data["agents"] = {}
+                _save_local_agent_config(data)
             return data
     except Exception:
         pass
@@ -368,28 +403,39 @@ def _resolve_executable(agent_id: str, spec: Dict[str, object]) -> tuple[Optiona
             return expanded, "configured", "configured_path", None
         warning = f"configured path is not executable: {configured}"
 
-    executable = str(spec["executable"])
-    path = shutil.which(executable)
-    if path:
-        return path, "path", f"which {executable}", warning
+    executable_names = _executable_names(spec)
+    for executable in executable_names:
+        path = shutil.which(executable)
+        if path:
+            return path, "path", f"which {executable}", warning
 
     for candidate in _candidate_paths(spec):
         if _is_executable_file(candidate):
             return candidate, "candidate", "safe_candidate_path", warning
 
+    executable = executable_names[0]
     return None, "configured" if configured else "not_found", "configured_path" if configured else f"which {executable}", warning
 
 
 def _candidate_paths(spec: Dict[str, object]) -> list[str]:
-    executable = str(spec["executable"])
     return [
         str(Path(_expand_path(str(directory))) / executable)
         for directory in list(spec.get("candidate_dirs") or [])
+        for executable in _executable_names(spec)
     ]
 
 
 def _existing_candidate_paths(spec: Dict[str, object]) -> list[str]:
     return [path for path in _candidate_paths(spec) if _is_executable_file(path)]
+
+
+def _executable_names(spec: Dict[str, object]) -> list[str]:
+    names: list[str] = []
+    for value in [spec["executable"], *list(spec.get("executable_aliases") or [])]:
+        name = str(value).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _expand_path(path: str) -> str:

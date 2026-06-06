@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/readme/en-dark-main-chat.png" alt="Across Agents Assistant dark English main chat with project tree, local agents, and cloud LLMs">
+  <img src="assets/readme/zh-dark-main-chat.png" alt="Across Agents Assistant dark main chat with project tree, local agents, and cloud LLMs">
 </p>
 
 <p align="center">
-  <img src="assets/readme/en-dark-task-orchestration.png" alt="Across Agents Assistant dark English complex task orchestration detail with owner agent, waves, subtasks, and completed delivery">
+  <img src="assets/readme/zh-dark-task-orchestration.png" alt="Across Agents Assistant dark task orchestration with release readiness, task list, and new task entry">
 </p>
 
 <p align="center">
@@ -38,13 +38,15 @@ The core idea is cross-agent collaboration: pick an owner agent, keep local agen
 
 ## Product Tour
 
-### Dark English Theme
+### Current Dark Theme
 
-The primary product experience uses the dark English theme.
+The current `0.4.1` product screenshots show the refreshed dark interface,
+agent/provider icon catalog, task orchestration, model settings, MCP plugins,
+tool permissions, and preferences.
 
 | Project chat | Task orchestration |
 | --- | --- |
-| <img src="assets/readme/en-dark-main-chat.png" alt="Dark English project chat with directory tree and agent sidebar"> | <img src="assets/readme/en-dark-task-orchestration.png" alt="Dark English task orchestration with owner agent, waves, and subtasks"> |
+| <img src="assets/readme/zh-dark-main-chat.png" alt="Dark project chat with directory tree and refreshed agent sidebar icons"> | <img src="assets/readme/zh-dark-task-orchestration.png" alt="Dark task orchestration with release readiness and task list"> |
 
 | Complex task creation |
 | --- |
@@ -52,11 +54,22 @@ The primary product experience uses the dark English theme.
 
 | Models | MCP plugins |
 | --- | --- |
-| <img src="assets/readme/en-dark-model-settings.png" alt="Dark English model settings with local agents and cloud LLMs"> | <img src="assets/readme/en-dark-mcp-plugins.png" alt="Dark English MCP plugin settings"> |
+| <img src="assets/readme/zh-dark-model-settings.png" alt="Dark model settings with local agents, cloud LLMs, and refreshed provider icons"> | <img src="assets/readme/zh-dark-mcp-plugins.png" alt="Dark MCP plugin settings with local knowledge, RAG, SQLite, and filesystem plugins"> |
 
 | Tool permissions | Voice and preferences |
 | --- | --- |
-| <img src="assets/readme/en-dark-tool-permissions.png" alt="Dark English tool permission management"> | <img src="assets/readme/en-dark-settings.png" alt="Dark English settings with language, theme, voice, and auto-read controls"> |
+| <img src="assets/readme/zh-dark-tool-permissions.png" alt="Dark tool permission management with native and MCP tool policies"> | <img src="assets/readme/zh-dark-settings.png" alt="Dark settings with language, theme, voice, and auto-read controls"> |
+
+### Agent And Provider Catalog
+
+The `0.4.1` icon refresh keeps third-party marks as descriptive compatibility
+labels inside Across-owned neutral tiles. Codex reads the installed
+OpenAI-signed `Codex.app` icon at runtime when available and falls back to the
+bundled OpenAI tile when it is not installed.
+
+| Live model catalog | Icon source preview |
+| --- | --- |
+| <img src="assets/readme/zh-dark-model-settings.png" alt="Model catalog with local agents and cloud providers"> | <img src="assets/agent-icons/agent-icon-preview.png" alt="Dark and light agent icon preview with local agents and cloud providers"> |
 
 ### Light Chinese Theme
 
@@ -92,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.4.1` | Expanded local-agent/cloud-provider icon catalog, OpenCode MIT-source icon treatment, runtime Codex.app icon support with OpenAI fallback, unsupported local IDE integration cleanup, and stricter icon release-status checks. |
 | `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
 | `0.3.1` | Evidence Bundle export for completed tasks, non-secret Agent Cards, richer release-evaluation audit traces, persisted task quality rechecks, and public repository guards for private docs, local data, signing files, README assets, and secret patterns. |
 | `0.3.0` | Release Evaluation summary, fixed high-complexity cross-agent Release E2E scenario, stronger delivery quality gates, capability preflight, native skill readiness, MCP safety signals, and targeted quality-remediation feedback. |
@@ -130,9 +144,17 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.4.0` quality work focuses on making complex agent deliveries easier to inspect and harder to overclaim:
+The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
+
+- Local-agent and cloud-provider icons are bundled as dark/light neutral tiles with provenance recorded in `macOS-Client/Sources/Assets/icons/agent-icon-sources.json`.
+- Codex prefers the installed OpenAI-signed `Codex.app` icon at runtime when present, while falling back to the bundled OpenAI tile when it is not installed.
+- OpenCode uses the LobeHub Icons `opencode.svg` source inside the app-owned tile instead of relying on a Marketplace image with unresolved redistribution terms.
+- Unsupported local IDE integrations are omitted from the shipped local-agent catalog until their CLI install and authentication flow can be supported reliably.
+- `scripts/open_source_check.sh` now blocks icon entries that still require release review.
+
+The `0.4.0` quality work that this release builds on focuses on making complex agent deliveries easier to inspect and harder to overclaim:
 
 - Release Evaluation summarizes recent task evidence into a local readiness signal without rerunning expensive probes or restoring old tasks automatically.
 - Release Evaluation now includes a readiness checklist, recent score trend, required probe coverage, local/cloud agent-mix coverage, benchmark status, and per-task audit traces so release quality can be compared across versions instead of judged from one task row.
@@ -189,7 +211,7 @@ On first launch:
 - Open Settings -> Diagnostics to confirm backend health, local runtime paths, provider readiness, and task persistence before starting a complex task.
 - Open Model Settings.
 - Configure at least one cloud LLM API key, or install/configure one local agent.
-- Supported local agent integrations currently include OpenClaw, Hermes, and Claude Code.
+- Supported local agent integrations currently include OpenClaw, Hermes, Claude Code, Codex, OpenCode, and Cursor Agent.
 - Open Agent Capabilities to tune each agent's built-in/custom skills, install or inspect native local-agent skills, configure MCP plugins, set tool scope, and add task-specific operating notes.
 - Native skills that fail readiness checks are shown as unavailable with the missing requirement, and are excluded from automatic capability routing until repaired.
 - When creating a complex task, review Capability Preflight before submitting; it previews the recommended agent and matching skills.

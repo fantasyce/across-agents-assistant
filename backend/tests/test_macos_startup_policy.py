@@ -36,3 +36,17 @@ def test_agent_detection_endpoint_offloads_blocking_probe():
     source = _swift_source("backend/src/across_agents_assistant/api_server.py")
 
     assert "await asyncio.to_thread(detect_local_agents, force=force)" in source
+
+
+def test_app_delegate_retries_early_clean_backend_exit():
+    source = _swift_source("macOS-Client/Sources/AppDelegate.swift")
+
+    assert "runtimeBeforeTermination" in source
+    assert "stableRunThreshold: backendStableRunThreshold" in source
+    assert re.search(
+        r"if reason == \.exit && status == 0 \{\s*"
+        r"guard let runtime else \{ return false \}\s*"
+        r"return runtime < stableRunThreshold",
+        source,
+        re.S,
+    )

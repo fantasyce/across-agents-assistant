@@ -65,6 +65,55 @@ Third-party provider names and compatibility references, including local agent
 and cloud LLM names, are used descriptively. They remain the property of their
 respective owners.
 
+Agent and provider icons under `macOS-Client/Sources/Assets/icons/agent.*`
+have mixed provenance. Project-created artwork, including OpenClaw and Hermes,
+is treated as bundled project assets. Selected third-party provider marks are
+sourced from LobeHub Icons and are used only as descriptive identifiers for
+compatible integrations, not as Across Agents Assistant branding. The app wraps
+those glyphs in project-owned dark/light neutral tile backgrounds to normalize
+UI presentation and preserve clear space; the glyph geometry is not redrawn.
+LobeHub Icons is distributed under the MIT license, but brand trademarks remain
+the property of their respective owners.
+
+Reviewed LobeHub Icons entries currently bundled from
+`@lobehub/icons-static-svg` (`@1.73.0` unless noted):
+
+| App asset | LobeHub source icon | Usage |
+| --- | --- | --- |
+| `agent.claude.svg` | `claude-color.svg` | Claude Code local agent |
+| `agent.codex.svg` | `openai.svg` | Codex local agent fallback; installed OpenAI-signed Codex.app icon is read at runtime when present |
+| `agent.cursor.svg` | `cursor.svg` | Cursor local agent |
+| `agent.openai.svg` | `openai.svg` | OpenAI cloud provider |
+| `agent.anthropic.svg` | `anthropic.svg` | Anthropic cloud provider |
+| `agent.deepseek.svg` | `deepseek-color.svg` | DeepSeek cloud provider |
+| `agent.minimax.svg` | `minimax-color.svg` | MiniMax cloud provider |
+| `agent.bailian.svg` | `qwen-color.svg` | Alibaba Bailian / Qwen cloud provider |
+| `agent.moonshot.svg` | `kimi-color.svg` | Moonshot / Kimi cloud provider |
+| `agent.zhipu.svg` | `zhipu-color.svg` | Zhipu GLM cloud provider |
+| `agent.volcengine.svg` | `doubao-color.svg` | Volcengine Ark / Doubao cloud provider |
+| `agent.google.svg` | `gemini-color.svg` | Google Gemini cloud provider |
+| `agent.xai.svg` | `xai.svg` | xAI cloud provider |
+| `agent.mistral.svg` | `mistral-color.svg` | Mistral AI cloud provider |
+| `agent.groq.svg` | `groq.svg` | Groq cloud provider |
+| `agent.cohere.svg` | `cohere-color.svg` | Cohere cloud provider |
+| `agent.openrouter.svg` | `openrouter.svg` | OpenRouter cloud provider |
+| `agent.together.svg` | `together-color.svg` | Together AI cloud provider |
+| `agent.fireworks.svg` | `fireworks-color.svg` | Fireworks AI cloud provider |
+
+The Gemini tile uses a stabilized sparkle glyph based on the LobeHub Gemini
+source icon because macOS CoreSVG rendered the original gradient SVG too small
+inside the app tile.
+
+`agent.opencode.svg` and `agent.opencode.light.svg` use the LobeHub Icons
+`opencode.svg` source from `@lobehub/icons-static-svg@1.91.0` inside the same
+neutral tile treatment. Treat it as a third-party provider mark; the SVG asset
+source is MIT-licensed, and trademark rights remain with the brand owner.
+
+The macOS client may still display icons from locally installed applications at
+runtime as a fallback. Those local application icons are read from the user's
+machine, wrapped in the same neutral dark/light tile at runtime, and are not
+bundled in the public repository.
+
 ## Adding New Dependencies or Assets
 
 Before adding a new dependency or asset:

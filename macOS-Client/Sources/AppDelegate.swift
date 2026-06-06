@@ -431,7 +431,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pid = process.processIdentifier
         let status = process.terminationStatus
         let reason = process.terminationReason == .exit ? "exit" : "uncaught-signal"
-        debugLog("Backend terminated PID: \(pid), reason: \(reason), status: \(status)")
+        let runtimeBeforeTermination = backendLaunchDate.map { Date().timeIntervalSince($0) }
+        let runtimeDescription = runtimeBeforeTermination.map { String(format: "%.2fs", $0) } ?? "unknown"
+        debugLog("Backend terminated PID: \(pid), reason: \(reason), status: \(status), runtime: \(runtimeDescription)")
 
         if backendProcess?.processIdentifier == pid {
             backendProcess = nil
@@ -450,7 +452,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard Self.shouldRestartBackendAfterTermination(
             reason: process.terminationReason,
-            status: status
+            status: status,
+            runtime: runtimeBeforeTermination,
+            stableRunThreshold: backendStableRunThreshold
         ) else {
             debugLog("Backend exited cleanly; restart skipped")
             return
@@ -461,10 +465,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func shouldRestartBackendAfterTermination(
         reason: Process.TerminationReason,
-        status: Int32
+        status: Int32,
+        runtime: TimeInterval?,
+        stableRunThreshold: TimeInterval
     ) -> Bool {
         if reason == .exit && status == 0 {
-            return false
+            guard let runtime else { return false }
+            return runtime < stableRunThreshold
         }
         return true
     }

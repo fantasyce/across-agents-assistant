@@ -301,6 +301,8 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#d97757", type: .local),
         AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#d97757", type: .local),
         AgentModel(id: "codex", name: "Codex", iconName: "agent.codex", color: "#d97757", type: .local),
+        AgentModel(id: "opencode", name: "OpenCode", iconName: "agent.opencode", color: "#d97757", type: .local),
+        AgentModel(id: "cursor", name: "Cursor Agent", iconName: "agent.cursor", color: "#d97757", type: .local),
         // Cloud LLMs
         AgentModel(id: "openai", name: "OpenAI", iconName: "agent.openai", color: "#4d6bfe", type: .cloudLLM),
         AgentModel(id: "anthropic", name: "Anthropic", iconName: "agent.anthropic", color: "#4d6bfe", type: .cloudLLM),
@@ -314,7 +316,10 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: "xai", name: "xAI", iconName: "agent.xai", color: "#4d6bfe", type: .cloudLLM),
         AgentModel(id: "mistral", name: "Mistral AI", iconName: "agent.mistral", color: "#4d6bfe", type: .cloudLLM),
         AgentModel(id: "groq", name: "Groq", iconName: "agent.groq", color: "#4d6bfe", type: .cloudLLM),
-        AgentModel(id: "cohere", name: "Cohere", iconName: "agent.cohere", color: "#4d6bfe", type: .cloudLLM)
+        AgentModel(id: "cohere", name: "Cohere", iconName: "agent.cohere", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "openrouter", name: "OpenRouter", iconName: "agent.openrouter", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "together", name: "Together AI", iconName: "agent.together", color: "#4d6bfe", type: .cloudLLM),
+        AgentModel(id: "fireworks", name: "Fireworks AI", iconName: "agent.fireworks", color: "#4d6bfe", type: .cloudLLM)
     ]
 
     @Published var fileTree: [FileItemModel] = [] {

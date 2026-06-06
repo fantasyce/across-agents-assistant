@@ -679,6 +679,9 @@ class KeysRequest(BaseModel):
     mistral: Optional[str] = None
     groq: Optional[str] = None
     cohere: Optional[str] = None
+    openrouter: Optional[str] = None
+    together: Optional[str] = None
+    fireworks: Optional[str] = None
 
     class Config:
         extra = "allow"

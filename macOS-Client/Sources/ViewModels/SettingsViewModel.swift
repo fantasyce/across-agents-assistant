@@ -128,6 +128,25 @@ final class SettingsViewModel: ObservableObject {
     @Published var localAgentDetectionFeedback: [String: AgentDetectionFeedback] = [:]
     @Published var startupDiagnostics: StartupDiagnosticsReport? = nil
     @Published var isLoadingStartupDiagnostics: Bool = false
+
+    private static let supersededCloudDefaultModels: [String: Set<String>] = [
+        "openai": ["gpt-5.1", "gpt-5-codex"],
+        "anthropic": ["claude-opus-4-1", "claude-3-5-sonnet-20241022"],
+        "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+        "minimax": ["MiniMax-M2.7"],
+        "bailian": ["qwen-plus", "qwen-max", "qwen-turbo"],
+        "moonshot": ["kimi-k2-0711-preview", "moonshot-v1-32k"],
+        "zhipu": ["glm-4.5", "glm-4.5-air"],
+        "volcengine": ["doubao-seed-1-6"],
+        "google": ["gemini-2.5-pro", "gemini-2.5-flash"],
+        "xai": ["grok-4", "grok-4-mini"],
+        "cohere": ["command-a-03-2025"]
+    ]
+
+    private static let supersededLocalDefaultModels: [String: Set<String>] = [
+        "claude": ["claude-3-5-sonnet-20241022"],
+        "codex": ["gpt-5.1", "gpt-5-codex"]
+    ]
     @Published var startupDiagnosticsError: String? = nil
     @Published var releaseVerificationReport: ReleaseVerificationReport? = nil
     @Published var isRunningReleaseVerification: Bool = false
@@ -149,7 +168,14 @@ final class SettingsViewModel: ObservableObject {
     private var didRefreshLocalAgentsThisSession = false
     private var isRefreshingLocalAgents = false
 
-    private static let defaultLocalAgents: [AgentConfig] = [.localAgent, .hermes, .claude, .codex]
+    private static let defaultLocalAgents: [AgentConfig] = [
+        .localAgent,
+        .hermes,
+        .claude,
+        .codex,
+        .opencode,
+        .cursor
+    ]
 
     func isKeyConfigured(_ providerId: String) -> Bool {
         return apiKeyStatusCache[providerId] == "configured"
@@ -601,8 +627,15 @@ final class SettingsViewModel: ObservableObject {
                     config.apiKey = existing.apiKey
                     config.temperature = existing.temperature
                     config.maxTokens = existing.maxTokens
-                    if let model = existing.model, !model.isEmpty {
+                    let providerModels = provider.models.map(\.modelId)
+                    config.availableModels = mergeModelList(preferred: providerModels, saved: existing.availableModels)
+                    if let model = existing.model,
+                       !model.isEmpty,
+                       providerModels.contains(model),
+                       Self.supersededCloudDefaultModels[provider.providerId]?.contains(model) != true {
                         config.model = model
+                    } else {
+                        config.model = providerModels.first ?? config.model
                     }
                 }
                 return config
@@ -632,7 +665,10 @@ final class SettingsViewModel: ObservableObject {
                 return
             }
             cloudLLMs[index].availableModels = models
-            if cloudLLMs[index].model?.isEmpty != false {
+            let currentModel = cloudLLMs[index].model?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldUseRefreshedDefault = currentModel?.isEmpty != false
+                || Self.supersededCloudDefaultModels[providerId]?.contains(currentModel ?? "") == true
+            if shouldUseRefreshedDefault {
                 cloudLLMs[index].model = models.first
             }
             persistCloudSettings()
@@ -858,10 +894,18 @@ final class SettingsViewModel: ObservableObject {
             if savedAgent.name.isEmpty {
                 savedAgent.name = defaultAgent.name
             }
+            savedAgent.availableModels = mergeModelList(
+                preferred: defaultAgent.availableModels,
+                saved: savedAgent.availableModels,
+                selected: savedAgent.selectedModel
+            )
             if savedAgent.availableModels?.isEmpty != false {
                 savedAgent.availableModels = defaultAgent.availableModels
             }
             if savedAgent.selectedModel?.isEmpty != false {
+                savedAgent.selectedModel = defaultAgent.selectedModel
+            } else if let model = savedAgent.selectedModel,
+                      Self.supersededLocalDefaultModels[defaultAgent.id]?.contains(model) == true {
                 savedAgent.selectedModel = defaultAgent.selectedModel
             }
             return savedAgent
@@ -882,10 +926,18 @@ final class SettingsViewModel: ObservableObject {
             }
             if savedConfig.model?.isEmpty != false {
                 savedConfig.model = defaultConfig.model
+            } else if let model = savedConfig.model,
+                      Self.supersededCloudDefaultModels[defaultConfig.id]?.contains(model) == true {
+                savedConfig.model = defaultConfig.model
             }
             if savedConfig.modelsEndpoint?.isEmpty != false {
                 savedConfig.modelsEndpoint = defaultConfig.modelsEndpoint
             }
+            savedConfig.availableModels = mergeModelList(
+                preferred: defaultConfig.availableModels,
+                saved: savedConfig.availableModels,
+                selected: savedConfig.model
+            )
             if savedConfig.availableModels?.isEmpty != false {
                 savedConfig.availableModels = defaultConfig.availableModels
             }
@@ -896,6 +948,23 @@ final class SettingsViewModel: ObservableObject {
         }
         for config in saved where !merged.contains(where: { $0.id == config.id }) {
             merged.append(config)
+        }
+        return merged
+    }
+
+    private func mergeModelList(preferred: [String]?, saved: [String]?, selected: String? = nil) -> [String] {
+        var seen = Set<String>()
+        var merged: [String] = []
+        for model in (preferred ?? []) + (saved ?? []) {
+            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
+            seen.insert(trimmed)
+            merged.append(trimmed)
+        }
+        if let selected = selected?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !selected.isEmpty,
+           !seen.contains(selected) {
+            merged.append(selected)
         }
         return merged
     }
@@ -969,6 +1038,8 @@ final class SettingsViewModel: ObservableObject {
         case "hermes": return "Hermes"
         case "claude": return "Claude Code"
         case "codex": return "Codex"
+        case "opencode": return "OpenCode"
+        case "cursor": return "Cursor Agent"
         default: return fallback
         }
     }

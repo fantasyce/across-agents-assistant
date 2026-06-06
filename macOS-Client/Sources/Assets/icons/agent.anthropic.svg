@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' color='#FFFFFF'>
+    <defs>
+        <linearGradient id='agentTileBg' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#2A2C31'/>
+            <stop offset='100%' stop-color='#1B1C20'/>
+        </linearGradient>
+    </defs>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='url(#agentTileBg)' stroke='#2F3238' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#FFFFFF' stroke-opacity='0.06' stroke-width='1'/>
+    <g transform='translate(24 24) scale(2.16667) translate(-0 -0)' fill="currentColor" fill-rule="evenodd">
+        <title>Anthropic</title><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z"></path>
+    </g>
+</svg>

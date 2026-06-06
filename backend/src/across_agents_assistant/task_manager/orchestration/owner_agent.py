@@ -45,7 +45,15 @@ logger = logging.getLogger("across_agents_assistant.task_manager")
 
 
 _CLOUD_AGENT_IDS = get_default_provider_ids()
-_AGENT_LABEL_ALIASES = ("openclaw", "hermes", "claude(?:\\s+code)?", "codex", *_CLOUD_AGENT_IDS)
+_AGENT_LABEL_ALIASES = (
+    "openclaw",
+    "hermes",
+    "claude(?:\\s+code)?",
+    "codex",
+    "opencode",
+    "cursor(?:\\s+agent)?",
+    *_CLOUD_AGENT_IDS,
+)
 _AGENT_CAPABILITY_LABEL_RE = re.compile(
     rf"\b(?:{'|'.join(_AGENT_LABEL_ALIASES)})\s*:\s*[^.;)\n]+",
     re.IGNORECASE,
@@ -220,6 +228,8 @@ Your job is to decompose a user request into well-defined subtasks with dependen
 - claude: Deep technical architecture, OpenAPI spec design, database schema design
 - hermes: React frontend, UI/UX, TypeScript components
 - codex: Local Codex CLI coding agent for implementation, debugging, and repository-aware changes
+- opencode: Local OpenCode CLI coding agent for scripted repository-aware implementation
+- cursor: Local Cursor Agent CLI for editor-native implementation and code review tasks
 - openclaw: General purpose, fallback for anything else
 - configured cloud provider ids from the provider registry: backend/API, reasoning, implementation, DevOps, and fallback LLM tasks when their API keys are configured
 
@@ -230,7 +240,7 @@ You MUST output a JSON object with this exact structure:
         {
             "id": "short-name",
             "description": "Clear, actionable description of what to implement",
-            "agent": "openclaw|hermes|claude|codex|configured-cloud-provider-id",
+            "agent": "openclaw|hermes|claude|codex|opencode|cursor|configured-cloud-provider-id",
             "priority": 1,
             "dependencies": ["id-of-dependency-1", "id-of-dependency-2"],
             "deliverables": [
@@ -383,6 +393,8 @@ Rules:
             {"id": "claude", "name": "Claude Code", "characteristics": "Deep technical architecture, OpenAPI spec design, database schema design, system architecture. Best for: designing APIs, data models, and system layouts. Requires: claude CLI installed."},
             {"id": "hermes", "name": "Hermes", "characteristics": "React frontend, UI/UX design, TypeScript components, HTML/CSS. Best for: building user interfaces, React components, and frontend styling. Requires: hermes CLI installed."},
             {"id": "codex", "name": "Codex", "characteristics": "Local Codex CLI coding agent. Best for repository-aware implementation, debugging, tests, and code review tasks. Requires: codex CLI installed and authenticated."},
+            {"id": "opencode", "name": "OpenCode", "characteristics": "Local OpenCode CLI coding agent. Best for scripted repository-aware implementation and automation. Requires: opencode CLI installed and authenticated."},
+            {"id": "cursor", "name": "Cursor Agent", "characteristics": "Local Cursor Agent CLI. Best for editor-native implementation, refactoring, and code review tasks. Requires: cursor-agent installed and authenticated."},
             {"id": LOCAL_AGENT_ID, "name": "OpenClaw", "characteristics": "General purpose coding, file operations, system commands, fallback for any task. Best for: generic code tasks, file manipulation, and any task other agents cannot handle. Requires: OpenClaw CLI installed."},
         ]
         all_agents.extend(

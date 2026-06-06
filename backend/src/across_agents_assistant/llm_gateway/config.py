@@ -70,6 +70,51 @@ def _default_config() -> LLMConfig:
     )
 
 
+def _merge_models(preferred: List[ModelInfo], saved: List[ModelInfo]) -> List[ModelInfo]:
+    """Merge model lists with registry defaults first and saved custom entries preserved."""
+    seen = set()
+    merged: List[ModelInfo] = []
+    for model in [*preferred, *saved]:
+        model_id = (model.model_id or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        merged.append(model)
+    return merged
+
+
+def _merge_with_defaults(config: LLMConfig) -> LLMConfig:
+    """Refresh persisted built-in providers against the current registry."""
+    defaults = _default_config()
+    saved_by_id = {provider.provider_id: provider for provider in config.providers}
+    merged_providers: List[LLMProviderConfig] = []
+
+    for default_provider in defaults.providers:
+        saved = saved_by_id.pop(default_provider.provider_id, None)
+        if saved is None:
+            merged_providers.append(default_provider)
+            continue
+        merged_providers.append(
+            LLMProviderConfig(
+                provider_id=default_provider.provider_id,
+                name=saved.name or default_provider.name,
+                api_key_env=saved.api_key_env or default_provider.api_key_env,
+                endpoint=saved.endpoint or default_provider.endpoint,
+                provider_type=saved.provider_type or default_provider.provider_type,
+                models_endpoint=saved.models_endpoint or default_provider.models_endpoint,
+                models=_merge_models(default_provider.models, saved.models),
+                enabled=saved.enabled,
+            )
+        )
+
+    merged_providers.extend(saved_by_id.values())
+    return LLMConfig(
+        providers=merged_providers,
+        primary_provider=config.primary_provider or defaults.primary_provider,
+        fallback_providers=config.fallback_providers or defaults.fallback_providers,
+    )
+
+
 def _parse_config(data: Dict) -> LLMConfig:
     """Parse JSON data into LLMConfig."""
     providers = []
@@ -103,7 +148,11 @@ def load_llm_config() -> LLMConfig:
                 CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
                 with open(CONFIG_FILE, "w") as out:
                     json.dump(data, out, indent=2)
-            return _parse_config(data)
+            parsed = _parse_config(data)
+            merged = _merge_with_defaults(parsed)
+            if merged != parsed or source_file == LEGACY_CONFIG_FILE:
+                save_llm_config(merged)
+            return merged
         except (json.JSONDecodeError, KeyError):
             pass
     return _default_config()

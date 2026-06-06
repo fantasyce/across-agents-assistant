@@ -146,13 +146,15 @@ class UniversalAgentClient:
             elif agent_id == "codex":
                 args_template = [
                     "exec",
-                    "--ask-for-approval",
-                    "never",
                     "--sandbox",
                     "workspace-write",
                     "--skip-git-repo-check",
                     "{message}",
                 ]
+            elif agent_id == "opencode":
+                args_template = ["run", "{message}"]
+            elif agent_id == "cursor":
+                args_template = ["-p", "{message}"]
             elif agent_id == LOCAL_AGENT_ID:
                 # The gateway-compatible local CLI requires --agent, --to, or
                 # --session-id. Use --to with a fixed E.164 number for task
@@ -170,7 +172,7 @@ class UniversalAgentClient:
                 args.append(arg)
 
         configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
-        if configured_model:
+        if configured_model and configured_model.lower() != "auto":
             if agent_id == "codex" and "exec" in args:
                 exec_index = args.index("exec")
                 args[exec_index + 1:exec_index + 1] = ["--model", configured_model]
@@ -178,6 +180,11 @@ class UniversalAgentClient:
                 chat_index = args.index("chat")
                 args[chat_index + 1:chat_index + 1] = ["--model", configured_model]
             elif agent_id == "claude":
+                args[1:1] = ["--model", configured_model]
+            elif agent_id == "opencode" and "run" in args:
+                run_index = args.index("run")
+                args[run_index + 1:run_index + 1] = ["--model", configured_model]
+            elif agent_id == "cursor":
                 args[1:1] = ["--model", configured_model]
             elif agent_id == LOCAL_AGENT_ID and "agent" in args:
                 agent_index = args.index("agent")
@@ -311,6 +318,7 @@ class UniversalAgentClient:
             process = subprocess.Popen(
                 args,
                 env=process_env,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -468,7 +476,6 @@ class UniversalAgentClient:
         else:
             # Raw output parsing (like Hermes or Claude)
             text = clean.strip()
-
             # Clean up Claude Code verbose headers if present
             header_end_marker = "----------------------------------------"
             if "Claude Code" in text:
@@ -567,7 +574,7 @@ class UniversalAgentClient:
             args.extend(["exec"])
             if configured_model:
                 args.extend(["--model", configured_model])
-            args.extend(["--ask-for-approval", "never", "--sandbox", "workspace-write", "--skip-git-repo-check"])
+            args.extend(["--sandbox", "workspace-write", "--skip-git-repo-check"])
             if project_dir:
                 args.extend(["--cd", project_dir])
             args.append(message)
@@ -583,6 +590,7 @@ class UniversalAgentClient:
         process = await asyncio.create_subprocess_exec(
             *args,
             env=process_env,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=stream_cwd

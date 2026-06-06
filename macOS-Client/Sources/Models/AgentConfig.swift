@@ -2,6 +2,8 @@ import Foundation
 
 enum AgentIDs {
     static let openclaw = "openclaw"
+    static let opencode = "opencode"
+    static let cursor = "cursor"
 
     static func normalized(_ id: String?) -> String? {
         guard let id else { return nil }
@@ -55,7 +57,9 @@ struct AgentConfig: Identifiable, Codable {
         name: "OpenClaw",
         executablePath: nil,
         version: nil,
-        status: .notInstalled
+        status: .notInstalled,
+        selectedModel: "sonnet",
+        availableModels: ["sonnet", "opus", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
     )
 
     static let hermes = AgentConfig(
@@ -80,7 +84,26 @@ struct AgentConfig: Identifiable, Codable {
         executablePath: nil,
         version: nil,
         status: .notInstalled,
-        selectedModel: "gpt-5-codex",
-        availableModels: ["gpt-5-codex", "gpt-5.1", "o3"]
+        selectedModel: "gpt-5.5",
+        availableModels: ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"]
+    )
+
+    static let opencode = AgentConfig(
+        id: AgentIDs.opencode,
+        name: "OpenCode",
+        executablePath: nil,
+        version: nil,
+        status: .notInstalled,
+        availableModels: ["anthropic/claude-sonnet-4-5", "openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat"]
+    )
+
+    static let cursor = AgentConfig(
+        id: AgentIDs.cursor,
+        name: "Cursor Agent",
+        executablePath: nil,
+        version: nil,
+        status: .notInstalled,
+        selectedModel: "auto",
+        availableModels: ["auto", "gpt-5", "claude-sonnet-4.5", "claude-opus-4.1"]
     )
 }

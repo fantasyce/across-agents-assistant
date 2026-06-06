@@ -75,6 +75,33 @@ if [[ "$missing_assets" -ne 0 ]]; then
   exit 1
 fi
 
+echo "== third-party icon release statuses =="
+python3 - <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path("macOS-Client/Sources/Assets/icons/agent-icon-sources.json")
+if not manifest_path.exists():
+    raise SystemExit(0)
+
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+blocked_statuses = {"review-before-release"}
+blocked = [
+    entry
+    for entry in manifest.get("bundled_icons", [])
+    if entry.get("redistribution_status") in blocked_statuses
+]
+if blocked:
+    for entry in blocked:
+        print(
+            f"{entry.get('agent_id')}: unresolved icon redistribution status "
+            f"{entry.get('redistribution_status')}",
+            file=sys.stderr,
+        )
+    raise SystemExit(1)
+PY
+
 echo "== shell syntax =="
 bash -n build_app.sh
 

@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' color='#FFFFFF'>
+    <defs>
+        <linearGradient id='agentTileBg' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#2A2C31'/>
+            <stop offset='100%' stop-color='#1B1C20'/>
+        </linearGradient>
+    </defs>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='url(#agentTileBg)' stroke='#2F3238' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#FFFFFF' stroke-opacity='0.06' stroke-width='1'/>
+    <g transform='translate(24 24) scale(2.16667) translate(-0 -0)' fill="currentColor" fill-rule="evenodd">
+        <title>together.ai</title><path d="M17.385 11.23a4.615 4.615 0 100-9.23 4.615 4.615 0 000 9.23zm0 10.77a4.615 4.615 0 100-9.23 4.615 4.615 0 000 9.23zm-10.77 0a4.615 4.615 0 100-9.23 4.615 4.615 0 000 9.23z" opacity=".2"></path><circle cx="6.615" cy="6.615" fill="#0F6FFF" r="4.615"></circle>
+    </g>
+</svg>

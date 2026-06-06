@@ -666,7 +666,7 @@ Output a JSON plan with the following structure:
 {
     "task_type": "research|code_review|automation|simple_qa",
     "subtasks": [
-        {"description": "...", "agent": "openclaw|hermes|claude", "priority": 1}
+        {"description": "...", "agent": "openclaw|hermes|claude|codex|opencode|cursor", "priority": 1}
     ],
     "can_handle_directly": true|false,
     "direct_response": "..." (if can_handle_directly)

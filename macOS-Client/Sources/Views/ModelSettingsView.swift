@@ -167,7 +167,7 @@ struct ModelSettingsView: View {
                 // Status dots row
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
-                        ForEach(statusIndicators, id: \.label) { indicator in
+                        ForEach(statusIndicators, id: \.id) { indicator in
                             statusDot(indicator: indicator)
                         }
                     }
@@ -217,7 +217,8 @@ struct ModelSettingsView: View {
         for llm in viewModel.cloudLLMs {
             let configured = viewModel.isKeyConfigured(llm.id)
             items.append(StatusIndicator(
-                label: llm.id == "deepseek" ? "Deepseek" : "MiniMax",
+                id: "cloud-\(llm.id)",
+                label: llm.name,
                 isOK: configured
             ))
         }
@@ -225,6 +226,7 @@ struct ModelSettingsView: View {
         for agent in viewModel.localAgents {
             let installed = agent.status == .installed
             items.append(StatusIndicator(
+                id: "local-\(agent.id)",
                 label: agent.name,
                 isOK: installed
             ))
@@ -241,11 +243,13 @@ struct ModelSettingsView: View {
             Text(indicator.label)
                 .font(.system(size: 10, weight: .regular))
                 .foregroundColor(colorScheme == .dark ? Color(hex: "8e8e93") : Color(hex: "6b7280"))
+                .lineLimit(1)
         }
     }
 }
 
 private struct StatusIndicator {
+    let id: String
     let label: String
     let isOK: Bool
 }

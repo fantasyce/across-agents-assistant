@@ -39,6 +39,32 @@ def test_agent_manager_uses_across_agents_home_and_migrates_legacy(monkeypatch, 
     assert manager_mod.AGENTS_CONFIG_FILE.exists()
 
 
+def test_agent_manager_prunes_removed_local_cli_entries(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / ".across_agents/llm_agents.json"
+    config_file.parent.mkdir(parents=True)
+    removed_local_id = "deferred-local-ide"
+    retained_cloud_id = "custom-cloud"
+    config_file.write_text(
+        (
+            '{"active_agent": "%s", "agents": {'
+            '"%s": {"type": "local_cli", "model": ""},'
+            '"%s": {"type": "openai_compatible", "model": "custom"}}}'
+        )
+        % (removed_local_id, removed_local_id, retained_cloud_id),
+        encoding="utf-8",
+    )
+
+    import across_agents_assistant.agent_manager as manager_mod
+
+    manager_mod = importlib.reload(manager_mod)
+    manager = manager_mod.AgentManager()
+
+    assert removed_local_id not in manager.config["agents"]
+    assert retained_cloud_id in manager.config["agents"]
+    assert manager.get_active_agent() == manager_mod.DEFAULT_CONFIG["active_agent"]
+
+
 def test_local_agent_default_workspace_uses_across_agents_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
 

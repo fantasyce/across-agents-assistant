@@ -2676,7 +2676,8 @@ struct AgentIdentityBadge: View {
     private var isCloudLLM: Bool {
         [
             "openai", "anthropic", "deepseek", "minimax", "bailian", "moonshot",
-            "zhipu", "volcengine", "google", "xai", "mistral", "groq", "cohere"
+            "zhipu", "volcengine", "google", "xai", "mistral", "groq", "cohere",
+            "openrouter", "together", "fireworks"
         ].contains(resolvedAgentId)
     }
 

@@ -23,13 +23,13 @@ DEFAULT_CONFIG = {
             "type": "openai_compatible",
             "base_url": "https://api.openai.com/v1",
             "api_key": "",
-            "model": "gpt-4o"
+            "model": "gpt-5.5"
         },
         "anthropic": {
             "type": "anthropic",
             "base_url": "",
             "api_key": "",
-            "model": "claude-3-5-sonnet-20241022"
+            "model": "claude-opus-4-8"
         },
         # MiniMax: use OpenAI-compatible /v1 (recommended by MiniMax docs). The Anthropic
         # compatible endpoint can return success with content=null when used via Anthropic SDK.
@@ -37,7 +37,7 @@ DEFAULT_CONFIG = {
             "type": "openai_compatible",
             "base_url": "https://api.minimaxi.com/v1",
             "api_key": "",
-            "model": "MiniMax-M2.7"
+            "model": "MiniMax-M3"
         },
         LOCAL_AGENT_ID: {
             "type": "openai_compatible",
@@ -49,21 +49,41 @@ DEFAULT_CONFIG = {
             "type": "openai_compatible",
             "base_url": "https://api.openai.com/v1",
             "api_key": "",
-            "model": "gpt-4o-mini"
+            "model": "gpt-5.4-mini"
         },
         "claude": {
             "type": "anthropic",
             "base_url": "",
             "api_key": "",
-            "model": "claude-3-5-sonnet-20241022"
+            "model": "sonnet"
         },
         "codex": {
             "type": "local_cli",
             "base_url": "",
             "api_key": "",
-            "model": "gpt-5-codex"
+            "model": "gpt-5.5"
+        },
+        "opencode": {
+            "type": "local_cli",
+            "base_url": "",
+            "api_key": "",
+            "model": ""
+        },
+        "cursor": {
+            "type": "local_cli",
+            "base_url": "",
+            "api_key": "",
+            "model": "auto"
         }
     }
+}
+
+SUPERSEDED_AGENT_DEFAULT_MODELS = {
+    "openai": {"gpt-4o"},
+    "anthropic": {"claude-3-5-sonnet-20241022"},
+    "hermes": {"gpt-4o-mini"},
+    "claude": {"claude-3-5-sonnet-20241022"},
+    "codex": {"gpt-5.1", "gpt-5-codex"},
 }
 
 
@@ -99,6 +119,19 @@ class AgentManager:
                 user_config["agents"] = {}
             agents = user_config["agents"]
 
+            supported_agent_ids = set(DEFAULT_CONFIG["agents"])
+            active_agent_removed = False
+            for agent_id, agent_data in list(agents.items()):
+                if agent_id in supported_agent_ids or not isinstance(agent_data, dict):
+                    continue
+                if agent_data.get("type") == "local_cli":
+                    active_agent_removed = user_config.get("active_agent") == agent_id
+                    agents.pop(agent_id, None)
+                    needs_save = True
+            if active_agent_removed:
+                user_config["active_agent"] = DEFAULT_CONFIG["active_agent"]
+                needs_save = True
+
             for agent_id, agent_data in DEFAULT_CONFIG["agents"].items():
                 if agent_id not in agents:
                     agents[agent_id] = agent_data.copy()
@@ -113,8 +146,16 @@ class AgentManager:
                             current["base_url"] = "https://api.minimaxi.com/v1"
                         current["type"] = "openai_compatible"
                         needs_save = True
-                    if current.get("model") != "MiniMax-M2.7":
-                        current["model"] = "MiniMax-M2.7"
+                    if current.get("model") == "MiniMax-M2.7":
+                        current["model"] = "MiniMax-M3"
+                        needs_save = True
+                    elif not current.get("model"):
+                        current["model"] = agent_data.get("model")
+                        needs_save = True
+                else:
+                    current = agents[agent_id]
+                    if current.get("model") in SUPERSEDED_AGENT_DEFAULT_MODELS.get(agent_id, set()):
+                        current["model"] = agent_data.get("model")
                         needs_save = True
 
             if needs_save:

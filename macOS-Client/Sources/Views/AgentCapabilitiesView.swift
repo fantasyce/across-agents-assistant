@@ -989,11 +989,10 @@ struct AgentCapabilitiesView: View {
 
     private func agentIcon(_ iconName: String) -> some View {
         Group {
-            if let nsImage = loadSVGIconSync(name: iconName) {
+            if let nsImage = loadAgentIconSync(name: iconName, colorScheme: colorScheme) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .scaledToFit()
-                    .padding(6)
             } else {
                 Image(systemName: "cpu")
                     .font(.system(size: 15, weight: .semibold))

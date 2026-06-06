@@ -479,6 +479,8 @@ enum AgentCapabilityCatalog {
         "hermes": ["frontend_design", "interaction_design", "test_authoring"],
         "claude": ["architecture_review", "code_review", "test_strategy"],
         "codex": ["general_execution", "code_review", "test_authoring"],
+        "opencode": ["general_execution", "code_review", "test_authoring"],
+        "cursor": ["general_execution", "frontend_design", "code_review"],
         "openai": ["backend_api", "code_review"],
         "anthropic": ["backend_api", "code_review"],
         "deepseek": ["backend_api", "data_modeling", "code_review"],
@@ -491,7 +493,10 @@ enum AgentCapabilityCatalog {
         "xai": ["backend_api", "code_review"],
         "mistral": ["backend_api", "code_review"],
         "groq": ["backend_api", "code_review"],
-        "cohere": ["backend_api", "code_review"]
+        "cohere": ["backend_api", "code_review"],
+        "openrouter": ["backend_api", "code_review"],
+        "together": ["backend_api", "code_review"],
+        "fireworks": ["backend_api", "code_review"]
     ]
 
     static func defaultSkillIds(for agentId: String) -> [String] {
