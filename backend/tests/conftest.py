@@ -12,6 +12,34 @@ LIVE_E2E_FILES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def isolate_orchestrator_plugin_runtime(monkeypatch, tmp_path, request):
+    """Keep unit tests from discovering a real user-installed plugin."""
+
+    if Path(request.node.fspath).name != "test_local_paths.py":
+        monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.delenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", raising=False)
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv(
+        "ACROSS_AGENTS_ORCHESTRATOR_COMMAND",
+        str(tmp_path / "missing-across-orchestrator"),
+    )
+    monkeypatch.setenv(
+        "ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME",
+        str(tmp_path / "plugins"),
+    )
+    try:
+        import across_agents_assistant.api_server as api_server
+
+        api_server._orchestrator_plugin_manager = None
+        api_server._orchestrator_plugin_signature = None
+        yield
+        api_server._orchestrator_plugin_manager = None
+        api_server._orchestrator_plugin_signature = None
+    except Exception:
+        yield
+
+
 def pytest_collection_modifyitems(config, items):
     if os.environ.get(LIVE_E2E_ENV) == "1":
         return

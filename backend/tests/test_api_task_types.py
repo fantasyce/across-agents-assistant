@@ -5,6 +5,7 @@ os.makedirs(os.path.dirname(os.environ["ACROSS_AGENTS_DB_PATH"]), exist_ok=True)
 
 from fastapi.testclient import TestClient
 
+import across_agents_assistant.api_server as api_server
 from across_agents_assistant.api_server import app
 
 
@@ -20,14 +21,25 @@ def test_auto_task_requires_task_types(monkeypatch):
 def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
     captured = {}
 
-    class FakeOrchestrator:
-        def submit_task(self, description, context):
-            captured["description"] = description
-            captured["context"] = context
-            return "task-unit123"
+    class FakePlugin:
+        def implementation_status(self, probe=True):
+            return {
+                "mode": "external",
+                "implementation": "external",
+                "available": True,
+                "transport": "cli",
+                "connection_note": "fake external runtime",
+            }
+
+        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None):
+            captured["goal"] = goal
+            captured["project_dir"] = project_dir
+            captured["deliverables"] = deliverables
+            captured["agent"] = agent
+            return {"task_id": "task-unit123", "status": "pending"}
 
     monkeypatch.setattr("across_agents_assistant.api_server._check_llm_provider_readiness", lambda: [])
-    monkeypatch.setattr("across_agents_assistant.api_server.get_task_orchestrator", lambda: FakeOrchestrator())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
 
     client = TestClient(app)
     response = client.post(
@@ -41,5 +53,6 @@ def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["task_id"] == "task-unit123"
-    assert captured["context"]["task_types"] == ["functional", "artifact"]
-    assert captured["context"]["delivery_mode"] == "composite"
+    assert captured["goal"] == "Build a todo tool"
+    assert captured["deliverables"] == ["README.md"]
+    assert captured["agent"] == "claude"

@@ -108,9 +108,10 @@ struct TaskListSidebar: View {
                 Button(action: { viewModel.enterCreateMode() }) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(Color(hex: "#B58AE3"))
+                        .foregroundColor(viewModel.isOrchestratorPluginUnavailable ? .secondary.opacity(0.5) : Color(hex: "#B58AE3"))
                 }
                 .buttonStyle(.plain)
+                .disabled(viewModel.isOrchestratorPluginUnavailable)
                 .help(appPreferences.text("tasks.new"))
             }
             .padding(.horizontal, 16)
@@ -139,6 +140,7 @@ struct TaskListSidebar: View {
                 errorMessage: viewModel.releaseEvaluationError,
                 isStartingE2E: viewModel.isStartingReleaseE2E,
                 e2eErrorMessage: viewModel.releaseE2EError,
+                isOrchestratorUnavailable: viewModel.isOrchestratorPluginUnavailable,
                 onRefresh: { viewModel.loadReleaseEvaluation() },
                 onOpenCenter: { viewModel.openReleaseCenter() },
                 onRunE2E: { viewModel.startReleaseE2E() }
@@ -203,6 +205,7 @@ struct ReleaseEvaluationCard: View {
     let errorMessage: String?
     let isStartingE2E: Bool
     let e2eErrorMessage: String?
+    let isOrchestratorUnavailable: Bool
     let onRefresh: () -> Void
     let onOpenCenter: () -> Void
     let onRunE2E: () -> Void
@@ -381,7 +384,8 @@ struct ReleaseEvaluationCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .disabled(isStartingE2E)
+            .disabled(isStartingE2E || isOrchestratorUnavailable)
+            .opacity(isOrchestratorUnavailable ? 0.65 : 1)
             .help(appPreferences.text("tasks.releaseE2E.help"))
 
             if let e2eErrorMessage, !e2eErrorMessage.isEmpty {
@@ -1235,6 +1239,8 @@ struct TaskDetailPanel: View {
                     .buttonStyle(.plain)
                     .padding(.top, 4)
                 }
+            } else if viewModel.isOrchestratorPluginUnavailable {
+                orchestratorPluginUnavailableView
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "list.bullet.rectangle")
@@ -1266,6 +1272,85 @@ struct TaskDetailPanel: View {
                 }
             }
         }
+    }
+
+    private var orchestratorPluginUnavailableView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(Color(hex: "#B58AE3").opacity(0.78))
+
+            Text(appPreferences.text("tasks.orchestratorPlugin.title"))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text(appPreferences.text("tasks.orchestratorPlugin.subtitle"))
+                .font(.system(size: 12))
+                .foregroundColor(.secondary.opacity(0.78))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+
+            Text(viewModel.orchestratorPluginUnavailableMessage)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary.opacity(0.68))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 460)
+
+            if let installDir = viewModel.orchestratorPluginStatus?.install.installDir {
+                Text(String(format: appPreferences.text("tasks.orchestratorPlugin.installDir"), installDir))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary.opacity(0.58))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 460)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: { viewModel.installOrchestratorPlugin() }) {
+                    HStack(spacing: 7) {
+                        if viewModel.isInstallingOrchestratorPlugin {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.72)
+                        } else {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        Text(viewModel.isInstallingOrchestratorPlugin ? appPreferences.text("tasks.orchestratorPlugin.installing") : appPreferences.text("tasks.orchestratorPlugin.install"))
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(viewModel.canInstallOrchestratorPlugin ? Color(hex: "#4D6BFE") : Color.secondary.opacity(0.35))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .disabled(!viewModel.canInstallOrchestratorPlugin)
+
+                Button(action: { viewModel.loadOrchestratorPluginStatus() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text(appPreferences.text("tasks.orchestratorPlugin.retry"))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.strongText)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(theme.controlBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+
+            if viewModel.isLoadingOrchestratorPlugin {
+                Text(appPreferences.text("tasks.loading"))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary.opacity(0.65))
+            }
+        }
+        .padding(28)
     }
 
     private func taskDetailView(task: TaskOrchestrationViewModel.TaskDetail) -> some View {

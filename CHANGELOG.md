@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.4.3 - 2026-06-07
+
+This is a source-first patch release for the Across Orchestrator plugin slot.
+Across Agents Assistant now treats task orchestration as an external plugin
+runtime instead of an app-owned fallback path for new task submission.
+
+### Added
+
+- Across Orchestrator runtime status API and startup diagnostic coverage.
+- One-click managed plugin install endpoint for `across-orchestrator` using an
+  app-owned virtualenv under `~/.across_agents/plugins`.
+- External HTTP/CLI task lifecycle support for Release E2E creation, run,
+  status, quality benchmark, evidence bundle, and task-list surfaces.
+- UI support for unavailable/installing/installed plugin states in the task
+  orchestration view.
+
+### Changed
+
+- New task orchestration submissions now require the external Across
+  Orchestrator plugin; `builtin` and `auto` mode values normalize to the
+  external plugin boundary.
+- Packaged app plugin install resolves a real Python interpreter instead of
+  accidentally invoking the packaged backend binary as `python -m venv`.
+- The app-managed Across Orchestrator CLI takes precedence over PATH lookup
+  after installation.
+- README release notes now document the plugin slot, install source, task index
+  location, and external evidence gates.
+
+### Validation
+
+- App open-source guard: `bash scripts/open_source_check.sh`.
+- Focused backend regression for Across Orchestrator plugin/API/release/startup
+  paths.
+- Across Orchestrator plugin repo check: `bash scripts/check.sh`.
+- UI-level Release E2E completed through the packaged app using the external
+  Across Orchestrator CLI with 7/7 required files and app-grade quality score
+  100.
+
 ## 0.4.2 - 2026-06-07
 
 This is a source-first patch release for plugin-first shared memory. Across

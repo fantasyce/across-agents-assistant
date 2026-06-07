@@ -21,6 +21,10 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var isLoadingTaskEvidence = false
     @Published var taskEvidenceError: String?
     @Published var exportedEvidenceBundleURL: URL?
+    @Published var orchestratorPluginStatus: OrchestratorPluginStatus?
+    @Published var isLoadingOrchestratorPlugin = false
+    @Published var isInstallingOrchestratorPlugin = false
+    @Published var orchestratorPluginError: String?
     private let taskPageSize = 50
     private var taskListOffset = 0
 
@@ -50,6 +54,25 @@ class TaskOrchestrationViewModel: ObservableObject {
             return message
         }
         return nil
+    }
+
+    var isOrchestratorPluginUnavailable: Bool {
+        guard let runtime = orchestratorPluginStatus?.runtime else { return false }
+        return runtime.implementation == "external" && runtime.available == false
+    }
+
+    var orchestratorPluginUnavailableMessage: String {
+        if let error = orchestratorPluginError, !error.isEmpty {
+            return error
+        }
+        if let note = orchestratorPluginStatus?.runtime.connectionNote, !note.isEmpty {
+            return note
+        }
+        return "Across Orchestrator is required for task orchestration."
+    }
+
+    var canInstallOrchestratorPlugin: Bool {
+        orchestratorPluginStatus?.install.installable == true && !isInstallingOrchestratorPlugin
     }
 
     enum DeliveryTaskType: String, CaseIterable, Identifiable {
@@ -134,6 +157,54 @@ class TaskOrchestrationViewModel: ObservableObject {
         enum CodingKeys: String, CodingKey {
             case tasks, total, limit, offset
             case hasMore = "has_more"
+        }
+    }
+
+    struct OrchestratorPluginStatus: Decodable {
+        let runtime: Runtime
+        let install: Install
+
+        struct Runtime: Decodable {
+            let mode: String
+            let implementation: String
+            let available: Bool
+            let transport: String?
+            let endpoint: String?
+            let command: String?
+            let connectionNote: String?
+
+            enum CodingKeys: String, CodingKey {
+                case mode, implementation, available, transport, endpoint, command
+                case connectionNote = "connection_note"
+            }
+        }
+
+        struct Install: Decodable {
+            let status: String
+            let installed: Bool
+            let installable: Bool
+            let source: String?
+            let installDir: String?
+            let command: String?
+            let logs: [String]
+            let error: String?
+
+            enum CodingKeys: String, CodingKey {
+                case status, installed, installable, source, command, logs, error
+                case installDir = "install_dir"
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+                installed = try container.decodeIfPresent(Bool.self, forKey: .installed) ?? false
+                installable = try container.decodeIfPresent(Bool.self, forKey: .installable) ?? false
+                source = try container.decodeIfPresent(String.self, forKey: .source)
+                installDir = try container.decodeIfPresent(String.self, forKey: .installDir)
+                command = try container.decodeIfPresent(String.self, forKey: .command)
+                logs = (try? container.decode([String].self, forKey: .logs)) ?? []
+                error = try container.decodeIfPresent(String.self, forKey: .error)
+            }
         }
     }
 
@@ -991,9 +1062,82 @@ class TaskOrchestrationViewModel: ObservableObject {
     }
 
     func loadTasks() {
+        loadOrchestratorPluginStatus()
         loadTaskPage(reset: true)
         loadReleaseEvaluation()
         loadReleaseE2EScenarios()
+    }
+
+    func loadOrchestratorPluginStatus() {
+        Task { @MainActor in
+            guard let baseURL = baseURL else {
+                orchestratorPluginError = "Server URL not configured"
+                return
+            }
+
+            isLoadingOrchestratorPlugin = true
+            orchestratorPluginError = nil
+
+            do {
+                let url = baseURL.appendingPathComponent("api/orchestrator/plugin")
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 15
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    orchestratorPluginError = Self.backendErrorMessage(from: data) ?? "Failed to load Across Orchestrator status"
+                    isLoadingOrchestratorPlugin = false
+                    return
+                }
+
+                orchestratorPluginStatus = try JSONDecoder().decode(OrchestratorPluginStatus.self, from: data)
+                isLoadingOrchestratorPlugin = false
+            } catch {
+                orchestratorPluginError = error.localizedDescription
+                isLoadingOrchestratorPlugin = false
+            }
+        }
+    }
+
+    func installOrchestratorPlugin() {
+        Task { @MainActor in
+            guard !isInstallingOrchestratorPlugin else { return }
+            guard let baseURL = baseURL else {
+                orchestratorPluginError = "Server URL not configured"
+                return
+            }
+
+            isInstallingOrchestratorPlugin = true
+            orchestratorPluginError = nil
+
+            do {
+                let url = baseURL.appendingPathComponent("api/orchestrator/plugin/install")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 900
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    orchestratorPluginError = Self.backendErrorMessage(from: data) ?? "Failed to install Across Orchestrator"
+                    isInstallingOrchestratorPlugin = false
+                    return
+                }
+
+                orchestratorPluginStatus = try JSONDecoder().decode(OrchestratorPluginStatus.self, from: data)
+                isInstallingOrchestratorPlugin = false
+                loadTasks()
+            } catch {
+                orchestratorPluginError = error.localizedDescription
+                isInstallingOrchestratorPlugin = false
+            }
+        }
     }
 
     func openReleaseCenter() {
@@ -1159,6 +1303,10 @@ class TaskOrchestrationViewModel: ObservableObject {
     func startReleaseE2E() {
         Task { @MainActor in
             guard !isStartingReleaseE2E else { return }
+            guard !isOrchestratorPluginUnavailable else {
+                releaseE2EError = orchestratorPluginUnavailableMessage
+                return
+            }
             guard let baseURL = baseURL else {
                 releaseE2EError = "Server URL not configured"
                 return
@@ -1400,6 +1548,10 @@ class TaskOrchestrationViewModel: ObservableObject {
         strictDependency: Bool = true
     ) {
         Task { @MainActor in
+            guard !isOrchestratorPluginUnavailable else {
+                errorMessage = orchestratorPluginUnavailableMessage
+                return
+            }
             isLoading = true
             errorMessage = nil
 
@@ -1613,6 +1765,11 @@ class TaskOrchestrationViewModel: ObservableObject {
     }
 
     func enterCreateMode() {
+        guard !isOrchestratorPluginUnavailable else {
+            errorMessage = orchestratorPluginUnavailableMessage
+            viewMode = .empty
+            return
+        }
         viewMode = .createForm
         selectedTask = nil
         stopSSE()

@@ -256,11 +256,22 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
         ),
     )
 
-    class FakeOrchestrator:
-        def submit_task(self, description, context):
-            captured["description"] = description
-            captured["context"] = context
-            return "task-native-skills"
+    class FakePlugin:
+        def implementation_status(self, probe=True):
+            return {
+                "mode": "external",
+                "implementation": "external",
+                "available": True,
+                "transport": "cli",
+                "connection_note": "fake external runtime",
+            }
+
+        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None):
+            captured["goal"] = goal
+            captured["project_dir"] = project_dir
+            captured["deliverables"] = deliverables
+            captured["agent"] = agent
+            return {"task_id": "task-native-skills", "status": "pending"}
 
     monkeypatch.setattr(
         "across_agents_assistant.api_server._check_llm_provider_readiness",
@@ -268,12 +279,13 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
     )
     monkeypatch.setattr(
         "across_agents_assistant.api_server.get_task_orchestrator",
-        lambda: FakeOrchestrator(),
+        lambda: (_ for _ in ()).throw(AssertionError("internal orchestrator must not be used")),
     )
     monkeypatch.setattr(
         "across_agents_assistant.api_server.get_native_skill_manager",
         lambda: manager,
     )
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
 
     client = TestClient(app)
     response = client.post(
@@ -283,13 +295,18 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
             "task_types": ["functional"],
             "owner_agent": "claude",
             "allowed_subtask_agents": ["claude"],
+            "project_dir": str(tmp_path / "project"),
         },
     )
 
     assert response.status_code == 200
-    capabilities = captured["context"]["agent_capabilities"]
-    assert capabilities["native_skills"]["claude"][0]["name"] == "Architecture Review"
-    assert "Installed native skills" in capabilities["prompt"]
+    assert response.json()["implementation"] == "external"
+    assert captured == {
+        "goal": "Design a plugin system.",
+        "project_dir": str(tmp_path / "project"),
+        "deliverables": ["README.md"],
+        "agent": "claude",
+    }
 
 
 def test_native_skill_context_from_cli_adapter_routes_owner_agent(monkeypatch, tmp_path):

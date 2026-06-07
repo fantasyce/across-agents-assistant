@@ -549,17 +549,28 @@ def test_store_builds_standard_agent_cards_with_tool_and_native_skill_health(tmp
     assert "High-risk tools require explicit approval." in openclaw["warnings"]
 
 
-def test_auto_task_includes_agent_capability_context(monkeypatch, tmp_path):
+def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_path):
     captured = {}
     store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
     store.save_profile("hermes", {"enabled_skill_ids": ["frontend_design"]})
     store.save_profile("deepseek", {"enabled_skill_ids": ["backend_api"]})
 
-    class FakeOrchestrator:
-        def submit_task(self, description, context):
-            captured["description"] = description
-            captured["context"] = context
-            return "task-capabilities"
+    class FakePlugin:
+        def implementation_status(self, probe=True):
+            return {
+                "mode": "external",
+                "implementation": "external",
+                "available": True,
+                "transport": "cli",
+                "connection_note": "fake external runtime",
+            }
+
+        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None):
+            captured["goal"] = goal
+            captured["project_dir"] = project_dir
+            captured["deliverables"] = deliverables
+            captured["agent"] = agent
+            return {"task_id": "task-capabilities", "status": "pending"}
 
     monkeypatch.setattr(
         "across_agents_assistant.api_server._check_llm_provider_readiness",
@@ -567,11 +578,15 @@ def test_auto_task_includes_agent_capability_context(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "across_agents_assistant.api_server.get_task_orchestrator",
-        lambda: FakeOrchestrator(),
+        lambda: (_ for _ in ()).throw(AssertionError("internal orchestrator must not be used")),
     )
     monkeypatch.setattr(
         "across_agents_assistant.api_server.get_agent_capability_store",
         lambda: store,
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_orchestrator_plugin_manager",
+        lambda: FakePlugin(),
     )
 
     client = TestClient(app)
@@ -582,11 +597,16 @@ def test_auto_task_includes_agent_capability_context(monkeypatch, tmp_path):
             "task_types": ["functional"],
             "owner_agent": "hermes",
             "allowed_subtask_agents": ["deepseek"],
+            "project_dir": str(tmp_path / "project"),
         },
     )
 
     assert response.status_code == 200
-    capability_context = captured["context"]["agent_capabilities"]
-    assert set(capability_context["profiles"].keys()) == {"hermes", "deepseek"}
-    assert "Frontend product design" in capability_context["prompt"]
-    assert "Backend API implementation" in capability_context["prompt"]
+    assert response.json()["implementation"] == "external"
+    assert response.json()["external_task"] is True
+    assert captured == {
+        "goal": "Build a polished dashboard",
+        "project_dir": str(tmp_path / "project"),
+        "deliverables": ["README.md"],
+        "agent": "hermes",
+    }

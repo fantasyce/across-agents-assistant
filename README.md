@@ -40,7 +40,7 @@ The core idea is cross-agent collaboration: pick an owner agent, keep local agen
 
 ### Current Dark Theme
 
-The current `0.4.2` product screenshots show the refreshed dark interface,
+The current product screenshots show the refreshed dark interface,
 agent/provider icon catalog, task orchestration, model settings, MCP plugins,
 tool permissions, and preferences.
 
@@ -105,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.4.3` | Plugin-required Across Orchestrator slot with one-click managed install, external HTTP/CLI task lifecycle, app-grade Release E2E evidence, packaged-app installer fix, and no built-in task-orchestration fallback for new submissions. |
 | `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share the same `~/.across-context` vault. |
 | `0.4.1` | Expanded local-agent/cloud-provider icon catalog, OpenCode MIT-source icon treatment, runtime Codex.app icon support with OpenAI fallback, unsupported local IDE integration cleanup, and stricter icon release-status checks. |
 | `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
@@ -145,7 +146,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.2` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.3` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
 The `0.4.2` shared-memory work keeps Across Context as a standalone plugin
 product. Across Agents Assistant prefers the external `across-context mcp`
@@ -153,6 +154,14 @@ server, reports the active implementation mode in MCP settings/API responses,
 and uses the bundled bridge only as an auto-mode compatibility fallback. Both
 paths write to the canonical `~/.across-context` vault, so users who install or
 upgrade Across Context separately do not end up with split memory stores.
+
+The `0.4.3` task-orchestration work applies the same plugin-required boundary
+to Across Orchestrator. Across Agents Assistant can use an external Across
+Orchestrator HTTP or CLI runtime for Release E2E task creation, execution,
+status, quality benchmarking, and evidence bundles. If the external plugin is
+not installed or connected, task orchestration is unavailable and the UI offers
+one-click installation; new task submission no longer falls back to the
+historical in-app TaskOrchestrator.
 
 The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
 
@@ -297,6 +306,59 @@ Startup diagnostics can be checked from the packaged app or from the socket:
 ```bash
 curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
   "http://backend/api/diagnostics/startup"
+```
+
+### Across Orchestrator Runtime Slot
+
+Task orchestration is hosted by an external Across Orchestrator product. The
+desktop app is the console and plugin host; it does not silently fall back to
+the historical in-app orchestrator in normal product mode. If the plugin is not
+installed or connected, the task orchestration entry is shown as unavailable
+with a one-click install action.
+
+```bash
+ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product mode
+ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
+ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
+ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across_agents/plugins"
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.2.0
+ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
+ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
+```
+
+When an endpoint is configured, the app talks to the external HTTP runtime. If
+no endpoint is configured, it discovers either the app-managed CLI installed at
+`~/.across_agents/plugins/across-orchestrator/venv/bin/across-orchestrator` or
+an `across-orchestrator` executable on `PATH`. The UI calls
+`/api/orchestrator/plugin/install` to create that app-managed virtualenv and
+install the external product from the configured source.
+
+Packaged builds cannot use the backend binary itself to create Python
+virtualenvs. The installer auto-discovers a Python 3 interpreter from common
+locations; set `ACROSS_AGENTS_ORCHESTRATOR_PYTHON` only when you need to force a
+specific interpreter.
+
+External task state stays in `~/.across-orchestrator`; the app only keeps a thin
+task-id index in
+`~/.across_agents/orchestrator-plugin/tasks.json` so the main task UI can show
+external tasks.
+
+The historical in-app `TaskOrchestrator` code remains only for legacy task data
+inspection and migration-oriented maintenance paths. It is not a product
+runtime for new task submission.
+
+External Release E2E evidence is accepted only when the app-grade benchmark
+passes artifact integrity, workspace hygiene, security/privacy, agent mix,
+static web smoke, browser E2E, API service, and CLI gates. The focused backend
+check is:
+
+```bash
+PYTHONPATH=backend/src pytest \
+  backend/tests/test_orchestrator_plugin.py \
+  backend/tests/test_api_orchestrator_plugin.py \
+  backend/tests/test_api_release_e2e.py \
+  backend/tests/test_api_startup_diagnostics.py \
+  -q
 ```
 
 RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across_agents/release-reports/`:

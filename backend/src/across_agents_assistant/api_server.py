@@ -163,6 +163,14 @@ from .task_manager.orchestration.release_e2e import (
     build_release_e2e_task_request,
 )
 from .paths import app_home, app_subdir, backend_socket_path, data_file, log_dir as app_log_dir, run_dir, tmp_dir
+from .orchestrator_plugin import (
+    OrchestratorPluginConfig,
+    OrchestratorPluginManager,
+    OrchestratorPluginUnavailable,
+    build_external_quality_benchmark,
+    external_evidence_to_app_bundle,
+    external_task_to_app_info,
+)
 
 # Global Task Manager instances
 _task_state = TaskState()
@@ -388,6 +396,53 @@ def get_task_orchestrator() -> TaskOrchestrator:
             owner_agent=owner_agent,
         )
     return _task_orchestrator
+
+
+_orchestrator_plugin_manager: Optional[OrchestratorPluginManager] = None
+_orchestrator_plugin_signature: Optional[Tuple[Any, ...]] = None
+
+
+def get_orchestrator_plugin_manager() -> OrchestratorPluginManager:
+    global _orchestrator_plugin_manager, _orchestrator_plugin_signature
+    registry_path = app_subdir("orchestrator-plugin") / "tasks.json"
+    config = OrchestratorPluginConfig.from_env(registry_path=registry_path)
+    signature = (
+        config.normalized_mode(),
+        config.endpoint,
+        config.command,
+        str(config.registry_path),
+        str(config.plugin_home),
+        config.install_source,
+        config.auto_run,
+    )
+    if _orchestrator_plugin_manager is None or _orchestrator_plugin_signature != signature:
+        _orchestrator_plugin_manager = OrchestratorPluginManager(config)
+        _orchestrator_plugin_signature = signature
+    return _orchestrator_plugin_manager
+
+
+def _orchestrator_plugin_status(*, probe: bool = True) -> Dict[str, Any]:
+    try:
+        return get_orchestrator_plugin_manager().implementation_status(probe=probe)
+    except Exception as exc:
+        logger.warning("Failed to inspect Across Orchestrator plugin: %s", exc)
+        return {
+            "mode": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_MODE") or "external",
+            "implementation": "unknown",
+            "available": False,
+            "transport": None,
+            "endpoint": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT"),
+            "command": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_COMMAND") or "across-orchestrator",
+            "connection_note": f"Unable to inspect Across Orchestrator plugin: {exc}",
+            "error": str(exc),
+        }
+
+
+def _is_external_orchestrator_task(task_id: str) -> bool:
+    try:
+        return get_orchestrator_plugin_manager().is_external_task(task_id)
+    except Exception:
+        return False
 
 
 def _active_task_ids_waiting_for_keys() -> List[str]:
@@ -1128,6 +1183,37 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
         },
     })
 
+    orchestrator_plugin = _orchestrator_plugin_status(probe=True)
+    plugin_available = bool(orchestrator_plugin.get("available"))
+    plugin_required = str(orchestrator_plugin.get("mode") or "").replace("-", "_") == "external"
+    if plugin_available:
+        plugin_check_status = "passed"
+    elif plugin_required:
+        plugin_check_status = "failed"
+    else:
+        plugin_check_status = "warning"
+    checks.append({
+        "id": "orchestrator_plugin",
+        "title": "Across Orchestrator plugin",
+        "status": plugin_check_status,
+        "detail": str(orchestrator_plugin.get("connection_note") or "Across Orchestrator plugin status inspected."),
+        "remediation": (
+            "Install Across Orchestrator or configure ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT."
+            if plugin_check_status == "failed"
+            else None
+        ),
+        "metadata": {
+            "mode": orchestrator_plugin.get("mode"),
+            "implementation": orchestrator_plugin.get("implementation"),
+            "available": plugin_available,
+            "transport": orchestrator_plugin.get("transport"),
+            "endpoint": orchestrator_plugin.get("endpoint"),
+            "command_available": orchestrator_plugin.get("command_available"),
+            "task_index_count": orchestrator_plugin.get("task_index_count", 0),
+            "install": orchestrator_plugin.get("install"),
+        },
+    })
+
     summary = _diagnostic_summary(checks)
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return {
@@ -1153,6 +1239,7 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
             "persistence_initialized": _task_persistence_initialized,
             "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
+            "orchestrator_plugin": orchestrator_plugin,
         },
         "keys": key_readiness,
         "checks": checks,
@@ -1174,6 +1261,41 @@ async def get_readiness():
 async def get_startup_diagnostics():
     """Return a non-secret first-run and packaged-app startup diagnostic report."""
     return _build_startup_diagnostics()
+
+
+@app.get("/api/orchestrator/plugin")
+async def get_orchestrator_plugin_status():
+    """Return Across Orchestrator runtime and one-click install status."""
+    manager = get_orchestrator_plugin_manager()
+    runtime = manager.implementation_status(probe=True)
+    return {
+        "runtime": runtime,
+        "install": runtime.get("install") or manager.install_status(),
+    }
+
+
+@app.post("/api/orchestrator/plugin/install")
+async def install_orchestrator_plugin():
+    """Install Across Orchestrator into the app-managed plugin directory."""
+    manager = get_orchestrator_plugin_manager()
+    try:
+        install = await asyncio.to_thread(manager.install_plugin)
+        runtime = manager.implementation_status(probe=True)
+        return {
+            "runtime": runtime,
+            "install": install,
+        }
+    except Exception as exc:
+        logger.exception("Across Orchestrator plugin installation failed")
+        runtime = manager.implementation_status(probe=False)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": _sanitize_public_error_text(exc),
+                "runtime": runtime,
+                "install": manager.install_status(),
+            },
+        )
 
 
 @app.get("/api/health")
@@ -2958,6 +3080,16 @@ def _public_agent_card(card: Dict[str, Any], native_skills: List[Dict[str, Any]]
 
 
 def _load_task_info_read_only(task_id: str) -> "TaskInfo":
+    if _is_external_orchestrator_task(task_id):
+        plugin = get_orchestrator_plugin_manager()
+        task_payload = plugin.get_task(task_id)
+        evidence = None
+        if str(task_payload.get("status") or "") == "completed":
+            try:
+                evidence = plugin.get_evidence_bundle(task_id)
+            except Exception:
+                evidence = None
+        return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
     task = _task_state.get_task(task_id)
     if task:
         return _task_to_info(task, _task_state)
@@ -4506,12 +4638,44 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
         else:
             total = max(persisted_total, len(in_memory))
 
+        seen_summary_ids = {item.task_id for item in summaries}
+        try:
+            for row in get_orchestrator_plugin_manager().list_task_summaries():
+                task_id = row.get("task_id")
+                if not task_id or task_id in seen_summary_ids:
+                    continue
+                summaries.append(TaskSummaryInfo(
+                    task_id=str(task_id),
+                    description=str(row.get("description") or ""),
+                    status=str(row.get("status") or "pending"),
+                    progress=float(row.get("progress") or 0),
+                    completed_count=int(row.get("completed_count") or 0),
+                    total_count=int(row.get("total_count") or 0),
+                    created_at=float(row.get("created_at") or 0),
+                    updated_at=float(row.get("updated_at") or 0),
+                    project_dir=row.get("project_dir"),
+                    owner_agent=row.get("owner_agent"),
+                    delivery_mode=row.get("delivery_mode") or "composite",
+                ))
+                seen_summary_ids.add(str(task_id))
+            if len(summaries) > total:
+                total = len(summaries)
+        except Exception as exc:
+            logger.debug("Skipping external Orchestrator task summaries: %s", exc)
+
+        summaries = sorted(
+            summaries,
+            key=lambda item: item.updated_at or item.created_at or 0,
+            reverse=True,
+        )
+
+        page_summaries = summaries[:limit]
         return TaskPageResponse(
-            tasks=summaries,
+            tasks=page_summaries,
             total=total,
             limit=limit,
             offset=offset,
-            has_more=offset + len(summaries) < total,
+            has_more=offset + len(page_summaries) < total,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -4578,6 +4742,32 @@ def _collect_release_task_rows(safe_limit: int = 100) -> List[Dict[str, Any]]:
         if task_id and task_id not in seen_task_ids:
             rows.append(row)
             seen_task_ids.add(task_id)
+
+    try:
+        for row in get_orchestrator_plugin_manager().list_task_summaries():
+            task_id = row.get("task_id")
+            if task_id and task_id not in seen_task_ids:
+                rows.append({
+                    "task_id": task_id,
+                    "description": row.get("description") or "",
+                    "status": row.get("status") or "pending",
+                    "progress": row.get("progress") or 0.0,
+                    "completed_count": row.get("completed_count") or 0,
+                    "total_count": row.get("total_count") or 0,
+                    "created_at": row.get("created_at") or 0.0,
+                    "updated_at": row.get("updated_at") or 0.0,
+                    "project_dir": row.get("project_dir"),
+                    "owner_agent": row.get("owner_agent"),
+                    "allowed_subtask_agents": [],
+                    "task_types": ["functional", "artifact"],
+                    "delivery_mode": row.get("delivery_mode") or "composite",
+                    "last_owner_decision": {
+                        "decision": "external_orchestrator",
+                    },
+                })
+                seen_task_ids.add(str(task_id))
+    except Exception as exc:
+        logger.debug("Skipping external Orchestrator rows for release evaluation: %s", exc)
 
     return rows[:safe_limit]
 
@@ -4806,6 +4996,17 @@ async def get_task(task_id: str):
     from the database to ensure frontend always has full subtask information.
     """
     try:
+        if _is_external_orchestrator_task(task_id):
+            plugin = get_orchestrator_plugin_manager()
+            task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+            evidence = None
+            if str(task_payload.get("status") or "") == "completed":
+                try:
+                    evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                except Exception:
+                    evidence = None
+            return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
+
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
         _repair_task_dispatch_if_possible(task_id, reason="api_detail_poll")
 
@@ -4852,6 +5053,18 @@ async def list_tasks():
                     info.status = "suspended"
                 task_infos.append(info)
                 seen_task_ids.add(task_id)
+
+        try:
+            plugin = get_orchestrator_plugin_manager()
+            for row in plugin.list_task_summaries():
+                task_id = row.get("task_id")
+                if not task_id or task_id in seen_task_ids:
+                    continue
+                task_payload = plugin.get_task(str(task_id))
+                task_infos.append(TaskInfo(**external_task_to_app_info(task_payload)))
+                seen_task_ids.add(str(task_id))
+        except Exception as exc:
+            logger.debug("Skipping external Orchestrator tasks: %s", exc)
 
         return sorted(
             task_infos,
@@ -4928,6 +5141,8 @@ class AutoTaskResponse(BaseModel):
     task_id: str
     status: str
     message: str
+    implementation: str = "external"
+    external_task: bool = False
 
 
 class ReleaseE2EScenarioListResponse(BaseModel):
@@ -4948,9 +5163,18 @@ class ReleaseE2ETaskResponse(BaseModel):
     project_dir: str
     complexity_score: int
     required_files: List[str]
+    implementation: str = "external"
+    external_task: bool = False
+    orchestrator_transport: Optional[str] = None
 
 
-def _normalize_request_task_types(task_types: List[str]) -> tuple:
+def _default_external_orchestrator_project_dir() -> str:
+    path = app_subdir("orchestrator-workspaces") / f"task-{int(time.time() * 1000)}"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def _validate_request_task_types(task_types: List[str]) -> List[str]:
     allowed = {"functional", "artifact"}
     values: List[str] = []
     for item in task_types or []:
@@ -4961,61 +5185,53 @@ def _normalize_request_task_types(task_types: List[str]) -> tuple:
             values.append(value)
     if not values:
         raise HTTPException(status_code=422, detail="At least one task type must be selected")
-    return values, values[0] if len(values) == 1 else "composite"
+    return values
+
+
+def _deliverables_for_external_task(req: AutoTaskRequest) -> List[str]:
+    if "artifact" in set(req.task_types or []):
+        return ["README.md"]
+    return ["README.md"]
+
+
+def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=str(
+            plugin_status.get("connection_note")
+            or "Across Orchestrator is required for task orchestration. Install or connect the plugin first."
+        ),
+    )
 
 
 async def _submit_auto_orchestrated_task(
     req: AutoTaskRequest,
-    *,
-    success_message: str = "Task submitted for auto-orchestration",
-    extra_context: Optional[Dict[str, Any]] = None,
 ) -> AutoTaskResponse:
-    missing_providers = _check_llm_provider_readiness()
-    if missing_providers:
-        raise HTTPException(
-            status_code=412,
-            detail={
-                "message": "Missing API keys. Please sync keys from macOS app settings.",
-                "missing_providers": missing_providers,
-            }
-        )
-    try:
-        orchestrator = get_task_orchestrator()
-        context: Dict[str, Any] = {}
-        task_types, delivery_mode = _normalize_request_task_types(req.task_types)
-        context["task_types"] = task_types
-        context["delivery_mode"] = delivery_mode
-        if req.project_dir:
-            context["project_dir"] = req.project_dir
-        if req.owner_agent:
-            context["owner_agent"] = req.owner_agent
-        context["allowed_subtask_agents"] = req.allowed_subtask_agents
-        context["strict_dependency"] = req.strict_dependency
-        context["enable_wave_gate"] = req.enable_wave_gate
-        capability_agent_ids: List[str] = []
-        if req.owner_agent and req.owner_agent != "auto":
-            capability_agent_ids.append(req.owner_agent)
-        capability_agent_ids.extend(req.allowed_subtask_agents or [])
-        capability_context = get_agent_capability_store().build_task_context(
-            capability_agent_ids or None
-        )
-        context["agent_capabilities"] = _append_native_skill_context(
-            capability_context,
-            capability_agent_ids or None,
-            req.description,
-        )
-        if extra_context:
-            context.update(extra_context)
-        task_id = await asyncio.to_thread(orchestrator.submit_task, req.description, context)
-        return AutoTaskResponse(
-            task_id=task_id,
-            status="created",
-            message=success_message
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _validate_request_task_types(req.task_types)
+    plugin = get_orchestrator_plugin_manager()
+    plugin_status = plugin.implementation_status(probe=True)
+    if plugin_status.get("implementation") == "external" and plugin_status.get("available"):
+        try:
+            task = await asyncio.to_thread(
+                plugin.submit_task,
+                goal=req.description,
+                project_dir=req.project_dir or _default_external_orchestrator_project_dir(),
+                deliverables=_deliverables_for_external_task(req),
+                agent=req.owner_agent if req.owner_agent and req.owner_agent != "auto" else "demo",
+            )
+            return AutoTaskResponse(
+                task_id=str(task.get("task_id") or ""),
+                status=str(task.get("status") or "created"),
+                message="Task submitted to external Across Orchestrator",
+                implementation="external",
+                external_task=True,
+            )
+        except OrchestratorPluginUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except Exception as exc:
+            logger.exception("External Across Orchestrator task submission failed")
+            raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+    raise _external_orchestrator_unavailable_response(plugin_status)
 
 
 @app.get("/api/release/e2e/scenarios", response_model=ReleaseE2EScenarioListResponse)
@@ -5034,36 +5250,35 @@ async def create_release_e2e_task(req: ReleaseE2ETaskRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    auto_req = AutoTaskRequest(
-        description=task_request["description"],
-        task_types=task_request["task_types"],
-        owner_agent=task_request["owner_agent"],
-        allowed_subtask_agents=task_request["allowed_subtask_agents"],
-        project_dir=task_request["project_dir"],
-        strict_dependency=task_request["strict_dependency"],
-        enable_wave_gate=task_request["enable_wave_gate"],
-    )
-    result = await _submit_auto_orchestrated_task(
-        auto_req,
-        success_message="Release E2E task submitted for auto-orchestration",
-        extra_context={
-            "release_e2e": {
-                "scenario_id": task_request["scenario_id"],
-                "scenario_title": task_request["scenario_title"],
-                "complexity_score": task_request["complexity_score"],
-                "required_files": task_request["required_files"],
-                "required_quality_gates": task_request["required_quality_gates"],
-            }
-        },
-    )
-    return ReleaseE2ETaskResponse(
-        task_id=result.task_id,
-        status=result.status,
-        message=result.message,
-        scenario_id=task_request["scenario_id"],
-        project_dir=task_request["project_dir"],
-        complexity_score=task_request["complexity_score"],
-        required_files=task_request["required_files"],
+    plugin = get_orchestrator_plugin_manager()
+    plugin_status = plugin.implementation_status(probe=True)
+    if plugin_status.get("implementation") == "external" and plugin_status.get("available"):
+        try:
+            task = await asyncio.to_thread(
+                plugin.submit_release_e2e_task,
+                project_dir=task_request["project_dir"],
+                run_label=req.run_label,
+            )
+            return ReleaseE2ETaskResponse(
+                task_id=str(task.get("task_id") or ""),
+                status=str(task.get("status") or "created"),
+                message="Release E2E task submitted to external Across Orchestrator",
+                scenario_id=task_request["scenario_id"],
+                project_dir=task_request["project_dir"],
+                complexity_score=task_request["complexity_score"],
+                required_files=task_request["required_files"],
+                implementation="external",
+                external_task=True,
+                orchestrator_transport=plugin_status.get("transport"),
+            )
+        except OrchestratorPluginUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except Exception as exc:
+            logger.exception("External Across Orchestrator Release E2E submission failed")
+            raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+    raise HTTPException(
+        status_code=503,
+        detail=str(plugin_status.get("connection_note") or "External Across Orchestrator is unavailable."),
     )
 
 
@@ -5080,6 +5295,20 @@ async def auto_task(req: AutoTaskRequest):
     return await _submit_auto_orchestrated_task(req)
 
 
+@app.post("/api/tasks/{task_id}/run")
+async def run_external_task(task_id: str):
+    """Run an externally-owned Across Orchestrator task."""
+    if not _is_external_orchestrator_task(task_id):
+        raise HTTPException(status_code=409, detail="Only external Across Orchestrator tasks can be run through this endpoint.")
+    try:
+        task_payload = await asyncio.to_thread(get_orchestrator_plugin_manager().run_task, task_id)
+        return _sanitize_public_payload(external_task_to_app_info(task_payload))
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+
+
 @app.get("/api/tasks/{task_id}/status")
 async def get_task_status(task_id: str):
     """Query overall task status including progress and subtask states.
@@ -5089,6 +5318,17 @@ async def get_task_status(task_id: str):
     """
     try:
         from .task_manager.orchestration.delivery_report import build_delivery_report
+        if _is_external_orchestrator_task(task_id):
+            plugin = get_orchestrator_plugin_manager()
+            task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+            evidence = None
+            if str(task_payload.get("status") or "") == "completed":
+                try:
+                    evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                except Exception:
+                    evidence = None
+            return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
+
         _repair_task_dispatch_if_possible(task_id, reason="api_status_poll")
 
         # First check in-memory state
@@ -5266,6 +5506,19 @@ async def get_task_quality_benchmark(
     from . import __version__
     from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
 
+    if _is_external_orchestrator_task(task_id):
+        evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
+        report = build_external_quality_benchmark(
+            _redact_sensitive_evidence(evidence),
+            expected_files=_comma_separated_values(expected_files),
+            required_probes=_comma_separated_values(required_probes),
+            min_quality_score=min_quality_score,
+            max_remediation_attempts=max_remediation_attempts,
+            benchmark_id=benchmark_id or f"external-{task_id}-release-{__version__}",
+            app_version=__version__,
+        )
+        return _redact_sensitive_evidence(report)
+
     payload = await get_task_status(task_id)
     if isinstance(payload, BaseModel):
         payload = _pydantic_dump(payload)
@@ -5294,6 +5547,19 @@ async def get_task_evidence_bundle(
     """Return a read-only, sanitized audit bundle for a task delivery."""
     from . import __version__
     from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+
+    if _is_external_orchestrator_task(task_id):
+        evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
+        bundle = external_evidence_to_app_bundle(
+            _redact_sensitive_evidence(evidence),
+            expected_files=_comma_separated_values(expected_files),
+            required_probes=_comma_separated_values(required_probes),
+            min_quality_score=min_quality_score,
+            max_remediation_attempts=max_remediation_attempts,
+            benchmark_id=benchmark_id or f"external-{task_id}-evidence-{__version__}",
+            app_version=__version__,
+        )
+        return _redact_sensitive_evidence(bundle)
 
     task_info = _load_task_info_read_only(task_id)
     payload = _pydantic_dump(task_info) if isinstance(task_info, BaseModel) else dict(task_info)
@@ -5346,6 +5612,38 @@ async def task_stream(task_id: str):
     Pushes SubTaskStatusChanged events when subtask status changes.
     Uses existing _task_state._progress_callbacks mechanism.
     """
+    if _is_external_orchestrator_task(task_id):
+        async def external_event_generator():
+            try:
+                plugin = get_orchestrator_plugin_manager()
+                task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+                task_info = external_task_to_app_info(task_payload)
+                status_changed_data = {
+                    "type": "task_status_changed",
+                    "task_id": task_id,
+                    "status": task_info["status"],
+                    "progress": task_info["progress"],
+                    "completed_count": task_info["completed_count"],
+                    "total_count": task_info["total_count"],
+                    "owner_session_id": task_info.get("owner_session_id"),
+                    "last_owner_decision": task_info.get("last_owner_decision"),
+                    "subtasks": task_info.get("subtasks", []),
+                    "waves": task_info.get("waves", []),
+                }
+                yield f"data: {json.dumps(status_changed_data)}\n\n"
+                if task_info["status"] == TaskStatus.COMPLETED.value:
+                    yield f"data: {json.dumps({'type': 'task_completed', 'taskId': task_id})}\n\n"
+                elif task_info["status"] == TaskStatus.FAILED.value:
+                    yield f"data: {json.dumps({'type': 'task_failed', 'taskId': task_id, 'error': task_info.get('error') or 'Task failed'})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'content': _sanitize_public_error_text(exc)})}\n\n"
+
+        return StreamingResponse(
+            external_event_generator(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"}
+        )
+
     _repair_task_dispatch_if_possible(task_id, reason="api_stream_open")
 
     task = _task_state.get_task(task_id)

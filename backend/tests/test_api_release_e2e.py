@@ -26,22 +26,27 @@ def test_release_e2e_scenarios_endpoint_exposes_full_gate():
 
 
 def test_release_e2e_task_endpoint_submits_frontend_runnable_complex_task(monkeypatch, tmp_path):
+    import across_agents_assistant.api_server as api_server
+
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
     captured = {}
 
-    class FakeOrchestrator:
-        def submit_task(self, description, context):
-            captured["description"] = description
-            captured["context"] = context
-            return "task-release-e2e"
+    class FakePlugin:
+        def implementation_status(self, probe=True):
+            return {
+                "mode": "external",
+                "implementation": "external",
+                "available": True,
+                "transport": "cli",
+                "connection_note": "fake external runtime",
+            }
 
-    monkeypatch.setattr(
-        "across_agents_assistant.api_server._check_llm_provider_readiness",
-        lambda: [],
-    )
-    monkeypatch.setattr(
-        "across_agents_assistant.api_server.get_task_orchestrator",
-        lambda: FakeOrchestrator(),
-    )
+        def submit_release_e2e_task(self, project_dir, run_label=None):
+            captured["project_dir"] = project_dir
+            captured["run_label"] = run_label
+            return {"task_id": "task-release-e2e", "status": "pending"}
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
 
     response = TestClient(app).post(
         "/api/release/e2e/tasks",
@@ -65,8 +70,7 @@ def test_release_e2e_task_endpoint_submits_frontend_runnable_complex_task(monkey
         "cli/quality-check.mjs",
         "tests/e2e-smoke.mjs",
     ]
-    assert captured["context"]["delivery_mode"] == "composite"
-    assert captured["context"]["strict_dependency"] is True
-    assert captured["context"]["enable_wave_gate"] is True
-    assert "Node.js built-in http server" in captured["description"]
-    assert "Do not create any other files" in captured["description"]
+    assert body["implementation"] == "external"
+    assert body["external_task"] is True
+    assert captured["project_dir"] == str(tmp_path / "frontend-release-e2e")
+    assert captured["run_label"] == "api-unit"
