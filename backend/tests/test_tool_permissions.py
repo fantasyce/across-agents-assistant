@@ -1,5 +1,6 @@
 import os
 import tempfile
+import stat
 import pytest
 
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
@@ -46,6 +47,42 @@ def test_unavailable_tools_are_filtered_from_agent_schemas(monkeypatch):
     monkeypatch.setattr(srv, "persistence", FakePersistence())
 
     assert srv._filter_unavailable_tool_schemas(schemas) == [schemas[1]]
+
+
+def test_available_agent_tool_schemas_include_mcp_tools(monkeypatch):
+    import across_agents_assistant.api_server as srv
+
+    class FakePermissionStore:
+        def is_unavailable(self, tool_name):
+            return False
+
+    class FakePersistence:
+        permissions = FakePermissionStore()
+
+    class FakeRegistry:
+        def get_all_tools_schema(self):
+            return [
+                {"name": "list_directory", "description": "List", "risk_level": "low"},
+            ]
+
+    class FakeMCPManager:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "across_context__remember_context",
+                    "description": "Store shared memory",
+                    "risk_level": "high",
+                },
+            ]
+
+    monkeypatch.setattr(srv, "persistence", FakePersistence())
+    monkeypatch.setattr(srv, "registry", FakeRegistry())
+    monkeypatch.setattr(srv, "mcp_manager", FakeMCPManager())
+
+    assert [schema["name"] for schema in srv._available_tool_schemas()] == [
+        "list_directory",
+        "across_context__remember_context",
+    ]
 
 
 @pytest.mark.asyncio
@@ -152,11 +189,134 @@ async def test_mcp_tool_approval_routes_to_matching_mcp_server(monkeypatch):
     assert calls == [("sqlite", "sqlite_query", {"query": "select 1"})]
 
 
+@pytest.mark.asyncio
+async def test_mcp_approval_adds_session_project_root_for_across_context(monkeypatch, tmp_path):
+    import across_agents_assistant.api_server as srv
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    calls = []
+
+    class FakeRegistry:
+        def get_tool(self, name):
+            return None
+
+    class FakeMCPManager:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "across_context__remember_context",
+                    "description": "Store shared memory",
+                    "risk_level": "high",
+                }
+            ]
+
+        async def call_tool(self, server_id, tool_name, arguments):
+            calls.append((server_id, tool_name, arguments))
+            return "stored"
+
+    class FakePersistence:
+        def __init__(self):
+            self.audit_logs = []
+            self.messages = []
+
+        def add_audit_log(self, **kwargs):
+            self.audit_logs.append(kwargs)
+
+        def set_tool_authorization(self, tool_name, is_authorized):
+            pass
+
+        def add_message(self, **kwargs):
+            self.messages.append(kwargs)
+
+        def get_messages(self, session_id, limit=50):
+            return [{"role": "user", "content": "remember this"}]
+
+        def get_session_project(self, session_id):
+            return {"path": str(project_root)}
+
+    async def fake_chat_endpoint(req):
+        return srv.ChatResponse(text="continued", session_id=req.session_id)
+
+    monkeypatch.setattr(srv, "registry", FakeRegistry())
+    monkeypatch.setattr(srv, "mcp_manager", FakeMCPManager())
+    monkeypatch.setattr(srv, "persistence", FakePersistence())
+    monkeypatch.setattr(srv, "_is_tool_unavailable", lambda tool_name: False)
+    monkeypatch.setattr(srv, "chat_endpoint", fake_chat_endpoint)
+
+    response = await srv.approve_tool_execution(
+        srv.ApprovalDecision(
+            session_id="s1",
+            decision="approve",
+            tool_name="across_context__remember_context",
+            tool_args={"text": "memory", "scope": "project"},
+            agent_id="deepseek",
+            tool_call_id="call-1",
+        )
+    )
+
+    assert response.text == "continued"
+    assert calls == [
+        (
+            "across_context",
+            "remember_context",
+            {"text": "memory", "scope": "project", "projectRoot": str(project_root)},
+        )
+    ]
+
+
 def test_mcp_path_allowlist_rejects_sibling_prefix_paths():
     manager = MCPClientManager()
 
     assert manager._is_path_allowed("/tmp/project/file.txt", ["/tmp/project"])
     assert not manager._is_path_allowed("/tmp/project-secrets/file.txt", ["/tmp/project"])
+
+
+def test_mcp_command_resolution_uses_npm_global_bin(tmp_path):
+    homebrew_bin = tmp_path / "homebrew" / "bin"
+    npm_prefix = tmp_path / "cellar" / "node"
+    npm_bin = npm_prefix / "bin"
+    homebrew_bin.mkdir(parents=True)
+    npm_bin.mkdir(parents=True)
+
+    npm = homebrew_bin / "npm"
+    npm.write_text(f"#!/bin/sh\nprintf '%s\\n' '{npm_prefix}'\n", encoding="utf-8")
+    npm.chmod(npm.stat().st_mode | stat.S_IXUSR)
+
+    across_context = npm_bin / "across-context"
+    across_context.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    across_context.chmod(across_context.stat().st_mode | stat.S_IXUSR)
+
+    manager = MCPClientManager()
+    manager.register_server(
+        "across_context",
+        "across-context",
+        ["mcp"],
+        env={"PATH": str(homebrew_bin)},
+    )
+
+    assert manager.server_configs["across_context"].command == str(across_context)
+
+
+@pytest.mark.asyncio
+async def test_across_context_native_connect_exposes_standard_tools(tmp_path):
+    across_context = tmp_path / "across-context"
+    across_context.write_text("#!/bin/sh\nprintf 'Across Context test CLI\\n'\n", encoding="utf-8")
+    across_context.chmod(across_context.stat().st_mode | stat.S_IXUSR)
+
+    manager = MCPClientManager()
+    manager.register_server("across_context", str(across_context), ["mcp"])
+
+    success, error = await manager.connect_server("across_context")
+
+    assert success, error
+    assert "across_context" in manager.sessions
+    assert "across_context" in manager._native_across_context_servers
+
+    tool_names = {tool["name"] for tool in manager.get_all_tools_schema()}
+    assert "across_context__remember_context" in tool_names
+    assert "across_context__search_context" in tool_names
+    assert "across_context__export_agent_instructions" in tool_names
 
 
 def test_mcp_tool_schemas_include_safety_metadata():
@@ -184,6 +344,26 @@ def test_mcp_tool_schemas_include_safety_metadata():
     assert schema["requires_approval"] is True
     assert schema["sandbox"]["allowed_paths"] == ["/tmp/project"]
     assert "write-capable" in schema["safety_labels"]
+
+
+def test_across_context_memory_write_tools_are_high_risk():
+    manager = MCPClientManager()
+
+    assert manager._infer_tool_risk_level(
+        "across_context",
+        "remember_context",
+        "Store a durable memory in the local Across Context vault.",
+    ) == "high"
+    assert manager._infer_tool_risk_level(
+        "across_context",
+        "approve_memory",
+        "Approve a pending memory so agents can use it as active context.",
+    ) == "high"
+    assert manager._infer_tool_risk_level(
+        "across_context",
+        "search_context",
+        "Search global and project memory for relevant context.",
+    ) == "medium"
 
 
 def test_mcp_safety_report_summarizes_server_risk():

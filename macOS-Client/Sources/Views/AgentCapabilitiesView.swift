@@ -1031,6 +1031,7 @@ struct AgentCapabilitiesView: View {
         if id == "sqlite" { return "cylinder.split.1x2.fill" }
         if id == "local_kb" { return "book.closed.fill" }
         if id == "external_rag" { return "cloud.fill" }
+        if id == "across_context" { return "memorychip.fill" }
         return "square.grid.2x2.fill"
     }
 

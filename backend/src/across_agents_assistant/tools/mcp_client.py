@@ -1,9 +1,13 @@
 import asyncio
 import logging
 import json
+import os
+import shutil
+import subprocess
 from typing import Dict, Any, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from .across_context_native import call_across_context_tool
 
 logger = logging.getLogger("across_agents_assistant.mcp")
 
@@ -18,6 +22,12 @@ HIGH_RISK_TOOL_KEYWORDS = [
     "edit",
     "update",
     "save",
+    "store",
+    "remember",
+    "approve",
+    "archive",
+    "expire",
+    "forget",
     "execute",
     "run",
     "shell",
@@ -36,24 +46,33 @@ class MCPClientManager:
         self.server_configs: Dict[str, StdioServerParameters] = {}
         self.server_tools: Dict[str, List[Dict[str, Any]]] = {}
         self._connecting: set = set()
+        self._native_across_context_servers: set[str] = set()
+        self._external_across_context_servers: set[str] = set()
+        self._server_implementations: Dict[str, str] = {}
+        self._server_connection_notes: Dict[str, str] = {}
 
     def register_server(self, server_id: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None,
                         allowed_paths: Optional[List[str]] = None, readonly: bool = False):
         """Register a new MCP server configuration."""
-        import shutil
-        import os
-
         # Merge with global os.environ to ensure PATH is included
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
+        merged_env["PATH"] = self._command_search_path(merged_env.get("PATH", ""))
 
         # Try to resolve the command to its absolute path to prevent "command not found" errors
         resolved_command = shutil.which(command, path=merged_env.get("PATH"))
         if resolved_command:
             command = resolved_command
         else:
-            logger.error(f"MCP command not found: {command}. PATH: {merged_env.get('PATH', 'not set')}")
+            if self._is_across_context_command_name(command):
+                logger.info(
+                    "Across Context CLI not found on PATH; auto mode can use built-in "
+                    "compatibility. PATH: %s",
+                    merged_env.get("PATH", "not set"),
+                )
+            else:
+                logger.error(f"MCP command not found: {command}. PATH: {merged_env.get('PATH', 'not set')}")
 
         self.server_configs[server_id] = StdioServerParameters(
             command=command,
@@ -68,6 +87,51 @@ class MCPClientManager:
             'allowed_paths': allowed_paths or [],
             'readonly': readonly
         }
+
+    def _command_search_path(self, current_path: str) -> str:
+        paths = [path for path in str(current_path or "").split(os.pathsep) if path]
+        for path in [
+            os.path.expanduser("~/.local/bin"),
+            os.path.expanduser("~/.npm-global/bin"),
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+        ]:
+            if path not in paths:
+                paths.append(path)
+
+        npm = self._which_in_paths("npm", paths)
+        npm_global_bin = self._npm_global_bin(npm, paths)
+        if npm_global_bin and npm_global_bin not in paths:
+            paths.append(npm_global_bin)
+
+        return os.pathsep.join(paths)
+
+    def _which_in_paths(self, command: str, paths: List[str]) -> Optional[str]:
+        import shutil
+
+        return shutil.which(command, path=os.pathsep.join(paths))
+
+    def _npm_global_bin(self, npm_command: Optional[str], paths: List[str]) -> Optional[str]:
+        if not npm_command:
+            return None
+        try:
+            result = subprocess.run(
+                [npm_command, "prefix", "-g"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+                env={**os.environ, "PATH": os.pathsep.join(paths)},
+            )
+        except Exception as exc:
+            logger.debug("Unable to resolve npm global prefix from %s: %s", npm_command, exc)
+            return None
+        prefix = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        if not prefix:
+            return None
+        return os.path.join(prefix, "bin")
 
     async def connect_server(self, server_id: str):
         """Connect to an MCP server and fetch its tools.
@@ -95,55 +159,33 @@ class MCPClientManager:
         logger.info(f"Connecting to MCP server {server_id} via {params.command} {' '.join(params.args)}")
 
         try:
-            # We use AsyncExitStack manually to manage the context managers
-            from contextlib import AsyncExitStack
-            stack = AsyncExitStack()
-            self._exit_stacks[server_id] = stack
+            if self._is_across_context_cli_server(server_id, params):
+                return await self._connect_across_context(server_id, params)
 
-            read, write = await stack.enter_async_context(stdio_client(params))
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-
-            self.sessions[server_id] = session
-            logger.info(f"Successfully connected and initialized MCP server {server_id}.")
-
-            # Fetch tools
-            tools_response = await session.list_tools()
-            self.server_tools[server_id] = []
-            for t in tools_response.tools:
-                risk_level = self._infer_tool_risk_level(server_id, t.name, t.description or "")
-                # Convert the tool definition to our internal format
-                self.server_tools[server_id].append({
-                    "name": f"{server_id}__{t.name}", # Prefix with server_id to avoid conflicts
-                    "description": t.description or "",
-                    "parameters": t.inputSchema,
-                    "risk_level": risk_level,
-                    "original_name": t.name
-                })
-            logger.info(f"Fetched {len(self.server_tools[server_id])} tools from {server_id}.")
-            self._connecting.remove(server_id)
-            return True, None
-
-        except Exception as e:
-            error_msg = f"Failed to connect to MCP server {server_id}: {e}"
-            logger.error(error_msg)
-            if server_id in self._exit_stacks:
-                await self._exit_stacks[server_id].aclose()
-                del self._exit_stacks[server_id]
-            if server_id in self._connecting:
-                self._connecting.remove(server_id)
-            return False, error_msg
+            return await self._connect_stdio_server(server_id, params, implementation="standard_mcp")
+        finally:
+            self._connecting.discard(server_id)
 
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
         if server_id in self.sessions:
             del self.sessions[server_id]
+        self._native_across_context_servers.discard(server_id)
+        self._external_across_context_servers.discard(server_id)
+        self._server_implementations.pop(server_id, None)
+        self._server_connection_notes.pop(server_id, None)
         if server_id in self._exit_stacks:
             await self._exit_stacks[server_id].aclose()
             del self._exit_stacks[server_id]
         if server_id in self.server_tools:
             del self.server_tools[server_id]
         logger.info(f"Disconnected from MCP server {server_id}.")
+
+    def get_server_implementation(self, server_id: str) -> Optional[str]:
+        return self._server_implementations.get(server_id)
+
+    def get_server_connection_note(self, server_id: str) -> Optional[str]:
+        return self._server_connection_notes.get(server_id)
 
     async def call_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Call a tool on a connected MCP server."""
@@ -160,6 +202,22 @@ class MCPClientManager:
             for file_path in file_args:
                 if not self._is_path_allowed(file_path, sandbox.get('allowed_paths', [])):
                     return f"Error: Access to path '{file_path}' is not allowed. Allowed paths: {sandbox['allowed_paths']}"
+
+        if server_id in self._native_across_context_servers:
+            return await asyncio.to_thread(
+                self._call_across_context_native_tool,
+                server_id,
+                tool_name,
+                arguments,
+            )
+
+        if server_id in self._external_across_context_servers:
+            return await asyncio.to_thread(
+                self._call_across_context_external_tool,
+                server_id,
+                tool_name,
+                arguments,
+            )
 
         session = self.sessions[server_id]
         logger.info(f"Calling MCP tool {tool_name} on {server_id} with args {arguments}")
@@ -187,6 +245,398 @@ class MCPClientManager:
         except Exception as e:
             logger.error(f"Exception calling MCP tool {tool_name}: {e}")
             return f"Error executing tool: {e}"
+
+    def _is_across_context_cli_server(self, server_id: str, params: StdioServerParameters) -> bool:
+        command_name = os.path.basename(str(params.command))
+        return server_id == "across_context" and command_name == "across-context"
+
+    def _is_across_context_command_name(self, command: str) -> bool:
+        return os.path.basename(str(command)) == "across-context"
+
+    async def _connect_across_context(self, server_id: str, params: StdioServerParameters):
+        mode = self._across_context_mode(params)
+        if mode in {"builtin", "native", "builtin_compatibility"}:
+            return self._connect_across_context_native(
+                server_id,
+                "Forced built-in Across Context compatibility mode.",
+            )
+
+        if not self._command_is_executable(str(params.command), params.env or {}):
+            error = (
+                "The external Across Context MCP server is required but the "
+                "`across-context` command is not installed or executable."
+            )
+            if mode == "external":
+                logger.error(error)
+                return False, error
+            return self._connect_across_context_native(
+                server_id,
+                "`across-context` command was not found; using built-in compatibility mode.",
+            )
+
+        ok, error = self._connect_across_context_external(server_id, params)
+        if ok:
+            logger.info("Connected Across Context through external MCP plugin.")
+            return True, None
+
+        external_error = error or "unknown external MCP connection failure"
+        if mode == "external":
+            message = f"The external Across Context MCP server is required but failed to start: {external_error}"
+            logger.error(message)
+            return False, message
+
+        logger.warning(
+            "External Across Context MCP connection failed; falling back to built-in compatibility: %s",
+            external_error,
+        )
+        return self._connect_across_context_native(
+            server_id,
+            f"External Across Context MCP failed: {external_error}",
+        )
+
+    def _connect_across_context_external(self, server_id: str, params: StdioServerParameters):
+        timeout = self._across_context_connect_timeout(params)
+        try:
+            result = self._run_across_context_jsonrpc(
+                params,
+                [
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                ],
+                expected_id=2,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            error_msg = f"Failed to connect to MCP server {server_id}: {exc}"
+            logger.error(error_msg)
+            return False, error_msg
+
+        tools = result.get("tools") or []
+        self.sessions[server_id] = None  # type: ignore[assignment]
+        self.server_tools[server_id] = []
+        for t in tools:
+            name = str(t.get("name") or "")
+            if not name:
+                continue
+            description = str(t.get("description") or "")
+            risk_level = self._infer_tool_risk_level(server_id, name, description)
+            self.server_tools[server_id].append({
+                "name": f"{server_id}__{name}",
+                "description": description,
+                "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
+                "risk_level": risk_level,
+                "original_name": name,
+            })
+        self._external_across_context_servers.add(server_id)
+        self._server_implementations[server_id] = "external"
+        self._server_connection_notes[server_id] = "External Across Context MCP server."
+        logger.info(
+            "Connected Across Context external MCP server; registered %s tools.",
+            len(self.server_tools[server_id]),
+        )
+        return True, None
+
+    async def _connect_stdio_server(
+        self,
+        server_id: str,
+        params: StdioServerParameters,
+        *,
+        implementation: str,
+        timeout: Optional[float] = None,
+    ):
+        async def connect_once():
+            from contextlib import AsyncExitStack
+
+            stack = AsyncExitStack()
+            self._exit_stacks[server_id] = stack
+
+            read, write = await stack.enter_async_context(stdio_client(params))
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+
+            self.sessions[server_id] = session
+            logger.info(f"Successfully connected and initialized MCP server {server_id}.")
+
+            tools_response = await session.list_tools()
+            self.server_tools[server_id] = []
+            for t in tools_response.tools:
+                risk_level = self._infer_tool_risk_level(server_id, t.name, t.description or "")
+                self.server_tools[server_id].append({
+                    "name": f"{server_id}__{t.name}",
+                    "description": t.description or "",
+                    "parameters": t.inputSchema,
+                    "risk_level": risk_level,
+                    "original_name": t.name
+                })
+            self._server_implementations[server_id] = implementation
+            self._server_connection_notes.pop(server_id, None)
+            logger.info(f"Fetched {len(self.server_tools[server_id])} tools from {server_id}.")
+
+        try:
+            if timeout is not None:
+                async with asyncio.timeout(timeout):
+                    await connect_once()
+            else:
+                await connect_once()
+            return True, None
+        except Exception as e:
+            error_msg = f"Failed to connect to MCP server {server_id}: {e}"
+            logger.error(error_msg)
+            await self._cleanup_failed_connection(server_id)
+            return False, error_msg
+
+    async def _cleanup_failed_connection(self, server_id: str) -> None:
+        if server_id in self._exit_stacks:
+            await self._exit_stacks[server_id].aclose()
+            del self._exit_stacks[server_id]
+        self.sessions.pop(server_id, None)
+        self.server_tools.pop(server_id, None)
+        self._native_across_context_servers.discard(server_id)
+        self._external_across_context_servers.discard(server_id)
+        self._server_implementations.pop(server_id, None)
+
+    def _connect_across_context_native(self, server_id: str, note: str):
+        self.sessions[server_id] = None  # type: ignore[assignment]
+        self.server_tools[server_id] = self._across_context_tool_definitions(server_id)
+        self._native_across_context_servers.add(server_id)
+        self._server_implementations[server_id] = "builtin_compatibility"
+        self._server_connection_notes[server_id] = note
+        logger.info(
+            "Connected Across Context through built-in compatibility mode; "
+            "registered %s tools. Reason: %s",
+            len(self.server_tools[server_id]),
+            note,
+        )
+        return True, None
+
+    def _across_context_mode(self, params: StdioServerParameters) -> str:
+        env = params.env or {}
+        raw = env.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or os.environ.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or "auto"
+        mode = str(raw).strip().lower().replace("-", "_")
+        if mode in {"auto", "external", "builtin", "native", "builtin_compatibility"}:
+            return mode
+        logger.warning("Unknown Across Context mode %r; using auto.", raw)
+        return "auto"
+
+    def _across_context_connect_timeout(self, params: StdioServerParameters) -> float:
+        env = params.env or {}
+        raw = env.get("ACROSS_AGENTS_ACROSS_CONTEXT_CONNECT_TIMEOUT") or os.environ.get("ACROSS_AGENTS_ACROSS_CONTEXT_CONNECT_TIMEOUT") or "5"
+        try:
+            return max(0.5, float(raw))
+        except ValueError:
+            return 5.0
+
+    def _command_is_executable(self, command: str, env: Dict[str, str]) -> bool:
+        if os.path.isabs(command) or os.sep in command:
+            return os.path.isfile(command) and os.access(command, os.X_OK)
+        return shutil.which(command, path=env.get("PATH")) is not None
+
+    def _across_context_tool_definitions(self, server_id: str) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": f"{server_id}__remember_context",
+                "description": "Store a user preference, project decision, command, note, or session summary in the local Across Context vault.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["global", "project"], "default": "global"},
+                        "type": {
+                            "type": "string",
+                            "enum": ["preference", "decision", "note", "command", "session"],
+                            "default": "note",
+                        },
+                        "projectRoot": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "auto": {"type": "boolean", "default": True},
+                        "visibility": {"type": "string", "enum": ["private", "team"], "default": "private"},
+                    },
+                    "required": ["text"],
+                },
+                "risk_level": "high",
+                "original_name": "remember_context",
+            },
+            {
+                "name": f"{server_id}__search_context",
+                "description": "Search global and project memory for relevant context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "projectRoot": {"type": "string"},
+                        "limit": {"type": "number", "default": 10},
+                        "mode": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "default": "hybrid"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "active", "pinned", "archived", "expired"],
+                        },
+                    },
+                    "required": ["query"],
+                },
+                "risk_level": "medium",
+                "original_name": "search_context",
+            },
+            {
+                "name": f"{server_id}__get_project_context",
+                "description": "Return an AGENTS.md style context document for the current project.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"projectRoot": {"type": "string"}},
+                    "required": ["projectRoot"],
+                },
+                "risk_level": "medium",
+                "original_name": "get_project_context",
+            },
+            {
+                "name": f"{server_id}__review_pending_memories",
+                "description": "List automatic memory writes that are pending user review.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"projectRoot": {"type": "string"}},
+                },
+                "risk_level": "high",
+                "original_name": "review_pending_memories",
+            },
+            {
+                "name": f"{server_id}__approve_memory",
+                "description": "Approve a pending memory by id so agents can use it as active context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                },
+                "risk_level": "high",
+                "original_name": "approve_memory",
+            },
+            {
+                "name": f"{server_id}__get_agent_card",
+                "description": "Return the Across Context agent card for A2A-style discovery.",
+                "parameters": {"type": "object", "properties": {}},
+                "risk_level": "medium",
+                "original_name": "get_agent_card",
+            },
+            {
+                "name": f"{server_id}__export_agent_instructions",
+                "description": "Write AGENTS.md, CLAUDE.md, Cursor rules, or Markdown context exports for a project.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "projectRoot": {"type": "string"},
+                        "target": {
+                            "type": "string",
+                            "enum": ["agents", "claude", "cursor", "markdown"],
+                            "default": "agents",
+                        },
+                    },
+                    "required": ["projectRoot"],
+                },
+                "risk_level": "high",
+                "original_name": "export_agent_instructions",
+            },
+        ]
+
+    def _call_across_context_native_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
+        params = self.server_configs.get(server_id)
+        if params is None:
+            return f"Error: MCP server {server_id} not registered."
+
+        echo_info = f"【执行的命令】\n工具: {tool_name}\n参数: {json.dumps(arguments, ensure_ascii=False, indent=2)}"
+        logger.info("Calling Across Context native tool %s with args %s", tool_name, arguments)
+
+        try:
+            output = call_across_context_tool(tool_name, arguments, env=params.env)
+        except Exception as exc:
+            logger.error("Exception calling Across Context native tool %s: %s", tool_name, exc)
+            return f"Error executing tool: {exc}"
+
+        return f"{echo_info}\n\n【执行结果】\n{output}"
+
+    def _call_across_context_external_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
+        params = self.server_configs.get(server_id)
+        if params is None:
+            return f"Error: MCP server {server_id} not registered."
+
+        echo_info = f"【执行的命令】\n工具: {tool_name}\n参数: {json.dumps(arguments, ensure_ascii=False, indent=2)}"
+        logger.info("Calling Across Context external MCP tool %s with args %s", tool_name, arguments)
+
+        try:
+            result = self._run_across_context_jsonrpc(
+                params,
+                [
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {"name": tool_name, "arguments": arguments},
+                    },
+                ],
+                expected_id=2,
+                timeout=self._across_context_connect_timeout(params),
+            )
+        except Exception as exc:
+            logger.error("Exception calling Across Context external MCP tool %s: %s", tool_name, exc)
+            return f"Error executing tool: {exc}"
+
+        texts = []
+        for content in result.get("content") or []:
+            if content.get("type") == "text":
+                texts.append(str(content.get("text") or ""))
+            else:
+                texts.append(f"[{content.get('type') or 'unknown'} content]")
+        output = "\n".join(texts)
+        if result.get("isError"):
+            return f"Error from tool: {output}\n\n{echo_info}"
+        return f"{echo_info}\n\n【执行结果】\n{output}"
+
+    def _run_across_context_jsonrpc(
+        self,
+        params: StdioServerParameters,
+        messages: List[Dict[str, Any]],
+        *,
+        expected_id: int,
+        timeout: float,
+    ) -> Dict[str, Any]:
+        command = [str(params.command), *list(params.args or [])]
+        payload = "".join(json.dumps(message, ensure_ascii=False) + "\n" for message in messages)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=params.env,
+            )
+            stdout, stderr = process.communicate(payload, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            stdout, stderr = process.communicate(timeout=2)
+            detail = (stderr or stdout or "").strip()
+            raise TimeoutError(f"{' '.join(command)} timed out after {timeout:g}s. {detail}".strip()) from exc
+
+        if process.returncode not in (0, None):
+            detail = (stderr or stdout or "").strip()
+            raise RuntimeError(detail or f"{' '.join(command)} exited with {process.returncode}")
+
+        for line in stdout.splitlines():
+            if not line.strip():
+                continue
+            response = json.loads(line)
+            if response.get("id") != expected_id:
+                continue
+            if response.get("error"):
+                error = response["error"]
+                raise RuntimeError(str(error.get("message") or error))
+            result = response.get("result")
+            if isinstance(result, dict):
+                return result
+            raise RuntimeError(f"Invalid MCP response for id {expected_id}: {response}")
+
+        detail = (stderr or stdout or "").strip()
+        raise RuntimeError(detail or f"No MCP response for id {expected_id}")
 
     def _extract_file_paths(self, arguments: Dict[str, Any]) -> List[str]:
         """Extract file paths from tool arguments."""
@@ -312,6 +762,8 @@ class MCPClientManager:
             servers.append({
                 "server_id": server_id,
                 "connected": server_id in self.sessions,
+                "implementation": self.get_server_implementation(server_id),
+                "connection_note": self.get_server_connection_note(server_id),
                 "tool_count": len(tools),
                 "write_capable_tool_count": write_capable,
                 "risk_counts": risk_counts,

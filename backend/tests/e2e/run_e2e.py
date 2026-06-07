@@ -84,6 +84,7 @@ def main():
         print(f"  Running: {f}")
         print(f"{'='*60}")
         env = os.environ.copy()
+        env["ACROSS_AGENTS_RUN_LIVE_E2E"] = "1"
         result = subprocess.run(
             [sys.executable, "-m", "pytest", f, "-v", "--tb=short"],
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))) or ".",

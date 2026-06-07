@@ -134,6 +134,13 @@ struct MCPCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 28, alignment: .topLeading)
 
+            if let implementationLabelKey = plugin.implementationLabelKey {
+                Text(appPreferences.text(implementationLabelKey))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(accentColor.opacity(0.9))
+                    .lineLimit(1)
+            }
+
             if plugin.status == "error", let errorMsg = plugin.errorMessage {
                 Text(errorMsg)
                     .font(.system(size: 10))
@@ -142,10 +149,10 @@ struct MCPCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if plugin.isBuiltIn {
+            if plugin.isBuiltIn && plugin.requiresConfiguration {
                 HStack(spacing: 6) {
-                    TextField(plugin.id == "external_rag" ? appPreferences.text("mcp.endpointPlaceholder") : appPreferences.text("mcp.noPath"), text: Binding(
-                        get: { plugin.args.last ?? "" },
+                    TextField(appPreferences.text(plugin.configurationPlaceholderKey), text: Binding(
+                        get: { plugin.configurationValue ?? "" },
                         set: { newValue in
                             var newArgs = plugin.args
                             if !newArgs.isEmpty {
@@ -163,9 +170,9 @@ struct MCPCardView: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.05))
                     .cornerRadius(4)
-                    .disabled(plugin.id != "external_rag") // Only external_rag allows direct text editing for now
+                    .disabled(!plugin.allowsDirectConfigurationEditing)
 
-                    if plugin.id != "external_rag" {
+                    if plugin.canBrowseConfiguration {
                         Button(action: openFilePicker) {
                             Text(appPreferences.text("system.browse"))
                                 .font(.system(size: 11))
@@ -183,6 +190,10 @@ struct MCPCardView: View {
                         }
                     }
                 }
+            } else if plugin.isBuiltIn {
+                Text(appPreferences.text("mcp.noConfigurationRequired"))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             } else {
                 Text(appPreferences.text("mcp.customConfiguration"))
                     .font(.system(size: 11))
@@ -203,6 +214,7 @@ struct MCPCardView: View {
         if id == "external_rag" { return "cloud.fill" }
         if id == "sqlite" { return "externaldrive.fill" }
         if id == "filesystem" { return "folder.fill" }
+        if id == "across_context" { return "memorychip.fill" }
         return "puzzlepiece.fill"
     }
 
@@ -240,11 +252,11 @@ struct MCPCardView: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
 
-        if plugin.id == "sqlite" {
+        if plugin.configurationKind == .file {
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
             panel.allowedContentTypes = [.data] // Allow .db, .sqlite etc.
-        } else if plugin.id == "filesystem" || plugin.id == "local_kb" {
+        } else if plugin.configurationKind == .directory {
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
         }

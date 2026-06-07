@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.4.2 - 2026-06-07
+
+This is a source-first patch release for plugin-first shared memory. Across
+Context remains an independent local memory product; Across Agents Assistant now
+hosts it through the external MCP plugin when available, with a bundled
+compatibility bridge only for first-run fallback.
+
+### Added
+
+- Built-in Across Context shared-memory support is now available from the main
+  app surface without requiring the MCP settings view to be opened first.
+- Packaged-app Across Context integration can use a native Python compatibility
+  bridge for the local Across Context JSONL vault, avoiding a packaged-backend
+  stdio hang when launching the external Node MCP server.
+- Across Context now uses a plugin-first host architecture: the app prefers the
+  external `across-context mcp` server, falls back to the built-in compatibility
+  bridge only in auto mode, and reports the active implementation in API/UI.
+- E2E coverage now verifies that one agent can write project memory and another
+  agent can retrieve the same memory through Across Context tools.
+
+### Changed
+
+- Across Context is enabled by default for built-in MCP plugin state, including
+  older saved preferences that previously persisted it as disabled.
+- Tool approval and chat continuation paths now preserve project context so
+  project-scoped MCP tools receive the correct project root.
+- MCP connection errors no longer disable built-in plugins automatically, so a
+  transient startup issue does not hide shared-memory tools from the catalog.
+- The canonical Across Context vault remains `~/.across-context`, keeping future
+  standalone Across Context installs on the same memory store instead of
+  splitting memory under the app runtime directory.
+
+### Validation
+
+- Backend regression: `849 passed, 18 skipped`.
+- Swift release build passed for the macOS client.
+- Focused MCP plugin behavior check passed.
+- Packaged app build and `codesign --verify --deep --strict` passed.
+- UI-level E2E verified project memory shared from DeepSeek to MiniMax through
+  Across Context approval prompts.
+- Packaged-app `/api/approve` executed `across_context__remember_context`
+  through the external `across-context mcp` integration; the standalone
+  `across-context search` CLI found the same pending project memory in
+  `~/.across-context`.
+- Plugin-mode regression verifies external-first, fallback, and forced-external
+  failure behavior for Across Context.
+- `bash scripts/open_source_check.sh`.
+
 ## 0.4.1 - 2026-06-07
 
 This is a source-first patch release for the local-agent and cloud-provider

@@ -146,6 +146,11 @@ DEFAULT_SKILLS_BY_AGENT: Dict[str, List[str]] = {
 for _provider_id in CLOUD_AGENT_IDS:
     DEFAULT_SKILLS_BY_AGENT.setdefault(_provider_id, ["backend_api", "code_review"])
 
+DEFAULT_PLUGINS_BY_AGENT: Dict[str, List[str]] = {
+    agent_id: ["across_context"]
+    for agent_id in DEFAULT_AGENT_IDS
+}
+
 
 def skill_catalog() -> List[Dict[str, Any]]:
     return [asdict(skill) for skill in SKILL_CATALOG]
@@ -336,6 +341,7 @@ def _default_profile(agent_id: str) -> AgentCapabilityProfile:
     return AgentCapabilityProfile(
         agent_id=normalized,
         enabled_skill_ids=list(DEFAULT_SKILLS_BY_AGENT.get(normalized, [])),
+        enabled_plugin_ids=list(DEFAULT_PLUGINS_BY_AGENT.get(normalized, [])),
     )
 
 

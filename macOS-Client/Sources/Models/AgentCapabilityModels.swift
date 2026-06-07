@@ -91,7 +91,7 @@ struct AgentCapabilityProfile: Codable, Identifiable, Equatable {
         return AgentCapabilityProfile(
             agentId: normalized,
             enabledSkillIds: AgentCapabilityCatalog.defaultSkillIds(for: normalized),
-            enabledPluginIds: [],
+            enabledPluginIds: AgentCapabilityCatalog.defaultPluginIds(for: normalized),
             enabledToolNames: [],
             customInstructions: "",
             strictToolScope: false
@@ -501,6 +501,11 @@ enum AgentCapabilityCatalog {
 
     static func defaultSkillIds(for agentId: String) -> [String] {
         defaultSkillIdsByAgent[AgentIDs.normalized(agentId) ?? agentId] ?? []
+    }
+
+    static func defaultPluginIds(for agentId: String) -> [String] {
+        let normalized = AgentIDs.normalized(agentId) ?? agentId
+        return defaultSkillIdsByAgent.keys.contains(normalized) ? ["across_context"] : []
     }
 
     static func configuredCapabilityCount(_ profile: AgentCapabilityProfile) -> Int {

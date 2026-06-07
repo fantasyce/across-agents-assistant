@@ -461,7 +461,7 @@ def _filter_unavailable_tool_schemas(schemas: List[Dict[str, Any]]) -> List[Dict
 
 
 def _available_tool_schemas() -> List[Dict[str, Any]]:
-    return _filter_unavailable_tool_schemas(registry.get_all_tools_schema())
+    return _filter_unavailable_tool_schemas(_runtime_tool_schemas())
 
 
 def _runtime_tool_schemas() -> List[Dict[str, Any]]:
@@ -481,6 +481,61 @@ def _dedupe_tool_schemas(schemas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen.add(name)
         deduped.append(schema)
     return deduped
+
+
+_ACROSS_CONTEXT_PROJECT_ROOT_TOOLS = {
+    "remember_context",
+    "search_context",
+    "get_project_context",
+    "export_agent_instructions",
+}
+
+
+def _session_project_root(session_id: Optional[str]) -> Optional[str]:
+    if not session_id:
+        return None
+    try:
+        project = persistence.get_session_project(session_id)
+    except Exception:
+        logger.exception("Failed to resolve session project for %s", session_id)
+        return None
+    if not project:
+        return None
+    raw_path = project.get("path") or project.get("project_dir")
+    if not raw_path:
+        return None
+    try:
+        return _normalize_local_path(raw_path)
+    except ValueError:
+        logger.warning("Ignoring invalid project root from session %s: %r", session_id, raw_path)
+        return None
+
+
+def _augment_mcp_tool_args_for_session(
+    tool_name: str,
+    tool_args: Optional[Dict[str, Any]],
+    session_id: Optional[str],
+) -> Dict[str, Any]:
+    args = dict(tool_args or {})
+    if "__" not in tool_name:
+        return args
+
+    server_id, actual_tool_name = tool_name.split("__", 1)
+    if server_id != "across_context" or actual_tool_name not in _ACROSS_CONTEXT_PROJECT_ROOT_TOOLS:
+        return args
+
+    if "projectRoot" not in args:
+        for alias in ("project_root", "projectDir", "project_dir"):
+            alias_value = args.get(alias)
+            if isinstance(alias_value, str) and alias_value.strip():
+                args["projectRoot"] = alias_value
+                break
+
+    if "projectRoot" not in args:
+        project_root = _session_project_root(session_id)
+        if project_root:
+            args["projectRoot"] = project_root
+    return args
 
 
 @asynccontextmanager
@@ -524,7 +579,14 @@ async def connect_mcp_server(req: MCPConnectRequest):
                                  readonly=req.readonly)
         success, error_msg = await mcp_manager.connect_server(req.server_id)
         if success:
-            return {"status": "success", "message": f"Connected to MCP server: {req.server_id}"}
+            implementation = mcp_manager.get_server_implementation(req.server_id)
+            connection_note = mcp_manager.get_server_connection_note(req.server_id)
+            return {
+                "status": "success",
+                "message": f"Connected to MCP server: {req.server_id}",
+                "implementation": implementation,
+                "connection_note": connection_note,
+            }
         else:
             raise HTTPException(status_code=500, detail=error_msg or f"Failed to connect to MCP server: {req.server_id}")
     except Exception as e:
@@ -546,6 +608,8 @@ class MCPContext(BaseModel):
     server_id: str
     name: str
     status: str
+    implementation: Optional[str] = None
+    connection_note: Optional[str] = None
     db_path: Optional[str] = None  # For sqlite plugin
 
 @app.get("/api/mcp/contexts")
@@ -556,7 +620,9 @@ async def get_mcp_contexts():
         contexts.append(MCPContext(
             server_id=server_id,
             name=server_id,
-            status="connected"
+            status="connected",
+            implementation=mcp_manager.get_server_implementation(server_id),
+            connection_note=mcp_manager.get_server_connection_note(server_id),
         ))
     return contexts
 
@@ -1786,22 +1852,25 @@ async def approve_tool_execution(req: ApprovalDecision):
         )
         return ChatResponse(text=f"错误：工具 `{req.tool_name}` 不存在，已自动拒绝。", session_id=req.session_id)
 
+    tool_name = matched_schema["name"]
+    tool_args = _augment_mcp_tool_args_for_session(tool_name, req.tool_args, req.session_id)
+    project_root = _session_project_root(req.session_id)
+
     # DB: Log the audit decision
     persistence.add_audit_log(
         session_id=req.session_id,
-        tool_name=req.tool_name,
-        tool_args=req.tool_args,
+        tool_name=tool_name,
+        tool_args=tool_args,
         risk_level=risk_level,
         decision=req.decision
     )
 
     if req.decision == "always_allow":
-        persistence.set_tool_authorization(req.tool_name, True)
+        persistence.set_tool_authorization(tool_name, True)
 
     if req.decision in ["approve", "always_allow"]:
         # Check if it's an MCP tool or a local tool
         is_mcp = False
-        tool_name = matched_schema["name"]
         tool_def = registry.get_tool(tool_name)
 
         if not tool_def:
@@ -1815,7 +1884,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                 actual_tool_name = parts[1]
 
                 try:
-                    result = await mcp_manager.call_tool(server_id, actual_tool_name, req.tool_args)
+                    result = await mcp_manager.call_tool(server_id, actual_tool_name, tool_args)
                     result_text = f"✅ MCP 工具 {tool_name} 执行成功！结果：\n{result}"
                     persistence.add_message(session_id=req.session_id, role="tool", content=result_text, tool_call_id=req.tool_call_id)
 
@@ -1833,7 +1902,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                         text=f"【工具执行反馈】\n刚才你调用的 MCP 工具 `{tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>",
                         context=None,
                         session_id=req.session_id,
-                        agent_id=req.agent_id
+                        agent_id=req.agent_id,
+                        project_dir=project_root,
                     )
                     return await chat_endpoint(continuation_req)
                 except Exception as e:
@@ -1843,7 +1913,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                         text=f"MCP 工具 {tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
                         context=None,
                         session_id=req.session_id,
-                        agent_id=req.agent_id
+                        agent_id=req.agent_id,
+                        project_dir=project_root,
                     )
                     return await chat_endpoint(continuation_req)
             return ChatResponse(text="MCP工具名称解析失败", session_id=req.session_id)
@@ -1853,7 +1924,7 @@ async def approve_tool_execution(req: ApprovalDecision):
             try:
                 # The tool_args coming from the Swift client will be a dict of {key: value}
                 # But since we use AnyCodableValue in Swift, simple types like Int/String should map correctly
-                result = tool_def.handler(**req.tool_args)
+                result = tool_def.handler(**tool_args)
                 result_text = f"✅ 工具 {req.tool_name} 执行成功！结果：\n{result}"
                 persistence.add_message(session_id=req.session_id, role="tool", content=result_text, tool_call_id=req.tool_call_id)
 
@@ -1870,7 +1941,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                     text=f"【工具执行反馈】\n刚才你调用的工具 `{req.tool_name}` 已执行完毕，结果如下：\n<tool_result>\n{result}\n</tool_result>\n\n请基于上述结果继续你的任务。如果还需要其他信息，可以继续调用工具；如果已经收集到足够信息，请直接回答用户最初的问题：\n<original_question>\n{original_question}\n</original_question>",
                     context=None, # We don't need to resend tier1 context for the continuation
                     session_id=req.session_id,
-                    agent_id=req.agent_id # Pass through the original agent
+                    agent_id=req.agent_id, # Pass through the original agent
+                    project_dir=project_root,
                 )
                 return await chat_endpoint(continuation_req)
 
@@ -1882,7 +1954,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                     text=f"工具 {req.tool_name} 执行失败，报错信息：\n{str(e)}\n请告诉用户执行失败了，或者尝试其他方法。",
                     context=None,
                     session_id=req.session_id,
-                    agent_id=req.agent_id # Pass through the original agent
+                    agent_id=req.agent_id, # Pass through the original agent
+                    project_dir=project_root,
                 )
                 return await chat_endpoint(continuation_req)
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
@@ -2102,6 +2175,11 @@ async def chat_endpoint(req: ChatRequest):
     print(f"DEBUG chat_endpoint: agent_id={req.agent_id}", flush=True)
     if not req.session_id:
         req.session_id = f"sess-{uuid.uuid4().hex[:12]}"
+    if not req.project_id and not req.project_dir and req.session_id:
+        existing_project = persistence.get_session_project(req.session_id)
+        if existing_project:
+            req.project_id = existing_project.get("id")
+            req.project_dir = existing_project.get("path")
     project = persistence.assign_session_project(
         req.session_id,
         project_id=req.project_id,
@@ -2407,6 +2485,12 @@ async def _run_agent_loop(
         tool_call = reply.tool_calls[0]
         tool_name = tool_call["name"]
         tool_args = tool_call["arguments"]
+        tool_def = registry.get_tool(tool_name)
+        is_mcp = not tool_def
+
+        if is_mcp:
+            tool_args = _augment_mcp_tool_args_for_session(tool_name, tool_args, session_id)
+            tool_call = {**tool_call, "arguments": tool_args}
 
         persistence.add_message(
             session_id=session_id,
@@ -2429,9 +2513,6 @@ async def _run_agent_loop(
                 current_image_context=current_image_context,
             )
 
-        tool_def = registry.get_tool(tool_name)
-        is_mcp = not tool_def
-
         is_always_allowed = persistence.get_tool_authorization(tool_name)
         if is_always_allowed:
             persistence.add_audit_log(session_id, tool_name, tool_args, "medium", "auto_approve")
@@ -2441,7 +2522,7 @@ async def _run_agent_loop(
 
             try:
                 result_text = await execute_tool_with_retry(
-                    tool_def=tool_def,
+                    tool_def=tool_name if is_mcp else tool_def,
                     tool_args=tool_args,
                     is_mcp=is_mcp,
                     mcp_manager=mcp_manager,

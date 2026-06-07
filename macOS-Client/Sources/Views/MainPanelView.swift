@@ -145,6 +145,7 @@ struct MainPanelView: View {
     @State private var activeSettingsHubTab: SettingsHubTab? = nil
     @State private var showTaskOrchestration = false
     @StateObject private var taskOrchestrationViewModel = TaskOrchestrationViewModel()
+    @StateObject private var mcpPluginManager = MCPPluginManager.shared
     @EnvironmentObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var appPreferences: AppPreferences
     @State private var showProjectTree: Bool = false
@@ -229,6 +230,7 @@ struct MainPanelView: View {
         .ignoresSafeArea(.all, edges: .top)
         .onAppear {
             AppAppearanceController.apply(appPreferences.colorSchemeMode)
+            _ = mcpPluginManager.plugins.count
             syncPreferencesToSessionViewModel()
             settingsViewModel.bootstrapFromPersistedSettings()
             loadInitialDataWhenBackendAvailable()

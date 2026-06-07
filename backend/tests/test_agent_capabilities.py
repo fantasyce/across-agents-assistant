@@ -9,7 +9,7 @@ os.makedirs(os.path.dirname(os.environ["ACROSS_AGENTS_DB_PATH"]), exist_ok=True)
 from fastapi.testclient import TestClient
 
 from across_agents_assistant.api_server import app
-from across_agents_assistant.agent_capabilities import AgentCapabilityStore
+from across_agents_assistant.agent_capabilities import AgentCapabilityStore, DEFAULT_AGENT_IDS
 
 
 def test_store_does_not_normalize_legacy_local_agent_alias(tmp_path):
@@ -67,6 +67,32 @@ def test_store_builds_prompt_context_for_selected_agents(tmp_path):
     assert "sqlite__sqlite_query" in payload["prompt"]
     assert "Favor typed request and response validation." in payload["prompt"]
     assert "Strict scope" in payload["prompt"]
+
+
+def test_across_context_plugin_can_be_enabled_for_every_agent(tmp_path):
+    store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+
+    for agent_id in DEFAULT_AGENT_IDS:
+        store.save_profile(agent_id, {"enabled_plugin_ids": ["across_context"]})
+
+    payload = store.build_task_context(DEFAULT_AGENT_IDS)
+
+    assert set(payload["profiles"].keys()) == set(DEFAULT_AGENT_IDS)
+    for agent_id in DEFAULT_AGENT_IDS:
+        assert payload["profiles"][agent_id]["enabled_plugin_ids"] == ["across_context"]
+        assert f"- {agent_id}:" in payload["prompt"]
+    assert payload["prompt"].count("plugins=across_context") == len(DEFAULT_AGENT_IDS)
+
+
+def test_across_context_plugin_is_default_for_every_known_agent(tmp_path):
+    store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+
+    payload = store.build_task_context(DEFAULT_AGENT_IDS)
+
+    for agent_id in DEFAULT_AGENT_IDS:
+        assert store.get_profile(agent_id)["enabled_plugin_ids"] == ["across_context"]
+        assert payload["profiles"][agent_id]["enabled_plugin_ids"] == ["across_context"]
+    assert payload["prompt"].count("plugins=across_context") == len(DEFAULT_AGENT_IDS)
 
 
 def test_store_persists_custom_skill_and_includes_it_in_task_context(tmp_path):

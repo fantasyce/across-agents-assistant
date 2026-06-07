@@ -11,6 +11,13 @@ func testProfileDoesNotNormalizeLegacyLocalAgentAlias() {
 
     assert(profile.agentId == "local", "Legacy local agent id should remain separate")
     assert(profile.enabledSkillIds.isEmpty, "Legacy local should not inherit OpenClaw defaults")
+    assert(profile.enabledPluginIds.isEmpty, "Legacy local should not inherit shared-memory defaults")
+}
+
+func testKnownProfilesEnableAcrossContextByDefault() {
+    let profile = AgentCapabilityProfile.defaultProfile(agentId: "hermes")
+
+    assert(profile.enabledPluginIds == ["across_context"], "Known agents should inherit the shared-memory plugin")
 }
 
 func testProfileTogglesSkillsPluginsAndTools() {
@@ -24,7 +31,7 @@ func testProfileTogglesSkillsPluginsAndTools() {
 
     assert(profile.enabledSkillIds.contains("backend_api"), "Enabled skill should be added")
     assert(!profile.enabledSkillIds.contains("frontend_design"), "Disabled skill should be removed")
-    assert(profile.enabledPluginIds == ["filesystem"], "Plugin list should stay stable and deduped")
+    assert(profile.enabledPluginIds == ["across_context", "filesystem"], "Plugin list should stay stable and deduped")
     assert(profile.enabledToolNames == ["read_file"], "Tool list should stay stable and deduped")
 }
 
@@ -275,6 +282,7 @@ func testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter() throws {
 struct AgentCapabilityBehavior {
     static func main() {
         testProfileDoesNotNormalizeLegacyLocalAgentAlias()
+        testKnownProfilesEnableAcrossContextByDefault()
         testProfileTogglesSkillsPluginsAndTools()
         testConfiguredCapabilityCountIsStable()
         try! testSkillDefinitionMarksCustomSkills()

@@ -40,7 +40,7 @@ The core idea is cross-agent collaboration: pick an owner agent, keep local agen
 
 ### Current Dark Theme
 
-The current `0.4.1` product screenshots show the refreshed dark interface,
+The current `0.4.2` product screenshots show the refreshed dark interface,
 agent/provider icon catalog, task orchestration, model settings, MCP plugins,
 tool permissions, and preferences.
 
@@ -105,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share the same `~/.across-context` vault. |
 | `0.4.1` | Expanded local-agent/cloud-provider icon catalog, OpenCode MIT-source icon treatment, runtime Codex.app icon support with OpenAI fallback, unsupported local IDE integration cleanup, and stricter icon release-status checks. |
 | `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
 | `0.3.1` | Evidence Bundle export for completed tasks, non-secret Agent Cards, richer release-evaluation audit traces, persisted task quality rechecks, and public repository guards for private docs, local data, signing files, README assets, and secret patterns. |
@@ -144,7 +145,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.2` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.4.2` shared-memory work keeps Across Context as a standalone plugin
+product. Across Agents Assistant prefers the external `across-context mcp`
+server, reports the active implementation mode in MCP settings/API responses,
+and uses the bundled bridge only as an auto-mode compatibility fallback. Both
+paths write to the canonical `~/.across-context` vault, so users who install or
+upgrade Across Context separately do not end up with split memory stores.
 
 The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
 

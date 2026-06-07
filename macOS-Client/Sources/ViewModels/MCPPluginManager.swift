@@ -1,6 +1,13 @@
 import Foundation
 import Combine
 
+enum MCPPluginConfigurationKind: String, Codable, Equatable {
+    case none
+    case directory
+    case file
+    case endpoint
+}
+
 struct MCPPlugin: Codable, Identifiable, Equatable {
     var id: String
     var name: String
@@ -11,13 +18,99 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
     var isEnabled: Bool
     var isBuiltIn: Bool
     var isReadOnly: Bool = false
+    var configurationKind: MCPPluginConfigurationKind = .none
 
     // Status can be: "disconnected", "connecting", "connected", "error"
     var status: String = "disconnected"
     var errorMessage: String? = nil
+    var implementationMode: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, command, args, env, isEnabled, isBuiltIn, isReadOnly
+        case id, name, description, command, args, env, isEnabled, isBuiltIn, isReadOnly, configurationKind
+    }
+
+    init(
+        id: String,
+        name: String,
+        description: String,
+        command: String,
+        args: [String],
+        env: [String: String]? = nil,
+        isEnabled: Bool,
+        isBuiltIn: Bool,
+        isReadOnly: Bool = false,
+        configurationKind: MCPPluginConfigurationKind = .none,
+        status: String = "disconnected",
+        errorMessage: String? = nil,
+        implementationMode: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.command = command
+        self.args = args
+        self.env = env
+        self.isEnabled = isEnabled
+        self.isBuiltIn = isBuiltIn
+        self.isReadOnly = isReadOnly
+        self.configurationKind = configurationKind
+        self.status = status
+        self.errorMessage = errorMessage
+        self.implementationMode = implementationMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        description = try container.decode(String.self, forKey: .description)
+        command = try container.decode(String.self, forKey: .command)
+        args = try container.decode([String].self, forKey: .args)
+        env = try container.decodeIfPresent([String: String].self, forKey: .env)
+        isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
+        isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
+        configurationKind = try container.decodeIfPresent(MCPPluginConfigurationKind.self, forKey: .configurationKind) ?? .none
+    }
+
+    var requiresConfiguration: Bool {
+        configurationKind != .none
+    }
+
+    var configurationValue: String? {
+        requiresConfiguration ? (args.last ?? "") : nil
+    }
+
+    var configurationPlaceholderKey: String {
+        switch configurationKind {
+        case .none:
+            return "mcp.noConfigurationRequired"
+        case .endpoint:
+            return "mcp.endpointPlaceholder"
+        case .directory, .file:
+            return "mcp.noPath"
+        }
+    }
+
+    var allowsDirectConfigurationEditing: Bool {
+        configurationKind == .endpoint
+    }
+
+    var canBrowseConfiguration: Bool {
+        configurationKind == .directory || configurationKind == .file
+    }
+
+    var implementationLabelKey: String? {
+        switch implementationMode {
+        case "external":
+            return "mcp.implementation.external"
+        case "builtin_compatibility":
+            return "mcp.implementation.builtinCompatibility"
+        case "standard_mcp":
+            return "mcp.implementation.standard"
+        default:
+            return nil
+        }
     }
 }
 
@@ -57,7 +150,8 @@ class MCPPluginManager: ObservableObject {
                 command: cmd,
                 args: prod ? ["mcp", "local_kb", "--dir", ""] : ["-m", "mcp_local_kb", "--dir", ""],
                 isEnabled: false,
-                isBuiltIn: true
+                isBuiltIn: true,
+                configurationKind: .directory
             ),
             MCPPlugin(
                 id: "external_rag",
@@ -66,7 +160,8 @@ class MCPPluginManager: ObservableObject {
                 command: cmd,
                 args: prod ? ["mcp", "external_rag", "--endpoint", ""] : ["-m", "mcp_external_rag", "--endpoint", ""],
                 isEnabled: false,
-                isBuiltIn: true
+                isBuiltIn: true,
+                configurationKind: .endpoint
             ),
             MCPPlugin(
                 id: "sqlite",
@@ -75,7 +170,8 @@ class MCPPluginManager: ObservableObject {
                 command: cmd,
                 args: prod ? ["mcp", "sqlite", "--db-path", ""] : ["-m", "mcp_sqlite", "--db-path", ""],
                 isEnabled: false,
-                isBuiltIn: true
+                isBuiltIn: true,
+                configurationKind: .file
             ),
             MCPPlugin(
                 id: "filesystem",
@@ -84,7 +180,18 @@ class MCPPluginManager: ObservableObject {
                 command: cmd,
                 args: prod ? ["mcp", "filesystem", ""] : ["-m", "mcp_filesystem", ""],
                 isEnabled: false,
-                isBuiltIn: true
+                isBuiltIn: true,
+                configurationKind: .directory
+            ),
+            MCPPlugin(
+                id: "across_context",
+                name: "Across Context",
+                description: "Share durable local memory across configured coding agents through Across Context.",
+                command: "across-context",
+                args: ["mcp"],
+                isEnabled: true,
+                isBuiltIn: true,
+                configurationKind: .none
             )
         ]
     }
@@ -117,17 +224,21 @@ class MCPPluginManager: ObservableObject {
 
             for (index, builtIn) in merged.enumerated() {
                 if let savedMatch = saved.first(where: { $0.id == builtIn.id }) {
-                    merged[index].isEnabled = savedMatch.isEnabled
+                    let shouldForceDefaultEnabled = builtIn.id == "across_context" && builtIn.isEnabled
+                    merged[index].isEnabled = savedMatch.isEnabled || shouldForceDefaultEnabled
                     // Always use the built-in command (it may have changed in an app update, e.g. uvx -> python3)
                     merged[index].command = builtIn.command
                     // Always use the built-in env (it may have changed in an app update)
                     merged[index].env = builtIn.env
+                    merged[index].configurationKind = builtIn.configurationKind
                     // Use built-in args structure, but preserve the last arg (the path) from saved state
-                    if !savedMatch.args.isEmpty && !builtIn.args.isEmpty {
+                    if builtIn.requiresConfiguration && !savedMatch.args.isEmpty && !builtIn.args.isEmpty {
                         var newArgs = builtIn.args
                         let savedPath = savedMatch.args.last ?? ""
                         newArgs[newArgs.count - 1] = savedPath
                         merged[index].args = newArgs
+                    } else {
+                        merged[index].args = builtIn.args
                     }
                 }
             }
@@ -196,14 +307,20 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
-    private func updateStatus(id: String, status: String, errorMessage: String? = nil) {
+    private func updateStatus(
+        id: String,
+        status: String,
+        errorMessage: String? = nil,
+        implementationMode: String? = nil
+    ) {
         DispatchQueue.main.async {
             if let index = self.plugins.firstIndex(where: { $0.id == id }) {
                 self.plugins[index].status = status
                 self.plugins[index].errorMessage = errorMessage
-                if status == "error" {
-                    self.plugins[index].isEnabled = false // Auto disable on fail
-                    self.savePlugins()
+                if let implementationMode {
+                    self.plugins[index].implementationMode = implementationMode
+                } else if status != "connected" {
+                    self.plugins[index].implementationMode = nil
                 }
             }
         }
@@ -224,6 +341,18 @@ class MCPPluginManager: ObservableObject {
         let server_id: String
     }
 
+    struct MCPConnectResponse: Codable {
+        let status: String?
+        let implementation: String?
+        let connectionNote: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case implementation
+            case connectionNote = "connection_note"
+        }
+    }
+
     private func connectPlugin(id: String, retryCount: Int = 0) {
         guard let plugin = plugins.first(where: { $0.id == id }) else { return }
 
@@ -233,8 +362,8 @@ class MCPPluginManager: ObservableObject {
             return
         }
 
-        // Validation for built-in plugins requiring paths
-        if plugin.isBuiltIn {
+        // Validation for plugins requiring user-supplied paths or endpoints.
+        if plugin.requiresConfiguration {
             let pathArg = plugin.args.last ?? ""
             if pathArg.isEmpty {
                 updateStatus(id: id, status: "error", errorMessage: "Configure the required parameters first")
@@ -313,7 +442,13 @@ class MCPPluginManager: ObservableObject {
                 return
             }
 
-            self?.updateStatus(id: id, status: "connected", errorMessage: nil)
+            let connectResponse = data.flatMap { try? JSONDecoder().decode(MCPConnectResponse.self, from: $0) }
+            self?.updateStatus(
+                id: id,
+                status: "connected",
+                errorMessage: nil,
+                implementationMode: connectResponse?.implementation
+            )
         }.resume()
     }
 

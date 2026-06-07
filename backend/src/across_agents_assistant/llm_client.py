@@ -17,6 +17,15 @@ class OrchestratorClient:
         self.manager = config_manager
 
     @staticmethod
+    def _compose_system_prompt(strong_prompt: str, existing_prompt: Optional[str]) -> str:
+        existing = (existing_prompt or "").strip()
+        if not existing:
+            return strong_prompt
+        if existing == strong_prompt or existing.startswith(strong_prompt):
+            return existing
+        return f"{strong_prompt}\n\n{existing}"
+
+    @staticmethod
     def _url_host(base_url: str) -> str:
         try:
             return (urlparse(base_url).hostname or "").lower()
@@ -107,7 +116,7 @@ class OrchestratorClient:
         has_system = False
         for m in messages:
             if m["role"] == "system":
-                m["content"] = strong_system_prompt
+                m["content"] = self._compose_system_prompt(strong_system_prompt, m.get("content"))
                 has_system = True
                 break
 

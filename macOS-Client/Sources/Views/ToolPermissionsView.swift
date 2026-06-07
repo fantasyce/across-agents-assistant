@@ -59,6 +59,7 @@ func localizedToolName(_ name: String, preferences: AppPreferences) -> String {
     if name.hasPrefix("filesystem__") { return preferences.text("tool.category.filesystem") }
     if name.hasPrefix("local_kb__") { return preferences.text("tool.category.local_kb") }
     if name.hasPrefix("external_rag__") { return preferences.text("mcp.plugin.external_rag.name") }
+    if name.hasPrefix("across_context__") { return preferences.text("tool.category.across_context") }
     if name.contains("directory") || name.contains("list_dir") { return preferences.text("tool.name.list_directory") }
     if name.contains("search_files") || name.contains("find_file") { return preferences.text("tool.name.search_files") }
     if name.contains("read_file") || name.contains("get_file") { return preferences.text("tool.name.read_file") }
@@ -87,6 +88,7 @@ private func iconForTool(_ name: String) -> String {
     if name.hasPrefix("filesystem__") { return "folder.fill" }
     if name.hasPrefix("local_kb__") { return "book.closed.fill" }
     if name.hasPrefix("external_rag__") { return "cloud.fill" }
+    if name.hasPrefix("across_context__") { return "memorychip.fill" }
     if name == "create_email_draft" { return "envelope.fill" }
     if name == "create_note_draft" { return "note.text" }
     if name == "get_finder_context" { return "finder" }

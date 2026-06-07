@@ -22,3 +22,40 @@ def test_normalize_local_path_rejects_control_characters():
         _normalize_local_path("/tmp/project\nother")
     with pytest.raises(ValueError, match="Invalid local path"):
         _normalize_local_path("/tmp/project\x00other")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_client_preserves_existing_system_context(monkeypatch):
+    class FakeManager:
+        def get_agent_config(self, agent_id):
+            return {
+                "type": "openai_compatible",
+                "model": "demo-model",
+                "api_key": "test-key",
+                "base_url": "https://example.test/v1",
+            }
+
+    captured = {}
+
+    async def fake_chat_openai(self, config, model, messages, tools):
+        captured["messages"] = messages
+        return type("Response", (), {"text": "ok", "tool_calls": []})()
+
+    monkeypatch.setattr(OrchestratorClient, "_chat_openai", fake_chat_openai)
+
+    client = OrchestratorClient(FakeManager())
+    await client.chat(
+        "deepseek",
+        [
+            {
+                "role": "system",
+                "content": "Current project directory: /tmp/across-ui-project",
+            },
+            {"role": "user", "content": "remember project context"},
+        ],
+        [],
+    )
+
+    system_message = captured["messages"][0]["content"]
+    assert "You are a helpful AI assistant running in a macOS desktop environment" in system_message
+    assert "Current project directory: /tmp/across-ui-project" in system_message
