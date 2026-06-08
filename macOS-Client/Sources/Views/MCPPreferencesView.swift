@@ -84,6 +84,9 @@ struct MCPCardView: View {
     @EnvironmentObject private var appPreferences: AppPreferences
     @State private var showingFilePicker = false
     @State private var isHoveringBrowse = false
+    private let implementationRowHeight: CGFloat = 14
+    private let configurationRowHeight: CGFloat = 26
+    private let minimumCardHeight: CGFloat = 160
 
     // Dynamic colors
     private var sidebarBgColor: Color { colorScheme == .dark ? .legacySidebarDark : .legacySidebarLight }
@@ -111,7 +114,7 @@ struct MCPCardView: View {
                         Circle()
                             .fill(statusColor(for: plugin.status))
                             .frame(width: 6, height: 6)
-                        Text(statusText(for: plugin.status))
+                        Text(statusText(for: plugin))
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
@@ -134,12 +137,7 @@ struct MCPCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 28, alignment: .topLeading)
 
-            if let implementationLabelKey = plugin.implementationLabelKey {
-                Text(appPreferences.text(implementationLabelKey))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(accentColor.opacity(0.9))
-                    .lineLimit(1)
-            }
+            implementationRow
 
             if plugin.status == "error", let errorMsg = plugin.errorMessage {
                 Text(errorMsg)
@@ -149,64 +147,91 @@ struct MCPCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if plugin.isBuiltIn && plugin.requiresConfiguration {
-                HStack(spacing: 6) {
-                    TextField(appPreferences.text(plugin.configurationPlaceholderKey), text: Binding(
-                        get: { plugin.configurationValue ?? "" },
-                        set: { newValue in
-                            var newArgs = plugin.args
-                            if !newArgs.isEmpty {
-                                newArgs[newArgs.count - 1] = newValue
-                            } else {
-                                newArgs.append(newValue)
-                            }
-                            MCPPluginManager.shared.updatePluginArgs(id: plugin.id, args: newArgs)
-                        }
-                    ))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundColor(textColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.05))
-                    .cornerRadius(4)
-                    .disabled(!plugin.allowsDirectConfigurationEditing)
-
-                    if plugin.canBrowseConfiguration {
-                        Button(action: openFilePicker) {
-                            Text(appPreferences.text("system.browse"))
-                                .font(.system(size: 11))
-                                .foregroundColor(textColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.black.opacity(isHoveringBrowse ? 0.1 : 0.05))
-                                .cornerRadius(4)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            withAnimation(.easeInOut(duration: 0.1)) {
-                                isHoveringBrowse = hovering
-                            }
-                        }
-                    }
-                }
-            } else if plugin.isBuiltIn {
-                Text(appPreferences.text("mcp.noConfigurationRequired"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            } else {
-                Text(appPreferences.text("mcp.customConfiguration"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+            configurationRow
         }
         .padding(14)
+        .frame(minHeight: minimumCardHeight, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(sidebarBgColor)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private var implementationRow: some View {
+        if let implementationLabelKey = plugin.implementationLabelKey {
+            Text(appPreferences.text(implementationLabelKey))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(accentColor.opacity(0.9))
+                .lineLimit(1)
+                .frame(height: implementationRowHeight, alignment: .leading)
+        } else {
+            Text(" ")
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+                .frame(height: implementationRowHeight, alignment: .leading)
+                .hidden()
+        }
+    }
+
+    @ViewBuilder
+    private var configurationRow: some View {
+        if plugin.isBuiltIn && plugin.requiresConfiguration {
+            HStack(spacing: 6) {
+                TextField(appPreferences.text(plugin.configurationPlaceholderKey), text: Binding(
+                    get: { plugin.configurationValue ?? "" },
+                    set: { newValue in
+                        var newArgs = plugin.args
+                        if !newArgs.isEmpty {
+                            newArgs[newArgs.count - 1] = newValue
+                        } else {
+                            newArgs.append(newValue)
+                        }
+                        MCPPluginManager.shared.updatePluginArgs(id: plugin.id, args: newArgs)
+                    }
+                ))
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundColor(textColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.05))
+                .cornerRadius(4)
+                .disabled(!plugin.allowsDirectConfigurationEditing)
+
+                if plugin.canBrowseConfiguration {
+                    Button(action: openFilePicker) {
+                        Text(appPreferences.text("system.browse"))
+                            .font(.system(size: 11))
+                            .foregroundColor(textColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(isHoveringBrowse ? 0.1 : 0.05))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        withAnimation(.easeInOut(duration: 0.1)) {
+                            isHoveringBrowse = hovering
+                        }
+                    }
+                }
+            }
+            .frame(height: configurationRowHeight, alignment: .leading)
+        } else if plugin.isBuiltIn {
+            Text(appPreferences.text("mcp.noConfigurationRequired"))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(height: configurationRowHeight, alignment: .leading)
+        } else {
+            Text(appPreferences.text("mcp.customConfiguration"))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(height: configurationRowHeight, alignment: .leading)
+        }
     }
 
     private func iconName(for id: String) -> String {
@@ -227,12 +252,19 @@ struct MCPCardView: View {
         }
     }
 
-    private func statusText(for status: String) -> String {
-        switch status {
+    private func statusText(for plugin: MCPPlugin) -> String {
+        switch plugin.status {
         case "connected": return appPreferences.text("mcp.connected")
         case "connecting": return appPreferences.text("mcp.connecting")
         case "error": return appPreferences.text("mcp.failed")
-        default: return appPreferences.text("mcp.disabled")
+        default:
+            if !plugin.isEnabled {
+                return appPreferences.text("mcp.disabled")
+            }
+            if plugin.requiresConfiguration && !plugin.isConfigurationComplete {
+                return appPreferences.text("mcp.needsConfiguration")
+            }
+            return appPreferences.text("mcp.disconnected")
         }
     }
 

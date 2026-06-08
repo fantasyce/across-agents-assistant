@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import httpx
 
-SOCKET_PATH = os.path.expanduser(os.environ.get("ACROSS_AGENTS_SOCKET", "~/.across_agents/run/across-agents.sock"))
+SOCKET_PATH = os.path.expanduser(os.environ.get("ACROSS_AGENTS_SOCKET", "~/.across/run/across-agents-assistant/across-agents.sock"))
 SERVER_START_TIMEOUT = 15
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 

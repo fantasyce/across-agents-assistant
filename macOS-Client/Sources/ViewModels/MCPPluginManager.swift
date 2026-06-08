@@ -100,6 +100,15 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
         configurationKind == .directory || configurationKind == .file
     }
 
+    var canAutoConnectOnLaunch: Bool {
+        isBuiltIn && isConfigurationComplete && configurationKind == .none
+    }
+
+    var isConfigurationComplete: Bool {
+        guard requiresConfiguration else { return true }
+        return !(args.last ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var implementationLabelKey: String? {
         switch implementationMode {
         case "external":
@@ -120,6 +129,7 @@ class MCPPluginManager: ObservableObject {
     @Published var plugins: [MCPPlugin] = []
 
     private let userDefaultsKey = "across_agents_mcp_plugins"
+    private let defaultEnabledMigrationKey = "across_agents_mcp_plugins_default_enabled_migration_v044"
 
     // MARK: - Built-in Plugin Helpers
 
@@ -149,7 +159,7 @@ class MCPPluginManager: ObservableObject {
                 description: "Index and search a local wiki folder for fast, private personal memory.",
                 command: cmd,
                 args: prod ? ["mcp", "local_kb", "--dir", ""] : ["-m", "mcp_local_kb", "--dir", ""],
-                isEnabled: false,
+                isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .directory
             ),
@@ -159,7 +169,7 @@ class MCPPluginManager: ObservableObject {
                 description: "Connect to a self-hosted RAG service or enterprise knowledge-base API, such as Dify or AnythingLLM.",
                 command: cmd,
                 args: prod ? ["mcp", "external_rag", "--endpoint", ""] : ["-m", "mcp_external_rag", "--endpoint", ""],
-                isEnabled: false,
+                isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .endpoint
             ),
@@ -169,7 +179,7 @@ class MCPPluginManager: ObservableObject {
                 description: "Allow AI to read and analyze a local SQLite database file.",
                 command: cmd,
                 args: prod ? ["mcp", "sqlite", "--db-path", ""] : ["-m", "mcp_sqlite", "--db-path", ""],
-                isEnabled: false,
+                isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .file
             ),
@@ -179,7 +189,7 @@ class MCPPluginManager: ObservableObject {
                 description: "Allow AI to access and edit folders you explicitly choose.",
                 command: cmd,
                 args: prod ? ["mcp", "filesystem", ""] : ["-m", "mcp_filesystem", ""],
-                isEnabled: false,
+                isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .directory
             ),
@@ -189,6 +199,10 @@ class MCPPluginManager: ObservableObject {
                 description: "Share durable local memory across configured coding agents through Across Context.",
                 command: "across-context",
                 args: ["mcp"],
+                env: [
+                    "ACROSS_AGENTS_ACROSS_CONTEXT_MODE": "external",
+                    "ACROSS_HOME": LocalAppPaths.acrossRoot.path
+                ],
                 isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .none
@@ -199,15 +213,15 @@ class MCPPluginManager: ObservableObject {
     private init() {
         loadPlugins()
 
-        // Wait a very short bit for the backend to fully start before attempting connections
-        // (The backend startup has been optimized so it should be ready much faster now)
+        // Wait a very short bit for the backend to fully start before connecting
+        // enabled built-in plugins whose configuration is complete.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.autoConnectEnabledPlugins()
+            self?.autoConnectConfiguredBuiltInPlugins()
         }
     }
 
-    private func autoConnectEnabledPlugins() {
-        for plugin in plugins where plugin.isEnabled {
+    private func autoConnectConfiguredBuiltInPlugins() {
+        for plugin in plugins where plugin.isEnabled && plugin.canAutoConnectOnLaunch {
             // Only connect if it's currently disconnected or error, to prevent overlapping the initial retry loops
             if plugin.status == "disconnected" || plugin.status == "error" {
                 connectPlugin(id: plugin.id)
@@ -216,6 +230,8 @@ class MCPPluginManager: ObservableObject {
     }
 
     func loadPlugins() {
+        let shouldApplyDefaultEnabledMigration = !UserDefaults.standard.bool(forKey: defaultEnabledMigrationKey)
+
         if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
            let saved = try? JSONDecoder().decode([MCPPlugin].self, from: data) {
 
@@ -224,7 +240,7 @@ class MCPPluginManager: ObservableObject {
 
             for (index, builtIn) in merged.enumerated() {
                 if let savedMatch = saved.first(where: { $0.id == builtIn.id }) {
-                    let shouldForceDefaultEnabled = builtIn.id == "across_context" && builtIn.isEnabled
+                    let shouldForceDefaultEnabled = shouldApplyDefaultEnabledMigration && builtIn.isEnabled
                     merged[index].isEnabled = savedMatch.isEnabled || shouldForceDefaultEnabled
                     // Always use the built-in command (it may have changed in an app update, e.g. uvx -> python3)
                     merged[index].command = builtIn.command
@@ -234,7 +250,10 @@ class MCPPluginManager: ObservableObject {
                     // Use built-in args structure, but preserve the last arg (the path) from saved state
                     if builtIn.requiresConfiguration && !savedMatch.args.isEmpty && !builtIn.args.isEmpty {
                         var newArgs = builtIn.args
-                        let savedPath = savedMatch.args.last ?? ""
+                        var savedPath = savedMatch.args.last ?? ""
+                        if builtIn.id == "sqlite" {
+                            savedPath = Self.migratedSQLitePath(savedPath)
+                        }
                         newArgs[newArgs.count - 1] = savedPath
                         merged[index].args = newArgs
                     } else {
@@ -248,14 +267,28 @@ class MCPPluginManager: ObservableObject {
             merged.append(contentsOf: customSaved)
 
             self.plugins = merged
+            if shouldApplyDefaultEnabledMigration {
+                UserDefaults.standard.set(true, forKey: defaultEnabledMigrationKey)
+                savePlugins()
+            }
         } else {
             self.plugins = builtInPlugins
+            if shouldApplyDefaultEnabledMigration {
+                UserDefaults.standard.set(true, forKey: defaultEnabledMigrationKey)
+            }
         }
+    }
 
-        // Auto-connect enabled plugins on load
-        for plugin in self.plugins where plugin.isEnabled {
-            self.connectPlugin(id: plugin.id)
+    private static func migratedSQLitePath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        let legacy = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".across_agents")
+            .appendingPathComponent("assistant.db")
+            .path
+        if expanded == legacy {
+            return LocalAppPaths.root.appendingPathComponent("assistant.db").path
         }
+        return path
     }
 
     func savePlugins() {
@@ -271,7 +304,11 @@ class MCPPluginManager: ObservableObject {
 
             // Reconnect if it's already enabled
             if plugins[index].isEnabled {
-                connectPlugin(id: id)
+                if plugins[index].isConfigurationComplete {
+                    connectPlugin(id: id)
+                } else {
+                    disconnectPlugin(id: id)
+                }
             }
         }
     }
@@ -282,7 +319,11 @@ class MCPPluginManager: ObservableObject {
             savePlugins()
 
             if plugins[index].isEnabled {
-                connectPlugin(id: id)
+                if plugins[index].isConfigurationComplete {
+                    connectPlugin(id: id)
+                } else {
+                    updateStatus(id: id, status: "disconnected")
+                }
             } else {
                 disconnectPlugin(id: id)
             }
@@ -292,7 +333,7 @@ class MCPPluginManager: ObservableObject {
     func addCustomPlugin(plugin: MCPPlugin) {
         plugins.append(plugin)
         savePlugins()
-        if plugin.isEnabled {
+        if plugin.isEnabled && plugin.isConfigurationComplete {
             connectPlugin(id: plugin.id)
         }
     }
@@ -364,13 +405,8 @@ class MCPPluginManager: ObservableObject {
 
         // Validation for plugins requiring user-supplied paths or endpoints.
         if plugin.requiresConfiguration {
-            let pathArg = plugin.args.last ?? ""
-            if pathArg.isEmpty {
-                updateStatus(id: id, status: "error", errorMessage: "Configure the required parameters first")
-                if let index = plugins.firstIndex(where: { $0.id == id }) {
-                    plugins[index].isEnabled = false
-                    savePlugins()
-                }
+            if !plugin.isConfigurationComplete {
+                updateStatus(id: id, status: "disconnected")
                 return
             }
         }
@@ -397,8 +433,10 @@ class MCPPluginManager: ObservableObject {
         } catch {
             updateStatus(id: id, status: "error", errorMessage: "Failed to encode request")
             if let index = plugins.firstIndex(where: { $0.id == id }) {
-                plugins[index].isEnabled = false
-                savePlugins()
+                if !plugins[index].isBuiltIn {
+                    plugins[index].isEnabled = false
+                    savePlugins()
+                }
             }
             return
         }
@@ -434,9 +472,12 @@ class MCPPluginManager: ObservableObject {
                 self?.updateStatus(id: id, status: "error", errorMessage: errorMsg)
                 DispatchQueue.main.async {
                     if let index = self?.plugins.firstIndex(where: { $0.id == id }) {
-                        // Configuration error (e.g. 500 from backend because invalid path), so disable it
-                        self?.plugins[index].isEnabled = false
-                        self?.savePlugins()
+                        // Custom plugin HTTP failures likely indicate a broken command/configuration.
+                        // Built-in plugins stay enabled so users can repair the path/endpoint in place.
+                        if !(self?.plugins[index].isBuiltIn ?? false) {
+                            self?.plugins[index].isEnabled = false
+                            self?.savePlugins()
+                        }
                     }
                 }
                 return

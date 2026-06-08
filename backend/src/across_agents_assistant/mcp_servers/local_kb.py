@@ -3,6 +3,7 @@ import os
 import sqlite3
 import re
 from mcp.server.fastmcp import FastMCP
+from across_agents_assistant.paths import app_home
 
 mcp = FastMCP("Local Knowledge Base")
 
@@ -165,7 +166,7 @@ def main():
     if args.dir:
         kb_dir = args.dir
     else:
-        kb_dir = os.path.expanduser("~/Documents/AcrossAgentsWiki")
+        kb_dir = str(app_home() / "local-knowledge")
 
     if not os.path.exists(kb_dir):
         try:

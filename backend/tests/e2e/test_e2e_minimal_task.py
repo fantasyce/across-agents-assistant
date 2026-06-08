@@ -2,13 +2,13 @@
 
 Prerequisites:
   1. The Across Agents Assistant app is running (backend Unix socket available).
-  2. API keys are configured in ~/.across_agents/credentials.json via app.
+  2. API keys are configured in ~/.across/data/across-agents-assistant/credentials.json via app.
 
 Usage:
   python3 -m pytest tests/e2e/test_e2e_minimal_task.py -v
 
 Environment:
-  ACROSS_AGENTS_SOCKET — packaged app backend socket (default ~/.across_agents/run/across-agents.sock)
+  ACROSS_AGENTS_SOCKET — packaged app backend socket (default ~/.across/run/across-agents-assistant/across-agents.sock)
   ACROSS_AGENTS_API    — optional HTTP URL for development servers
 """
 

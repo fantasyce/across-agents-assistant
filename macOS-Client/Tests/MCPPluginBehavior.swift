@@ -47,15 +47,46 @@ func testPathPluginsStillRequireConfiguration() {
     assert(plugin.requiresConfiguration, "Filesystem should still require an explicit directory")
     assert(plugin.configurationPlaceholderKey == "mcp.noPath", "Directory plugins should use the path placeholder")
     assert(plugin.configurationValue == "", "Directory plugins should expose their last arg as the configuration value")
+    assert(plugin.isConfigurationComplete == false, "Directory plugins with no selected path should not be connection-ready")
+    assert(plugin.canAutoConnectOnLaunch == false, "Directory plugins without a selected path should not auto-connect")
 }
 
-func testAcrossContextBuiltInDefaultsEnabled() {
+func testBuiltInPluginsDefaultEnabledAndConfiguredBuiltInsAutoConnect() {
     UserDefaults.standard.removeObject(forKey: "across_agents_mcp_plugins")
+    UserDefaults.standard.removeObject(forKey: "across_agents_mcp_plugins_default_enabled_migration_v044")
+    MCPPluginManager.shared.loadPlugins()
+
+    let plugins = Dictionary(uniqueKeysWithValues: MCPPluginManager.shared.plugins.map { ($0.id, $0) })
+    for id in ["local_kb", "external_rag", "sqlite", "filesystem", "across_context"] {
+        assert(plugins[id]?.isEnabled == true, "\(id) should be enabled by default")
+    }
+    assert(plugins["across_context"]?.canAutoConnectOnLaunch == true, "Across Context should auto-connect on launch")
+    assert(plugins["filesystem"]?.canAutoConnectOnLaunch == false, "Filesystem should wait until a folder is configured")
+    assert(plugins["sqlite"]?.isConfigurationComplete == false, "SQLite should wait for an explicit database file before connecting")
+
+    var configuredFilesystem = plugins["filesystem"]!
+    configuredFilesystem.args[configuredFilesystem.args.count - 1] = "/tmp"
+    assert(configuredFilesystem.canAutoConnectOnLaunch == false, "Configured built-in filesystem should wait for a manual connect to avoid protected-directory prompts on launch")
+
+    var configuredSQLite = plugins["sqlite"]!
+    configuredSQLite.args[configuredSQLite.args.count - 1] = "/tmp/assistant.db"
+    assert(configuredSQLite.canAutoConnectOnLaunch == false, "Configured built-in SQLite should wait for a manual connect to avoid protected-file prompts on launch")
+}
+
+func testAcrossContextDefaultsToExternalPluginMode() {
+    UserDefaults.standard.removeObject(forKey: "across_agents_mcp_plugins")
+    UserDefaults.standard.removeObject(forKey: "across_agents_mcp_plugins_default_enabled_migration_v044")
+    MCPPluginManager.shared.loadPlugins()
 
     let acrossContext = MCPPluginManager.shared.plugins.first { $0.id == "across_context" }
 
     assert(acrossContext != nil, "Across Context should be a built-in MCP plugin")
     assert(acrossContext?.isEnabled == true, "Across Context should be enabled by default so shared memory is available on launch")
+    assert(acrossContext?.canAutoConnectOnLaunch == true, "Across Context can auto-connect because it is an external plugin and does not require a user-selected protected directory")
+    assert(
+        acrossContext?.env?["ACROSS_AGENTS_ACROSS_CONTEXT_MODE"] == "external",
+        "Across Context should default to the external MCP plugin so shared memory remains a pluggable module"
+    )
 }
 
 func testAcrossContextImplementationLabelsAreStable() {
@@ -87,7 +118,8 @@ struct MCPPluginBehavior {
     static func main() {
         testAcrossContextPluginDoesNotRequireConfiguration()
         testPathPluginsStillRequireConfiguration()
-        testAcrossContextBuiltInDefaultsEnabled()
+        testBuiltInPluginsDefaultEnabledAndConfiguredBuiltInsAutoConnect()
+        testAcrossContextDefaultsToExternalPluginMode()
         testAcrossContextImplementationLabelsAreStable()
         print("MCPPluginBehavior passed")
     }

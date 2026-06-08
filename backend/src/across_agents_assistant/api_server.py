@@ -981,7 +981,7 @@ def _check_single_backend_credential(provider_id: str) -> KeyCheckResult:
 
     Resolution order: runtime cache → environment → credential store.
     Does NOT access OS credential stores. The backend's durable credential
-    store is ``~/.across_agents/credentials.json``.
+    store is ``~/.across/data/across-agents-assistant/credentials.json``.
     """
     global _credential_cache
 

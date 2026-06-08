@@ -105,8 +105,9 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.5.0` | Unified Across ecosystem runtime under `~/.across`, external Across Context MCP plugin data under `~/.across/data/across-context`, sidecar-first Across Orchestrator under `~/.across/plugins/across-orchestrator`, and AAA host discovery through `~/.across/bin`. |
 | `0.4.3` | Plugin-required Across Orchestrator slot with one-click managed install, external HTTP/CLI task lifecycle, app-grade Release E2E evidence, packaged-app installer fix, and no built-in task-orchestration fallback for new submissions. |
-| `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share the same `~/.across-context` vault. |
+| `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share one vault. |
 | `0.4.1` | Expanded local-agent/cloud-provider icon catalog, OpenCode MIT-source icon treatment, runtime Codex.app icon support with OpenAI fallback, unsupported local IDE integration cleanup, and stricter icon release-status checks. |
 | `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
 | `0.3.1` | Evidence Bundle export for completed tasks, non-secret Agent Cards, richer release-evaluation audit traces, persisted task quality rechecks, and public repository guards for private docs, local data, signing files, README assets, and secret patterns. |
@@ -115,7 +116,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 ## Core Capabilities
 
-- Cross-agent task orchestration with an owner agent, subtask agents, waves, status tracking, delivery health, and acceptance-oriented review.
+- Cross-agent task orchestration through the external Across Orchestrator plugin, with an owner agent, subtask agents, waves, status tracking, delivery health, and acceptance-oriented review.
 - Per-agent capability profiles for tuning built-in skills, custom skills, native local-agent skills, MCP plugin scope, tool scope, and execution instructions before tasks are decomposed.
 - Native skill management for local agents: create directory-based Claude Code skills, inspect installed OpenClaw/Hermes skills, and use each agent's own skill commands for install, update, and validation where supported.
 - Native skill readiness checks mark missing binaries, environment variables, or config as unavailable; unavailable native skills stay visible for repair but are not used as strong routing signals.
@@ -127,8 +128,8 @@ The screenshots above are still the primary entry points: project chat, task orc
 - Single-agent mode for sending a complex task to one chosen agent when collaboration is unnecessary.
 - Voice and continuous conversation features that let you talk through work, auto-read assistant replies, and reduce keyboard time.
 - Local tool approval for file search/read/write/edit, browser URL context, Finder context, Xcode context, image OCR, screenshot OCR, Mail drafts, Notes drafts, system volume, dark mode, and MCP-backed tools.
-- MCP plugin settings for local knowledge, external retrieval, SQLite, and filesystem context.
-- Local runtime state under `~/.across_agents`, kept outside the source tree.
+- MCP plugin settings for Across Context shared memory, local knowledge, external retrieval, SQLite, and filesystem context.
+- Local runtime state under `~/.across`, kept outside the source tree.
 
 ## Local macOS Swiss Army Knife
 
@@ -146,22 +147,26 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.4.3` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.5.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.4.2` shared-memory work keeps Across Context as a standalone plugin
-product. Across Agents Assistant prefers the external `across-context mcp`
-server, reports the active implementation mode in MCP settings/API responses,
-and uses the bundled bridge only as an auto-mode compatibility fallback. Both
-paths write to the canonical `~/.across-context` vault, so users who install or
-upgrade Across Context separately do not end up with split memory stores.
+The `0.5.0` ecosystem work standardizes every Across-owned runtime path under
+`~/.across`. Across Agents Assistant stores its own data in
+`~/.across/data/across-agents-assistant`, discovers plugin wrappers from
+`~/.across/bin`, and keeps plugin runtime code under `~/.across/plugins`.
+Legacy `~/.across_agents`, `~/.across-context`, and `~/.across-orchestrator`
+data is copied forward on first use without deleting the old directories.
 
-The `0.4.3` task-orchestration work applies the same plugin-required boundary
-to Across Orchestrator. Across Agents Assistant can use an external Across
-Orchestrator HTTP or CLI runtime for Release E2E task creation, execution,
-status, quality benchmarking, and evidence bundles. If the external plugin is
-not installed or connected, task orchestration is unavailable and the UI offers
-one-click installation; new task submission no longer falls back to the
-historical in-app TaskOrchestrator.
+Across Context remains a standalone shared-memory plugin. Across Agents
+Assistant runs it through the external `across-context mcp` server in product
+mode, reports the active implementation mode in MCP settings/API responses, and
+stores shared memory in `~/.across/data/across-context`.
+
+Across Orchestrator is also standalone. Across Agents Assistant installs it
+under `~/.across/plugins/across-orchestrator`, launches it as a local sidecar
+HTTP runtime by default, and keeps CLI/MCP as external protocol adapters. If
+the external plugin is not installed or connected, task orchestration is
+unavailable and the UI offers one-click installation; new task submission does
+not fall back to the historical in-app TaskOrchestrator.
 
 The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
 
@@ -234,7 +239,7 @@ On first launch:
 - When creating a complex task, review Capability Preflight before submitting; it previews the recommended agent and matching skills.
 - Grant macOS permissions only when you need the related feature, such as microphone, screen capture, Apple Events, or file access.
 
-Local runtime state is stored under `~/.across_agents`. Build outputs, local credentials, logs, databases, certificates, and model files should stay outside Git.
+Local runtime state is stored under `~/.across`. Build outputs, local credentials, logs, databases, certificates, and model files should stay outside Git.
 
 ## Requirements
 
@@ -276,7 +281,7 @@ into a release-quality benchmark result. This is useful for comparing versions
 with the same task prompt and acceptance thresholds.
 
 ```bash
-curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+curl --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
   "http://backend/api/tasks/<task-id>/quality-benchmark?expected_files=index.html,styles.css,app.js,README.md&required_probes=static_web_smoke,browser_e2e&min_quality_score=70"
 ```
 
@@ -290,21 +295,21 @@ manifest, owner decision, quality health, artifacts, acceptance records, and a
 benchmark result in one local JSON payload:
 
 ```bash
-curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+curl --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
   "http://backend/api/tasks/<task-id>/evidence-bundle?expected_files=index.html,styles.css,app.js,README.md&required_probes=static_web_smoke,browser_e2e&min_quality_score=70"
 ```
 
 Agent capability cards can also be exported without secrets:
 
 ```bash
-curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+curl --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
   "http://backend/api/agent-cards"
 ```
 
 Startup diagnostics can be checked from the packaged app or from the socket:
 
 ```bash
-curl --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+curl --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
   "http://backend/api/diagnostics/startup"
 ```
 
@@ -320,28 +325,30 @@ with a one-click install action.
 ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product mode
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
-ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across_agents/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.2.0
+ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.3.0
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ```
 
-When an endpoint is configured, the app talks to the external HTTP runtime. If
-no endpoint is configured, it discovers either the app-managed CLI installed at
-`~/.across_agents/plugins/across-orchestrator/venv/bin/across-orchestrator` or
-an `across-orchestrator` executable on `PATH`. The UI calls
-`/api/orchestrator/plugin/install` to create that app-managed virtualenv and
-install the external product from the configured source.
+When an endpoint is configured, the app talks to that external HTTP runtime. If
+no endpoint is configured, it discovers the wrapper at
+`~/.across/bin/across-orchestrator`, starts a local sidecar with
+`across-orchestrator serve --host 127.0.0.1 --port 0`, and reads runtime
+metadata from `~/.across/run/across-orchestrator`. The UI calls
+`/api/orchestrator/plugin/install` to create the managed virtualenv under
+`~/.across/plugins/across-orchestrator` and install the external product from
+the configured source.
 
 Packaged builds cannot use the backend binary itself to create Python
 virtualenvs. The installer auto-discovers a Python 3 interpreter from common
 locations; set `ACROSS_AGENTS_ORCHESTRATOR_PYTHON` only when you need to force a
 specific interpreter.
 
-External task state stays in `~/.across-orchestrator`; the app only keeps a thin
-task-id index in
-`~/.across_agents/orchestrator-plugin/tasks.json` so the main task UI can show
-external tasks.
+External task state stays in `~/.across/data/across-orchestrator`; the app only
+keeps a thin task-id index in
+`~/.across/data/across-agents-assistant/orchestrator-plugin/tasks.json` so the
+main task UI can show external tasks.
 
 The historical in-app `TaskOrchestrator` code remains only for legacy task data
 inspection and migration-oriented maintenance paths. It is not a product
@@ -361,10 +368,10 @@ PYTHONPATH=backend/src pytest \
   -q
 ```
 
-RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across_agents/release-reports/`:
+RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across/data/across-agents-assistant/release-reports/`:
 
 ```bash
-curl --request POST --unix-socket "$HOME/.across_agents/run/across-agents.sock" \
+curl --request POST --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
   "http://backend/api/release/verification"
 ```
 

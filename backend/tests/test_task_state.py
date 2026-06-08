@@ -1,8 +1,6 @@
 import os
 from typing import Dict, List
 
-os.makedirs(os.path.expanduser("~/.across_agents"), exist_ok=True)
-
 import pytest
 from across_agents_assistant.task_manager.state import TaskState
 from across_agents_assistant.task_manager.models import JobStatus

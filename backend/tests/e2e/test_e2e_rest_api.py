@@ -7,7 +7,7 @@ Verifies the current owner-delivery-contract path:
 
 Prerequisites:
   1. The Across Agents Assistant app is running (backend Unix socket available).
-  2. At least one cloud LLM key is configured in ~/.across_agents/credentials.json.
+  2. At least one cloud LLM key is configured in ~/.across/data/across-agents-assistant/credentials.json.
 
 Usage:
   python3 -m pytest tests/e2e/test_e2e_rest_api.py -v

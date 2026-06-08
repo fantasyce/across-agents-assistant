@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.0 - 2026-06-09
+
+This release turns Across Agents Assistant into a thinner Across ecosystem host.
+AAA, Across Context, and Across Orchestrator now share one `~/.across` root while
+keeping plugin runtime code, durable data, logs, run metadata, and cache files
+in separate component namespaces.
+
+### Added
+
+- Unified Across ecosystem paths:
+  `~/.across/data/across-agents-assistant`,
+  `~/.across/data/across-context`, and
+  `~/.across/data/across-orchestrator`.
+- Plugin wrapper discovery through `~/.across/bin`.
+- Sidecar-first Across Orchestrator launch from the AAA host when no explicit
+  endpoint is configured.
+- Copy-on-missing migration from legacy `~/.across_agents`,
+  `~/.across-context`, and `~/.across-orchestrator` data directories.
+
+### Changed
+
+- Across Context external MCP mode now uses `~/.across/data/across-context` as
+  the shared-memory vault.
+- The Across Orchestrator managed install now writes runtime code under
+  `~/.across/plugins/across-orchestrator` and wrapper commands under
+  `~/.across/bin`.
+- App logs and sockets moved to
+  `~/.across/logs/across-agents-assistant` and
+  `~/.across/run/across-agents-assistant`.
+- The managed Orchestrator install source now targets
+  `fantasyce/across-orchestrator@v0.3.0`.
+
+### Validation
+
+- AAA backend regression: `870 passed, 18 skipped`.
+- Swift behavior checks passed for app preferences and MCP plugin defaults.
+- AAA open-source check passed.
+- Packaged AAA Release E2E submitted through the external Across Orchestrator
+  sidecar and passed with quality score `100`.
+- Across Context external MCP write/search smoke passed through AAA's MCP tool
+  path and was verified in the external vault.
+- Across Orchestrator plugin repo check: `414 passed`.
+- Across Context plugin repo check: `46 passed`.
+
 ## 0.4.3 - 2026-06-07
 
 This is a source-first patch release for the Across Orchestrator plugin slot.

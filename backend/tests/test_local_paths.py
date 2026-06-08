@@ -15,7 +15,7 @@ def test_llm_config_uses_across_agents_home_and_migrates_legacy(monkeypatch, tmp
 
     config_mod = importlib.reload(config_mod)
 
-    assert config_mod.CONFIG_FILE == tmp_path / ".across_agents/llm_config.json"
+    assert config_mod.CONFIG_FILE == tmp_path / ".across/data/across-agents-assistant/llm_config.json"
     assert config_mod.load_llm_config().primary_provider == "legacy"
     assert config_mod.CONFIG_FILE.exists()
 
@@ -34,14 +34,14 @@ def test_agent_manager_uses_across_agents_home_and_migrates_legacy(monkeypatch, 
     manager_mod = importlib.reload(manager_mod)
     manager = manager_mod.AgentManager()
 
-    assert manager_mod.AGENTS_CONFIG_FILE == tmp_path / ".across_agents/llm_agents.json"
+    assert manager_mod.AGENTS_CONFIG_FILE == tmp_path / ".across/data/across-agents-assistant/llm_agents.json"
     assert manager.get_active_agent() == "legacy-agent"
     assert manager_mod.AGENTS_CONFIG_FILE.exists()
 
 
 def test_agent_manager_prunes_removed_local_cli_entries(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    config_file = tmp_path / ".across_agents/llm_agents.json"
+    config_file = tmp_path / ".across/data/across-agents-assistant/llm_agents.json"
     config_file.parent.mkdir(parents=True)
     removed_local_id = "deferred-local-ide"
     retained_cloud_id = "custom-cloud"
@@ -70,7 +70,7 @@ def test_local_agent_default_workspace_uses_across_agents_home(monkeypatch, tmp_
 
     from across_agents_assistant.local_agent.client import default_local_agent_workspace
 
-    assert default_local_agent_workspace() == Path(tmp_path) / ".across_agents/workspace"
+    assert default_local_agent_workspace() == Path(tmp_path) / ".across/data/across-agents-assistant/workspace"
 
 
 def test_runtime_paths_are_under_across_agents_home(monkeypatch, tmp_path):
@@ -80,11 +80,11 @@ def test_runtime_paths_are_under_across_agents_home(monkeypatch, tmp_path):
 
     paths = importlib.reload(paths)
 
-    assert paths.log_dir() == tmp_path / ".across_agents/logs"
-    assert paths.run_dir() == tmp_path / ".across_agents/run"
-    assert paths.tmp_dir() == tmp_path / ".across_agents/tmp"
-    assert paths.backend_socket_path() == str(tmp_path / ".across_agents/run/across-agents.sock")
-    assert paths.speech_socket_path() == str(tmp_path / ".across_agents/run/speech_cli.sock")
+    assert paths.log_dir() == tmp_path / ".across/logs/across-agents-assistant"
+    assert paths.run_dir() == tmp_path / ".across/run/across-agents-assistant"
+    assert paths.tmp_dir() == tmp_path / ".across/cache/across-agents-assistant/tmp"
+    assert paths.backend_socket_path() == str(tmp_path / ".across/run/across-agents-assistant/across-agents.sock")
+    assert paths.speech_socket_path() == str(tmp_path / ".across/run/across-agents-assistant/speech_cli.sock")
 
 
 def test_across_agents_home_override_controls_runtime_paths(monkeypatch, tmp_path):

@@ -86,10 +86,13 @@ class PersistenceService:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM projects WHERE path = ?", (normalized,))
             row = cursor.fetchone()
+            if not row and project_id:
+                cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+                row = cursor.fetchone()
             if row:
                 cursor.execute(
-                    "UPDATE projects SET name = ?, kind = ?, archived_at = NULL, updated_at = ?, last_opened_at = ? WHERE id = ?",
-                    (safe_name, safe_kind, now, now, row["id"]),
+                    "UPDATE projects SET name = ?, path = ?, kind = ?, archived_at = NULL, updated_at = ?, last_opened_at = ? WHERE id = ?",
+                    (safe_name, normalized, safe_kind, now, now, row["id"]),
                 )
                 pid = row["id"]
             else:

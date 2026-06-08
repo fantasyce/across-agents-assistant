@@ -753,7 +753,7 @@ struct AgentCapabilitiesView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(textColor)
                     .lineLimit(1)
-                Text(localizedPluginStatus(plugin.status))
+                Text(localizedPluginStatus(plugin))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(plugin.status == "connected" ? mcpColor : .secondary)
                     .lineLimit(1)
@@ -1007,12 +1007,19 @@ struct AgentCapabilitiesView: View {
         return value == key ? plugin.name : value
     }
 
-    private func localizedPluginStatus(_ status: String) -> String {
-        switch status {
+    private func localizedPluginStatus(_ plugin: MCPPlugin) -> String {
+        switch plugin.status {
         case "connected": return appPreferences.text("mcp.connected")
         case "connecting": return appPreferences.text("mcp.connecting")
         case "error": return appPreferences.text("mcp.failed")
-        default: return appPreferences.text("mcp.disabled")
+        default:
+            if !plugin.isEnabled {
+                return appPreferences.text("mcp.disabled")
+            }
+            if plugin.requiresConfiguration && !plugin.isConfigurationComplete {
+                return appPreferences.text("mcp.needsConfiguration")
+            }
+            return appPreferences.text("mcp.disconnected")
         }
     }
 

@@ -272,7 +272,7 @@ def test_mcp_path_allowlist_rejects_sibling_prefix_paths():
     assert not manager._is_path_allowed("/tmp/project-secrets/file.txt", ["/tmp/project"])
 
 
-def test_mcp_command_resolution_uses_npm_global_bin(tmp_path):
+def test_mcp_command_resolution_uses_npm_global_bin(monkeypatch, tmp_path):
     homebrew_bin = tmp_path / "homebrew" / "bin"
     npm_prefix = tmp_path / "cellar" / "node"
     npm_bin = npm_prefix / "bin"
@@ -286,6 +286,8 @@ def test_mcp_command_resolution_uses_npm_global_bin(tmp_path):
     across_context = npm_bin / "across-context"
     across_context.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     across_context.chmod(across_context.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("ACROSS_BIN_HOME", str(tmp_path / "empty-across-bin"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     manager = MCPClientManager()
     manager.register_server(

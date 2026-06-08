@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_SOCKET = os.path.expanduser("~/.across_agents/run/across-agents.sock")
+DEFAULT_SOCKET = os.path.expanduser("~/.across/run/across-agents-assistant/across-agents.sock")
 SOCKET = os.path.expanduser(os.environ.get("ACROSS_AGENTS_SOCKET", DEFAULT_SOCKET))
 BASE = os.environ.get("ACROSS_AGENTS_API")
 

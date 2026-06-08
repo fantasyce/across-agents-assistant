@@ -9,7 +9,7 @@ Usage:
   ACROSS_AGENTS_API=http://localhost:9988 python3 tests/e2e/run_e2e.py
 
   # Custom packaged-app socket
-  ACROSS_AGENTS_SOCKET=~/.across_agents/run/across-agents.sock python3 tests/e2e/run_e2e.py
+  ACROSS_AGENTS_SOCKET=~/.across/run/across-agents-assistant/across-agents.sock python3 tests/e2e/run_e2e.py
 
   # Run a specific tier
   python3 tests/e2e/run_e2e.py --tier minimal

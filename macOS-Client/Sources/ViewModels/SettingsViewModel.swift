@@ -1099,7 +1099,7 @@ final class SettingsViewModel: ObservableObject {
 
         if let apiKey = config.apiKey, !apiKey.isEmpty {
             // Persist secrets only through the backend-owned credential file
-            // (~/.across_agents/credentials.json).
+            // (~/.across/data/across-agents-assistant/credentials.json).
             Task {
                 let saved = await sendKeysToBackend([config.id: apiKey])
                 if saved {

@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from .across_context_native import call_across_context_tool
+from ..paths import ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 
 logger = logging.getLogger("across_agents_assistant.mcp")
 
@@ -74,6 +75,9 @@ class MCPClientManager:
             else:
                 logger.error(f"MCP command not found: {command}. PATH: {merged_env.get('PATH', 'not set')}")
 
+        if server_id == "across_context":
+            merged_env = self._privacy_safe_across_context_env(merged_env)
+
         self.server_configs[server_id] = StdioServerParameters(
             command=command,
             args=args,
@@ -89,7 +93,16 @@ class MCPClientManager:
         }
 
     def _command_search_path(self, current_path: str) -> str:
-        paths = [path for path in str(current_path or "").split(os.pathsep) if path]
+        plugin_bin = str(ecosystem_bin_dir())
+        legacy_plugin_bin = os.path.expanduser("~/.across_agents/plugins/bin")
+        paths = [plugin_bin]
+        if legacy_plugin_bin != plugin_bin:
+            paths.append(legacy_plugin_bin)
+        paths.extend(
+            path
+            for path in str(current_path or "").split(os.pathsep)
+            if path and path not in paths
+        )
         for path in [
             os.path.expanduser("~/.local/bin"),
             os.path.expanduser("~/.npm-global/bin"),
@@ -107,6 +120,41 @@ class MCPClientManager:
             paths.append(npm_global_bin)
 
         return os.pathsep.join(paths)
+
+    def _privacy_safe_across_context_env(self, env: Dict[str, str]) -> Dict[str, str]:
+        base_keys = {
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "PATH",
+            "SHELL",
+            "TMPDIR",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TERM",
+            "NO_COLOR",
+            "SSH_AUTH_SOCK",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+        }
+        safe_env = {
+            key: value
+            for key, value in env.items()
+            if key in base_keys
+            or key.startswith("ACROSS_CONTEXT_")
+            or key.startswith("ACROSS_AGENTS_ACROSS_CONTEXT_")
+            or key in {"ACROSS_HOME", "ACROSS_BIN_HOME", "ACROSS_PLUGIN_HOME"}
+        }
+        safe_env["PWD"] = "/"
+        safe_env["OLDPWD"] = "/"
+        safe_env.setdefault("ACROSS_HOME", str(ecosystem_home()))
+        safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
+        safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
+        safe_env.setdefault("ACROSS_CONTEXT_HOME", str(ecosystem_home() / "data" / "across-context"))
+        return safe_env
 
     def _which_in_paths(self, command: str, paths: List[str]) -> Optional[str]:
         import shutil
@@ -609,6 +657,7 @@ class MCPClientManager:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=params.env,
+                cwd="/",
             )
             stdout, stderr = process.communicate(payload, timeout=timeout)
         except subprocess.TimeoutExpired as exc:

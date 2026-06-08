@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+import atexit
 import json
 import os
 import shutil
@@ -12,6 +13,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
+
+from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 
 
 REQUIRED_APP_GRADE_GATES = [
@@ -32,7 +36,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.2.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.3.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 
 
@@ -188,7 +192,8 @@ class OrchestratorPluginInstaller:
         python_executable: Optional[str] = None,
         timeout: float = 900.0,
     ):
-        self.plugin_home = Path(plugin_home or Path.home() / ".across_agents" / "plugins").expanduser()
+        self.plugin_home = Path(plugin_home).expanduser() if plugin_home else ecosystem_plugin_root()
+        self.bin_dir = self.plugin_home.parent / "bin" if plugin_home else ecosystem_bin_dir()
         self.source = source or DEFAULT_ORCHESTRATOR_INSTALL_SOURCE
         self.runner = runner
         self.python_executable = _resolve_python_executable(python_executable)
@@ -196,21 +201,27 @@ class OrchestratorPluginInstaller:
         self.install_dir = self.plugin_home / ORCHESTRATOR_PLUGIN_ID
         self.venv_dir = self.install_dir / "venv"
         self.command_path = self.venv_dir / "bin" / "across-orchestrator"
+        self.wrapper_path = self.bin_dir / "across-orchestrator"
+        self.manifest_path = self.install_dir / "manifest.json"
         self.state_path = self.install_dir / "install-state.json"
 
     def status(self) -> Dict[str, Any]:
         state = self._read_state()
         installed = self.command_path.is_file() and os.access(self.command_path, os.X_OK)
+        wrapper_installed = self.wrapper_path.is_file() and os.access(self.wrapper_path, os.X_OK)
         status = "installed" if installed else str(state.get("status") or "not_installed")
         return {
             "plugin_id": ORCHESTRATOR_PLUGIN_ID,
             "status": status,
             "installed": installed,
+            "wrapper_installed": wrapper_installed,
             "installable": True,
             "source": self.source,
             "install_dir": str(self.install_dir),
             "venv_dir": str(self.venv_dir),
             "command": str(self.command_path),
+            "wrapper": str(self.wrapper_path),
+            "manifest": str(self.manifest_path),
             "python": self.python_executable,
             "logs": list(state.get("logs") or [])[-20:],
             "updated_at": state.get("updated_at"),
@@ -233,11 +244,15 @@ class OrchestratorPluginInstaller:
                 raise OrchestratorPluginError(
                     f"Across Orchestrator installed but executable was not found at {self.command_path}"
                 )
+            self._write_wrapper()
+            self._write_manifest(logs)
             state = {
                 "status": "installed",
                 "logs": logs,
                 "source": self.source,
                 "command": str(self.command_path),
+                "wrapper": str(self.wrapper_path),
+                "manifest": str(self.manifest_path),
                 "updated_at": time.time(),
             }
             self._write_state(state)
@@ -290,10 +305,48 @@ class OrchestratorPluginInstaller:
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(self.state_path)
 
+    def _write_wrapper(self) -> None:
+        self.bin_dir.mkdir(parents=True, exist_ok=True)
+        script = "#!/bin/sh\nexec \"{}\" \"$@\"\n".format(str(self.command_path).replace('"', '\\"'))
+        self.wrapper_path.write_text(script, encoding="utf-8")
+        self.wrapper_path.chmod(0o755)
+
+    def _write_manifest(self, logs: List[str]) -> None:
+        try:
+            completed = self.runner(
+                [str(self.command_path), "plugin-manifest", "--json"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                env=self._env(),
+                check=False,
+            )
+            if int(getattr(completed, "returncode", 1)) != 0:
+                raise OrchestratorPluginError(str(getattr(completed, "stderr", "") or "").strip())
+            manifest = json.loads(str(getattr(completed, "stdout", "") or "{}"))
+        except Exception as exc:
+            logs.append(f"Plugin manifest probe failed; writing host manifest: {exc}")
+            manifest = {
+                "schemaVersion": "1.0",
+                "id": ORCHESTRATOR_PLUGIN_ID,
+                "kind": "task-runtime",
+                "entrypoints": {
+                    "sidecar": {"command": str(self.wrapper_path), "args": ["serve", "--host", "127.0.0.1"]},
+                    "cli": {"command": str(self.wrapper_path)},
+                    "mcp": {"command": str(self.wrapper_path), "args": ["mcp"]},
+                },
+            }
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
     def _env(self) -> Dict[str, str]:
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
+        env.setdefault("ACROSS_HOME", str(ecosystem_home()))
+        env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
+        env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
         return env
 
 
@@ -357,7 +410,7 @@ class OrchestratorPluginManager:
 
     def __init__(self, config: Optional[OrchestratorPluginConfig] = None):
         self.config = config or OrchestratorPluginConfig.from_env()
-        registry_path = self.config.registry_path or Path.home() / ".across_agents" / "orchestrator-plugin" / "tasks.json"
+        registry_path = self.config.registry_path or app_subdir("orchestrator-plugin") / "tasks.json"
         self.index = OrchestratorTaskIndex(registry_path)
         self.installer = OrchestratorPluginInstaller(
             plugin_home=self.config.plugin_home,
@@ -366,6 +419,9 @@ class OrchestratorPluginManager:
         )
         self._transport: Optional[str] = None
         self._endpoint: Optional[str] = None
+        self._sidecar_process: Optional[subprocess.Popen] = None
+        self._sidecar_runtime_id = f"aaa-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        atexit.register(self.shutdown)
 
     def implementation_status(self, *, probe: bool = True) -> Dict[str, Any]:
         mode = self.config.normalized_mode()
@@ -413,6 +469,26 @@ class OrchestratorPluginManager:
                 }
 
         if command_path:
+            try:
+                endpoint = self._ensure_sidecar(command_path) if probe else self._runtime_info_endpoint()
+                if endpoint:
+                    self._transport = "http"
+                    self._endpoint = endpoint.rstrip("/")
+                    card = self._http_get("/.well-known/agent-card.json") if probe else {}
+                    return {
+                        **base,
+                        "implementation": "external",
+                        "available": True,
+                        "transport": "http",
+                        "endpoint": self._endpoint,
+                        "command": command_path,
+                        "command_available": True,
+                        "agent_card": _public_agent_card(card),
+                        "connection_note": "External Across Orchestrator sidecar runtime.",
+                    }
+            except Exception as sidecar_exc:
+                base["sidecar_error"] = str(sidecar_exc)
+
             try:
                 card = self._cli_json(["agent-card", "--json"]) if probe else {}
                 self._transport = "cli"
@@ -593,6 +669,8 @@ class OrchestratorPluginManager:
         managed_command = self.installer.command_path
         if managed_command.is_file() and os.access(managed_command, os.X_OK):
             return str(managed_command)
+        if self.installer.wrapper_path.is_file() and os.access(self.installer.wrapper_path, os.X_OK):
+            return str(self.installer.wrapper_path)
         env_path = self._env().get("PATH", "")
         return shutil.which(command, path=env_path)
 
@@ -601,6 +679,8 @@ class OrchestratorPluginManager:
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         extras = [
+            str(ecosystem_bin_dir()),
+            os.path.expanduser("~/.across_agents/plugins/bin"),
             os.path.expanduser("~/.local/bin"),
             os.path.expanduser("~/.npm-global/bin"),
             "/opt/homebrew/bin",
@@ -613,19 +693,160 @@ class OrchestratorPluginManager:
             if item not in paths:
                 paths.append(item)
         env["PATH"] = os.pathsep.join(paths)
+        env.setdefault("ACROSS_HOME", str(ecosystem_home()))
+        env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
+        env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
         return env
 
-    def _http_get(self, path: str) -> Any:
-        endpoint = (self.config.endpoint or "").rstrip("/")
+    def shutdown(self) -> None:
+        process = self._sidecar_process
+        self._sidecar_process = None
+        if not process or process.poll() is not None:
+            self._unlink_sidecar_runtime_info()
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+        self._unlink_sidecar_runtime_info()
+
+    def _unlink_sidecar_runtime_info(self) -> None:
+        try:
+            self._sidecar_runtime_info_path().unlink()
+        except FileNotFoundError:
+            pass
+
+    def _sidecar_runtime_info_path(self) -> Path:
+        return ecosystem_home() / "run" / ORCHESTRATOR_PLUGIN_ID / f"{self._sidecar_runtime_id}.json"
+
+    def _runtime_info_endpoint(self) -> Optional[str]:
+        path = self._sidecar_runtime_info_path()
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        endpoint = str(payload.get("endpoint") or "").strip()
+        return endpoint or None
+
+    def _ensure_sidecar(self, command_path: str) -> str:
+        if self._endpoint:
+            self._http_get("/health")
+            return self._endpoint
+
+        self._cleanup_stale_aaa_sidecars()
+
+        endpoint = self._runtime_info_endpoint()
+        if endpoint:
+            self._endpoint = endpoint.rstrip("/")
+            try:
+                self._http_get("/health")
+                return self._endpoint
+            except Exception:
+                self._endpoint = None
+
+        if self._sidecar_process and self._sidecar_process.poll() is not None:
+            self._sidecar_process = None
+
+        runtime_info = self._sidecar_runtime_info_path()
+        try:
+            runtime_info.unlink()
+        except FileNotFoundError:
+            pass
+
+        if self._sidecar_process is None:
+            runtime_info.parent.mkdir(parents=True, exist_ok=True)
+            self._sidecar_process = subprocess.Popen(
+                [
+                    command_path,
+                    "serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "0",
+                    "--runtime-id",
+                    self._sidecar_runtime_id,
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self._env(),
+                cwd="/",
+            )
+
+        deadline = time.time() + self.config.connect_timeout
+        last_error: Optional[Exception] = None
+        while time.time() < deadline:
+            if self._sidecar_process and self._sidecar_process.poll() is not None:
+                stdout, stderr = self._sidecar_process.communicate(timeout=1)
+                self._sidecar_process = None
+                detail = (stderr or stdout or "").strip()
+                raise OrchestratorPluginUnavailable(detail or "Across Orchestrator sidecar exited before becoming healthy.")
+            endpoint = self._runtime_info_endpoint()
+            if endpoint:
+                self._endpoint = endpoint.rstrip("/")
+                try:
+                    self._http_get("/health")
+                    return self._endpoint
+                except Exception as exc:
+                    last_error = exc
+            time.sleep(0.1)
+        raise OrchestratorPluginUnavailable(f"Across Orchestrator sidecar did not become healthy: {last_error}")
+
+    def _cleanup_stale_aaa_sidecars(self) -> None:
+        run_root = ecosystem_home() / "run" / ORCHESTRATOR_PLUGIN_ID
+        current_info = self._sidecar_runtime_info_path()
+        if not run_root.exists():
+            return
+        for info_path in run_root.glob("aaa-*.json"):
+            if info_path == current_info:
+                continue
+            try:
+                payload = json.loads(info_path.read_text(encoding="utf-8"))
+            except Exception:
+                info_path.unlink(missing_ok=True)
+                continue
+            pid = int(payload.get("pid") or 0)
+            if pid > 0 and self._is_orchestrator_sidecar_pid(pid):
+                try:
+                    os.kill(pid, 15)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    continue
+            info_path.unlink(missing_ok=True)
+
+    def _is_orchestrator_sidecar_pid(self, pid: int) -> bool:
+        try:
+            completed = subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", "command="],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=1,
+                check=False,
+            )
+        except Exception:
+            return False
+        command = completed.stdout.strip()
+        return "across-orchestrator" in command and " serve " in f" {command} "
+
+    def _resolved_endpoint(self) -> str:
+        endpoint = (self._endpoint or self.config.endpoint or "").rstrip("/")
         if not endpoint:
             raise OrchestratorPluginUnavailable("Across Orchestrator endpoint is not configured.")
+        return endpoint
+
+    def _http_get(self, path: str) -> Any:
+        endpoint = self._resolved_endpoint()
         with urllib.request.urlopen(endpoint + path, timeout=self.config.connect_timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:
-        endpoint = (self.config.endpoint or "").rstrip("/")
-        if not endpoint:
-            raise OrchestratorPluginUnavailable("Across Orchestrator endpoint is not configured.")
+        endpoint = self._resolved_endpoint()
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             endpoint + path,

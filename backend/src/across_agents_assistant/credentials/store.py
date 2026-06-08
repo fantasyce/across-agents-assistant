@@ -1,6 +1,6 @@
 """Backend-owned credential store for cloud LLM API keys.
 
-The credentials live in ``~/.across_agents/credentials.json`` with ``0600``
+The credentials live in ``~/.across/data/across-agents-assistant/credentials.json`` with ``0600``
 permissions.  The backend owns reading, writing, validating, and permission-
 checking this file.  The database stores metadata only (never raw keys).
 """

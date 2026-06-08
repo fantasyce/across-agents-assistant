@@ -753,7 +753,7 @@ class SessionViewModel: ObservableObject {
     func createBlankProjectPrompt() {
         let alert = NSAlert()
         alert.messageText = "New Blank Project"
-        alert.informativeText = "Create a project directory under ~/.across_agents/workspace."
+        alert.informativeText = "Create a project directory under ~/.across/data/across-agents-assistant/workspace."
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))

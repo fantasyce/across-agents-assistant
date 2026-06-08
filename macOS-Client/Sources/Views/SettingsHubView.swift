@@ -342,9 +342,9 @@ private struct GlobalPreferencesContent: View {
                             .labelsHidden()
                             .disabled(true)
                     }
-                    settingRow(title: preferences.text("privacy.openData"), help: "~/.across_agents") {
+                    settingRow(title: preferences.text("privacy.openData"), help: "~/.across") {
                         Button(preferences.text("privacy.openData")) {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".across_agents"))
+                            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".across"))
                         }
                     }
                 }
@@ -353,14 +353,14 @@ private struct GlobalPreferencesContent: View {
                     title: preferences.text("section.advanced"),
                     description: preferences.text("advanced.socket")
                 ) {
-                    settingRow(title: preferences.text("advanced.socket"), help: "~/.across_agents/run/across-agents.sock") {
+                    settingRow(title: preferences.text("advanced.socket"), help: "~/.across/run/across-agents-assistant/across-agents.sock") {
                         Text(preferences.text("system.ready"))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(Color(hex: "30d158"))
                     }
-                    settingRow(title: preferences.text("advanced.logs"), help: "~/.across_agents/logs") {
+                    settingRow(title: preferences.text("advanced.logs"), help: "~/.across/logs/across-agents-assistant") {
                         Button(preferences.text("advanced.openLogs")) {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".across_agents/logs"))
+                            NSWorkspace.shared.open(LocalAppPaths.logsDir)
                         }
                     }
                 }
