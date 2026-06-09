@@ -1,14 +1,15 @@
 import pathlib
 import re
+import tomllib
 
 import across_agents_assistant
 
 
-def test_release_version_sources_are_consistent_for_v0_5_0():
+def test_release_version_sources_are_consistent():
     root = pathlib.Path(__file__).resolve().parents[2]
     pyproject = root / "backend" / "pyproject.toml"
-    match = re.search(r'^version = "([^"]+)"', pyproject.read_text(), re.MULTILINE)
+    metadata = tomllib.loads(pyproject.read_text())
+    project_version = metadata["project"]["version"]
 
-    assert match is not None
-    assert match.group(1) == "0.5.0"
-    assert across_agents_assistant.__version__ == "0.5.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", project_version)
+    assert across_agents_assistant.__version__ == project_version
