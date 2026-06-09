@@ -63,14 +63,23 @@ func testBuiltInPluginsDefaultEnabledAndConfiguredBuiltInsAutoConnect() {
     assert(plugins["across_context"]?.canAutoConnectOnLaunch == true, "Across Context should auto-connect on launch")
     assert(plugins["filesystem"]?.canAutoConnectOnLaunch == false, "Filesystem should wait until a folder is configured")
     assert(plugins["sqlite"]?.isConfigurationComplete == false, "SQLite should wait for an explicit database file before connecting")
+    assert(plugins["local_kb"]?.canAutoConnectOnLaunch == false, "Local knowledge base should wait until a folder is configured")
 
     var configuredFilesystem = plugins["filesystem"]!
     configuredFilesystem.args[configuredFilesystem.args.count - 1] = "/tmp"
-    assert(configuredFilesystem.canAutoConnectOnLaunch == false, "Configured built-in filesystem should wait for a manual connect to avoid protected-directory prompts on launch")
+    assert(configuredFilesystem.canAutoConnectOnLaunch == true, "Configured built-in filesystem should auto-connect on launch")
 
     var configuredSQLite = plugins["sqlite"]!
     configuredSQLite.args[configuredSQLite.args.count - 1] = "/tmp/assistant.db"
-    assert(configuredSQLite.canAutoConnectOnLaunch == false, "Configured built-in SQLite should wait for a manual connect to avoid protected-file prompts on launch")
+    assert(configuredSQLite.canAutoConnectOnLaunch == true, "Configured built-in SQLite should auto-connect on launch")
+
+    var configuredLocalKB = plugins["local_kb"]!
+    configuredLocalKB.args[configuredLocalKB.args.count - 1] = "/tmp/wiki"
+    assert(configuredLocalKB.canAutoConnectOnLaunch == true, "Configured built-in local knowledge base should auto-connect on launch")
+
+    var configuredExternalRAG = plugins["external_rag"]!
+    configuredExternalRAG.args[configuredExternalRAG.args.count - 1] = "http://127.0.0.1:8080"
+    assert(configuredExternalRAG.canAutoConnectOnLaunch == false, "External RAG should remain manual to avoid launch-time network calls")
 }
 
 func testAcrossContextDefaultsToExternalPluginMode() {

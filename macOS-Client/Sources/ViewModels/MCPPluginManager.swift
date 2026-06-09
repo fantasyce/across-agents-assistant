@@ -101,7 +101,11 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
     }
 
     var canAutoConnectOnLaunch: Bool {
-        isBuiltIn && isConfigurationComplete && configurationKind == .none
+        guard isBuiltIn && isConfigurationComplete else { return false }
+        // Local file, SQLite, and knowledge-base MCP servers only bind their
+        // configured scope at startup; filesystem reads happen when tools run.
+        // Keep custom RAG manual so launch does not open network endpoints.
+        return id != "external_rag"
     }
 
     var isConfigurationComplete: Bool {
