@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 - 2026-06-09
+
+### Fixed
+
+- Preserve successful tool results when the automatic post-approval continuation
+  hits a gateway fallback, so shared-memory reads and writes are not hidden by a
+  downstream model-routing error.
+- Point the managed Across Orchestrator install source at `v0.3.1`, which
+  backfills legacy task state into the unified `~/.across` data namespace.
+
 ## 0.5.0 - 2026-06-09
 
 This release turns Across Agents Assistant into a thinner Across ecosystem host.
@@ -30,7 +40,7 @@ in separate component namespaces.
   `~/.across/logs/across-agents-assistant` and
   `~/.across/run/across-agents-assistant`.
 - The managed Orchestrator install source now targets
-  `fantasyce/across-orchestrator@v0.3.0`.
+  `fantasyce/across-orchestrator@v0.3.1`.
 
 ### Validation
 

@@ -190,6 +190,75 @@ async def test_mcp_tool_approval_routes_to_matching_mcp_server(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mcp_tool_approval_keeps_tool_result_when_continuation_gateway_falls_back(monkeypatch):
+    import across_agents_assistant.api_server as srv
+
+    class FakeRegistry:
+        def get_tool(self, name):
+            return None
+
+    class FakeMCPManager:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "across_context__search_context",
+                    "description": "Search shared memory",
+                    "risk_level": "high",
+                }
+            ]
+
+        async def call_tool(self, server_id, tool_name, arguments):
+            return "found shared memory marker"
+
+    class FakePersistence:
+        def __init__(self):
+            self.audit_logs = []
+            self.messages = []
+
+        def add_audit_log(self, **kwargs):
+            self.audit_logs.append(kwargs)
+
+        def set_tool_authorization(self, tool_name, is_authorized):
+            pass
+
+        def add_message(self, **kwargs):
+            self.messages.append(kwargs)
+
+        def get_messages(self, session_id, limit=50):
+            return [{"role": "user", "content": "find shared memory"}]
+
+        def get_session_project(self, session_id):
+            return None
+
+    async def fake_chat_endpoint(req):
+        return srv.ChatResponse(
+            text='EMBEDDED FALLBACK: Gateway agent failed; running embedded agent: Model override "minimax/deepseek-chat" is not allowed for agent "main".',
+            session_id=req.session_id,
+        )
+
+    persistence = FakePersistence()
+    monkeypatch.setattr(srv, "registry", FakeRegistry())
+    monkeypatch.setattr(srv, "mcp_manager", FakeMCPManager())
+    monkeypatch.setattr(srv, "persistence", persistence)
+    monkeypatch.setattr(srv, "_is_tool_unavailable", lambda tool_name: False)
+    monkeypatch.setattr(srv, "chat_endpoint", fake_chat_endpoint)
+
+    response = await srv.approve_tool_execution(
+        srv.ApprovalDecision(
+            session_id="s1",
+            decision="approve",
+            tool_name="across_context__search_context",
+            tool_args={"query": "marker"},
+            agent_id="minimax",
+            tool_call_id="call-1",
+        )
+    )
+
+    assert "found shared memory marker" in response.text
+    assert "EMBEDDED FALLBACK" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_mcp_approval_adds_session_project_root_for_across_context(monkeypatch, tmp_path):
     import across_agents_assistant.api_server as srv
 

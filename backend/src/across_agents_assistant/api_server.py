@@ -773,6 +773,50 @@ class ApprovalDecision(BaseModel):
     agent_id: str = LOCAL_AGENT_ID
     tool_call_id: Optional[str] = None
 
+
+_GATEWAY_FALLBACK_PREFIX = "EMBEDDED FALLBACK: Gateway agent failed"
+
+
+def _is_gateway_fallback_text(text: Optional[str]) -> bool:
+    return bool((text or "").lstrip().startswith(_GATEWAY_FALLBACK_PREFIX))
+
+
+def _persist_tool_continuation_fallback(session_id: Optional[str], text: str) -> None:
+    if not session_id:
+        return
+    try:
+        persistence.add_message(session_id=session_id, role="assistant", content=text)
+    except Exception:
+        logger.exception("Failed to persist tool continuation fallback for session=%s", session_id)
+
+
+async def _continue_after_tool_execution(
+    continuation_req: ChatRequest,
+    fallback_text: str,
+) -> ChatResponse:
+    try:
+        response = await chat_endpoint(continuation_req)
+    except Exception:
+        logger.exception(
+            "Tool continuation failed for session=%s agent=%s; returning raw tool result",
+            continuation_req.session_id,
+            continuation_req.agent_id,
+        )
+        _persist_tool_continuation_fallback(continuation_req.session_id, fallback_text)
+        return ChatResponse(text=fallback_text, session_id=continuation_req.session_id)
+
+    if _is_gateway_fallback_text(response.text):
+        logger.warning(
+            "Tool continuation returned gateway fallback for session=%s agent=%s; returning raw tool result",
+            continuation_req.session_id,
+            continuation_req.agent_id,
+        )
+        session_id = response.session_id or continuation_req.session_id
+        _persist_tool_continuation_fallback(session_id, fallback_text)
+        return ChatResponse(text=fallback_text, session_id=session_id)
+
+    return response
+
 # Global instances
 agent_manager = AgentManager()
 agent_client = OrchestratorClient(agent_manager)
@@ -2027,7 +2071,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                         agent_id=req.agent_id,
                         project_dir=project_root,
                     )
-                    return await chat_endpoint(continuation_req)
+                    return await _continue_after_tool_execution(continuation_req, result_text)
                 except Exception as e:
                     error_text = f"❌ MCP 工具执行失败: {str(e)}"
                     persistence.add_message(session_id=req.session_id, role="tool", content=error_text, tool_call_id=req.tool_call_id)
@@ -2038,7 +2082,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                         agent_id=req.agent_id,
                         project_dir=project_root,
                     )
-                    return await chat_endpoint(continuation_req)
+                    return await _continue_after_tool_execution(continuation_req, error_text)
             return ChatResponse(text="MCP工具名称解析失败", session_id=req.session_id)
 
         # Execute local tool
@@ -2066,7 +2110,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     agent_id=req.agent_id, # Pass through the original agent
                     project_dir=project_root,
                 )
-                return await chat_endpoint(continuation_req)
+                return await _continue_after_tool_execution(continuation_req, result_text)
 
             except Exception as e:
                 error_text = f"❌ 工具执行失败: {str(e)}"
@@ -2079,7 +2123,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     agent_id=req.agent_id, # Pass through the original agent
                     project_dir=project_root,
                 )
-                return await chat_endpoint(continuation_req)
+                return await _continue_after_tool_execution(continuation_req, error_text)
         return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
     else:
         cancel_text = "用户已取消执行工具操作。"
@@ -2090,7 +2134,7 @@ async def approve_tool_execution(req: ApprovalDecision):
             session_id=req.session_id,
             agent_id=req.agent_id
         )
-        return await chat_endpoint(continuation_req)
+        return await _continue_after_tool_execution(continuation_req, cancel_text)
 
 
 class PermissionInfo(BaseModel):
@@ -2702,6 +2746,15 @@ async def _run_agent_loop(
         )
 
     reply_text = reply.text or ""
+    if _is_gateway_fallback_text(reply_text):
+        logger.warning(
+            "Gateway fallback text returned for session=%s agent=%s; skipping assistant persistence",
+            session_id,
+            agent_id,
+        )
+        state_machine.transition(AgentLoopState.DONE)
+        return ChatResponse(text=reply_text, session_id=session_id)
+
     persistence.add_message(session_id=session_id, role="assistant", content=reply_text)
     if not reply_text.strip():
         logger.warning(
