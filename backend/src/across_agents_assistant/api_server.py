@@ -179,6 +179,7 @@ from .orchestrator_plugin import (
     external_evidence_to_app_bundle,
     external_task_to_app_info,
 )
+from .plugin_runtime import discover_across_plugins, inspect_across_plugin
 
 # Global Task Manager instances
 _task_state = TaskState()
@@ -1241,6 +1242,7 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
     })
 
     orchestrator_plugin = _orchestrator_plugin_status(probe=True)
+    ecosystem_plugins = discover_across_plugins(probe=False)
     plugin_available = bool(orchestrator_plugin.get("available"))
     plugin_required = str(orchestrator_plugin.get("mode") or "").replace("-", "_") == "external"
     if plugin_available:
@@ -1297,6 +1299,7 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
             "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
             "orchestrator_plugin": orchestrator_plugin,
+            "ecosystem_plugins": ecosystem_plugins,
         },
         "keys": key_readiness,
         "checks": checks,
@@ -1318,6 +1321,23 @@ async def get_readiness():
 async def get_startup_diagnostics():
     """Return a non-secret first-run and packaged-app startup diagnostic report."""
     return _sanitize_public_payload(_build_startup_diagnostics())
+
+
+@app.get("/api/plugins")
+async def list_across_plugins(probe: bool = False):
+    """Return Across ecosystem plugin discovery status without mutating installs."""
+    return {
+        "plugins": _sanitize_public_payload(discover_across_plugins(probe=probe)),
+    }
+
+
+@app.get("/api/plugins/{plugin_id}")
+async def get_across_plugin(plugin_id: str, probe: bool = False):
+    """Return one Across ecosystem plugin discovery status."""
+    try:
+        return _sanitize_public_payload(inspect_across_plugin(plugin_id, probe=probe))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown Across plugin")
 
 
 @app.get("/api/orchestrator/plugin")

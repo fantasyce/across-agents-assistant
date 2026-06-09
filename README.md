@@ -169,6 +169,12 @@ the external plugin is not installed or connected, task orchestration is
 unavailable and the UI offers one-click installation; new task submission does
 not fall back to the historical in-app TaskOrchestrator.
 
+Startup diagnostics discover Across-owned plugins by reading manifests and
+wrappers under `~/.across/plugins` and `~/.across/bin`. That discovery path is
+read-only and does not launch plugin processes, so startup should not require
+Documents access. Explicit refresh, install, task submission, and MCP actions
+may start the selected plugin when the user asks for that capability.
+
 The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
 
 - Local-agent and cloud-provider icons are bundled as dark/light neutral tiles with provenance recorded in `macOS-Client/Sources/Assets/icons/agent-icon-sources.json`.
