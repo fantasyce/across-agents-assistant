@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -12,12 +13,22 @@ from .agent_ids import LOCAL_CLI_AGENT_IDS, normalize_agent_id
 
 
 APP_MANAGED_BY = "across-agents-assistant"
+NATIVE_SKILL_COMMAND_FAILED_PUBLIC_MESSAGE = "Native skill command failed. See local backend logs for details."
+
+
+logger = logging.getLogger("across_agents_assistant.native_agent_skills")
 
 
 class NativeSkillError(Exception):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _public_native_skill_error(exc: NativeSkillError) -> str:
+    if exc.status_code >= 500 and exc.status_code != 501:
+        return NATIVE_SKILL_COMMAND_FAILED_PUBLIC_MESSAGE
+    return str(exc)
 
 
 class NativeSkillCommandRunner(Protocol):
@@ -595,7 +606,8 @@ class OpenClawNativeSkillAdapter:
         try:
             readiness = self._check_readiness()
         except NativeSkillError as exc:
-            readiness_error = str(exc)
+            logger.warning("OpenClaw native skill readiness check failed: %s", exc)
+            readiness_error = _public_native_skill_error(exc)
         skills = _apply_skill_readiness(self._parse_json_or_text(output), readiness)
         state = self._state(skills)
         if readiness:
@@ -724,7 +736,8 @@ class NativeSkillManager:
             try:
                 states[agent_id] = self.list_agent_skills(agent_id)
             except NativeSkillError as exc:
-                states[agent_id] = self._error_state(agent_id, str(exc))
+                logger.warning("Native skill listing failed for %s: %s", agent_id, exc)
+                states[agent_id] = self._error_state(agent_id, _public_native_skill_error(exc))
         return states
 
     def list_agent_skills(self, agent_id: str, request: Optional[NativeSkillRequest] = None) -> Dict[str, Any]:

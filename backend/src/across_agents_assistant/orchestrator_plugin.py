@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import atexit
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ import uuid
 
 from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 
+
+logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
 REQUIRED_APP_GRADE_GATES = [
     "artifact_integrity",
@@ -38,6 +41,10 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
 
 DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.3.1"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
+ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
+    "Across Orchestrator plugin installation failed. See local backend logs for details."
+)
+ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE = "External Across Orchestrator runtime is unavailable."
 
 
 class OrchestratorPluginError(RuntimeError):
@@ -225,7 +232,7 @@ class OrchestratorPluginInstaller:
             "python": self.python_executable,
             "logs": list(state.get("logs") or [])[-20:],
             "updated_at": state.get("updated_at"),
-            "error": state.get("error"),
+            "error": ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE if state.get("error") else None,
         }
 
     def install(self) -> Dict[str, Any]:
@@ -258,13 +265,14 @@ class OrchestratorPluginInstaller:
             self._write_state(state)
             return self.status()
         except Exception as exc:
-            logs.append(str(exc))
+            logger.exception("Across Orchestrator plugin installation failed")
+            logs.append(ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE)
             self._write_state(
                 {
                     "status": "failed",
                     "logs": logs,
                     "source": self.source,
-                    "error": str(exc),
+                    "error": ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE,
                     "updated_at": time.time(),
                 }
             )
@@ -288,7 +296,8 @@ class OrchestratorPluginInstaller:
         if stderr:
             logs.append(stderr[-1000:])
         if int(getattr(completed, "returncode", 1)) != 0:
-            raise OrchestratorPluginError(stderr or stdout or f"{label} failed")
+            logger.warning("%s failed during Across Orchestrator plugin installation: %s", label, (stderr or stdout)[:1000])
+            raise OrchestratorPluginError(f"{label} failed")
 
     def _read_state(self) -> Dict[str, Any]:
         if not self.state_path.exists():
@@ -325,8 +334,9 @@ class OrchestratorPluginInstaller:
             if int(getattr(completed, "returncode", 1)) != 0:
                 raise OrchestratorPluginError(str(getattr(completed, "stderr", "") or "").strip())
             manifest = json.loads(str(getattr(completed, "stdout", "") or "{}"))
-        except Exception as exc:
-            logs.append(f"Plugin manifest probe failed; writing host manifest: {exc}")
+        except Exception:
+            logger.info("Plugin manifest probe failed; writing host manifest", exc_info=True)
+            logs.append("Plugin manifest probe failed; writing host manifest.")
             manifest = {
                 "schemaVersion": "1.0",
                 "id": ORCHESTRATOR_PLUGIN_ID,
@@ -459,13 +469,14 @@ class OrchestratorPluginManager:
                     "connection_note": "External Across Orchestrator HTTP runtime.",
                 }
             except Exception as exc:
+                logger.info("External Across Orchestrator HTTP runtime probe failed", exc_info=True)
                 return {
                     **base,
                     "implementation": "external",
                     "available": False,
                     "transport": "http",
-                    "connection_note": f"External Across Orchestrator HTTP runtime is unavailable: {exc}",
-                    "error": str(exc),
+                    "connection_note": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
+                    "error": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
                 }
 
         if command_path:
@@ -486,8 +497,8 @@ class OrchestratorPluginManager:
                         "agent_card": _public_agent_card(card),
                         "connection_note": "External Across Orchestrator sidecar runtime.",
                     }
-            except Exception as sidecar_exc:
-                base["sidecar_error"] = str(sidecar_exc)
+            except Exception:
+                logger.info("External Across Orchestrator sidecar probe failed", exc_info=True)
 
             try:
                 card = self._cli_json(["agent-card", "--json"]) if probe else {}
@@ -504,14 +515,15 @@ class OrchestratorPluginManager:
                     "connection_note": "External Across Orchestrator CLI runtime.",
                 }
             except Exception as exc:
+                logger.info("External Across Orchestrator CLI runtime probe failed", exc_info=True)
                 return {
                     **base,
                     "implementation": "external",
                     "available": False,
                     "transport": "cli",
                     "command": command_path,
-                    "connection_note": f"External Across Orchestrator CLI runtime is unavailable: {exc}",
-                    "error": str(exc),
+                    "connection_note": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
+                    "error": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
                 }
 
         return {
@@ -784,7 +796,9 @@ class OrchestratorPluginManager:
                 stdout, stderr = self._sidecar_process.communicate(timeout=1)
                 self._sidecar_process = None
                 detail = (stderr or stdout or "").strip()
-                raise OrchestratorPluginUnavailable(detail or "Across Orchestrator sidecar exited before becoming healthy.")
+                if detail:
+                    logger.warning("Across Orchestrator sidecar exited before becoming healthy: %s", detail[:1000])
+                raise OrchestratorPluginUnavailable("Across Orchestrator sidecar exited before becoming healthy.")
             endpoint = self._runtime_info_endpoint()
             if endpoint:
                 self._endpoint = endpoint.rstrip("/")
@@ -792,9 +806,12 @@ class OrchestratorPluginManager:
                     self._http_get("/health")
                     return self._endpoint
                 except Exception as exc:
+                    logger.info("Across Orchestrator sidecar health check failed", exc_info=True)
                     last_error = exc
             time.sleep(0.1)
-        raise OrchestratorPluginUnavailable(f"Across Orchestrator sidecar did not become healthy: {last_error}")
+        if last_error is not None:
+            logger.info("Across Orchestrator sidecar did not become healthy")
+        raise OrchestratorPluginUnavailable("Across Orchestrator sidecar did not become healthy.")
 
     def _cleanup_stale_aaa_sidecars(self) -> None:
         run_root = ecosystem_home() / "run" / ORCHESTRATOR_PLUGIN_ID
@@ -859,7 +876,8 @@ class OrchestratorPluginManager:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise OrchestratorPluginError(f"HTTP {exc.code}: {detail}") from exc
+            logger.warning("Across Orchestrator HTTP request failed with %s: %s", exc.code, detail[:1000])
+            raise OrchestratorPluginError(f"HTTP {exc.code}: Across Orchestrator request failed.") from exc
 
     def _cli_json(self, args: List[str]) -> Any:
         command = self._resolve_command()
@@ -875,11 +893,17 @@ class OrchestratorPluginManager:
             check=False,
         )
         if completed.returncode != 0:
-            raise OrchestratorPluginError((completed.stderr or completed.stdout or "").strip() or "CLI command failed")
+            logger.warning(
+                "Across Orchestrator CLI command failed with %s: %s",
+                completed.returncode,
+                (completed.stderr or completed.stdout or "").strip()[:1000],
+            )
+            raise OrchestratorPluginError("Across Orchestrator CLI command failed.")
         try:
             return json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            raise OrchestratorPluginError(f"CLI returned non-JSON output: {completed.stdout[:500]}") from exc
+            logger.warning("Across Orchestrator CLI returned non-JSON output: %s", completed.stdout[:1000])
+            raise OrchestratorPluginError("Across Orchestrator CLI returned non-JSON output.") from exc
 
 
 def _public_agent_card(card: Any) -> Dict[str, Any]:

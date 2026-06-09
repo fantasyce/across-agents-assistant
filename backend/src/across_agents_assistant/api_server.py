@@ -1136,11 +1136,12 @@ def _path_check(check_id: str, title: str, path: Path, *, expect_file: bool = Fa
             "metadata": {"path": str(path)},
         }
     except Exception as exc:
+        logger.warning("Unable to inspect diagnostic path %s: %s", path, exc)
         return {
             "id": check_id,
             "title": title,
             "status": "failed",
-            "detail": f"Unable to inspect {title}: {exc}",
+            "detail": _safe_error_message(f"Inspect {title}"),
             "remediation": "Check local app data directory permissions.",
             "metadata": {"path": str(path)},
         }
@@ -1682,6 +1683,9 @@ def _native_skill_request(req: Optional[NativeSkillInstallRequest] = None) -> Na
 
 
 def _handle_native_skill_error(exc: NativeSkillError) -> HTTPException:
+    if exc.status_code >= 500 and exc.status_code != 501:
+        logger.warning("Native skill command failed: %s", exc)
+        return HTTPException(status_code=exc.status_code, detail=_safe_error_message("Native skill command"))
     return HTTPException(status_code=exc.status_code, detail=str(exc))
 
 

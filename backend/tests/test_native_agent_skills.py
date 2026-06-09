@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from across_agents_assistant import api_server
 from across_agents_assistant.api_server import app
 from across_agents_assistant.native_agent_skills import (
+    NATIVE_SKILL_COMMAND_FAILED_PUBLIC_MESSAGE,
+    NativeSkillError,
     NativeSkillManager,
     NativeSkillRequest,
 )
@@ -28,6 +30,16 @@ class RecordingRunner:
         self.commands.append(list(command))
         key = tuple(command)
         return self.outputs.get(key, "")
+
+
+class FailingRunner:
+    def run(self, command, *, timeout=20):
+        raise NativeSkillError(
+            "Traceback (most recent call last):\n"
+            '  File "/Users/example/private/native.py", line 1, in run\n'
+            "RuntimeError: private native skill failure",
+            status_code=502,
+        )
 
 
 class MockLLMResponse:
@@ -189,6 +201,21 @@ def test_native_skill_context_excludes_unavailable_checked_skills(monkeypatch):
 
     assert capability_context.get("native_skills", {}).get("openclaw", []) == []
     assert "apple-notes" not in capability_context.get("prompt", "")
+
+
+def test_native_skill_list_all_sanitizes_command_failures(tmp_path):
+    manager = NativeSkillManager(
+        command_runner=FailingRunner(),
+        claude_user_skills_dir=tmp_path / "claude-skills",
+    )
+
+    states = manager.list_all_agent_skills()
+    encoded = str(states)
+
+    assert "Traceback (most recent call last)" not in encoded
+    assert "/Users/example/private/native.py" not in encoded
+    assert "private native skill failure" not in encoded
+    assert NATIVE_SKILL_COMMAND_FAILED_PUBLIC_MESSAGE in encoded
 
 
 def test_hermes_native_skill_parser_handles_table_output():
