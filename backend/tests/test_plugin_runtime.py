@@ -4,8 +4,17 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import across_agents_assistant.api_server as api_server
 from across_agents_assistant.api_server import app
-from across_agents_assistant.plugin_runtime import discover_across_plugins, inspect_across_plugin
+from across_agents_assistant.plugin_runtime import (
+    discover_across_plugins,
+    forget_context_memory,
+    inspect_across_plugin,
+    list_context_memories,
+    remember_context_memory,
+    run_context_plugin_lifecycle_action,
+    update_context_memory_status,
+)
 
 
 def _write_plugin_manifest(across_home: Path, plugin_id: str, kind: str) -> Path:
@@ -17,6 +26,9 @@ def _write_plugin_manifest(across_home: Path, plugin_id: str, kind: str) -> Path
         "id": plugin_id,
         "displayName": "Across Context" if plugin_id == "across-context" else "Across Orchestrator",
         "kind": kind,
+        "version": "1.2.3",
+        "compatibility": {"requiredHostVersion": ">=0.6.0"},
+        "lifecycle": {"actions": ["probe", "install", "repair", "uninstall"]},
         "entrypoints": {"mcp": {"command": plugin_id, "args": ["mcp"]}},
     }
     path = plugin_dir / "manifest.json"
@@ -41,6 +53,25 @@ def _write_fake_command(across_home: Path, name: str) -> Path:
     return path
 
 
+def _write_fake_context_memory_command(across_home: Path) -> Path:
+    bin_dir = across_home / "bin"
+    bin_dir.mkdir(parents=True)
+    path = bin_dir / "across-context"
+    path.write_text(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  list) printf '[{\"id\":\"mem_cli_1\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"CLI memory\",\"status\":\"pending\"}]\\n' ;;\n"
+        "  remember) printf '{\"memory\":{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"pending\"}}\\n' ;;\n"
+        "  update-status) printf '{\"updated\":[{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"active\"}],\"missing\":[]}\\n' ;;\n"
+        "  forget) printf '{\"forgotten\":1}\\n' ;;\n"
+        "  *) printf '{}\\n' ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
 def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     across_home = tmp_path / "across"
     manifest_path = _write_plugin_manifest(across_home, "across-context", "memory-provider")
@@ -53,6 +84,9 @@ def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     assert context["installed"] is True
     assert context["manifest_path"] == str(manifest_path)
     assert context["manifest"]["pluginApiVersion"] == "2026-06-10"
+    assert context["version"] == "1.2.3"
+    assert context["compatibility"]["requiredHostVersion"] == ">=0.6.0"
+    assert context["lifecycle"]["actions"] == ["probe", "install", "repair", "upgrade", "uninstall"]
     assert context["command_exists"] is False
     assert orchestrator["installed"] is False
     assert orchestrator["paths"]["data"] == str(across_home / "data" / "across-orchestrator")
@@ -91,3 +125,111 @@ def test_plugin_api_rejects_unknown_plugin():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Unknown Across plugin"
+
+
+def test_context_plugin_lifecycle_probe_and_uninstall(tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-context", "memory-provider")
+    command_path = _write_fake_command(across_home, "across-context")
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    probed = run_context_plugin_lifecycle_action("probe", env=env)
+    assert probed["available"] is True
+    assert probed["command"] == str(command_path)
+
+    uninstalled = run_context_plugin_lifecycle_action("uninstall", env=env)
+    assert uninstalled["removed"] is True
+    assert not command_path.exists()
+    assert not (across_home / "plugins" / "across-context").exists()
+    assert uninstalled["preserved_data"] == str(across_home / "data" / "across-context")
+
+
+def test_context_memory_client_uses_plugin_cli(tmp_path):
+    across_home = tmp_path / "across"
+    _write_fake_context_memory_command(across_home)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    memories = list_context_memories(status="pending", env=env)
+    assert memories[0]["id"] == "mem_cli_1"
+
+    created = remember_context_memory(text="Host apps use plugin CLI.", env=env)
+    assert created["id"] == "mem_cli_2"
+
+    updated = update_context_memory_status("mem_cli_2", "active", env=env)
+    assert updated["status"] == "active"
+
+    forgotten = forget_context_memory("mem_cli_2", env=env)
+    assert forgotten == {"forgotten": True, "id": "mem_cli_2"}
+
+
+def test_plugins_action_api_rejects_unsupported_action(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_HOME", str(tmp_path / "across"))
+    response = TestClient(app).post("/api/plugins/across-context/actions", json={"action": "explode"})
+
+    assert response.status_code == 400
+
+
+def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        api_server,
+        "remember_context_memory",
+        lambda **_: {
+            "id": "mem_api_1",
+            "scope": "global",
+            "type": "note",
+            "text": "AAA plugin lifecycle E2E should review pending memory.",
+            "status": "pending",
+        },
+    )
+    monkeypatch.setattr(
+        api_server,
+        "list_context_memories",
+        lambda **_: [{
+            "id": "mem_api_1",
+            "scope": "global",
+            "type": "note",
+            "text": "AAA plugin lifecycle E2E should review pending memory.",
+            "status": "pending",
+        }],
+    )
+    monkeypatch.setattr(
+        api_server,
+        "update_context_memory_status",
+        lambda memory_id, status: {
+            "id": memory_id,
+            "scope": "global",
+            "type": "note",
+            "text": "AAA plugin lifecycle E2E should review pending memory.",
+            "status": status,
+        },
+    )
+    monkeypatch.setattr(
+        api_server,
+        "forget_context_memory",
+        lambda memory_id: {"forgotten": True, "id": memory_id},
+    )
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/memory/remember",
+        json={
+            "text": "AAA plugin lifecycle E2E should review pending memory.",
+            "scope": "global",
+            "type": "note",
+            "status": "pending",
+        },
+    )
+    assert created.status_code == 200
+    memory_id = created.json()["memory"]["id"]
+
+    pending = client.get("/api/memory/memories", params={"status": "pending"})
+    assert pending.status_code == 200
+    assert [item["id"] for item in pending.json()["memories"]] == [memory_id]
+
+    approved = client.post(f"/api/memory/memories/{memory_id}/status", json={"status": "active"})
+    assert approved.status_code == 200
+    assert approved.json()["memory"]["status"] == "active"
+
+    forgotten = client.post(f"/api/memory/memories/{memory_id}/forget")
+    assert forgotten.status_code == 200
+    assert forgotten.json()["forgotten"] is True

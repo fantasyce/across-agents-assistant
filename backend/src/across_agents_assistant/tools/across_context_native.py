@@ -219,6 +219,17 @@ class AcrossContextVault:
                 return updated
         raise ValueError(f"Memory not found: {memory_id}")
 
+    def forget(self, memory_id: str) -> Dict[str, Any]:
+        self.init()
+        removed = False
+        for file in self.memory_files():
+            memories = read_jsonl(file)
+            next_memories = [entry for entry in memories if entry.get("id") != memory_id]
+            if len(next_memories) != len(memories):
+                write_jsonl(file, next_memories)
+                removed = True
+        return {"forgotten": removed, "id": memory_id}
+
     def memory_files(self) -> Iterable[Path]:
         yield self.home / "global" / "memories.jsonl"
         projects_root = self.home / "projects"

@@ -105,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.6.0` | Plugin Center for Across plugin lifecycle management, external Across Context memory governance through the plugin CLI, and managed install sources aligned to Across Context `v0.5.0` and Across Orchestrator `v0.4.0`. |
 | `0.5.1` | Tool approval now preserves successful MCP/local tool results even if the automatic continuation hits a gateway fallback; managed Across Orchestrator installs use the `v0.3.1` legacy-data backfill fix. |
 | `0.5.0` | Unified Across ecosystem runtime under `~/.across`, external Across Context MCP plugin data under `~/.across/data/across-context`, sidecar-first Across Orchestrator under `~/.across/plugins/across-orchestrator`, and AAA host discovery through `~/.across/bin`. |
 | `0.4.3` | Plugin-required Across Orchestrator slot with one-click managed install, external HTTP/CLI task lifecycle, app-grade Release E2E evidence, packaged-app installer fix, and no built-in task-orchestration fallback for new submissions. |
@@ -148,7 +149,12 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.5.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.6.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.6.0` plugin lifecycle work adds a Plugin Center for installing,
+repairing, probing, and uninstalling Across ecosystem plugins. Shared memory
+review now goes through the external Across Context CLI contract, so the host
+does not need to own the plugin's vault internals.
 
 The `0.5.0` ecosystem work standardizes every Across-owned runtime path under
 `~/.across`. Across Agents Assistant stores its own data in
@@ -333,7 +339,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.3.1
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.4.0
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ```
