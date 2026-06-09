@@ -38,12 +38,16 @@ def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
 
 _ERROR_DETAIL_KEYS = {
     "error",
+    "errors",
     "error_message",
     "exception",
     "traceback",
     "stack_trace",
+    "stacktrace",
     "output_tail",
 }
+_ERROR_DETAIL_KEY_PARTS = ("error", "exception", "traceback", "stack_trace", "stacktrace", "output_tail")
+_PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
 
 
 def _sanitize_public_error_text(value: Any) -> Any:
@@ -57,7 +61,11 @@ def _sanitize_public_error_text(value: Any) -> Any:
 
 def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     lowered = key.lower()
-    if lowered in _ERROR_DETAIL_KEYS:
+    if (
+        lowered in _ERROR_DETAIL_KEYS
+        or lowered in _PUBLIC_TEXT_DETAIL_KEYS
+        or any(part in lowered for part in _ERROR_DETAIL_KEY_PARTS)
+    ):
         return _sanitize_public_error_text(value)
     if isinstance(value, dict):
         return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
@@ -426,6 +434,7 @@ def _orchestrator_plugin_status(*, probe: bool = True) -> Dict[str, Any]:
         return get_orchestrator_plugin_manager().implementation_status(probe=probe)
     except Exception as exc:
         logger.warning("Failed to inspect Across Orchestrator plugin: %s", exc)
+        public_message = _safe_error_message("Across Orchestrator plugin inspection")
         return {
             "mode": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_MODE") or "external",
             "implementation": "unknown",
@@ -433,8 +442,8 @@ def _orchestrator_plugin_status(*, probe: bool = True) -> Dict[str, Any]:
             "transport": None,
             "endpoint": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT"),
             "command": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_COMMAND") or "across-orchestrator",
-            "connection_note": f"Unable to inspect Across Orchestrator plugin: {exc}",
-            "error": str(exc),
+            "connection_note": public_message,
+            "error": public_message,
         }
 
 
@@ -643,9 +652,12 @@ async def connect_mcp_server(req: MCPConnectRequest):
                 "connection_note": connection_note,
             }
         else:
-            raise HTTPException(status_code=500, detail=error_msg or f"Failed to connect to MCP server: {req.server_id}")
+            raise HTTPException(
+                status_code=500,
+                detail=_sanitize_public_error_text(error_msg or f"Failed to connect to MCP server: {req.server_id}"),
+            )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Connect MCP server", e)
 
 class MCPDisconnectRequest(BaseModel):
     server_id: str
@@ -657,7 +669,7 @@ async def disconnect_mcp_server(req: MCPDisconnectRequest):
         await mcp_manager.disconnect_server(req.server_id)
         return {"status": "success"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Disconnect MCP server", e)
 
 class MCPContext(BaseModel):
     server_id: str
@@ -1304,7 +1316,7 @@ async def get_readiness():
 @app.get("/api/diagnostics/startup")
 async def get_startup_diagnostics():
     """Return a non-secret first-run and packaged-app startup diagnostic report."""
-    return _build_startup_diagnostics()
+    return _sanitize_public_payload(_build_startup_diagnostics())
 
 
 @app.get("/api/orchestrator/plugin")
@@ -1312,10 +1324,10 @@ async def get_orchestrator_plugin_status():
     """Return Across Orchestrator runtime and one-click install status."""
     manager = get_orchestrator_plugin_manager()
     runtime = manager.implementation_status(probe=True)
-    return {
+    return _sanitize_public_payload({
         "runtime": runtime,
         "install": runtime.get("install") or manager.install_status(),
-    }
+    })
 
 
 @app.post("/api/orchestrator/plugin/install")
@@ -1325,20 +1337,20 @@ async def install_orchestrator_plugin():
     try:
         install = await asyncio.to_thread(manager.install_plugin)
         runtime = manager.implementation_status(probe=True)
-        return {
+        return _sanitize_public_payload({
             "runtime": runtime,
             "install": install,
-        }
+        })
     except Exception as exc:
         logger.exception("Across Orchestrator plugin installation failed")
         runtime = manager.implementation_status(probe=False)
         raise HTTPException(
             status_code=500,
-            detail={
-                "message": _sanitize_public_error_text(exc),
+            detail=_sanitize_public_payload({
+                "message": _safe_error_message("Across Orchestrator plugin installation"),
                 "runtime": runtime,
                 "install": manager.install_status(),
-            },
+            }),
         )
 
 
@@ -1474,7 +1486,7 @@ async def get_chat_history(session_id: str, limit: int = 30, offset: int = 0):
             "has_more": has_more
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get chat history", e)
 
 def _session_info_from_row(s: Dict[str, Any]) -> SessionInfo:
     preview = s.get("first_user_message")
@@ -1523,7 +1535,7 @@ async def list_projects(session_limit: int = 5):
             projects.append(_project_info_from_row(p, sessions=sessions))
         return ProjectListResponse(projects=projects)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List projects", e)
 
 @app.post("/api/projects/blank", response_model=ProjectInfo)
 async def create_blank_project(req: CreateBlankProjectRequest):
@@ -1531,7 +1543,7 @@ async def create_blank_project(req: CreateBlankProjectRequest):
         project = persistence.create_blank_project(req.name)
         return _project_info_from_row(project)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Create blank project", e)
 
 @app.post("/api/projects/from-folder", response_model=ProjectInfo)
 async def create_folder_project(req: CreateFolderProjectRequest):
@@ -1591,7 +1603,7 @@ async def list_sessions(limit: int = 50, offset: int = 0, project_id: Optional[s
             has_more=safe_offset + len(session_infos) < total,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List sessions", e)
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
@@ -1600,7 +1612,7 @@ async def delete_session(session_id: str):
         persistence.clear_session(session_id)
         return {"status": "success", "session_id": session_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Delete session", e)
 
 @app.patch("/api/sessions/{session_id}/rename")
 async def rename_session(session_id: str, req: RenameSessionRequest):
@@ -1609,7 +1621,7 @@ async def rename_session(session_id: str, req: RenameSessionRequest):
         persistence.rename_session(session_id, req.name)
         return {"status": "success", "session_id": session_id, "name": req.name}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Rename session", e)
 
 @app.patch("/api/sessions/{session_id}/pin")
 async def pin_session(session_id: str, req: PinRequest):
@@ -1621,7 +1633,7 @@ async def pin_session(session_id: str, req: PinRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Pin session", e)
 
 @app.get("/api/tools", response_model=List[Dict[str, Any]])
 async def get_tools():
@@ -2230,7 +2242,7 @@ async def list_llm_providers():
             ))
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List LLM providers", e)
 
 @app.get("/api/llm/models/{provider_id}", response_model=List[LLMModelInfo])
 async def list_llm_models(provider_id: str, refresh: bool = True):
@@ -2250,8 +2262,10 @@ async def list_llm_models(provider_id: str, refresh: bool = True):
             )
             for m in models
         ]
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List LLM models", e)
 
 @app.post("/api/llm/switch")
 async def switch_llm_provider(req: LLMSwitchRequest):
@@ -2265,7 +2279,7 @@ async def switch_llm_provider(req: LLMSwitchRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Switch LLM provider", e)
 
 @app.get("/api/llm/status")
 async def get_llm_status():
@@ -2281,7 +2295,7 @@ async def get_llm_status():
             "available": gw.get_current_adapter().is_available() if gw.get_current_adapter() else False
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get LLM status", e)
 
 class LLMChatRequest(BaseModel):
     message: str
@@ -2319,7 +2333,7 @@ async def llm_chat(req: LLMChatRequest):
             usage=response.usage
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("LLM chat", e)
 
 @app.post("/api/chat/cancel")
 async def cancel_chat(req: ChatCancelRequest):
@@ -2331,7 +2345,7 @@ async def cancel_chat(req: ChatCancelRequest):
             return {"status": "success", "message": "Chat cancelled"}
         return {"status": "ignored", "message": "No active chat found to cancel"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Cancel chat", e)
 
 
 
@@ -2978,7 +2992,7 @@ async def get_tool_authorizations():
         auths = persistence.get_all_authorizations()
         return {"authorizations": auths}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get tool authorizations", e)
 
 class RevokeRequest(BaseModel):
     tool_name: str
@@ -2990,7 +3004,7 @@ async def revoke_tool_authorization(req: RevokeRequest):
         persistence.set_tool_authorization(req.tool_name, False)
         return {"status": "success", "tool_name": req.tool_name}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Revoke tool authorization", e)
 
 class SubTaskInfo(BaseModel):
     subtask_id: str
@@ -4568,7 +4582,7 @@ async def dispatch_task(task_id: str, req: TaskDispatchRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Dispatch ready subtasks", e)
 
 @app.get("/api/tasks/page", response_model=TaskPageResponse)
 async def list_task_summaries(limit: int = 50, offset: int = 0):
@@ -4731,7 +4745,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
             has_more=offset + len(page_summaries) < total,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List task summaries", e)
 
 
 def _task_row_for_release_evaluation(task: "Task") -> Dict[str, Any]:
@@ -5028,18 +5042,18 @@ async def get_release_evaluation(limit: int = 100):
     """
     try:
         safe_limit = max(1, min(int(limit or 100), 500))
-        return build_release_evaluation_summary(_collect_release_task_rows(safe_limit))
+        return _sanitize_public_payload(build_release_evaluation_summary(_collect_release_task_rows(safe_limit)))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get release evaluation", e)
 
 
 @app.post("/api/release/verification")
 async def run_release_verification():
     """Create a non-secret release-candidate verification report."""
     try:
-        return _build_release_verification_report(write_report=True)
+        return _sanitize_public_payload(_build_release_verification_report(write_report=True))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Run release verification", e)
 
 @app.get("/api/tasks/{task_id}", response_model=TaskInfo)
 async def get_task(task_id: str):
@@ -5077,7 +5091,7 @@ async def get_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get task", e)
 
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
@@ -5125,7 +5139,7 @@ async def list_tasks():
             reverse=True,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("List tasks", e)
 
 @app.get("/api/tasks/{task_id}/jobs/{job_id}", response_model=JobInfo)
 async def get_job(task_id: str, job_id: str):
@@ -5148,7 +5162,7 @@ async def get_job(task_id: str, job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get job", e)
 
 @app.post("/api/tasks/{task_id}/jobs/{job_id}/cancel")
 async def cancel_job(task_id: str, job_id: str):
@@ -5177,7 +5191,7 @@ async def cancel_job(task_id: str, job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Cancel job", e)
 
 
 class AutoTaskRequest(BaseModel):
@@ -5283,7 +5297,7 @@ async def _submit_auto_orchestrated_task(
             raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             logger.exception("External Across Orchestrator task submission failed")
-            raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+            raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator task submission"))
     raise _external_orchestrator_unavailable_response(plugin_status)
 
 
@@ -5328,7 +5342,7 @@ async def create_release_e2e_task(req: ReleaseE2ETaskRequest):
             raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             logger.exception("External Across Orchestrator Release E2E submission failed")
-            raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+            raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator Release E2E submission"))
     raise HTTPException(
         status_code=503,
         detail=str(plugin_status.get("connection_note") or "External Across Orchestrator is unavailable."),
@@ -5359,7 +5373,8 @@ async def run_external_task(task_id: str):
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=_sanitize_public_error_text(exc))
+        logger.exception("External Across Orchestrator task run failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator task run"))
 
 
 @app.get("/api/tasks/{task_id}/status")
@@ -5535,7 +5550,7 @@ async def get_task_status(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get task status", e)
 
 
 def _comma_separated_values(value: Optional[str]) -> List[str]:
@@ -5689,7 +5704,8 @@ async def task_stream(task_id: str):
                 elif task_info["status"] == TaskStatus.FAILED.value:
                     yield f"data: {json.dumps({'type': 'task_failed', 'taskId': task_id, 'error': task_info.get('error') or 'Task failed'})}\n\n"
             except Exception as exc:
-                yield f"data: {json.dumps({'type': 'error', 'content': _sanitize_public_error_text(exc)})}\n\n"
+                logger.exception("External task stream failed")
+                yield f"data: {json.dumps({'type': 'error', 'content': _safe_error_message('External task stream')})}\n\n"
 
         return StreamingResponse(
             external_event_generator(),
@@ -5862,7 +5878,7 @@ async def pause_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Pause task", e)
 
 @app.post("/api/tasks/{task_id}/resume")
 async def resume_task(task_id: str):
@@ -5875,7 +5891,7 @@ async def resume_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Resume task", e)
 
 @app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str):
@@ -5889,7 +5905,7 @@ async def cancel_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Cancel task", e)
 
 
 @app.get("/api/resumable_tasks", response_model=List[Dict[str, Any]])
@@ -5905,7 +5921,7 @@ async def get_resumable_tasks():
         resumable = _task_state.get_resumable_tasks()
         return resumable
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Get resumable tasks", e)
 
 
 @app.post("/api/tasks/{task_id}/restore")
@@ -5940,7 +5956,7 @@ async def restore_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _safe_http_500("Restore task", e)
 
 
 if __name__ == "__main__":
