@@ -1,0 +1,401 @@
+import SwiftUI
+
+struct PluginLifecycleView: View {
+    @StateObject private var viewModel = PluginLifecycleViewModel()
+    @EnvironmentObject private var appPreferences: AppPreferences
+    @Environment(\.colorScheme) private var colorScheme
+
+    var onClose: (() -> Void)? = nil
+    var embeddedInHub: Bool = false
+
+    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
+    private var cardColor: Color { colorScheme == .dark ? Color(hex: "202227") : Color(hex: "fafbfc") }
+    private var fieldColor: Color { colorScheme == .dark ? Color(hex: "15171b") : Color.black.opacity(0.045) }
+    private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10) }
+    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
+    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !embeddedInHub {
+                standaloneHeader
+                Divider().opacity(0.35)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
+                    titleRow
+                    feedbackRows
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(viewModel.plugins) { plugin in
+                            pluginCard(plugin)
+                        }
+                    }
+                    memorySection
+                }
+                .padding(SettingsHubPageLayout.contentPadding)
+                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+            .overlay {
+                if viewModel.isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(18)
+                        .background(cardColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(bgColor)
+        .background(
+            Group {
+                if !embeddedInHub {
+                    VisualEffectView().ignoresSafeArea()
+                }
+            }
+        )
+        .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
+        .task {
+            await viewModel.load()
+        }
+    }
+
+    private var standaloneHeader: some View {
+        HStack {
+            CustomTrafficLights(onClose: onClose)
+            Spacer()
+            Text(appPreferences.text("plugins.title"))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(textColor)
+            Spacer()
+            Spacer().frame(width: 50)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 56)
+        .background(
+            ZStack {
+                bgColor.opacity(colorScheme == .dark ? 0.84 : 0.96)
+                WindowDragView().contentShape(Rectangle())
+            }
+        )
+    }
+
+    private var titleRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(appPreferences.text("plugins.title"))
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(textColor)
+                Text(appPreferences.text("plugins.subtitle"))
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await viewModel.load(probe: true) }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 32, height: 30)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(textColor)
+            .background(fieldColor)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .help(appPreferences.text("settings.refresh"))
+        }
+    }
+
+    @ViewBuilder
+    private var feedbackRows: some View {
+        if let message = viewModel.message {
+            banner(message, color: Color(hex: "30d158"))
+        }
+        if let error = viewModel.errorMessage {
+            banner(error, color: Color(hex: "ff453a"))
+        }
+    }
+
+    private func banner(_ text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(textColor)
+                .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(color.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.18), lineWidth: 1))
+    }
+
+    private func pluginCard(_ plugin: AcrossPluginStatus) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: iconName(for: plugin.pluginId))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(accentColor.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(plugin.displayName)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(textColor)
+                        .lineLimit(1)
+                    Text(plugin.kind)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                statusChip(plugin)
+            }
+
+            HStack(spacing: 8) {
+                metadataChip(plugin.version?.isEmpty == false ? "v\(plugin.version!)" : appPreferences.text("plugins.versionUnknown"))
+                metadataChip(plugin.commandExists ? appPreferences.text("plugins.commandReady") : appPreferences.text("plugins.commandMissing"))
+                metadataChip(plugin.manifestExists ? appPreferences.text("plugins.manifestReady") : appPreferences.text("plugins.manifestMissing"))
+            }
+
+            pathRow(appPreferences.text("plugins.path.runtime"), plugin.paths.plugin)
+            pathRow(appPreferences.text("plugins.path.data"), plugin.paths.data)
+            if let required = plugin.compatibility?.requiredHostVersion {
+                pathRow(appPreferences.text("plugins.compatibility"), required)
+            }
+
+            HStack(spacing: 8) {
+                actionButton("probe", icon: "waveform.path.ecg", title: appPreferences.text("plugins.action.probe"), plugin: plugin)
+                if plugin.installed {
+                    actionButton("repair", icon: "cross.case", title: appPreferences.text("plugins.action.repair"), plugin: plugin)
+                    actionButton("uninstall", icon: "trash", title: appPreferences.text("plugins.action.uninstall"), plugin: plugin)
+                } else {
+                    actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
+                }
+            }
+        }
+        .padding(14)
+        .frame(minHeight: 216, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(cardColor)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(lineColor, lineWidth: 1))
+    }
+
+    private func statusChip(_ plugin: AcrossPluginStatus) -> some View {
+        let ready = plugin.installed && plugin.available
+        let color = ready ? Color(hex: "30d158") : plugin.installed ? Color(hex: "ff9f0a") : Color.secondary
+        return HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(statusText(plugin))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(color)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(color.opacity(0.11))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func metadataChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(fieldColor)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func pathRow(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(textColor.opacity(0.78))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func actionButton(_ action: String, icon: String, title: String, plugin: AcrossPluginStatus) -> some View {
+        Button {
+            Task { await viewModel.runAction(action, for: plugin) }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 30, height: 28)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(textColor)
+        .background(fieldColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .help(title)
+        .disabled(viewModel.isWorking)
+    }
+
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(appPreferences.text("plugins.memory.title"))
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(textColor)
+                    Text(appPreferences.text("plugins.memory.subtitle"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Picker("", selection: $viewModel.memoryStatusFilter) {
+                    Text(appPreferences.text("plugins.memory.pending")).tag("pending")
+                    Text(appPreferences.text("plugins.memory.active")).tag("active")
+                    Text(appPreferences.text("plugins.memory.archived")).tag("archived")
+                    Text(appPreferences.text("plugins.memory.all")).tag("")
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .onChange(of: viewModel.memoryStatusFilter) {
+                    Task { await viewModel.loadMemories() }
+                }
+                Button {
+                    Task { await viewModel.loadMemories() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 30, height: 28)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(textColor)
+                .background(fieldColor)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .help(appPreferences.text("settings.refresh"))
+            }
+
+            HStack(spacing: 10) {
+                TextField(appPreferences.text("plugins.memory.placeholder"), text: $viewModel.newMemoryText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(textColor)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(fieldColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                Button {
+                    Task { await viewModel.rememberPendingMemory() }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 32, height: 30)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(textColor)
+                .background(accentColor.opacity(0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .help(appPreferences.text("plugins.memory.add"))
+                .disabled(viewModel.newMemoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            VStack(spacing: 10) {
+                if viewModel.memories.isEmpty {
+                    Text(appPreferences.text("plugins.memory.empty"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 48, alignment: .center)
+                } else {
+                    ForEach(viewModel.memories) { memory in
+                        memoryRow(memory)
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func memoryRow(_ memory: AcrossMemoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    metadataChip(memory.status)
+                    metadataChip(memory.scope)
+                    metadataChip(memory.type)
+                    if let projectName = memory.projectName {
+                        metadataChip(projectName)
+                    }
+                }
+                Text(memory.text)
+                    .font(.system(size: 12))
+                    .foregroundColor(textColor)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            HStack(spacing: 6) {
+                memoryAction(memory, status: "active", icon: "checkmark", title: appPreferences.text("plugins.memory.approve"))
+                memoryAction(memory, status: "archived", icon: "archivebox", title: appPreferences.text("plugins.memory.archive"))
+                Button {
+                    Task { await viewModel.forgetMemory(memory) }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 26)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(textColor)
+                .background(fieldColor)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .help(appPreferences.text("plugins.memory.forget"))
+            }
+        }
+        .padding(12)
+        .background(fieldColor.opacity(colorScheme == .dark ? 0.7 : 1.0))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func memoryAction(_ memory: AcrossMemoryEntry, status: String, icon: String, title: String) -> some View {
+        Button {
+            Task { await viewModel.updateMemory(memory, status: status) }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 28, height: 26)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(textColor)
+        .background(fieldColor)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .help(title)
+    }
+
+    private func iconName(for id: String) -> String {
+        switch id {
+        case "across-context": return "memorychip.fill"
+        case "across-orchestrator": return "point.3.connected.trianglepath.dotted"
+        default: return "puzzlepiece.extension.fill"
+        }
+    }
+
+    private func statusText(_ plugin: AcrossPluginStatus) -> String {
+        if plugin.installed && plugin.available { return appPreferences.text("plugins.status.ready") }
+        if plugin.installed { return appPreferences.text("plugins.status.installed") }
+        return appPreferences.text("plugins.status.missing")
+    }
+}

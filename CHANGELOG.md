@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 - 2026-06-10
+
+### Added
+
+- Plugin Center UI for Across plugin discovery, install, repair, uninstall,
+  status probing, compatibility metadata, and shared-memory review.
+- Shared memory governance endpoints that call the external Across Context
+  plugin CLI instead of directly owning the plugin's vault implementation.
+- Generic plugin lifecycle action API for `across-context` and
+  `across-orchestrator`.
+
+### Changed
+
+- Managed Across Context install source now targets `v0.5.0`.
+- Managed Across Orchestrator install source now targets `v0.4.0`.
+- The AAA host remains a thin console: task orchestration and shared memory are
+  unavailable when their external plugins are not installed.
+
 ## 0.5.1 - 2026-06-09
 
 ### Fixed

@@ -179,7 +179,16 @@ from .orchestrator_plugin import (
     external_evidence_to_app_bundle,
     external_task_to_app_info,
 )
-from .plugin_runtime import discover_across_plugins, inspect_across_plugin
+from .plugin_runtime import (
+    PluginLifecycleError,
+    discover_across_plugins,
+    forget_context_memory,
+    inspect_across_plugin,
+    list_context_memories,
+    remember_context_memory,
+    run_context_plugin_lifecycle_action,
+    update_context_memory_status,
+)
 
 # Global Task Manager instances
 _task_state = TaskState()
@@ -1167,6 +1176,60 @@ def _diagnostic_summary(checks: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _startup_plugin_summary(plugin: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a safe startup-diagnostics view of a plugin status payload."""
+    if not isinstance(plugin, dict):
+        return {}
+
+    install = plugin.get("install") if isinstance(plugin.get("install"), dict) else {}
+    lifecycle = plugin.get("lifecycle") if isinstance(plugin.get("lifecycle"), dict) else {}
+    compatibility = plugin.get("compatibility") if isinstance(plugin.get("compatibility"), dict) else {}
+
+    summary: Dict[str, Any] = {
+        "plugin_id": plugin.get("plugin_id") or plugin.get("pluginId") or plugin.get("id"),
+        "name": plugin.get("name"),
+        "status": plugin.get("status"),
+        "installed": plugin.get("installed"),
+        "available": plugin.get("available"),
+        "version": plugin.get("version"),
+        "mode": plugin.get("mode"),
+        "implementation": plugin.get("implementation"),
+        "transport": plugin.get("transport"),
+        "endpoint": plugin.get("endpoint"),
+        "manifest_exists": plugin.get("manifest_exists", plugin.get("manifestExists")),
+        "command_exists": plugin.get("command_exists", plugin.get("commandExists")),
+        "command_available": plugin.get("command_available"),
+        "task_index_count": plugin.get("task_index_count", plugin.get("taskCount")),
+        "data_path": plugin.get("data_path", plugin.get("dataPath")),
+        "connection_note": plugin.get("connection_note"),
+        "protocols": plugin.get("protocols"),
+        "capabilities": plugin.get("capabilities"),
+        "install": {
+            "installable": install.get("installable"),
+            "installed": install.get("installed"),
+            "install_dir": install.get("install_dir", install.get("installDir")),
+        },
+        "lifecycle": {
+            "actions": lifecycle.get("actions"),
+            "preserves_data_on_uninstall": lifecycle.get(
+                "preserves_data_on_uninstall",
+                lifecycle.get("preservesDataOnUninstall"),
+            ),
+        },
+        "compatibility": {
+            "required_host_version": compatibility.get(
+                "required_host_version",
+                compatibility.get("requiredHostVersion"),
+            ),
+            "plugin_api_version": compatibility.get(
+                "plugin_api_version",
+                compatibility.get("pluginApiVersion"),
+            ),
+        },
+    }
+    return {key: value for key, value in summary.items() if value not in (None, {}, [])}
+
+
 def _build_startup_diagnostics() -> Dict[str, Any]:
     """Return a read-only startup report for packaged-app and first-run checks."""
     from . import __version__
@@ -1242,7 +1305,11 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
     })
 
     orchestrator_plugin = _orchestrator_plugin_status(probe=True)
-    ecosystem_plugins = discover_across_plugins(probe=False)
+    orchestrator_plugin_summary = _startup_plugin_summary(orchestrator_plugin)
+    ecosystem_plugins = [
+        _startup_plugin_summary(plugin)
+        for plugin in discover_across_plugins(probe=False)
+    ]
     plugin_available = bool(orchestrator_plugin.get("available"))
     plugin_required = str(orchestrator_plugin.get("mode") or "").replace("-", "_") == "external"
     if plugin_available:
@@ -1298,7 +1365,7 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
             "persistence_initialized": _task_persistence_initialized,
             "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
-            "orchestrator_plugin": orchestrator_plugin,
+            "orchestrator_plugin": orchestrator_plugin_summary,
             "ecosystem_plugins": ecosystem_plugins,
         },
         "keys": key_readiness,
@@ -1338,6 +1405,134 @@ async def get_across_plugin(plugin_id: str, probe: bool = False):
         return _sanitize_public_payload(inspect_across_plugin(plugin_id, probe=probe))
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Across plugin")
+
+
+class PluginLifecycleActionRequest(BaseModel):
+    action: str
+
+
+@app.post("/api/plugins/{plugin_id}/actions")
+async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionRequest):
+    """Run an explicit user-triggered plugin lifecycle action."""
+    action = str(req.action or "").strip().lower().replace("-", "_")
+    if action == "refresh":
+        action = "probe"
+    if action not in {"probe", "install", "repair", "upgrade", "uninstall"}:
+        raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
+    try:
+        if plugin_id == "across-context":
+            result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
+            return _sanitize_public_payload(result)
+        if plugin_id == "across-orchestrator":
+            manager = get_orchestrator_plugin_manager()
+            if action in {"probe", "refresh"}:
+                return _sanitize_public_payload(manager.implementation_status(probe=True))
+            if action in {"install", "repair", "upgrade"}:
+                install = await asyncio.to_thread(manager.install_plugin)
+                runtime = manager.implementation_status(probe=True)
+                return _sanitize_public_payload({"runtime": runtime, "install": install})
+            if action == "uninstall":
+                result = await asyncio.to_thread(manager.uninstall_plugin)
+                return _sanitize_public_payload(result)
+        raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
+    except HTTPException:
+        raise
+    except (PluginLifecycleError, OrchestratorPluginUnavailable):
+        raise HTTPException(status_code=500, detail=_safe_error_message("Plugin lifecycle action"))
+    except Exception as exc:
+        raise _safe_http_500("Plugin lifecycle action", exc)
+
+
+class MemoryRememberRequest(BaseModel):
+    text: str
+    projectRoot: Optional[str] = None
+    scope: str = "global"
+    type: str = "note"
+    status: str = "pending"
+    tags: List[str] = Field(default_factory=list)
+
+
+class MemoryStatusRequest(BaseModel):
+    status: str
+
+
+@app.get("/api/memory/memories")
+async def list_across_context_memories(
+    projectRoot: Optional[str] = None,
+    status: Optional[str] = None,
+    scope: Optional[str] = None,
+    type: Optional[str] = None,
+):
+    """List Across Context memories from the shared plugin vault."""
+    try:
+        memories = await asyncio.to_thread(
+            list_context_memories,
+            project_root=projectRoot,
+            status=status,
+            scope=scope,
+            type=type,
+        )
+        return _sanitize_public_payload({"memories": memories})
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+    except Exception as exc:
+        raise _safe_http_500("List Across Context memories", exc)
+
+
+@app.post("/api/memory/remember")
+async def remember_across_context_memory(req: MemoryRememberRequest):
+    """Create a conservative pending Across Context memory."""
+    try:
+        entry = await asyncio.to_thread(
+            remember_context_memory,
+            text=req.text,
+            project_root=req.projectRoot,
+            scope=req.scope,
+            type=req.type,
+            status=req.status,
+            tags=req.tags,
+        )
+        return _sanitize_public_payload({"memory": entry})
+    except PluginLifecycleError as exc:
+        if "not installed" in str(exc).lower():
+            raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+        raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
+    except Exception as exc:
+        raise _safe_http_500("Remember Across Context memory", exc)
+
+
+@app.post("/api/memory/memories/{memory_id}/status")
+async def update_across_context_memory_status(memory_id: str, req: MemoryStatusRequest):
+    """Approve, archive, expire, or pin a memory by changing its lifecycle status."""
+    try:
+        entry = await asyncio.to_thread(update_context_memory_status, memory_id, req.status)
+        return _sanitize_public_payload({"memory": entry})
+    except PluginLifecycleError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail="Memory not found")
+        if "not installed" in str(exc).lower():
+            raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+        raise HTTPException(status_code=404, detail="Memory not found")
+    except Exception as exc:
+        raise _safe_http_500("Update Across Context memory", exc)
+
+
+@app.post("/api/memory/memories/{memory_id}/forget")
+async def forget_across_context_memory(memory_id: str):
+    """Forget one Across Context memory by id."""
+    try:
+        result = await asyncio.to_thread(forget_context_memory, memory_id)
+        if not result.get("forgotten"):
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return _sanitize_public_payload(result)
+    except HTTPException:
+        raise
+    except PluginLifecycleError as exc:
+        if "not installed" in str(exc).lower():
+            raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+        raise HTTPException(status_code=404, detail="Memory not found")
+    except Exception as exc:
+        raise _safe_http_500("Forget Across Context memory", exc)
 
 
 @app.get("/api/orchestrator/plugin")

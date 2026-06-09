@@ -39,7 +39,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.3.1"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.4.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -277,6 +277,21 @@ class OrchestratorPluginInstaller:
                 }
             )
             raise
+
+    def uninstall(self) -> Dict[str, Any]:
+        shutil.rmtree(self.install_dir, ignore_errors=True)
+        try:
+            self.wrapper_path.unlink()
+        except FileNotFoundError:
+            pass
+        return {
+            "plugin_id": ORCHESTRATOR_PLUGIN_ID,
+            "status": "not_installed",
+            "removed": True,
+            "install_dir": str(self.install_dir),
+            "wrapper": str(self.wrapper_path),
+            "preserved_data": str(ecosystem_home() / "data" / ORCHESTRATOR_PLUGIN_ID),
+        }
 
     def _run(self, args: List[str], logs: List[str], label: str) -> None:
         logs.append(label)
@@ -539,6 +554,13 @@ class OrchestratorPluginManager:
 
     def install_plugin(self) -> Dict[str, Any]:
         status = self.installer.install()
+        self._transport = None
+        self._endpoint = None
+        return status
+
+    def uninstall_plugin(self) -> Dict[str, Any]:
+        self.shutdown()
+        status = self.installer.uninstall()
         self._transport = None
         self._endpoint = None
         return status

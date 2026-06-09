@@ -7,6 +7,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     case models
     case capabilities
     case mcp
+    case plugins
     case tools
     case settings
 
@@ -18,6 +19,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .mcp: return "square.grid.2x2"
+        case .plugins: return "puzzlepiece.extension.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .settings: return "gearshape"
         }
@@ -30,6 +32,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
         case .models: return preferences.text("settings.models")
         case .capabilities: return preferences.text("settings.capabilities")
         case .mcp: return preferences.text("settings.mcp")
+        case .plugins: return preferences.text("settings.plugins")
         case .tools: return preferences.text("settings.tools")
         case .settings: return preferences.text("settings.preferences")
         }
@@ -131,6 +134,9 @@ struct SettingsHubView: View {
                 .environmentObject(preferences)
         case .mcp:
             MCPPreferencesView(onClose: nil, embeddedInHub: true)
+                .environmentObject(preferences)
+        case .plugins:
+            PluginLifecycleView(onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)
         case .tools:
             ToolPermissionsView(onClose: nil, embeddedInHub: true)
