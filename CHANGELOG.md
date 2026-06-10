@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 - 2026-06-11
+
+### Added
+
+- Agent Loop Runtime integration for the external Across Orchestrator plugin,
+  including loop start, run, status, events, and Plugin Center probe support.
+- Plugin Center capability badges for Agent Loop, checkpoint, and memory-hook
+  support.
+- Managed install source alignment for Across Context `v0.6.0` and Across
+  Orchestrator `v0.5.0`.
+
+### Changed
+
+- Task orchestration remains external-plugin only, but hosts can now use the
+  loop protocol directly instead of relying only on task-level lifecycle APIs.
+- Shared-memory governance is exposed as an external Across Context loop-memory
+  policy surface instead of app-owned vault inspection.
+
 ## 0.6.0 - 2026-06-10
 
 ### Added

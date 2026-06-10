@@ -136,7 +136,9 @@ class FakeHTTPOrchestrator:
     def __init__(self, project_dir: str):
         self.project_dir = project_dir
         self.task_id = "task-api-external"
+        self.loop_id = "loop-api-external"
         self.status = "pending"
+        self.loop_status = "pending"
         self.requests = []
         self.port = _free_port()
         owner = self
@@ -173,6 +175,12 @@ class FakeHTTPOrchestrator:
                 if self.path == f"/tasks/{owner.task_id}/events":
                     self._json([{"type": "task.completed", "task_id": owner.task_id}])
                     return
+                if self.path == f"/loops/{owner.loop_id}":
+                    self._json(owner._loop_payload(owner.loop_status))
+                    return
+                if self.path == f"/loops/{owner.loop_id}/events":
+                    self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
+                    return
                 self._json({"error": "not_found"}, 404)
 
             def do_POST(self):
@@ -191,9 +199,18 @@ class FakeHTTPOrchestrator:
                     owner.status = "completed"
                     self._json(_task(owner.task_id, owner.project_dir, "completed"))
                     return
+                if self.path == "/loops":
+                    owner.last_loop_submit = payload
+                    self._json(owner._loop_payload("pending"), 201)
+                    return
+                if self.path == f"/loops/{owner.loop_id}/run":
+                    owner.loop_status = "completed"
+                    self._json(owner._loop_payload("completed"))
+                    return
                 self._json({"error": "not_found"}, 404)
 
         self.last_submit = {}
+        self.last_loop_submit = {}
         self._server = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -209,6 +226,27 @@ class FakeHTTPOrchestrator:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
+
+    def _loop_payload(self, status: str) -> dict:
+        return {
+            "loop_id": self.loop_id,
+            "goal": "API loop smoke",
+            "project_root": self.project_dir,
+            "status": status,
+            "agent": "owner",
+            "turn_count": 5 if status == "completed" else 0,
+            "checkpoint_count": 5 if status == "completed" else 0,
+            "memory_policy": {"provider": "across-context", "read": True, "writeCandidates": True},
+            "approval_policy": {"requireApprovalFor": []},
+            "steps": [
+                {"action": {"type": "memory_search"}},
+                {"action": {"type": "task_dispatch"}},
+                {"action": {"type": "quality_gate"}},
+                {"action": {"type": "memory_write_candidate"}},
+                {"action": {"type": "final_output"}},
+            ] if status == "completed" else [],
+            "final_output": "Agent loop completed for: API loop smoke" if status == "completed" else None,
+        }
 
 
 def _reset_plugin_manager():
@@ -258,6 +296,39 @@ def test_release_e2e_uses_external_orchestrator_slot_for_full_task_lifecycle(mon
     assert evidence["audit"]["expected_files"] == REQUIRED_FILES
     assert ("POST", "/release-e2e") in server.requests
     assert ("POST", "/tasks/task-api-external/run") in server.requests
+
+
+def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        client = TestClient(app)
+
+        created = client.post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "API loop smoke",
+                "project_dir": str(tmp_path / "project"),
+                "agent": "owner",
+                "max_turns": 8,
+            },
+        )
+        assert created.status_code == 200
+        loop_id = created.json()["loop_id"]
+
+        run = client.post(f"/api/orchestrator/loops/{loop_id}/run")
+        status = client.get(f"/api/orchestrator/loops/{loop_id}")
+        events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
+
+    assert loop_id == "loop-api-external"
+    assert run.json()["status"] == "completed"
+    assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
+    assert events.json()[0]["type"] == "loop.completed"
+    assert ("POST", "/loops") in server.requests
 
 
 def test_task_page_and_startup_diagnostics_include_orchestrator_plugin(monkeypatch, tmp_path):

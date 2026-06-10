@@ -141,6 +141,7 @@ class _FakeOrchestratorHTTPServer:
     def __init__(self, project_dir: str):
         self.project_dir = project_dir
         self.task_id = "task-external-http"
+        self.loop_id = "loop-external-http"
         self.requests = []
         self.port = _free_port()
         owner = self
@@ -177,6 +178,12 @@ class _FakeOrchestratorHTTPServer:
                 if self.path == f"/tasks/{owner.task_id}/events":
                     self._json([{"type": "task.completed", "task_id": owner.task_id}])
                     return
+                if self.path == f"/loops/{owner.loop_id}":
+                    self._json(owner._loop_payload("completed"))
+                    return
+                if self.path == f"/loops/{owner.loop_id}/events":
+                    self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
+                    return
                 self._json({"error": "not_found"}, 404)
 
             def do_POST(self):
@@ -191,10 +198,20 @@ class _FakeOrchestratorHTTPServer:
                     owner.status = "completed"
                     self._json(_external_task(owner.task_id, owner.project_dir, "completed"))
                     return
+                if self.path == "/loops":
+                    owner.last_loop_submit = payload
+                    self._json(owner._loop_payload("pending"), 201)
+                    return
+                if self.path == f"/loops/{owner.loop_id}/run":
+                    owner.loop_status = "completed"
+                    self._json(owner._loop_payload("completed"))
+                    return
                 self._json({"error": "not_found"}, 404)
 
         self.status = "pending"
+        self.loop_status = "pending"
         self.last_submit = {}
+        self.last_loop_submit = {}
         self._server = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -210,6 +227,28 @@ class _FakeOrchestratorHTTPServer:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
+
+    def _loop_payload(self, status: str) -> dict:
+        return {
+            "loop_id": self.loop_id,
+            "goal": "External loop smoke",
+            "project_root": self.project_dir,
+            "status": status,
+            "agent": "owner",
+            "max_turns": 8,
+            "turn_count": 5 if status == "completed" else 0,
+            "memory_policy": {"provider": "across-context", "read": True, "writeCandidates": True},
+            "approval_policy": {"requireApprovalFor": []},
+            "steps": [
+                {"action": {"type": "memory_search"}},
+                {"action": {"type": "task_dispatch"}},
+                {"action": {"type": "quality_gate"}},
+                {"action": {"type": "memory_write_candidate"}},
+                {"action": {"type": "final_output"}},
+            ] if status == "completed" else [],
+            "checkpoint_count": 5 if status == "completed" else 0,
+            "final_output": "Agent loop completed for: External loop smoke" if status == "completed" else None,
+        }
 
 
 def test_auto_mode_without_external_runtime_requires_plugin(tmp_path):
@@ -229,6 +268,35 @@ def test_auto_mode_without_external_runtime_requires_plugin(tmp_path):
     assert status["available"] is False
     assert status["error"] == "across-orchestrator not found"
     assert "required" in status["connection_note"].lower()
+
+
+def test_external_http_runtime_proxies_agent_loop_lifecycle(tmp_path):
+    with _FakeOrchestratorHTTPServer(str(tmp_path / "project")) as server:
+        manager = OrchestratorPluginManager(
+            OrchestratorPluginConfig(
+                mode="external",
+                endpoint=server.endpoint,
+                registry_path=tmp_path / "tasks.json",
+                auto_run=False,
+            )
+        )
+
+        loop = manager.start_agent_loop(
+            goal="External loop smoke",
+            project_dir=str(tmp_path / "project"),
+            agent="owner",
+            max_turns=8,
+        )
+        completed = manager.run_agent_loop(loop["loop_id"])
+        status = manager.get_agent_loop(loop["loop_id"])
+        events = manager.get_agent_loop_events(loop["loop_id"])
+
+    assert loop["loop_id"] == "loop-external-http"
+    assert completed["status"] == "completed"
+    assert status["final_output"] == "Agent loop completed for: External loop smoke"
+    assert events[0]["type"] == "loop.completed"
+    assert ("POST", "/loops") in server.requests
+    assert ("POST", "/loops/loop-external-http/run") in server.requests
 
 
 def test_builtin_mode_is_normalized_to_external_plugin_boundary(tmp_path):

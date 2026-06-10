@@ -1570,6 +1570,76 @@ async def install_orchestrator_plugin():
         )
 
 
+class AgentLoopStartRequest(BaseModel):
+    goal: str
+    project_dir: Optional[str] = None
+    agent: str = "owner"
+    max_turns: int = 8
+    memory_policy: Optional[Dict[str, Any]] = None
+    approval_policy: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/orchestrator/loops")
+async def start_external_agent_loop(req: AgentLoopStartRequest):
+    """Start a durable agent loop through the external Across Orchestrator plugin."""
+    manager = get_orchestrator_plugin_manager()
+    try:
+        loop = await asyncio.to_thread(
+            manager.start_agent_loop,
+            goal=req.goal,
+            project_dir=req.project_dir or _default_external_orchestrator_project_dir(),
+            agent=req.agent or "owner",
+            max_turns=req.max_turns or 8,
+            memory_policy=req.memory_policy,
+            approval_policy=req.approval_policy,
+        )
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop start failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop start"))
+
+
+@app.post("/api/orchestrator/loops/{loop_id}/run")
+async def run_external_agent_loop(loop_id: str):
+    """Run or continue an external Across Orchestrator agent loop."""
+    try:
+        loop = await asyncio.to_thread(get_orchestrator_plugin_manager().run_agent_loop, loop_id)
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop run failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop run"))
+
+
+@app.get("/api/orchestrator/loops/{loop_id}")
+async def get_external_agent_loop(loop_id: str):
+    """Fetch external Across Orchestrator agent loop state."""
+    try:
+        loop = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop, loop_id)
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop status failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop status"))
+
+
+@app.get("/api/orchestrator/loops/{loop_id}/events")
+async def get_external_agent_loop_events(loop_id: str):
+    """Fetch external Across Orchestrator agent loop events."""
+    try:
+        events = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_events, loop_id)
+        return _sanitize_public_payload(events)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop events failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop events"))
+
+
 @app.get("/api/health")
 async def get_health():
     """Small runtime probe for the macOS app and E2E harnesses."""

@@ -171,6 +171,18 @@ struct PluginLifecycleView: View {
                 metadataChip(plugin.manifestExists ? appPreferences.text("plugins.manifestReady") : appPreferences.text("plugins.manifestMissing"))
             }
 
+            if plugin.supportsAgentLoopRuntime {
+                HStack(spacing: 8) {
+                    metadataChip(appPreferences.text("plugins.loop.runtime"))
+                    if plugin.supportsCheckpoints {
+                        metadataChip(appPreferences.text("plugins.loop.checkpoints"))
+                    }
+                    if plugin.supportsMemoryHooks {
+                        metadataChip(appPreferences.text("plugins.loop.memoryHooks"))
+                    }
+                }
+            }
+
             pathRow(appPreferences.text("plugins.path.runtime"), plugin.paths.plugin)
             pathRow(appPreferences.text("plugins.path.data"), plugin.paths.data)
             if let required = plugin.compatibility?.requiredHostVersion {
@@ -185,10 +197,33 @@ struct PluginLifecycleView: View {
                 } else {
                     actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
                 }
+                if plugin.pluginId == "across-orchestrator" && plugin.available {
+                    Button {
+                        Task { await viewModel.runAgentLoopProbe() }
+                    } label: {
+                        Image(systemName: "play.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(textColor)
+                    .background(fieldColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .help(appPreferences.text("plugins.loop.probe"))
+                    .disabled(viewModel.isWorking)
+                }
+            }
+
+            if plugin.pluginId == "across-orchestrator", let probe = viewModel.agentLoopProbe {
+                HStack(spacing: 8) {
+                    metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
+                    metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
+                    metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                }
             }
         }
         .padding(14)
-        .frame(minHeight: 216, alignment: .topLeading)
+        .frame(minHeight: 244, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 10))
