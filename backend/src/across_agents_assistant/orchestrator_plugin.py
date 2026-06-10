@@ -39,7 +39,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.4.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.5.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -671,6 +671,62 @@ class OrchestratorPluginManager:
     def get_quality_benchmark(self, task_id: str) -> Dict[str, Any]:
         evidence = self.get_evidence_bundle(task_id)
         return build_external_quality_benchmark(evidence, benchmark_id=f"external-{task_id}-quality")
+
+    def start_agent_loop(
+        self,
+        *,
+        goal: str,
+        project_dir: str,
+        agent: str = "owner",
+        max_turns: int = 8,
+        memory_policy: Optional[Dict[str, Any]] = None,
+        approval_policy: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_external()
+        payload = {
+            "goal": goal,
+            "projectRoot": project_dir,
+            "agent": agent or "owner",
+            "maxTurns": max_turns or 8,
+        }
+        if memory_policy:
+            payload["memoryPolicy"] = memory_policy
+        if approval_policy:
+            payload["approvalPolicy"] = approval_policy
+        if self._transport == "http":
+            return self._http_post("/loops", payload)
+        args = [
+            "loop-start",
+            goal,
+            "--project",
+            project_dir,
+            "--agent",
+            agent or "owner",
+            "--max-turns",
+            str(max_turns or 8),
+            "--json",
+        ]
+        return self._cli_json(args)
+
+    def run_agent_loop(self, loop_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_post(f"/loops/{loop_id}/run", {})
+        return self._cli_json(["loop-run", loop_id, "--json"])
+
+    def get_agent_loop(self, loop_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_get(f"/loops/{loop_id}")
+        return self._cli_json(["loop-status", loop_id, "--json"])
+
+    def get_agent_loop_events(self, loop_id: str) -> List[Dict[str, Any]]:
+        self._ensure_external()
+        if self._transport == "http":
+            events = self._http_get(f"/loops/{loop_id}/events")
+        else:
+            events = self._cli_json(["loop-events", loop_id, "--json"])
+        return events if isinstance(events, list) else []
 
     def list_task_summaries(self) -> List[Dict[str, Any]]:
         summaries: List[Dict[str, Any]] = []

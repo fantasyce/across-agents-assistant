@@ -21,6 +21,7 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
     let install: AcrossPluginInstallInfo?
     let lifecycle: AcrossPluginLifecycle?
     let compatibility: AcrossPluginCompatibility?
+    let capabilities: [String: Bool]?
 
     var id: String { pluginId }
 
@@ -41,6 +42,19 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
         case install
         case lifecycle
         case compatibility
+        case capabilities
+    }
+
+    var supportsAgentLoopRuntime: Bool {
+        capabilities?["agentLoopRuntime"] == true
+    }
+
+    var supportsCheckpoints: Bool {
+        capabilities?["checkpoints"] == true
+    }
+
+    var supportsMemoryHooks: Bool {
+        capabilities?["memoryHooks"] == true
     }
 }
 
@@ -142,4 +156,48 @@ struct AcrossMemoryRememberRequest: Encodable {
 
 struct AcrossMemoryStatusRequest: Encodable {
     let status: String
+}
+
+struct AgentLoopStartRequest: Encodable {
+    let goal: String
+    let projectDir: String?
+    let agent: String
+    let maxTurns: Int
+
+    enum CodingKeys: String, CodingKey {
+        case goal
+        case projectDir = "project_dir"
+        case agent
+        case maxTurns = "max_turns"
+    }
+}
+
+struct AgentLoopRunResponse: Decodable, Equatable {
+    let loopId: String
+    let goal: String
+    let status: String
+    let agent: String?
+    let turnCount: Int?
+    let checkpointCount: Int?
+    let finalOutput: String?
+    let steps: [AgentLoopStep]
+
+    enum CodingKeys: String, CodingKey {
+        case loopId = "loop_id"
+        case goal
+        case status
+        case agent
+        case turnCount = "turn_count"
+        case checkpointCount = "checkpoint_count"
+        case finalOutput = "final_output"
+        case steps
+    }
+}
+
+struct AgentLoopStep: Decodable, Equatable {
+    let action: AgentLoopAction?
+}
+
+struct AgentLoopAction: Decodable, Equatable {
+    let type: String?
 }

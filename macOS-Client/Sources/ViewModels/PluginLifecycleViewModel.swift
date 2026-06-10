@@ -9,6 +9,8 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var isLoadingPlugins = false
     @Published var isLoadingMemories = false
     @Published var isWorking = false
+    @Published var isRunningAgentLoopProbe = false
+    @Published var agentLoopProbe: AgentLoopRunResponse?
     @Published var message: String?
     @Published var errorMessage: String?
 
@@ -146,6 +148,47 @@ final class PluginLifecycleViewModel: ObservableObject {
             try Self.validate(response)
             message = "Memory forgotten"
             await loadMemories()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func runAgentLoopProbe() async {
+        isRunningAgentLoopProbe = true
+        isWorking = true
+        message = nil
+        errorMessage = nil
+        defer {
+            isRunningAgentLoopProbe = false
+            isWorking = false
+        }
+
+        do {
+            let startURL = URL(string: "\(backendBase)/api/orchestrator/loops")!
+            var startRequest = URLRequest(url: startURL)
+            startRequest.httpMethod = "POST"
+            startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            startRequest.httpBody = try JSONEncoder().encode(
+                AgentLoopStartRequest(
+                    goal: "Plugin Center Agent Loop Probe",
+                    projectDir: nil,
+                    agent: "owner",
+                    maxTurns: 8
+                )
+            )
+            let (startData, startResponse) = try await URLSession.shared.data(for: startRequest)
+            try Self.validate(startResponse)
+            let started = try JSONDecoder().decode(AgentLoopRunResponse.self, from: startData)
+
+            let escaped = started.loopId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? started.loopId
+            let runURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/run")!
+            var runRequest = URLRequest(url: runURL)
+            runRequest.httpMethod = "POST"
+            let (runData, runResponse) = try await URLSession.shared.data(for: runRequest)
+            try Self.validate(runResponse)
+            let completed = try JSONDecoder().decode(AgentLoopRunResponse.self, from: runData)
+            agentLoopProbe = completed
+            message = "Agent Loop Probe: \(completed.status)"
         } catch {
             errorMessage = error.localizedDescription
         }
