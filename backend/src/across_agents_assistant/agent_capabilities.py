@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -471,13 +472,17 @@ class AgentCapabilityStore:
     def __init__(self, path: Optional[Path | str] = None) -> None:
         self.path = Path(path) if path is not None else data_file("agent-capabilities.json")
 
-    def _read_payload(self) -> tuple[Dict[str, Dict[str, Any]], List[SkillDefinition]]:
+    def _read_raw_payload(self) -> Dict[str, Any]:
         if not self.path.exists():
-            return {}, []
+            return {}
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
-            return {}, []
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _read_payload(self) -> tuple[Dict[str, Dict[str, Any]], List[SkillDefinition]]:
+        raw = self._read_raw_payload()
         if isinstance(raw, dict) and isinstance(raw.get("profiles"), dict):
             raw_profiles = raw.get("profiles") or {}
             raw_custom_skills = raw.get("custom_skills") or []
@@ -507,16 +512,23 @@ class AgentCapabilityStore:
         self,
         profiles: Dict[str, AgentCapabilityProfile],
         custom_skills: List[SkillDefinition],
+        native_skill_states: Optional[Dict[str, Dict[str, Any]]] = None,
+        native_skill_cache_updated_at: Optional[float] = None,
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if native_skill_states is None:
+            native_skill_states, native_skill_cache_updated_at = self.get_native_skill_snapshot()
         payload = {
-            "version": 2,
+            "version": 3,
             "custom_skills": [asdict(skill) for skill in sorted(custom_skills, key=lambda item: item.id)],
             "profiles": {
                 agent_id: asdict(profile)
                 for agent_id, profile in sorted(profiles.items())
             },
         }
+        if native_skill_states:
+            payload["native_skill_states"] = native_skill_states
+            payload["native_skill_cache_updated_at"] = native_skill_cache_updated_at or time.time()
         self.path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -638,6 +650,53 @@ class AgentCapabilityStore:
         current_profiles[normalized] = profile
         self._write_payload(current_profiles, custom_skills)
         return asdict(profile)
+
+    def get_native_skill_snapshot(self) -> tuple[Dict[str, Dict[str, Any]], Optional[float]]:
+        raw = self._read_raw_payload()
+        raw_states = raw.get("native_skill_states") if isinstance(raw, dict) else {}
+        if not isinstance(raw_states, dict):
+            return {}, None
+        states: Dict[str, Dict[str, Any]] = {}
+        for key, value in raw_states.items():
+            if not isinstance(value, dict):
+                continue
+            normalized = normalize_agent_id(value.get("agent_id") or key) or str(key)
+            item = dict(value)
+            item["agent_id"] = normalized
+            states[normalized] = item
+        updated_at = raw.get("native_skill_cache_updated_at")
+        try:
+            timestamp = float(updated_at) if updated_at is not None else None
+        except (TypeError, ValueError):
+            timestamp = None
+        return states, timestamp
+
+    def get_native_skill_states(self) -> Dict[str, Dict[str, Any]]:
+        states, _ = self.get_native_skill_snapshot()
+        return states
+
+    def save_native_skill_states(self, states: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        saved, custom_skills = self._read_payload()
+        known = _known_skill_ids(custom_skills)
+        normalized_profiles = {
+            aid: _normalize_profile(value, aid, known)
+            for aid, value in saved.items()
+        }
+        normalized_states: Dict[str, Dict[str, Any]] = {}
+        for key, value in (states or {}).items():
+            if not isinstance(value, dict):
+                continue
+            normalized = normalize_agent_id(value.get("agent_id") or key) or str(key)
+            item = dict(value)
+            item["agent_id"] = normalized
+            normalized_states[normalized] = item
+        self._write_payload(
+            normalized_profiles,
+            custom_skills,
+            native_skill_states=normalized_states,
+            native_skill_cache_updated_at=time.time(),
+        )
+        return normalized_states
 
     def build_task_context(self, agent_ids: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         requested = _dedupe_strings(agent_ids)

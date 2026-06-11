@@ -24,6 +24,17 @@ private struct CapabilityAgentOption: Identifiable, Equatable {
     }
 }
 
+@MainActor
+private enum AgentCapabilitiesInitialLoadGate {
+    private static var didRefreshThisLaunch = false
+
+    static func shouldRefresh() -> Bool {
+        guard !didRefreshThisLaunch else { return false }
+        didRefreshThisLaunch = true
+        return true
+    }
+}
+
 struct AgentCapabilitiesView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject private var appPreferences: AppPreferences
@@ -157,7 +168,7 @@ struct AgentCapabilitiesView: View {
         .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
         .task {
             ensureSelectedAgent()
-            await viewModel.load()
+            await viewModel.load(refresh: AgentCapabilitiesInitialLoadGate.shouldRefresh())
         }
         .sheet(isPresented: $showCustomSkillEditor) {
             customSkillEditorSheet
@@ -201,7 +212,7 @@ struct AgentCapabilitiesView: View {
             Spacer()
 
             Button {
-                Task { await viewModel.load() }
+                Task { await viewModel.load(refresh: true) }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
@@ -517,7 +528,7 @@ struct AgentCapabilitiesView: View {
                     }
                     Spacer()
                     Button {
-                        Task { await viewModel.loadNativeSkills() }
+                        Task { await viewModel.loadNativeSkills(refresh: true) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11, weight: .bold))
@@ -966,7 +977,7 @@ struct AgentCapabilitiesView: View {
                 .foregroundColor(.secondary)
             Spacer()
             Button(appPreferences.text("system.retry")) {
-                Task { await viewModel.load() }
+                Task { await viewModel.load(refresh: true) }
             }
             .buttonStyle(.plain)
             .font(.system(size: 12, weight: .semibold))

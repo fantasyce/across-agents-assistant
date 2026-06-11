@@ -33,6 +33,32 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def test_plugin_child_env_strips_pyinstaller_launcher_state():
+    env = orchestrator_plugin._sanitize_python_child_env(
+        {
+            "_PYI_ARCHIVE_FILE": "/Applications/Across Agents Assistant.app/backend",
+            "_PYI_PARENT_PROCESS_LEVEL": "1",
+            "__PYVENV_LAUNCHER__": "/tmp/venv/bin/python",
+            "PYTHONPATH": "/tmp/app",
+            "PYTHONHOME": "/tmp/python",
+            "PYTHONEXECUTABLE": "/tmp/python",
+            "PYINSTALLER_RESET_ENVIRONMENT": "1",
+            "ACROSS_HOME": "/Users/example/.across",
+            "PATH": "/usr/bin",
+        }
+    )
+
+    assert "_PYI_ARCHIVE_FILE" not in env
+    assert "_PYI_PARENT_PROCESS_LEVEL" not in env
+    assert "__PYVENV_LAUNCHER__" not in env
+    assert "PYTHONPATH" not in env
+    assert "PYTHONHOME" not in env
+    assert "PYTHONEXECUTABLE" not in env
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in env
+    assert env["ACROSS_HOME"] == "/Users/example/.across"
+    assert env["PATH"] == "/usr/bin"
+
+
 def _external_task(task_id: str, project_dir: str, status: str = "pending") -> dict:
     subtask_status = "completed" if status == "completed" else "pending"
     return {
@@ -487,6 +513,38 @@ def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
     assert ("POST", "/release-e2e") in server.requests
     assert ("POST", "/tasks/task-external-http/run") in server.requests
     assert server.last_submit["runLabel"] == "unit"
+
+
+def test_external_generic_task_preserves_task_types_in_app_mapping(tmp_path):
+    task = _external_task("task-generic-functional", str(tmp_path / "project"), "completed")
+    task["contract"].pop("engine", None)
+    task["metadata"] = {
+        "task_types": ["functional"],
+        "delivery_mode": "functional",
+    }
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["contract"] = task["contract"]
+    evidence.pop("app_grade", None)
+    evidence["metadata"] = task["metadata"]
+    evidence["quality"] = {
+        "status": "passed",
+        "gates": {
+            "artifact_integrity": True,
+            "workspace_hygiene": True,
+            "security_privacy": True,
+            "agent_mix": True,
+            "static_web_smoke": True,
+            "browser_e2e": True,
+            "api_service": True,
+            "cli_generic": True,
+        },
+    }
+
+    app_task = external_task_to_app_info(task, evidence)
+
+    assert app_task["task_types"] == ["functional"]
+    assert app_task["delivery_mode"] == "functional"
+    assert app_task["delivery_report"]["status"] == "passed"
 
 
 def test_external_cli_runtime_uses_canonical_command_protocol(tmp_path):

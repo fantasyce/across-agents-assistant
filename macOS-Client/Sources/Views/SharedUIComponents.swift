@@ -406,6 +406,41 @@ func loadSVGIconSync(name: String) -> NSImage? {
     loadAgentIconSync(name: name)
 }
 
+func loadTemplateIconSync(name: String, colorScheme: ColorScheme? = nil) -> NSImage? {
+    guard let image = loadAgentIconSync(name: name, colorScheme: colorScheme),
+          let copy = image.copy() as? NSImage else {
+        return nil
+    }
+    copy.isTemplate = true
+    return copy
+}
+
+struct BundledTemplateIcon: View {
+    let name: String
+    let fallbackSystemName: String
+    var size: CGFloat
+    var weight: Font.Weight = .semibold
+    var color: Color
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Group {
+            if let image = loadTemplateIconSync(name: name, colorScheme: colorScheme) {
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: fallbackSystemName)
+                    .font(.system(size: size, weight: weight))
+            }
+        }
+        .foregroundColor(color)
+    }
+}
+
 struct FileChipView: View {
     let file: AttachedFile
     let textColor: Color

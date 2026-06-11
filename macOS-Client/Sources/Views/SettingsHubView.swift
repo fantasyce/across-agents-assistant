@@ -19,7 +19,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .mcp: return "square.grid.2x2"
-        case .plugins: return "puzzlepiece.extension.fill"
+        case .plugins: return "puzzlepiece"
         case .tools: return "wrench.and.screwdriver.fill"
         case .settings: return "gearshape"
         }
@@ -81,8 +81,17 @@ struct SettingsHubView: View {
                         selectedTab = tab
                     } label: {
                         HStack(spacing: 7) {
-                            Image(systemName: tab.iconName)
-                                .font(.system(size: 12, weight: .semibold))
+                            if tab == .plugins {
+                                BundledTemplateIcon(
+                                    name: "ui.plugin-center",
+                                    fallbackSystemName: tab.iconName,
+                                    size: 12,
+                                    color: selectedTab == tab ? textColor : .secondary
+                                )
+                            } else {
+                                Image(systemName: tab.iconName)
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
                             Text(tab.title(preferences: preferences))
                                 .font(.system(size: 12, weight: .semibold))
                         }

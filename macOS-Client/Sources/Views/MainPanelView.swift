@@ -1,5 +1,10 @@
 import SwiftUI
 
+private enum MainPanelIconMetrics {
+    static let glyphSize: CGFloat = 14
+    static let buttonSize: CGFloat = 24
+}
+
 struct FileTreeView: View {
     let item: FileItemModel
     let depth: Int
@@ -406,9 +411,9 @@ struct MainPanelView: View {
                     InteractiveIconLabel(
                         systemName: "folder.badge.plus",
                         help: appPreferences.text("project.new"),
-                        iconSize: 13,
+                        iconSize: MainPanelIconMetrics.glyphSize,
                         weight: .semibold,
-                        frameSize: 24,
+                        frameSize: MainPanelIconMetrics.buttonSize,
                         externalIsHovered: isNewProjectMenuHovered
                     )
                 }
@@ -604,52 +609,60 @@ struct MainPanelView: View {
                 .foregroundColor(textColor)
             Spacer()
             HStack(spacing: 12) {
-                InteractiveIconButton(systemName: "mic", help: appPreferences.text("toolbar.voiceInput"), iconSize: 14, frameSize: 24) {}
+                InteractiveIconButton(systemName: "mic", help: appPreferences.text("toolbar.voiceInput"), iconSize: MainPanelIconMetrics.glyphSize, frameSize: MainPanelIconMetrics.buttonSize) {}
                 InteractiveIconButton(
                     systemName: isContinuousMode ? "waveform.circle.fill" : "waveform",
                     help: isContinuousMode ? appPreferences.text("toolbar.continuous.disable") : appPreferences.text("toolbar.continuous.enable"),
-                    iconSize: 14,
+                    iconSize: MainPanelIconMetrics.glyphSize,
                     foregroundColor: isContinuousMode ? .blue : .secondary,
-                    frameSize: 24
+                    frameSize: MainPanelIconMetrics.buttonSize
                 ) {
                     isContinuousMode.toggle()
                 }
                 InteractiveIconButton(
                     systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.wave.2",
                     help: viewModel.isMuted ? appPreferences.text("toolbar.unmute") : appPreferences.text("toolbar.mute"),
-                    iconSize: 14,
+                    iconSize: MainPanelIconMetrics.glyphSize,
                     foregroundColor: viewModel.isMuted ? .red : .secondary,
-                    frameSize: 24
+                    frameSize: MainPanelIconMetrics.buttonSize
                 ) {
                     viewModel.isMuted.toggle()
                 }
-                InteractiveIconButton(systemName: "doc.on.clipboard", help: appPreferences.text("toolbar.copyConversation"), iconSize: 13, frameSize: 24) {
+                InteractiveIconButton(systemName: "doc.on.clipboard", help: appPreferences.text("toolbar.copyConversation"), iconSize: MainPanelIconMetrics.glyphSize, frameSize: MainPanelIconMetrics.buttonSize) {
                     viewModel.copyFullConversation()
                 }
                 InteractiveIconButton(
                     systemName: "list.bullet.rectangle",
                     help: taskEntryDisabled ? appPreferences.text("toolbar.tasks.disabled") : appPreferences.text("toolbar.tasks"),
-                    iconSize: 14,
+                    iconSize: MainPanelIconMetrics.glyphSize,
                     foregroundColor: .gray,
-                    frameSize: 24,
+                    frameSize: MainPanelIconMetrics.buttonSize,
                     isDisabled: taskEntryDisabled
                 ) {
                     activeSettingsHubTab = nil
                     showTaskOrchestration = true
                 }
-                InteractiveIconButton(systemName: "cpu", help: appPreferences.text("toolbar.models"), iconSize: 14, foregroundColor: .gray, frameSize: 24) {
+                InteractiveIconButton(systemName: "cpu", help: appPreferences.text("toolbar.models"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
                     showTaskOrchestration = false
                     activeSettingsHubTab = .models
                 }
-                InteractiveIconButton(systemName: "square.grid.2x2", help: appPreferences.text("toolbar.mcp"), iconSize: 15, foregroundColor: .gray, frameSize: 24) {
+                InteractiveIconButton(systemName: "sparkles.rectangle.stack", help: appPreferences.text("toolbar.capabilities"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
+                    showTaskOrchestration = false
+                    activeSettingsHubTab = .capabilities
+                }
+                InteractiveIconButton(systemName: "square.grid.2x2", help: appPreferences.text("toolbar.mcp"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
                     showTaskOrchestration = false
                     activeSettingsHubTab = .mcp
                 }
-                InteractiveIconButton(systemName: "wrench.and.screwdriver.fill", help: appPreferences.text("toolbar.tools"), iconSize: 14, foregroundColor: .gray, frameSize: 24) {
+                InteractiveAssetIconButton(assetName: "ui.plugin-center", fallbackSystemName: "puzzlepiece", help: appPreferences.text("toolbar.plugins"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
+                    showTaskOrchestration = false
+                    activeSettingsHubTab = .plugins
+                }
+                InteractiveIconButton(systemName: "wrench.and.screwdriver.fill", help: appPreferences.text("toolbar.tools"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
                     showTaskOrchestration = false
                     activeSettingsHubTab = .tools
                 }
-                InteractiveIconButton(systemName: "gearshape", help: appPreferences.text("toolbar.settings"), iconSize: 15, foregroundColor: .gray, frameSize: 24) {
+                InteractiveIconButton(systemName: "gearshape", help: appPreferences.text("toolbar.settings"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
                     showTaskOrchestration = false
                     activeSettingsHubTab = activeSettingsHubTab == .settings ? nil : .settings
                 }
@@ -732,9 +745,9 @@ struct MainPanelView: View {
             InteractiveIconButton(
                 systemName: "camera.viewfinder",
                 help: appPreferences.text("screenshot.ocr"),
-                iconSize: 14,
+                iconSize: MainPanelIconMetrics.glyphSize,
                 foregroundColor: .secondary,
-                frameSize: 24,
+                frameSize: MainPanelIconMetrics.buttonSize,
                 isDisabled: !canUseAgentFeatures
             ) {
                 viewModel.requestManualScreenshot()
@@ -743,9 +756,9 @@ struct MainPanelView: View {
             InteractiveIconButton(
                 systemName: "photo.badge.plus",
                 help: appPreferences.text("screenshot.attach"),
-                iconSize: 14,
+                iconSize: MainPanelIconMetrics.glyphSize,
                 foregroundColor: .secondary,
-                frameSize: 24,
+                frameSize: MainPanelIconMetrics.buttonSize,
                 isDisabled: !canUseAgentFeatures
             ) {
                 viewModel.requestScreenshotAttachment()
@@ -754,9 +767,9 @@ struct MainPanelView: View {
             InteractiveIconButton(
                 systemName: "plus",
                 help: appPreferences.text("attachment.addFiles"),
-                iconSize: 16,
+                iconSize: MainPanelIconMetrics.glyphSize,
                 foregroundColor: .secondary,
-                frameSize: 24,
+                frameSize: MainPanelIconMetrics.buttonSize,
                 isDisabled: !canUseAgentFeatures
             ) {
                 viewModel.requestFileAttachment()
@@ -1637,6 +1650,32 @@ private struct InteractiveIconButton: View {
                 Image(systemName: systemName)
                     .font(.system(size: iconSize, weight: weight))
                     .foregroundColor(foregroundColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+    }
+}
+
+private struct InteractiveAssetIconButton: View {
+    let assetName: String
+    let fallbackSystemName: String
+    let help: String
+    var iconSize: CGFloat = 14
+    var foregroundColor: Color = .secondary
+    var frameSize: CGFloat = 24
+    var isDisabled: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            InteractiveIconFrame(help: help, frameSize: frameSize, isDisabled: isDisabled) {
+                BundledTemplateIcon(
+                    name: assetName,
+                    fallbackSystemName: fallbackSystemName,
+                    size: iconSize,
+                    color: foregroundColor
+                )
             }
         }
         .buttonStyle(.plain)

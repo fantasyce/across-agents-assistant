@@ -96,6 +96,22 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
     }
 
+    struct AutoTaskSubmitResponse: Decodable {
+        let taskId: String?
+        let status: String?
+        let message: String?
+        let implementation: String?
+        let externalTask: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case taskId = "task_id"
+            case status
+            case message
+            case implementation
+            case externalTask = "external_task"
+        }
+    }
+
     struct TaskSummary: Identifiable, Codable {
         let taskId: String
         let description: String
@@ -1594,9 +1610,9 @@ class TaskOrchestrationViewModel: ObservableObject {
 
                 if (200...299).contains(httpResponse.statusCode) {
                     let decoder = JSONDecoder()
-                    let result = try decoder.decode([String: String].self, from: data)
+                    let result = try decoder.decode(AutoTaskSubmitResponse.self, from: data)
 
-                    if let newTaskId = result["task_id"] {
+                    if let newTaskId = result.taskId {
                         viewMode = .detail
                         selectTask(newTaskId)
                         loadTasks()

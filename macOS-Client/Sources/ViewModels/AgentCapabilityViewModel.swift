@@ -22,13 +22,13 @@ final class AgentCapabilityViewModel: ObservableObject {
 
     private let backendBase = "http://backend"
 
-    func load() async {
+    func load(refresh: Bool = false) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
         do {
-            guard let url = URL(string: "\(backendBase)/api/agent-capabilities") else {
+            guard let url = URL(string: "\(backendBase)/api/agent-capabilities\(refresh ? "?refresh=true" : "")") else {
                 return
             }
             let (data, response) = try await URLSession.shared.data(from: url)
@@ -40,8 +40,8 @@ final class AgentCapabilityViewModel: ObservableObject {
             skillCatalog = decoded.skills
             profiles = decoded.profiles
             availableTools = decoded.availableTools.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            nativeSkillAgents = decoded.nativeSkillAgents
             agentCards = Dictionary(uniqueKeysWithValues: decoded.agentCards.map { ($0.agentId, $0) })
-            await loadNativeSkills()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -196,9 +196,9 @@ final class AgentCapabilityViewModel: ObservableObject {
         }
     }
 
-    func loadNativeSkills() async {
+    func loadNativeSkills(refresh: Bool = false) async {
         do {
-            guard let url = URL(string: "\(backendBase)/api/native-skills") else {
+            guard let url = URL(string: "\(backendBase)/api/native-skills\(refresh ? "?refresh=true" : "")") else {
                 return
             }
             let (data, response) = try await URLSession.shared.data(from: url)

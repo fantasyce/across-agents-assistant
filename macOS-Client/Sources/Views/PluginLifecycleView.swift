@@ -142,9 +142,7 @@ struct PluginLifecycleView: View {
     private func pluginCard(_ plugin: AcrossPluginStatus) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: iconName(for: plugin.pluginId))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(accentColor)
+                pluginIcon(for: plugin.pluginId)
                     .frame(width: 34, height: 34)
                     .background(accentColor.opacity(0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -171,23 +169,11 @@ struct PluginLifecycleView: View {
                 metadataChip(plugin.manifestExists ? appPreferences.text("plugins.manifestReady") : appPreferences.text("plugins.manifestMissing"))
             }
 
-            if plugin.supportsAgentLoopRuntime {
-                HStack(spacing: 8) {
-                    metadataChip(appPreferences.text("plugins.loop.runtime"))
-                    if plugin.supportsCheckpoints {
-                        metadataChip(appPreferences.text("plugins.loop.checkpoints"))
-                    }
-                    if plugin.supportsMemoryHooks {
-                        metadataChip(appPreferences.text("plugins.loop.memoryHooks"))
-                    }
-                }
-            }
+            capabilityTagRow(plugin)
 
             pathRow(appPreferences.text("plugins.path.runtime"), plugin.paths.plugin)
             pathRow(appPreferences.text("plugins.path.data"), plugin.paths.data)
-            if let required = plugin.compatibility?.requiredHostVersion {
-                pathRow(appPreferences.text("plugins.compatibility"), required)
-            }
+            compatibilityRow(plugin)
 
             HStack(spacing: 8) {
                 actionButton("probe", icon: "waveform.path.ecg", title: appPreferences.text("plugins.action.probe"), plugin: plugin)
@@ -214,20 +200,58 @@ struct PluginLifecycleView: View {
                 }
             }
 
-            if plugin.pluginId == "across-orchestrator", let probe = viewModel.agentLoopProbe {
-                HStack(spacing: 8) {
-                    metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
-                    metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
-                    metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
-                }
-            }
+            agentLoopProbeRow(plugin)
         }
         .padding(14)
-        .frame(minHeight: 244, alignment: .topLeading)
+        .frame(minHeight: 286, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(lineColor, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func capabilityTagRow(_ plugin: AcrossPluginStatus) -> some View {
+        HStack(spacing: 8) {
+            if plugin.supportsAgentLoopRuntime {
+                metadataChip(appPreferences.text("plugins.loop.runtime"))
+                if plugin.supportsCheckpoints {
+                    metadataChip(appPreferences.text("plugins.loop.checkpoints"))
+                }
+                if plugin.supportsMemoryHooks {
+                    metadataChip(appPreferences.text("plugins.loop.memoryHooks"))
+                }
+            } else {
+                Color.clear.frame(height: 22)
+            }
+        }
+        .frame(height: 22, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func compatibilityRow(_ plugin: AcrossPluginStatus) -> some View {
+        if let required = plugin.compatibility?.requiredHostVersion {
+            pathRow(appPreferences.text("plugins.compatibility"), required)
+                .frame(height: 28, alignment: .topLeading)
+        } else {
+            Color.clear.frame(height: 28)
+        }
+    }
+
+    @ViewBuilder
+    private func agentLoopProbeRow(_ plugin: AcrossPluginStatus) -> some View {
+        if let probe = viewModel.agentLoopProbe {
+            HStack(spacing: 8) {
+                if plugin.pluginId == "across-orchestrator" {
+                    metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
+                    metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
+                    metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                } else {
+                    Color.clear.frame(height: 22)
+                }
+            }
+            .frame(height: 22, alignment: .leading)
+        }
     }
 
     private func statusChip(_ plugin: AcrossPluginStatus) -> some View {
@@ -424,7 +448,24 @@ struct PluginLifecycleView: View {
         switch id {
         case "across-context": return "memorychip.fill"
         case "across-orchestrator": return "point.3.connected.trianglepath.dotted"
-        default: return "puzzlepiece.extension.fill"
+        default: return "puzzlepiece"
+        }
+    }
+
+    @ViewBuilder
+    private func pluginIcon(for id: String) -> some View {
+        switch id {
+        case "across-context", "across-orchestrator":
+            Image(systemName: iconName(for: id))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(accentColor)
+        default:
+            BundledTemplateIcon(
+                name: "ui.plugin-center",
+                fallbackSystemName: "puzzlepiece",
+                size: 16,
+                color: accentColor
+            )
         }
     }
 
