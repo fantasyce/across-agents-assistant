@@ -226,7 +226,7 @@ def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
     assert body["profile"]["agent_id"] == "openclaw"
     assert body["profile"]["enabled_plugin_ids"] == ["filesystem"]
 
-    response = client.get("/api/agent-capabilities")
+    response = client.get("/api/agent-capabilities?refresh=true")
     assert response.status_code == 200
     body = response.json()
     assert body["profiles"]["openclaw"]["enabled_tool_names"] == ["read_file"]
@@ -239,6 +239,116 @@ def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
         "total": 2,
     }
     assert "Unavailable native skills need repair before routing." in body["agent_cards"][0]["warnings"]
+
+
+def test_agent_capabilities_refresh_persists_native_skill_snapshot(monkeypatch, tmp_path):
+    store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+    calls = {"count": 0}
+
+    class FakeNativeSkillManager:
+        def list_all_agent_skills(self):
+            calls["count"] += 1
+            return {
+                "openclaw": {
+                    "agent_id": "openclaw",
+                    "skills": [
+                        {"id": "filesystem-review", "status": "enabled", "availability": "available"},
+                        {"id": "apple-notes", "status": "unavailable", "availability": "unavailable"},
+                    ],
+                },
+                "hermes": {"agent_id": "hermes", "skills": []},
+                "claude": {"agent_id": "claude", "skills": []},
+            }
+
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_agent_capability_store",
+        lambda: store,
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_native_skill_manager",
+        lambda: FakeNativeSkillManager(),
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server._runtime_tool_schemas",
+        lambda: [],
+    )
+
+    client = TestClient(app)
+
+    response = client.get("/api/agent-capabilities")
+    assert response.status_code == 200
+    assert calls["count"] == 0
+    assert response.json()["agent_cards"][0]["native_skill_health"] == {
+        "available": 0,
+        "unavailable": 0,
+        "total": 0,
+    }
+
+    response = client.get("/api/agent-capabilities?refresh=true")
+    assert response.status_code == 200
+    assert calls["count"] == 1
+    assert response.json()["agent_cards"][0]["native_skill_health"] == {
+        "available": 1,
+        "unavailable": 1,
+        "total": 2,
+    }
+
+    response = client.get("/api/agent-capabilities")
+    assert response.status_code == 200
+    assert calls["count"] == 1
+    assert response.json()["agent_cards"][0]["native_skill_health"] == {
+        "available": 1,
+        "unavailable": 1,
+        "total": 2,
+    }
+
+
+def test_native_skills_api_refresh_persists_snapshot(monkeypatch, tmp_path):
+    store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+    calls = {"count": 0}
+
+    class FakeNativeSkillManager:
+        def list_all_agent_skills(self):
+            calls["count"] += 1
+            return {
+                "hermes": {
+                    "agent_id": "hermes",
+                    "display_name": "Hermes",
+                    "mode": "cli",
+                    "supports_create": False,
+                    "supports_install": True,
+                    "supports_uninstall": True,
+                    "supports_update": True,
+                    "supports_check": True,
+                    "skills": [{"id": "dogfood", "name": "dogfood", "status": "builtin"}],
+                }
+            }
+
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_agent_capability_store",
+        lambda: store,
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.api_server.get_native_skill_manager",
+        lambda: FakeNativeSkillManager(),
+    )
+
+    client = TestClient(app)
+
+    response = client.get("/api/native-skills")
+    assert response.status_code == 200
+    assert response.json()["agents"] == {}
+    assert calls["count"] == 0
+
+    response = client.get("/api/native-skills?refresh=true")
+    assert response.status_code == 200
+    assert response.json()["agents"]["hermes"]["skills"][0]["id"] == "dogfood"
+    assert calls["count"] == 1
+
+    response = client.get("/api/native-skills")
+    assert response.status_code == 200
+    assert response.json()["agents"]["hermes"]["skills"][0]["id"] == "dogfood"
+    assert calls["count"] == 1
 
 
 def test_agent_capabilities_api_custom_skill_and_preflight(monkeypatch, tmp_path):
@@ -565,11 +675,14 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None):
+        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
             captured["goal"] = goal
             captured["project_dir"] = project_dir
             captured["deliverables"] = deliverables
             captured["agent"] = agent
+            captured["subtasks"] = subtasks
+            captured["strict_dependency"] = strict_dependency
+            captured["task_types"] = task_types
             return {"task_id": "task-capabilities", "status": "pending"}
 
     monkeypatch.setattr(
@@ -609,4 +722,7 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
         "project_dir": str(tmp_path / "project"),
         "deliverables": ["README.md"],
         "agent": "hermes",
+        "subtasks": [],
+        "strict_dependency": True,
+        "task_types": ["functional"],
     }

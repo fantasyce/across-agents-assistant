@@ -2089,11 +2089,28 @@ def _native_skills_for_preflight(
     return native_skills
 
 
+def _native_skill_states_for_capability_ui(refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+    store = get_agent_capability_store()
+    if refresh:
+        states = get_native_skill_manager().list_all_agent_skills()
+        return store.save_native_skill_states(states)
+    return store.get_native_skill_states()
+
+
+def _refresh_native_skill_cache_for_agent(agent_id: str) -> Dict[str, Any]:
+    store = get_agent_capability_store()
+    states = store.get_native_skill_states()
+    normalized = normalize_agent_id(agent_id) or agent_id
+    states[normalized] = get_native_skill_manager().list_agent_skills(normalized)
+    store.save_native_skill_states(states)
+    return states[normalized]
+
+
 @app.get("/api/agent-capabilities")
-async def list_agent_capabilities():
+async def list_agent_capabilities(refresh: bool = False):
     store = get_agent_capability_store()
     available_tools = _runtime_tool_schemas()
-    native_skill_states = get_native_skill_manager().list_all_agent_skills()
+    native_skill_states = _native_skill_states_for_capability_ui(refresh=refresh)
     native_skills_by_agent = {
         agent_id: [
             skill
@@ -2106,6 +2123,7 @@ async def list_agent_capabilities():
         "skills": store.skill_catalog(),
         "profiles": store.get_profiles(),
         "available_tools": available_tools,
+        "native_skill_agents": native_skill_states,
         "agent_cards": store.build_agent_cards(
             tool_schemas=available_tools,
             native_skills_by_agent=native_skills_by_agent,
@@ -2222,10 +2240,9 @@ async def update_agent_capability(agent_id: str, req: AgentCapabilityUpdateReque
 
 
 @app.get("/api/native-skills")
-async def list_native_skills():
-    manager = get_native_skill_manager()
+async def list_native_skills(refresh: bool = False):
     return {
-        "agents": manager.list_all_agent_skills(),
+        "agents": _native_skill_states_for_capability_ui(refresh=refresh),
     }
 
 
@@ -2243,11 +2260,13 @@ async def install_native_agent_skill(agent_id: str, req: NativeSkillInstallReque
     manager = get_native_skill_manager()
     try:
         skill = manager.install_skill(agent_id, _native_skill_request(req))
+        state = _refresh_native_skill_cache_for_agent(agent_id)
     except NativeSkillError as exc:
         raise _handle_native_skill_error(exc)
     return {
         "status": "success",
         "skill": skill,
+        "state": state,
     }
 
 
@@ -2256,11 +2275,13 @@ async def update_native_agent_skill(agent_id: str, skill_id: str, req: Optional[
     manager = get_native_skill_manager()
     try:
         skill = manager.update_skill(agent_id, skill_id, _native_skill_request(req))
+        state = _refresh_native_skill_cache_for_agent(agent_id)
     except NativeSkillError as exc:
         raise _handle_native_skill_error(exc)
     return {
         "status": "success",
         "skill": skill,
+        "state": state,
     }
 
 
@@ -2286,11 +2307,13 @@ async def uninstall_native_agent_skill(agent_id: str, skill_id: str, force: bool
             skill_id,
             NativeSkillRequest(force=force),
         )
+        state = _refresh_native_skill_cache_for_agent(agent_id)
     except NativeSkillError as exc:
         raise _handle_native_skill_error(exc)
     return {
         "status": "success",
         "skill": skill,
+        "state": state,
     }
 
 @app.post("/api/approve", response_model=ChatResponse)
@@ -5544,10 +5567,237 @@ def _validate_request_task_types(task_types: List[str]) -> List[str]:
     return values
 
 
+_EXTERNAL_FILE_HINT_EXTENSIONS = {
+    "md",
+    "json",
+    "mjs",
+    "js",
+    "html",
+    "css",
+    "txt",
+    "yml",
+    "yaml",
+    "toml",
+    "py",
+    "ts",
+    "tsx",
+    "jsx",
+}
+_NEGATIVE_DELIVERABLE_LINE_RE = re.compile(r"(不允许|不要|禁止|do\s+not|must\s+not|no\s+files?|no\s+cdn|node_modules)", re.IGNORECASE)
+_DELIVERABLE_ACTION_RE = re.compile(
+    r"(?:创建|生成|输出|交付|新增|写入|create|generate|produce|deliver|write)\s+",
+    re.IGNORECASE,
+)
+_DELIVERABLE_SEGMENT_STOP_RE = re.compile(r"[，,。；;]")
+_EXTERNAL_FILE_HINT_MAX_LINE_LENGTH = 4096
+
+
+def _normalize_external_artifact_path(path: str) -> Optional[str]:
+    value = str(path or "").strip().replace("\\", "/").lstrip("/")
+    if not value or "\x00" in value:
+        return None
+    parts = [part for part in value.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    return "/".join(parts)
+
+
+def _external_file_hints_from_line(line: str) -> List[str]:
+    if _NEGATIVE_DELIVERABLE_LINE_RE.search(line or ""):
+        return []
+    hints: List[str] = []
+    for token in _external_file_hint_tokens(line or ""):
+        normalized = _normalize_external_artifact_path(token)
+        if normalized and normalized not in hints:
+            hints.append(normalized)
+    return hints
+
+
+def _external_file_hint_tokens(line: str) -> List[str]:
+    """Extract file-like tokens with a linear scan to avoid regex backtracking."""
+    text = str(line or "")[:_EXTERNAL_FILE_HINT_MAX_LINE_LENGTH]
+    tokens: List[str] = []
+    current: List[str] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        token = "".join(current).strip("./")
+        current.clear()
+        if not token or "/" in {token[0], token[-1]}:
+            return
+        last_segment = token.rsplit("/", 1)[-1]
+        if "." not in last_segment:
+            return
+        extension = last_segment.rsplit(".", 1)[-1].lower()
+        if extension in _EXTERNAL_FILE_HINT_EXTENSIONS:
+            tokens.append(token)
+
+    for char in text:
+        if char.isalnum() or char in {"_", "-", ".", "/"}:
+            current.append(char)
+        else:
+            flush()
+    flush()
+    return tokens
+
+
+def _external_file_hints_from_description(description: str) -> List[str]:
+    hints: List[str] = []
+    for line in str(description or "").splitlines():
+        for path in _external_file_hints_from_line(line):
+            if path not in hints:
+                hints.append(path)
+    return hints
+
+
+def _external_deliverable_hints_from_wave_line(line: str) -> List[str]:
+    if _NEGATIVE_DELIVERABLE_LINE_RE.search(line or ""):
+        return []
+    action = _DELIVERABLE_ACTION_RE.search(line or "")
+    if not action:
+        return []
+    segment = str(line or "")[action.end():]
+    stop = _DELIVERABLE_SEGMENT_STOP_RE.search(segment)
+    if stop:
+        segment = segment[: stop.start()]
+    return _external_file_hints_from_line(segment)
+
+
+def _external_wave_deliverable_hints(description: str) -> List[str]:
+    hints: List[str] = []
+    for line in str(description or "").splitlines():
+        if _parse_external_wave_line(line) is None:
+            continue
+        for path in _external_deliverable_hints_from_wave_line(line):
+            if path not in hints:
+                hints.append(path)
+    return hints
+
+
+def _parse_external_wave_line(line: str) -> Optional[Tuple[int, str, str]]:
+    value = str(line or "").strip()
+    if not value[:4].lower() == "wave":
+        return None
+    index = 4
+    length = len(value)
+    while index < length and value[index].isspace():
+        index += 1
+    digit_start = index
+    while index < length and value[index].isdigit():
+        index += 1
+    if index == digit_start:
+        return None
+    wave_number = int(value[digit_start:index])
+    while index < length and value[index].isspace():
+        index += 1
+    colon_index = -1
+    for candidate in (":", "："):
+        found = value.find(candidate, index)
+        if found >= 0 and (colon_index < 0 or found < colon_index):
+            colon_index = found
+    if colon_index < 0:
+        return None
+    title = value[index:colon_index].strip()
+    body = value[colon_index + 1 :].strip()
+    return wave_number, title, body
+
+
 def _deliverables_for_external_task(req: AutoTaskRequest) -> List[str]:
-    if "artifact" in set(req.task_types or []):
-        return ["README.md"]
+    if req.strict_dependency:
+        wave_deliverables = _external_wave_deliverable_hints(req.description)
+        if wave_deliverables:
+            return wave_deliverables
+    deliverables = _external_file_hints_from_description(req.description)
+    if deliverables:
+        return deliverables
     return ["README.md"]
+
+
+def _external_owner_agent(req: AutoTaskRequest) -> str:
+    owner = str(req.owner_agent or "").strip()
+    if owner and owner != "auto":
+        return owner
+    for agent in req.allowed_subtask_agents or []:
+        value = str(agent or "").strip()
+        if value:
+            return value
+    return "demo"
+
+
+def _external_subtask_agents(req: AutoTaskRequest) -> List[str]:
+    agents = [str(agent).strip() for agent in req.allowed_subtask_agents or [] if str(agent).strip()]
+    if not agents:
+        owner = _external_owner_agent(req)
+        agents = [owner] if owner else ["demo"]
+    return agents or ["demo"]
+
+
+def _planned_subtasks_for_external_task(req: AutoTaskRequest, deliverables: List[str]) -> List[Dict[str, Any]]:
+    """Build an explicit serial plan for the external generic runtime.
+
+    The generic Across Orchestrator sidecar currently owns orchestration state
+    and evidence, but not host-native agent execution. Its executable adapter is
+    therefore `demo`; the fixed release E2E path is the multi-agent quality
+    scenario. This path preserves user-authored Wave N structure so the UI can
+    verify dependency/wave behavior instead of collapsing to a single README.
+    """
+    if not req.strict_dependency:
+        return []
+
+    wave_specs: List[Tuple[int, str, str, List[str]]] = []
+    for line in str(req.description or "").splitlines():
+        parsed_wave = _parse_external_wave_line(line)
+        if parsed_wave is None:
+            continue
+        wave_number, parsed_title, _body = parsed_wave
+        title = parsed_title or f"Wave {wave_number}"
+        files = _external_deliverable_hints_from_wave_line(line)
+        if files:
+            wave_specs.append((wave_number, title, line.strip(), files))
+
+    subtask_agents = _external_subtask_agents(req)
+    subtasks: List[Dict[str, Any]] = []
+    previous_wave_ids: List[str] = []
+    if wave_specs:
+        for wave_number, title, source_line, files in wave_specs:
+            current_ids: List[str] = []
+            for index, path in enumerate(files, start=1):
+                spec_id = f"wave-{wave_number}-{index}"
+                subtasks.append(
+                    {
+                        "id": spec_id,
+                        "description": f"Wave {wave_number} {title}: produce {path}. Source requirement: {source_line}",
+                        "path": path,
+                        "agent": subtask_agents[len(subtasks) % len(subtask_agents)],
+                        "wave": wave_number,
+                        "priority": (wave_number * 100) + index,
+                        "dependencies": list(previous_wave_ids),
+                    }
+                )
+                current_ids.append(spec_id)
+            previous_wave_ids = current_ids
+        return subtasks
+
+    if len(deliverables) <= 1:
+        return []
+
+    previous_id: Optional[str] = None
+    for index, path in enumerate(deliverables, start=1):
+        spec_id = f"stage-{index}"
+        subtasks.append(
+            {
+                "id": spec_id,
+                "description": f"Serial stage {index}: produce {path}.",
+                "path": path,
+                "agent": subtask_agents[(index - 1) % len(subtask_agents)],
+                "wave": index,
+                "priority": index,
+                "dependencies": [previous_id] if previous_id else [],
+            }
+        )
+        previous_id = spec_id
+    return subtasks
 
 
 def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -> HTTPException:
@@ -5568,12 +5818,17 @@ async def _submit_auto_orchestrated_task(
     plugin_status = plugin.implementation_status(probe=True)
     if plugin_status.get("implementation") == "external" and plugin_status.get("available"):
         try:
+            deliverables = _deliverables_for_external_task(req)
+            planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
             task = await asyncio.to_thread(
                 plugin.submit_task,
                 goal=req.description,
                 project_dir=req.project_dir or _default_external_orchestrator_project_dir(),
-                deliverables=_deliverables_for_external_task(req),
-                agent=req.owner_agent if req.owner_agent and req.owner_agent != "auto" else "demo",
+                deliverables=deliverables,
+                agent=_external_owner_agent(req),
+                subtasks=planned_subtasks,
+                strict_dependency=req.strict_dependency,
+                task_types=req.task_types,
             )
             return AutoTaskResponse(
                 task_id=str(task.get("task_id") or ""),

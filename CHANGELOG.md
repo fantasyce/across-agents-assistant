@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.1 - 2026-06-12
+
+### Changed
+
+- Refined the main toolbar icon sizing so built-in controls, capability entry,
+  MCP entry, and Plugin Center entry use one shared glyph/button metric.
+- Reworked the Plugin Center icon as an Across-owned hollow puzzle-piece SVG
+  with the bottom-left jigsaw shape and a larger effective drawing area.
+- Updated managed install sources to Across Context `v0.6.1` and Across
+  Orchestrator `v0.5.1`.
+
+### Validation
+
+- Open-source release check passed.
+- Backend regression passed with `857 passed`.
+- Swift package build passed.
+
 ## 0.7.0 - 2026-06-11
 
 ### Added

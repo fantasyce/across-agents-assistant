@@ -127,12 +127,14 @@ struct AgentCapabilityListResponse: Decodable {
     let skills: [AgentSkillDefinition]
     let profiles: [String: AgentCapabilityProfile]
     let availableTools: [AgentCapabilityToolSchema]
+    let nativeSkillAgents: [String: NativeSkillAgentState]
     let agentCards: [AgentCapabilityAgentCard]
 
     enum CodingKeys: String, CodingKey {
         case skills
         case profiles
         case availableTools = "available_tools"
+        case nativeSkillAgents = "native_skill_agents"
         case agentCards = "agent_cards"
     }
 
@@ -141,6 +143,7 @@ struct AgentCapabilityListResponse: Decodable {
         skills = try container.decodeIfPresent([AgentSkillDefinition].self, forKey: .skills) ?? []
         profiles = try container.decodeIfPresent([String: AgentCapabilityProfile].self, forKey: .profiles) ?? [:]
         availableTools = try container.decodeIfPresent([AgentCapabilityToolSchema].self, forKey: .availableTools) ?? []
+        nativeSkillAgents = try container.decodeIfPresent([String: NativeSkillAgentState].self, forKey: .nativeSkillAgents) ?? [:]
         agentCards = try container.decodeIfPresent([AgentCapabilityAgentCard].self, forKey: .agentCards) ?? []
     }
 }

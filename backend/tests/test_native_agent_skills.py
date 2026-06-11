@@ -293,11 +293,14 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None):
+        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
             captured["goal"] = goal
             captured["project_dir"] = project_dir
             captured["deliverables"] = deliverables
             captured["agent"] = agent
+            captured["subtasks"] = subtasks
+            captured["strict_dependency"] = strict_dependency
+            captured["task_types"] = task_types
             return {"task_id": "task-native-skills", "status": "pending"}
 
     monkeypatch.setattr(
@@ -333,6 +336,9 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
         "project_dir": str(tmp_path / "project"),
         "deliverables": ["README.md"],
         "agent": "claude",
+        "subtasks": [],
+        "strict_dependency": True,
+        "task_types": ["functional"],
     }
 
 

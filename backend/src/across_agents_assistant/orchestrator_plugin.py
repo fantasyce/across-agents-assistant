@@ -39,7 +39,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.5.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.5.1"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -98,6 +98,29 @@ def _python_search_path() -> str:
         if item not in paths:
             paths.append(item)
     return os.pathsep.join(paths)
+
+
+def _sanitize_python_child_env(env: Dict[str, str]) -> Dict[str, str]:
+    """Remove parent Python launcher state before spawning plugin runtimes.
+
+    Packaged AAA backends are PyInstaller processes. If ``_PYI_*`` or
+    ``__PYVENV_LAUNCHER__`` leak into a child venv Python process, that child can
+    mis-detect itself as a PyInstaller child and hang during import/bootstrap.
+    """
+
+    clean = dict(env)
+    for key in list(clean):
+        if key.startswith("_PYI_"):
+            clean.pop(key, None)
+    for key in (
+        "__PYVENV_LAUNCHER__",
+        "PYTHONEXECUTABLE",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "PYINSTALLER_RESET_ENVIRONMENT",
+    ):
+        clean.pop(key, None)
+    return clean
 
 
 def _resolve_python_executable(explicit: Optional[str] = None) -> str:
@@ -366,9 +389,7 @@ class OrchestratorPluginInstaller:
         self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 
     def _env(self) -> Dict[str, str]:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env.pop("PYTHONHOME", None)
+        env = _sanitize_python_child_env(os.environ.copy())
         env.setdefault("ACROSS_HOME", str(ecosystem_home()))
         env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
         env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
@@ -579,24 +600,33 @@ class OrchestratorPluginManager:
         project_dir: str,
         deliverables: Optional[List[str]] = None,
         agent: Optional[str] = None,
+        subtasks: Optional[List[Dict[str, Any]]] = None,
+        strict_dependency: bool = False,
+        task_types: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         deliverables = deliverables or ["README.md"]
         agent = agent or "demo"
+        clean_task_types = _clean_task_types(task_types)
         if self._transport == "http":
-            task = self._http_post(
-                "/tasks",
-                {
-                    "goal": goal,
-                    "projectRoot": project_dir,
-                    "deliverables": deliverables,
-                    "agent": agent,
-                },
-            )
+            payload: Dict[str, Any] = {
+                "goal": goal,
+                "projectRoot": project_dir,
+                "deliverables": deliverables,
+                "agent": agent,
+                "strictDependency": bool(strict_dependency),
+            }
+            if clean_task_types:
+                payload["taskTypes"] = clean_task_types
+            if subtasks:
+                payload["subtasks"] = subtasks
+            task = self._http_post("/tasks", payload)
         else:
             args = ["submit", goal, "--project", project_dir, "--agent", agent]
             for deliverable in deliverables:
                 args.extend(["--deliverable", deliverable])
+            for task_type in clean_task_types:
+                args.extend(["--task-type", task_type])
             args.append("--json")
             task = self._cli_json(args)
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
@@ -765,9 +795,7 @@ class OrchestratorPluginManager:
         return shutil.which(command, path=env_path)
 
     def _env(self) -> Dict[str, str]:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env.pop("PYTHONHOME", None)
+        env = _sanitize_python_child_env(os.environ.copy())
         extras = [
             str(ecosystem_bin_dir()),
             os.path.expanduser("~/.across_agents/plugins/bin"),
@@ -1115,6 +1143,59 @@ def _artifact_rows(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = No
     ]
 
 
+def _clean_task_types(task_types: Optional[List[Any]]) -> List[str]:
+    clean: List[str] = []
+    seen: set[str] = set()
+    for item in task_types or []:
+        value = str(item or "").strip().lower()
+        if not value or value in seen:
+            continue
+        clean.append(value)
+        seen.add(value)
+    return clean
+
+
+def _external_metadata(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    task_metadata = task.get("metadata")
+    if isinstance(task_metadata, dict):
+        metadata.update(task_metadata)
+    contract = task.get("contract")
+    if isinstance(contract, dict):
+        for key in ("task_types", "delivery_mode"):
+            if key in contract and key not in metadata:
+                metadata[key] = contract[key]
+    if isinstance(evidence, dict):
+        evidence_metadata = evidence.get("metadata")
+        if isinstance(evidence_metadata, dict):
+            metadata.update(evidence_metadata)
+        for key in ("task_types", "delivery_mode"):
+            if key in evidence and key not in metadata:
+                metadata[key] = evidence[key]
+    return metadata
+
+
+def _external_task_types(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> List[str]:
+    metadata = _external_metadata(task, evidence)
+    task_types = _clean_task_types(metadata.get("task_types") if isinstance(metadata.get("task_types"), list) else None)
+    if task_types:
+        return task_types
+    if _is_app_grade(task):
+        return ["functional", "artifact"]
+    return ["artifact"]
+
+
+def _external_delivery_mode(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> str:
+    metadata = _external_metadata(task, evidence)
+    explicit = str(metadata.get("delivery_mode") or "").strip().lower()
+    if explicit:
+        return explicit
+    task_types = _external_task_types(task, evidence)
+    if len(task_types) > 1:
+        return "composite"
+    return task_types[0] if task_types else "artifact"
+
+
 def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     task_id = str(task.get("task_id") or "")
     status = _app_status(str(task.get("status") or "pending"))
@@ -1124,12 +1205,14 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
     required_files = _required_files(task, evidence)
     quality = evaluate_app_grade_quality(evidence or {"status": status, "contract": task.get("contract") or {}})
     artifacts = _artifact_rows(task, evidence)
+    task_types = _external_task_types(task, evidence)
+    delivery_mode = _external_delivery_mode(task, evidence)
     return {
         "task_id": task_id,
         "description": str(task.get("goal") or task.get("description") or ""),
         "status": status,
-        "task_types": ["functional", "artifact"] if _is_app_grade(task) else ["artifact"],
-        "delivery_mode": "composite" if _is_app_grade(task) else "artifact",
+        "task_types": task_types,
+        "delivery_mode": delivery_mode,
         "owner_delivery_contract": task.get("contract") or {},
         "owner_agent": task.get("agent") or "app-grade",
         "allowed_subtask_agents": sorted({str(item.get("agent") or "app-grade") for item in task.get("subtasks") or []}),
@@ -1200,7 +1283,7 @@ def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": float(task.get("updated_at") or time.time()),
         "project_dir": task.get("project_root") or task.get("project_dir"),
         "owner_agent": task.get("agent") or "app-grade",
-        "delivery_mode": "composite" if _is_app_grade(task) else "artifact",
+        "delivery_mode": _external_delivery_mode(task),
     }
 
 
