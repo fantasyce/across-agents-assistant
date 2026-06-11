@@ -137,6 +137,7 @@ class FakeHTTPOrchestrator:
         self.project_dir = project_dir
         self.task_id = "task-api-external"
         self.loop_id = "loop-api-external"
+        self.loop_action_id = "action-api-external"
         self.status = "pending"
         self.loop_status = "pending"
         self.requests = []
@@ -204,8 +205,15 @@ class FakeHTTPOrchestrator:
                     self._json(owner._loop_payload("pending"), 201)
                     return
                 if self.path == f"/loops/{owner.loop_id}/run":
-                    owner.loop_status = "completed"
-                    self._json(owner._loop_payload("completed"))
+                    if (owner.last_loop_submit.get("approvalPolicy") or {}).get("requireApprovalFor"):
+                        owner.loop_status = "awaiting_approval"
+                    else:
+                        owner.loop_status = "completed"
+                    self._json(owner._loop_payload(owner.loop_status))
+                    return
+                if self.path == f"/loops/{owner.loop_id}/actions/{owner.loop_action_id}/approve":
+                    owner.loop_status = "running"
+                    self._json(owner._loop_payload("running", approved=True))
                     return
                 self._json({"error": "not_found"}, 404)
 
@@ -227,24 +235,52 @@ class FakeHTTPOrchestrator:
         self._server.server_close()
         self._thread.join(timeout=5)
 
-    def _loop_payload(self, status: str) -> dict:
+    def _loop_payload(self, status: str, approved: bool = False) -> dict:
+        if status == "awaiting_approval":
+            steps = [
+                {"action": {"type": "memory_search"}},
+                {
+                    "status": "waiting_approval",
+                    "action": {
+                        "action_id": self.loop_action_id,
+                        "type": "task_dispatch",
+                        "requires_approval": True,
+                        "approval_status": "pending",
+                    },
+                },
+            ]
+        elif approved:
+            steps = [
+                {"action": {"type": "memory_search"}},
+                {
+                    "status": "completed",
+                    "action": {
+                        "action_id": self.loop_action_id,
+                        "type": "task_dispatch",
+                        "requires_approval": True,
+                        "approval_status": "approved",
+                    },
+                },
+            ]
+        else:
+            steps = [
+                {"action": {"type": "memory_search"}},
+                {"action": {"type": "task_dispatch"}},
+                {"action": {"type": "quality_gate"}},
+                {"action": {"type": "memory_write_candidate"}},
+                {"action": {"type": "final_output"}},
+            ] if status == "completed" else []
         return {
             "loop_id": self.loop_id,
             "goal": "API loop smoke",
             "project_root": self.project_dir,
             "status": status,
             "agent": "owner",
-            "turn_count": 5 if status == "completed" else 0,
-            "checkpoint_count": 5 if status == "completed" else 0,
+            "turn_count": 5 if status == "completed" else len(steps),
+            "checkpoint_count": 5 if status == "completed" else max(0, len(steps) - 1),
             "memory_policy": {"provider": "across-context", "read": True, "writeCandidates": True},
-            "approval_policy": {"requireApprovalFor": []},
-            "steps": [
-                {"action": {"type": "memory_search"}},
-                {"action": {"type": "task_dispatch"}},
-                {"action": {"type": "quality_gate"}},
-                {"action": {"type": "memory_write_candidate"}},
-                {"action": {"type": "final_output"}},
-            ] if status == "completed" else [],
+            "approval_policy": self.last_loop_submit.get("approvalPolicy") or {"requireApprovalFor": []},
+            "steps": steps,
             "final_output": "Agent loop completed for: API loop smoke" if status == "completed" else None,
         }
 
@@ -329,6 +365,35 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert events.json()[0]["type"] == "loop.completed"
     assert ("POST", "/loops") in server.requests
+
+
+def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        client = TestClient(app)
+
+        created = client.post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "API loop smoke",
+                "project_dir": str(tmp_path / "project"),
+                "approval_policy": {"requireApprovalFor": ["task_dispatch"]},
+            },
+        )
+        loop_id = created.json()["loop_id"]
+        waiting = client.post(f"/api/orchestrator/loops/{loop_id}/run").json()
+        action_id = waiting["steps"][-1]["action"]["action_id"]
+
+        approved = client.post(f"/api/orchestrator/loops/{loop_id}/actions/{action_id}/approve")
+
+    assert approved.status_code == 200
+    assert approved.json()["steps"][-1]["action"]["approval_status"] == "approved"
+    assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/approve") in server.requests
 
 
 def test_task_page_and_startup_diagnostics_include_orchestrator_plugin(monkeypatch, tmp_path):

@@ -23,8 +23,11 @@ func testPluginStatusDecodesAgentLoopCapabilities() throws {
       "command_exists": true,
       "capabilities": {
         "agentLoopRuntime": true,
+        "agentLoopV2": true,
         "checkpoints": true,
-        "memoryHooks": true
+        "memoryHooks": true,
+        "dynamicLoopPlanning": true,
+        "remediationDispatch": true
       },
       "paths": {
         "home": "/tmp/across",
@@ -45,8 +48,11 @@ func testPluginStatusDecodesAgentLoopCapabilities() throws {
     let plugin = try JSONDecoder().decode(AcrossPluginStatus.self, from: json)
 
     assert(plugin.supportsAgentLoopRuntime, "Orchestrator should decode agent loop runtime capability")
+    assert(plugin.supportsAgentLoopV2, "Orchestrator should decode agent loop v2 capability")
     assert(plugin.supportsCheckpoints, "Orchestrator should decode checkpoint capability")
     assert(plugin.supportsMemoryHooks, "Orchestrator should decode memory hook capability")
+    assert(plugin.supportsDynamicLoopPlanning, "Orchestrator should decode dynamic loop planning capability")
+    assert(plugin.supportsRemediationDispatch, "Orchestrator should decode remediation dispatch capability")
 }
 
 func testAgentLoopRunResponseDecodesProbeResult() throws {
@@ -60,9 +66,9 @@ func testAgentLoopRunResponseDecodesProbeResult() throws {
       "checkpoint_count": 5,
       "final_output": "Agent loop completed",
       "steps": [
-        {"action": {"type": "memory_search"}},
-        {"action": {"type": "task_dispatch"}},
-        {"action": {"type": "quality_gate"}}
+        {"status": "completed", "action": {"type": "memory_search"}},
+        {"status": "completed", "action": {"action_id": "action-ui", "type": "task_dispatch", "requires_approval": true, "approval_status": "approved"}},
+        {"status": "completed", "action": {"type": "quality_gate"}}
       ]
     }
     """.data(using: .utf8)!
@@ -73,6 +79,10 @@ func testAgentLoopRunResponseDecodesProbeResult() throws {
     assert(loop.status == "completed", "Loop status should decode")
     assert(loop.checkpointCount == 5, "Checkpoint count should decode")
     assert(loop.steps.map { $0.action?.type ?? "" } == ["memory_search", "task_dispatch", "quality_gate"], "Step action types should decode")
+    assert(loop.steps[1].status == "completed", "Step status should decode")
+    assert(loop.steps[1].action?.actionId == "action-ui", "Action id should decode")
+    assert(loop.steps[1].action?.requiresApproval == true, "Action approval requirement should decode")
+    assert(loop.steps[1].action?.approvalStatus == "approved", "Action approval status should decode")
 }
 
 @main

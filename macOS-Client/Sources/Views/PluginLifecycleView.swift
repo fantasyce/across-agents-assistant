@@ -215,11 +215,11 @@ struct PluginLifecycleView: View {
         HStack(spacing: 8) {
             if plugin.supportsAgentLoopRuntime {
                 metadataChip(appPreferences.text("plugins.loop.runtime"))
+                if plugin.supportsAgentLoopV2 {
+                    metadataChip(appPreferences.text("plugins.loop.v2"))
+                }
                 if plugin.supportsCheckpoints {
                     metadataChip(appPreferences.text("plugins.loop.checkpoints"))
-                }
-                if plugin.supportsMemoryHooks {
-                    metadataChip(appPreferences.text("plugins.loop.memoryHooks"))
                 }
             } else {
                 Color.clear.frame(height: 22)

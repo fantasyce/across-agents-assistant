@@ -1,6 +1,6 @@
 [project]
 name = "across-agents-assistant"
-version = "0.7.1"
+version = "0.8.0"
 description = "macOS desktop assistant with a Swift client, local Python backend, project chat, and agent orchestration"
 requires-python = ">=3.10"
 dependencies = [

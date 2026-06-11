@@ -39,7 +39,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.5.1"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -734,8 +734,10 @@ class OrchestratorPluginManager:
             agent or "owner",
             "--max-turns",
             str(max_turns or 8),
-            "--json",
         ]
+        for action in (approval_policy or {}).get("requireApprovalFor") or []:
+            args.extend(["--require-approval-for", str(action)])
+        args.append("--json")
         return self._cli_json(args)
 
     def run_agent_loop(self, loop_id: str) -> Dict[str, Any]:
@@ -743,6 +745,12 @@ class OrchestratorPluginManager:
         if self._transport == "http":
             return self._http_post(f"/loops/{loop_id}/run", {})
         return self._cli_json(["loop-run", loop_id, "--json"])
+
+    def approve_agent_loop_action(self, loop_id: str, action_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_post(f"/loops/{loop_id}/actions/{action_id}/approve", {})
+        return self._cli_json(["loop-approve", loop_id, action_id, "--json"])
 
     def get_agent_loop(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
@@ -814,6 +822,8 @@ class OrchestratorPluginManager:
         env.setdefault("ACROSS_HOME", str(ecosystem_home()))
         env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
         env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
+        env.setdefault("ACROSS_ORCHESTRATOR_MEMORY_PROVIDER", "across-context")
+        env.setdefault("ACROSS_CONTEXT_COMMAND", str(ecosystem_bin_dir() / "across-context"))
         return env
 
     def shutdown(self) -> None:

@@ -105,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.0` | Agent Loop v2 host integration, external approval proxy, Plugin Center v2 capability badges, Across Context memory-provider handoff, all-project pending memory review, and managed install sources aligned to Across Context `v0.7.0` and Across Orchestrator `v0.6.0`. |
 | `0.7.1` | Toolbar icon sizing cleanup, Across-owned hollow Plugin Center icon polish, and managed install sources aligned to Across Context `v0.6.1` and Across Orchestrator `v0.5.1`. |
 | `0.7.0` | Agent Loop integration through the external Across Orchestrator plugin, Plugin Center loop probes, checkpoint capability badges, and managed install sources aligned to Across Context `v0.6.0` and Across Orchestrator `v0.5.0`. |
 | `0.6.0` | Plugin Center for Across plugin lifecycle management, external Across Context memory governance through the plugin CLI, and managed install sources aligned to Across Context `v0.5.0` and Across Orchestrator `v0.4.0`. |
@@ -151,7 +152,17 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.7.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.0` release moves Agent Loop from a probe-level lifecycle into an
+adapter-backed external runtime path. Across Orchestrator owns dynamic loop
+planning, remediation dispatch, checkpoints, approval execution, and memory
+provider hooks. Across Agents Assistant starts the sidecar with
+`ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context`, proxies approval actions,
+and surfaces Agent Loop v2 capability metadata without embedding orchestration
+logic in the app.
+Plugin Center memory review includes project-scoped pending summaries from
+Across Context, so Agent Loop write candidates can be approved from the host UI.
 
 The `0.7.1` release keeps the Agent Loop architecture intact while polishing
 the console surface: toolbar icons now share one sizing metric, the Plugin
@@ -352,9 +363,11 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.5.1
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
+ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
+ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
 
 When an endpoint is configured, the app talks to that external HTTP runtime. If

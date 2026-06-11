@@ -49,12 +49,24 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
         capabilities?["agentLoopRuntime"] == true
     }
 
+    var supportsAgentLoopV2: Bool {
+        capabilities?["agentLoopV2"] == true
+    }
+
     var supportsCheckpoints: Bool {
         capabilities?["checkpoints"] == true
     }
 
     var supportsMemoryHooks: Bool {
         capabilities?["memoryHooks"] == true
+    }
+
+    var supportsDynamicLoopPlanning: Bool {
+        capabilities?["dynamicLoopPlanning"] == true
+    }
+
+    var supportsRemediationDispatch: Bool {
+        capabilities?["remediationDispatch"] == true
     }
 }
 
@@ -195,9 +207,20 @@ struct AgentLoopRunResponse: Decodable, Equatable {
 }
 
 struct AgentLoopStep: Decodable, Equatable {
+    let status: String?
     let action: AgentLoopAction?
 }
 
 struct AgentLoopAction: Decodable, Equatable {
+    let actionId: String?
     let type: String?
+    let requiresApproval: Bool?
+    let approvalStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case actionId = "action_id"
+        case type
+        case requiresApproval = "requires_approval"
+        case approvalStatus = "approval_status"
+    }
 }
