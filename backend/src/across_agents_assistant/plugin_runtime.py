@@ -30,16 +30,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.6.1",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.5.1",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.5.1",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0",
     ),
 )
 
@@ -156,6 +156,8 @@ def list_context_memories(
     args = ["list", "--json"]
     if project_root:
         args.extend(["--project", project_root])
+    elif status == "pending":
+        args.append("--all-projects")
     if status:
         args.extend(["--status", status])
     payload = _run_context_cli_json(args, env=env, timeout=15)

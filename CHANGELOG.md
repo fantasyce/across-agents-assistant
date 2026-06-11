@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 - 2026-06-12
+
+### Added
+
+- Agent Loop v2 host integration for the external Across Orchestrator plugin,
+  including approval-action proxying and Plugin Center capability decoding.
+- Sidecar environment wiring that explicitly enables Across Context as the
+  Orchestrator memory provider when the plugin is launched by AAA.
+- Plugin Center memory review now asks Across Context for all-project pending
+  memories, so project-scoped Agent Loop summaries are visible for approval.
+- Managed install source alignment for Across Context `v0.7.0` and Across
+  Orchestrator `v0.6.0`.
+
+### Changed
+
+- AAA remains a thin host: Agent Loop planning, dynamic remediation dispatch,
+  checkpoints, and memory hooks stay in Across Orchestrator.
+
 ## 0.7.1 - 2026-06-12
 
 ### Changed

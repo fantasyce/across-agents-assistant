@@ -59,6 +59,22 @@ def test_plugin_child_env_strips_pyinstaller_launcher_state():
     assert env["PATH"] == "/usr/bin"
 
 
+def test_orchestrator_sidecar_env_enables_across_context_memory_provider(tmp_path):
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(tmp_path / "missing-across-orchestrator"),
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+
+    env = manager._env()
+
+    assert env["ACROSS_ORCHESTRATOR_MEMORY_PROVIDER"] == "across-context"
+    assert env["ACROSS_CONTEXT_COMMAND"].endswith("/across-context")
+
+
 def _external_task(task_id: str, project_dir: str, status: str = "pending") -> dict:
     subtask_status = "completed" if status == "completed" else "pending"
     return {

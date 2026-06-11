@@ -162,6 +162,27 @@ def test_context_memory_client_uses_plugin_cli(tmp_path):
     assert forgotten == {"forgotten": True, "id": "mem_cli_2"}
 
 
+def test_context_memory_pending_review_includes_all_projects(tmp_path):
+    across_home = tmp_path / "across"
+    bin_dir = across_home / "bin"
+    bin_dir.mkdir(parents=True)
+    log_path = tmp_path / "argv.txt"
+    command_path = bin_dir / "across-context"
+    command_path.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" > {log_path}\n"
+        "printf '[{\"id\":\"mem_project_1\",\"scope\":\"project\",\"type\":\"session\",\"text\":\"Project memory\",\"status\":\"pending\"}]\\n'\n",
+        encoding="utf-8",
+    )
+    command_path.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    memories = list_context_memories(status="pending", env=env)
+
+    assert memories[0]["id"] == "mem_project_1"
+    assert "--all-projects" in log_path.read_text(encoding="utf-8")
+
+
 def test_plugins_action_api_rejects_unsupported_action(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_HOME", str(tmp_path / "across"))
     response = TestClient(app).post("/api/plugins/across-context/actions", json={"action": "explode"})

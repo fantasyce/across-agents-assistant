@@ -1614,6 +1614,23 @@ async def run_external_agent_loop(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop run"))
 
 
+@app.post("/api/orchestrator/loops/{loop_id}/actions/{action_id}/approve")
+async def approve_external_agent_loop_action(loop_id: str, action_id: str):
+    """Approve a pending external Across Orchestrator agent loop action."""
+    try:
+        loop = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().approve_agent_loop_action,
+            loop_id,
+            action_id,
+        )
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop approval failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop approval"))
+
+
 @app.get("/api/orchestrator/loops/{loop_id}")
 async def get_external_agent_loop(loop_id: str):
     """Fetch external Across Orchestrator agent loop state."""
