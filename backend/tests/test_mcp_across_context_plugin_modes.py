@@ -130,7 +130,9 @@ def test_across_context_plugin_bin_is_prioritized_in_command_search_path():
 
     search_path = manager._command_search_path("/opt/homebrew/bin:/usr/bin")
 
-    assert search_path.split(os.pathsep)[0].endswith(".across/bin")
+    paths = search_path.split(os.pathsep)
+    assert paths[0].endswith(".across/bin")
+    assert not any(path.endswith(".across_agents/plugins/bin") for path in paths)
 
 
 def _write_fake_across_context_server(tmp_path: Path) -> Path:

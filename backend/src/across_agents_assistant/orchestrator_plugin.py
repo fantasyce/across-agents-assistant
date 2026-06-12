@@ -7,11 +7,13 @@ import atexit
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 import uuid
@@ -39,7 +41,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -80,6 +82,32 @@ def _is_executable_file(path: Optional[str]) -> bool:
         return False
     candidate = Path(str(path)).expanduser()
     return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _protected_user_reference_roots() -> List[Path]:
+    home = Path.home()
+    return [home / "Documents", home / "Desktop", home / "Downloads"]
+
+
+def _contains_protected_user_reference(value: str) -> bool:
+    if not value:
+        return False
+    expanded = os.path.expanduser(value)
+    if any(str(root) in expanded for root in _protected_user_reference_roots()):
+        return True
+    return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
+
+
+def _is_safe_python_executable(path: str) -> bool:
+    return _is_executable_file(path) and not _contains_protected_user_reference(path)
 
 
 def _python_search_path() -> str:
@@ -138,7 +166,11 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
 
     sys_executable = str(getattr(sys, "executable", "") or "")
     sys_name = Path(sys_executable).name.lower()
-    if not bool(getattr(sys, "frozen", False)) and "python" in sys_name and _is_executable_file(sys_executable):
+    if (
+        not bool(getattr(sys, "frozen", False))
+        and "python" in sys_name
+        and _is_safe_python_executable(sys_executable)
+    ):
         return sys_executable
 
     search_path = _python_search_path()
@@ -152,7 +184,7 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
     ]
     for name in candidate_names:
         resolved = shutil.which(name, path=search_path)
-        if _is_executable_file(resolved):
+        if _is_safe_python_executable(resolved or ""):
             return str(Path(resolved).expanduser())
 
     fixed_paths = [
@@ -165,7 +197,7 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
         Path("/usr/bin/python3"),
     ]
     for path in fixed_paths:
-        if _is_executable_file(str(path)):
+        if _is_safe_python_executable(str(path)):
             return str(path)
 
     raise OrchestratorPluginUnavailable(
@@ -237,9 +269,13 @@ class OrchestratorPluginInstaller:
 
     def status(self) -> Dict[str, Any]:
         state = self._read_state()
-        installed = self.command_path.is_file() and os.access(self.command_path, os.X_OK)
+        command_installed = self.command_path.is_file() and os.access(self.command_path, os.X_OK)
         wrapper_installed = self.wrapper_path.is_file() and os.access(self.wrapper_path, os.X_OK)
+        integrity_issues = self._runtime_integrity_issues() if command_installed else []
+        installed = command_installed and not integrity_issues
         status = "installed" if installed else str(state.get("status") or "not_installed")
+        if command_installed and integrity_issues:
+            status = "needs_repair"
         return {
             "plugin_id": ORCHESTRATOR_PLUGIN_ID,
             "status": status,
@@ -253,6 +289,8 @@ class OrchestratorPluginInstaller:
             "wrapper": str(self.wrapper_path),
             "manifest": str(self.manifest_path),
             "python": self.python_executable,
+            "integrity_ok": not integrity_issues,
+            "integrity_issues": integrity_issues,
             "logs": list(state.get("logs") or [])[-20:],
             "updated_at": state.get("updated_at"),
             "error": ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE if state.get("error") else None,
@@ -265,6 +303,9 @@ class OrchestratorPluginInstaller:
         self._write_state({"status": "installing", "logs": logs, "updated_at": time.time()})
 
         try:
+            if self.venv_dir.exists():
+                logs.append("Remove stale virtualenv")
+                shutil.rmtree(self.venv_dir)
             self._run([self.python_executable, "-m", "venv", str(self.venv_dir)], logs, "Create virtualenv")
             venv_python = str(self.venv_dir / "bin" / "python")
             self._run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], logs, "Upgrade pip")
@@ -276,6 +317,7 @@ class OrchestratorPluginInstaller:
                 )
             self._write_wrapper()
             self._write_manifest(logs)
+            self._assert_runtime_self_contained()
             state = {
                 "status": "installed",
                 "logs": logs,
@@ -357,6 +399,71 @@ class OrchestratorPluginInstaller:
         script = "#!/bin/sh\nexec \"{}\" \"$@\"\n".format(str(self.command_path).replace('"', '\\"'))
         self.wrapper_path.write_text(script, encoding="utf-8")
         self.wrapper_path.chmod(0o755)
+
+    def _assert_runtime_self_contained(self) -> None:
+        issues = self._runtime_integrity_issues()
+        if issues:
+            raise OrchestratorPluginError("Across Orchestrator plugin runtime is not self-contained.")
+
+    def _runtime_integrity_issues(self) -> List[str]:
+        issues: List[str] = []
+        install_root = self.install_dir.resolve()
+        venv_root = self.venv_dir.resolve()
+
+        for path in (self.wrapper_path, self.command_path, self.venv_dir / "pyvenv.cfg"):
+            if path.exists():
+                issues.extend(self._text_file_integrity_issues(path, install_root, venv_root))
+
+        for path in self.venv_dir.glob("lib/python*/site-packages/*.pth"):
+            issues.extend(self._pth_integrity_issues(path, install_root, venv_root))
+
+        for path in self.venv_dir.glob("lib/python*/site-packages/*.dist-info/direct_url.json"):
+            issues.extend(self._direct_url_integrity_issues(path, install_root, venv_root))
+
+        return issues
+
+    def _text_file_integrity_issues(self, path: Path, install_root: Path, venv_root: Path) -> List[str]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return []
+        if _contains_protected_user_reference(text):
+            return [f"{path.name} references a protected user directory"]
+        return []
+
+    def _pth_integrity_issues(self, path: Path, install_root: Path, venv_root: Path) -> List[str]:
+        issues = self._text_file_integrity_issues(path, install_root, venv_root)
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            return issues
+        for line in lines:
+            value = line.strip()
+            if not value or value.startswith("#") or value.startswith("import "):
+                continue
+            candidate = Path(value).expanduser()
+            if candidate.is_absolute() and not _is_relative_to(candidate, venv_root):
+                issues.append(f"{path.name} adds import path outside plugin virtualenv")
+        return issues
+
+    def _direct_url_integrity_issues(self, path: Path, install_root: Path, venv_root: Path) -> List[str]:
+        issues: List[str] = []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return issues
+        if not isinstance(payload, dict):
+            return issues
+        dir_info = payload.get("dir_info")
+        if isinstance(dir_info, dict) and dir_info.get("editable"):
+            issues.append(f"{path.name} records an editable install")
+        url = str(payload.get("url") or "")
+        if url.startswith("file:"):
+            parsed = urllib.parse.urlparse(url)
+            local_path = Path(urllib.parse.unquote(parsed.path)).expanduser()
+            if local_path.is_absolute() and not _is_relative_to(local_path, install_root):
+                issues.append(f"{path.name} references local source outside plugin directory")
+        return issues
 
     def _write_manifest(self, logs: List[str]) -> None:
         try:
@@ -471,8 +578,8 @@ class OrchestratorPluginManager:
 
     def implementation_status(self, *, probe: bool = True) -> Dict[str, Any]:
         mode = self.config.normalized_mode()
-        command_path = self._resolve_command()
         install_status = self.install_status()
+        command_path = self._resolve_command() if install_status.get("integrity_ok", True) else None
         base: Dict[str, Any] = {
             "mode": mode,
             "implementation": "external",
@@ -485,6 +592,16 @@ class OrchestratorPluginManager:
             "install": install_status,
             "connection_note": "External Across Orchestrator is required but no endpoint or executable was found.",
         }
+
+        if install_status.get("integrity_ok") is False:
+            return {
+                **base,
+                "implementation": "external",
+                "available": False,
+                "command_available": False,
+                "connection_note": "Across Orchestrator plugin must be repaired because its runtime is not self-contained.",
+                "error": "across-orchestrator plugin needs repair",
+            }
 
         if self.config.endpoint:
             try:
@@ -806,7 +923,6 @@ class OrchestratorPluginManager:
         env = _sanitize_python_child_env(os.environ.copy())
         extras = [
             str(ecosystem_bin_dir()),
-            os.path.expanduser("~/.across_agents/plugins/bin"),
             os.path.expanduser("~/.local/bin"),
             os.path.expanduser("~/.npm-global/bin"),
             "/opt/homebrew/bin",

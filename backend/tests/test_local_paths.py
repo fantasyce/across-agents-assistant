@@ -73,6 +73,21 @@ def test_local_agent_default_workspace_uses_across_agents_home(monkeypatch, tmp_
     assert default_local_agent_workspace() == Path(tmp_path) / ".across/data/across-agents-assistant/workspace"
 
 
+def test_local_kb_default_dir_uses_across_data_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    import across_agents_assistant.paths as paths
+    import across_agents_assistant.mcp_servers.local_kb as local_kb
+
+    importlib.reload(paths)
+    local_kb = importlib.reload(local_kb)
+
+    assert local_kb.default_kb_dir() == str(
+        tmp_path / ".across/data/across-agents-assistant/local-knowledge"
+    )
+    assert "Documents" not in local_kb.default_kb_dir()
+
+
 def test_runtime_paths_are_under_across_agents_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
 

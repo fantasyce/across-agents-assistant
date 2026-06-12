@@ -418,6 +418,5 @@ class PersistenceService:
         except Exception as e:
             logger.warning(f"Migration skipped: {e}")
 
-
 # 全局单例（替换 db/database.py 的 db 单例）
 persistence = PersistenceService()

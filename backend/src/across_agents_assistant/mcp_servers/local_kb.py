@@ -4,10 +4,16 @@ import sqlite3
 import re
 from mcp.server.fastmcp import FastMCP
 
+from ..paths import component_data_home
+
 mcp = FastMCP("Local Knowledge Base")
 
 kb_dir = ""
 db_conn = None
+
+
+def default_kb_dir():
+    return str(component_data_home() / "local-knowledge")
 
 def get_db():
     global db_conn
@@ -165,7 +171,7 @@ def main():
     if args.dir:
         kb_dir = args.dir
     else:
-        kb_dir = os.path.expanduser("~/Documents/AcrossAgentsWiki")
+        kb_dir = default_kb_dir()
 
     if not os.path.exists(kb_dir):
         try:
