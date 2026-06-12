@@ -105,11 +105,12 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
-| `0.8.0` | Agent Loop v2 host integration, external approval proxy, Plugin Center v2 capability badges, Across Context memory-provider handoff, all-project pending memory review, and managed install sources aligned to Across Context `v0.7.0` and Across Orchestrator `v0.6.0`. |
+| `0.8.1` | Managed plugin runtime integrity repair, bounded Across Context upgrade/repair reinstalls, no automatic legacy hidden-directory migration, and built-in MCP defaults reset to managed `~/.across` paths to avoid macOS Documents prompts on fresh installs. |
+| `0.8.0` | Agent Loop v2 host integration, external approval proxy, Plugin Center v2 capability badges, Across Context memory-provider handoff, all-project pending memory review, and managed install sources routed through the Across plugin repositories. |
 | `0.7.1` | Toolbar icon sizing cleanup, Across-owned hollow Plugin Center icon polish, and managed install sources aligned to Across Context `v0.6.1` and Across Orchestrator `v0.5.1`. |
 | `0.7.0` | Agent Loop integration through the external Across Orchestrator plugin, Plugin Center loop probes, checkpoint capability badges, and managed install sources aligned to Across Context `v0.6.0` and Across Orchestrator `v0.5.0`. |
 | `0.6.0` | Plugin Center for Across plugin lifecycle management, external Across Context memory governance through the plugin CLI, and managed install sources aligned to Across Context `v0.5.0` and Across Orchestrator `v0.4.0`. |
-| `0.5.1` | Tool approval now preserves successful MCP/local tool results even if the automatic continuation hits a gateway fallback; managed Across Orchestrator installs use the `v0.3.1` legacy-data backfill fix. |
+| `0.5.1` | Tool approval now preserves successful MCP/local tool results even if the automatic continuation hits a gateway fallback. |
 | `0.5.0` | Unified Across ecosystem runtime under `~/.across`, external Across Context MCP plugin data under `~/.across/data/across-context`, sidecar-first Across Orchestrator under `~/.across/plugins/across-orchestrator`, and AAA host discovery through `~/.across/bin`. |
 | `0.4.3` | Plugin-required Across Orchestrator slot with one-click managed install, external HTTP/CLI task lifecycle, app-grade Release E2E evidence, packaged-app installer fix, and no built-in task-orchestration fallback for new submissions. |
 | `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share one vault. |
@@ -152,7 +153,16 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.0` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.1` release is a runtime hygiene patch for the Across plugin boundary.
+Managed plugin installs now reject stale wrappers, editable installs, and
+Python metadata that point back to protected user directories. Across Context
+repair and upgrade force a fresh managed install with an app-owned npm cache and
+bounded install timeout. Built-in local knowledge, SQLite, and filesystem MCP
+defaults use managed `~/.across` paths, and saved settings that still reference
+old Across hidden directories or the previous Documents defaults are reset to
+the managed namespace.
 
 The `0.8.0` release moves Agent Loop from a probe-level lifecycle into an
 adapter-backed external runtime path. Across Orchestrator owns dynamic loop
@@ -184,8 +194,8 @@ The `0.5.0` ecosystem work standardizes every Across-owned runtime path under
 `~/.across`. Across Agents Assistant stores its own data in
 `~/.across/data/across-agents-assistant`, discovers plugin wrappers from
 `~/.across/bin`, and keeps plugin runtime code under `~/.across/plugins`.
-Legacy `~/.across_agents`, `~/.across-context`, and `~/.across-orchestrator`
-data is copied forward on first use without deleting the old directories.
+Fresh installs and managed plugins do not read or write older standalone
+hidden directories.
 
 Across Context remains a standalone shared-memory plugin. Across Agents
 Assistant runs it through the external `across-context mcp` server in product
@@ -363,7 +373,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.0
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context

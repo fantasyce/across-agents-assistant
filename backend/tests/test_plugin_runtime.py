@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -105,6 +106,30 @@ def test_inspect_across_plugin_probe_uses_command_status(tmp_path):
     assert context["display_name"] == "Fake across-context"
 
 
+def test_inspect_across_plugin_rejects_wrapper_referencing_documents(tmp_path):
+    across_home = tmp_path / "across"
+    bin_dir = across_home / "bin"
+    bin_dir.mkdir(parents=True)
+    marker_path = tmp_path / "wrapper-ran"
+    command_path = bin_dir / "across-context"
+    command_path.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker_path}\n"
+        "exec /usr/bin/env node 'file:///Users/example/Documents/projects/across-context/src/cli.js' \"$@\"\n",
+        encoding="utf-8",
+    )
+    command_path.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    context = inspect_across_plugin("across-context", env=env, probe=True)
+
+    assert context["status"] == "needs_repair"
+    assert context["available"] is False
+    assert context["integrity_ok"] is False
+    assert context["integrity_issues"]
+    assert not marker_path.exists()
+
+
 def test_plugins_api_returns_known_plugins(monkeypatch, tmp_path):
     across_home = tmp_path / "across"
     _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
@@ -142,6 +167,51 @@ def test_context_plugin_lifecycle_probe_and_uninstall(tmp_path):
     assert not command_path.exists()
     assert not (across_home / "plugins" / "across-context").exists()
     assert uninstalled["preserved_data"] == str(across_home / "data" / "across-context")
+
+
+def test_context_plugin_upgrade_reinstalls_existing_runtime(tmp_path):
+    across_home = tmp_path / "across"
+    _write_fake_command(across_home, "across-context")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_npm = fake_bin / "npm"
+    fake_npm.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_npm.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": str(fake_bin)}
+    calls: list[list[str]] = []
+    runner_envs: list[dict[str, str]] = []
+
+    def runner(args, **kwargs):
+        calls.append([str(item) for item in args])
+        runner_envs.append(dict(kwargs.get("env") or {}))
+        if args[0] == str(fake_npm):
+            prefix = Path(args[args.index("--prefix") + 1])
+            command = prefix / "node_modules" / ".bin" / "across-context"
+            command.parent.mkdir(parents=True)
+            command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            command.chmod(0o755)
+        elif Path(args[0]).name == "across-context" and args[1:3] == ["install", "host-plugin"]:
+            wrapper = across_home / "bin" / "across-context"
+            wrapper.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  plugin-manifest) printf '{\"id\":\"across-context\",\"displayName\":\"Across Context\",\"kind\":\"memory-provider\",\"version\":\"9.9.9\"}\\n' ;;\n"
+                "  plugin-status) printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n' ;;\n"
+                "  *) printf '{}\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    upgraded = run_context_plugin_lifecycle_action("upgrade", env=env, runner=runner)
+
+    assert upgraded["version"] == "9.9.9"
+    assert any(call[0] == str(fake_npm) and "install" in call for call in calls)
+    assert all(
+        item.get("NPM_CONFIG_CACHE") == str(across_home / "cache" / "across-agents-assistant" / "npm")
+        for item in runner_envs
+    )
 
 
 def test_context_memory_client_uses_plugin_cli(tmp_path):

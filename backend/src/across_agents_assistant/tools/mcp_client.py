@@ -94,10 +94,7 @@ class MCPClientManager:
 
     def _command_search_path(self, current_path: str) -> str:
         plugin_bin = str(ecosystem_bin_dir())
-        legacy_plugin_bin = os.path.expanduser("~/.across_agents/plugins/bin")
         paths = [plugin_bin]
-        if legacy_plugin_bin != plugin_bin:
-            paths.append(legacy_plugin_bin)
         paths.extend(
             path
             for path in str(current_path or "").split(os.pathsep)

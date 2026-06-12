@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,26 +87,14 @@ class AcrossContextVault:
         across_home = str(source_env.get("ACROSS_HOME") or "").strip()
         if explicit_home:
             self.home = Path(explicit_home).expanduser().resolve()
-            self.should_migrate_legacy = False
         else:
             root = Path(across_home).expanduser() if across_home else Path.home() / ".across"
             self.home = (root / "data" / "across-context").resolve()
-            self.should_migrate_legacy = True
 
     def init(self) -> None:
-        self._migrate_legacy_default_vault()
         (self.home / "global").mkdir(parents=True, exist_ok=True)
         (self.home / "projects").mkdir(parents=True, exist_ok=True)
         (self.home / "global" / "memories.jsonl").touch(exist_ok=True)
-
-    def _migrate_legacy_default_vault(self) -> None:
-        if not self.should_migrate_legacy or self.home.exists():
-            return
-        home = str(self.env.get("HOME") or "").strip()
-        legacy = ((Path(home).expanduser() if home else Path.home()) / ".across-context").resolve()
-        if legacy == self.home or not legacy.exists():
-            return
-        shutil.copytree(legacy, self.home)
 
     def remember(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         self.init()

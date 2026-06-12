@@ -46,7 +46,7 @@ registry.register(ToolDefinition(
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "The absolute or relative path (e.g. ~/Documents) to list"}
+            "path": {"type": "string", "description": "The absolute or relative path to list"}
         },
         "required": ["path"]
     },

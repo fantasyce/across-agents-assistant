@@ -87,7 +87,7 @@ that it may be distributed under the project license. See
 Never commit:
 
 - API keys, tokens, authorization headers, private keys, certificates, provisioning profiles, or exported Keychain data.
-- Local app databases or runtime state under `~/.across_agents`.
+- Local app databases, plugin runtimes, or runtime state under `~/.across`.
 - Personal absolute paths, private project names, private screenshots, local tool caches, or generated design scratchpads.
 - Large model files unless a future maintainer explicitly moves them to a documented Git LFS flow.
 - Temporary E2E projects, generated browser reports, packaged `.app` bundles, DMGs, PyInstaller output, or Swift build directories.

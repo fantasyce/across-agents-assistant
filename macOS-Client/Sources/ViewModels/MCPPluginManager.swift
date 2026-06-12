@@ -156,13 +156,16 @@ class MCPPluginManager: ObservableObject {
     private var builtInPlugins: [MCPPlugin] {
         let cmd = builtInCommand
         let prod = isProduction
+        let localKnowledgePath = Self.managedDirectoryPath("local-knowledge")
+        let sqlitePath = LocalAppPaths.root.appendingPathComponent("assistant.db").path
+        let filesystemPath = Self.managedDirectoryPath("workspace")
         return [
             MCPPlugin(
                 id: "local_kb",
                 name: "Local Knowledge Base",
                 description: "Index and search a local wiki folder for fast, private personal memory.",
                 command: cmd,
-                args: prod ? ["mcp", "local_kb", "--dir", ""] : ["-m", "mcp_local_kb", "--dir", ""],
+                args: prod ? ["mcp", "local_kb", "--dir", localKnowledgePath] : ["-m", "mcp_local_kb", "--dir", localKnowledgePath],
                 isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .directory
@@ -182,7 +185,7 @@ class MCPPluginManager: ObservableObject {
                 name: "SQLite Database",
                 description: "Allow AI to read and analyze a local SQLite database file.",
                 command: cmd,
-                args: prod ? ["mcp", "sqlite", "--db-path", ""] : ["-m", "mcp_sqlite", "--db-path", ""],
+                args: prod ? ["mcp", "sqlite", "--db-path", sqlitePath] : ["-m", "mcp_sqlite", "--db-path", sqlitePath],
                 isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .file
@@ -192,7 +195,7 @@ class MCPPluginManager: ObservableObject {
                 name: "Local Filesystem",
                 description: "Allow AI to access and edit folders you explicitly choose.",
                 command: cmd,
-                args: prod ? ["mcp", "filesystem", ""] : ["-m", "mcp_filesystem", ""],
+                args: prod ? ["mcp", "filesystem", filesystemPath] : ["-m", "mcp_filesystem", filesystemPath],
                 isEnabled: true,
                 isBuiltIn: true,
                 configurationKind: .directory
@@ -212,6 +215,12 @@ class MCPPluginManager: ObservableObject {
                 configurationKind: .none
             )
         ]
+    }
+
+    private static func managedDirectoryPath(_ name: String) -> String {
+        let url = LocalAppPaths.root.appendingPathComponent(name, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.path
     }
 
     private init() {
@@ -235,6 +244,7 @@ class MCPPluginManager: ObservableObject {
 
     func loadPlugins() {
         let shouldApplyDefaultEnabledMigration = !UserDefaults.standard.bool(forKey: defaultEnabledMigrationKey)
+        var shouldSaveMergedPlugins = shouldApplyDefaultEnabledMigration
 
         if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
            let saved = try? JSONDecoder().decode([MCPPlugin].self, from: data) {
@@ -255,8 +265,14 @@ class MCPPluginManager: ObservableObject {
                     if builtIn.requiresConfiguration && !savedMatch.args.isEmpty && !builtIn.args.isEmpty {
                         var newArgs = builtIn.args
                         var savedPath = savedMatch.args.last ?? ""
-                        if builtIn.id == "sqlite" {
-                            savedPath = Self.migratedSQLitePath(savedPath)
+                        let builtInDefaultPath = builtIn.args.last ?? ""
+                        if Self.isObsoleteAcrossHiddenPath(savedPath)
+                            || Self.isObsoleteDocumentsDefaultPath(pluginId: builtIn.id, path: savedPath) {
+                            savedPath = builtIn.args.last ?? ""
+                            shouldSaveMergedPlugins = true
+                        } else if savedPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !builtInDefaultPath.isEmpty {
+                            savedPath = builtInDefaultPath
+                            shouldSaveMergedPlugins = true
                         }
                         newArgs[newArgs.count - 1] = savedPath
                         merged[index].args = newArgs
@@ -273,6 +289,8 @@ class MCPPluginManager: ObservableObject {
             self.plugins = merged
             if shouldApplyDefaultEnabledMigration {
                 UserDefaults.standard.set(true, forKey: defaultEnabledMigrationKey)
+            }
+            if shouldSaveMergedPlugins {
                 savePlugins()
             }
         } else {
@@ -283,16 +301,32 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
-    private static func migratedSQLitePath(_ path: String) -> String {
+    private static func isObsoleteAcrossHiddenPath(_ path: String) -> Bool {
         let expanded = (path as NSString).expandingTildeInPath
-        let legacy = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".across_agents")
-            .appendingPathComponent("assistant.db")
+        let components = URL(fileURLWithPath: expanded).pathComponents
+        let obsoleteNames = [".across_agents", ".across-context", ".across-orchestrator"]
+        return components.contains { obsoleteNames.contains($0) }
+    }
+
+    private static func isObsoleteDocumentsDefaultPath(pluginId: String, path: String) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        let documentsPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .standardizedFileURL
             .path
-        if expanded == legacy {
-            return LocalAppPaths.root.appendingPathComponent("assistant.db").path
+        let standardizedPath = URL(fileURLWithPath: expanded).standardizedFileURL.path
+
+        switch pluginId {
+        case "local_kb":
+            return standardizedPath == URL(fileURLWithPath: documentsPath)
+                .appendingPathComponent("mywiki", isDirectory: true)
+                .standardizedFileURL
+                .path
+        case "filesystem":
+            return standardizedPath == documentsPath
+        default:
+            return false
         }
-        return path
     }
 
     func savePlugins() {

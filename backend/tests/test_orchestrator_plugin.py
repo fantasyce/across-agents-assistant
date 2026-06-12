@@ -73,6 +73,7 @@ def test_orchestrator_sidecar_env_enables_across_context_memory_provider(tmp_pat
 
     assert env["ACROSS_ORCHESTRATOR_MEMORY_PROVIDER"] == "across-context"
     assert env["ACROSS_CONTEXT_COMMAND"].endswith("/across-context")
+    assert not any(path.endswith(".across_agents/plugins/bin") for path in env["PATH"].split(os.pathsep))
 
 
 def _external_task(task_id: str, project_dir: str, status: str = "pending") -> dict:
@@ -446,11 +447,15 @@ def test_orchestrator_plugin_installer_installs_into_app_managed_venv(tmp_path):
     plugin_home = tmp_path / "plugins"
     source = tmp_path / "across-orchestrator-src"
     source.mkdir()
+    stale_pth = plugin_home / "across-orchestrator" / "venv" / "lib" / "python3.11" / "site-packages" / "__editable__.across_orchestrator.pth"
+    stale_pth.parent.mkdir(parents=True)
+    stale_pth.write_text("/Users/example/Documents/projects/across-orchestrator/src\n", encoding="utf-8")
     calls = []
 
     def fake_run(args, **_kwargs):
         calls.append([str(item) for item in args])
-        if args[:3] == [os.sys.executable, "-m", "venv"]:
+        if str(args[1:3]) == str(["-m", "venv"]):
+            assert not stale_pth.exists()
             cli_path = plugin_home / "across-orchestrator" / "venv" / "bin" / "across-orchestrator"
             cli_path.parent.mkdir(parents=True, exist_ok=True)
             cli_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -474,9 +479,46 @@ def test_orchestrator_plugin_installer_installs_into_app_managed_venv(tmp_path):
     assert state["status"] == "installed"
     assert state["installed"] is True
     assert state["command"] == str(plugin_home / "across-orchestrator" / "venv" / "bin" / "across-orchestrator")
-    assert calls[0][:3] == [os.sys.executable, "-m", "venv"]
+    assert calls[0][:3] == [installer.python_executable, "-m", "venv"]
     assert calls[1][1:4] == ["-m", "pip", "install"]
     assert calls[2][1:4] == ["-m", "pip", "install"]
+
+
+def test_orchestrator_plugin_status_rejects_editable_runtime_reference(tmp_path):
+    plugin_home = tmp_path / "plugins"
+    install_dir = plugin_home / "across-orchestrator"
+    cli_path = install_dir / "venv" / "bin" / "across-orchestrator"
+    site_packages = install_dir / "venv" / "lib" / "python3.11" / "site-packages"
+    marker_path = tmp_path / "cli-was-run"
+    cli_path.parent.mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+    cli_path.write_text(
+        f"#!/bin/sh\ntouch {marker_path}\nprintf '{{\"name\":\"Across Orchestrator\"}}\\n'\n",
+        encoding="utf-8",
+    )
+    cli_path.chmod(cli_path.stat().st_mode | stat.S_IXUSR)
+    (site_packages / "__editable__.across_orchestrator.pth").write_text(
+        "/Users/example/Documents/projects/across-orchestrator/src\n",
+        encoding="utf-8",
+    )
+
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command="across-orchestrator",
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=plugin_home,
+        )
+    )
+
+    status = manager.implementation_status(probe=True)
+
+    assert status["available"] is False
+    assert status["command_available"] is False
+    assert status["install"]["status"] == "needs_repair"
+    assert status["install"]["integrity_ok"] is False
+    assert "needs repair" in status["error"]
+    assert not marker_path.exists()
 
 
 def test_packaged_installer_uses_real_python_instead_of_backend_executable(monkeypatch, tmp_path):

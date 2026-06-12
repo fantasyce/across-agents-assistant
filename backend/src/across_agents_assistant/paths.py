@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 from typing import Mapping
 
 COMPONENT_ID = "across-agents-assistant"
-LEGACY_HOME_NAME = ".across_agents"
 
 
 def _env_value(env: Mapping[str, str] | None, key: str) -> str | None:
@@ -71,10 +69,6 @@ def component_cache_home(component_id: str = COMPONENT_ID, env: Mapping[str, str
     return ecosystem_component_dir("cache", component_id, env)
 
 
-def legacy_app_home(env: Mapping[str, str] | None = None) -> Path:
-    return (_user_home(env) / LEGACY_HOME_NAME).resolve()
-
-
 def app_home() -> Path:
     """Return the single app-owned local data root."""
     override = _env_value(None, "ACROSS_AGENTS_HOME")
@@ -85,32 +79,8 @@ def app_home() -> Path:
 
 def ensure_app_home() -> Path:
     root = app_home()
-    _migrate_legacy_app_home(root)
     root.mkdir(parents=True, exist_ok=True)
     return root
-
-
-def _migrate_legacy_app_home(root: Path) -> None:
-    if _env_value(None, "ACROSS_AGENTS_HOME"):
-        return
-    legacy = legacy_app_home()
-    if legacy == root or not legacy.exists():
-        return
-    _copy_missing_regular_files(legacy, root)
-
-
-def _copy_missing_regular_files(source: Path, destination: Path) -> None:
-    ignored_dirs = {"run", "tmp"}
-    destination.mkdir(parents=True, exist_ok=True)
-    for child in source.iterdir():
-        if child.name in ignored_dirs:
-            continue
-        target = destination / child.name
-        if child.is_dir():
-            _copy_missing_regular_files(child, target)
-        elif child.is_file() and not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(child, target)
 
 
 def app_subdir(name: str) -> Path:

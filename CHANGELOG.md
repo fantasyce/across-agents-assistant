@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.1 - 2026-06-13
+
+### Fixed
+
+- Managed Across plugin installs now reject stale wrappers, editable installs,
+  and Python metadata that point back to protected user directories such as
+  Documents, Desktop, or Downloads.
+- Across Orchestrator repair now recreates the managed virtualenv before
+  reinstalling, so AAA does not keep launching an old plugin runtime.
+- Across Context repair and upgrade now force a fresh managed install instead
+  of returning an already-installed older wrapper.
+- Managed Across Context installs use an app-owned npm cache under
+  `~/.across/cache/across-agents-assistant/npm` and bounded install timeouts, so
+  broken user-level npm caches or network failures do not leave Plugin Center
+  waiting indefinitely.
+- Built-in local knowledge, SQLite, and filesystem MCP defaults now use
+  managed directories under `~/.across/data/across-agents-assistant`.
+- Saved MCP settings that still point at old Across hidden directories or the
+  previous Documents defaults are reset to managed `~/.across` paths.
+
+### Changed
+
+- Removed automatic read/copy migration from legacy `~/.across_agents` and
+  legacy Across Context vaults. Fresh installs and managed plugins use only the
+  unified `~/.across` ecosystem root unless an explicit override is provided.
+
 ## 0.8.0 - 2026-06-12
 
 ### Added
@@ -10,8 +36,8 @@
   Orchestrator memory provider when the plugin is launched by AAA.
 - Plugin Center memory review now asks Across Context for all-project pending
   memories, so project-scoped Agent Loop summaries are visible for approval.
-- Managed install source alignment for Across Context `v0.7.0` and Across
-  Orchestrator `v0.6.0`.
+- Managed install sources now route through the Across plugin repositories so
+  one-click repair does not pin stale plugin runtimes.
 
 ### Changed
 
@@ -78,8 +104,7 @@
 - Preserve successful tool results when the automatic post-approval continuation
   hits a gateway fallback, so shared-memory reads and writes are not hidden by a
   downstream model-routing error.
-- Point the managed Across Orchestrator install source at `v0.3.1`, which
-  backfills legacy task state into the unified `~/.across` data namespace.
+- Point the managed Across Orchestrator install source at `v0.3.1`.
 
 ## 0.5.0 - 2026-06-09
 
@@ -97,8 +122,8 @@ in separate component namespaces.
 - Plugin wrapper discovery through `~/.across/bin`.
 - Sidecar-first Across Orchestrator launch from the AAA host when no explicit
   endpoint is configured.
-- Copy-on-missing migration from legacy `~/.across_agents`,
-  `~/.across-context`, and `~/.across-orchestrator` data directories.
+- Fresh installs and managed plugins use only the unified `~/.across`
+  ecosystem root.
 
 ### Changed
 
@@ -134,8 +159,7 @@ runtime instead of an app-owned fallback path for new task submission.
 ### Added
 
 - Across Orchestrator runtime status API and startup diagnostic coverage.
-- One-click managed plugin install endpoint for `across-orchestrator` using an
-  app-owned virtualenv under `~/.across_agents/plugins`.
+- One-click managed plugin install endpoint for `across-orchestrator`.
 - External HTTP/CLI task lifecycle support for Release E2E creation, run,
   status, quality benchmark, evidence bundle, and task-list surfaces.
 - UI support for unavailable/installing/installed plugin states in the task
@@ -191,9 +215,8 @@ compatibility bridge only for first-run fallback.
   project-scoped MCP tools receive the correct project root.
 - MCP connection errors no longer disable built-in plugins automatically, so a
   transient startup issue does not hide shared-memory tools from the catalog.
-- The canonical Across Context vault remains `~/.across-context`, keeping future
-  standalone Across Context installs on the same memory store instead of
-  splitting memory under the app runtime directory.
+- Later ecosystem releases moved the canonical shared-memory vault under the
+  unified `~/.across` root.
 
 ### Validation
 
@@ -205,8 +228,7 @@ compatibility bridge only for first-run fallback.
   Across Context approval prompts.
 - Packaged-app `/api/approve` executed `across_context__remember_context`
   through the external `across-context mcp` integration; the standalone
-  `across-context search` CLI found the same pending project memory in
-  `~/.across-context`.
+  `across-context search` CLI found the same pending project memory.
 - Plugin-mode regression verifies external-first, fallback, and forced-external
   failure behavior for Across Context.
 - `bash scripts/open_source_check.sh`.
