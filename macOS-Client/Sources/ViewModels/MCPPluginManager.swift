@@ -117,8 +117,6 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
         switch implementationMode {
         case "external":
             return "mcp.implementation.external"
-        case "builtin_compatibility":
-            return "mcp.implementation.builtinCompatibility"
         case "standard_mcp":
             return "mcp.implementation.standard"
         default:

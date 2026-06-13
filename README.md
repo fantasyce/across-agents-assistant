@@ -105,6 +105,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.2` | Fully external shared-memory and task-runtime boundaries, pinned managed plugin sources for Across Context `v0.7.2` and Across Orchestrator `v0.6.2`, and packaged UI task-form accessibility synchronization. |
 | `0.8.1` | Managed plugin runtime integrity repair, bounded Across Context upgrade/repair reinstalls, no automatic legacy hidden-directory migration, and built-in MCP defaults reset to managed `~/.across` paths to avoid macOS Documents prompts on fresh installs. |
 | `0.8.0` | Agent Loop v2 host integration, external approval proxy, Plugin Center v2 capability badges, Across Context memory-provider handoff, all-project pending memory review, and managed install sources routed through the Across plugin repositories. |
 | `0.7.1` | Toolbar icon sizing cleanup, Across-owned hollow Plugin Center icon polish, and managed install sources aligned to Across Context `v0.6.1` and Across Orchestrator `v0.5.1`. |
@@ -153,7 +154,16 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.1` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.2` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.2` release completes the stricter product-boundary split for the
+current source-first line. Shared memory is resolved through the external Across
+Context plugin rather than an app-owned compatibility runtime, task
+orchestration remains routed through the external Across Orchestrator plugin,
+and managed plugin installs are pinned to Across Context `v0.7.2` and Across
+Orchestrator `v0.6.2`. The packaged task form also accepts accessibility value
+writes for the project-directory field, keeping UI-level E2E submission aligned
+with normal user interaction.
 
 The `0.8.1` release is a runtime hygiene patch for the Across plugin boundary.
 Managed plugin installs now reject stale wrappers, editable installs, and

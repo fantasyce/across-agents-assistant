@@ -14,7 +14,11 @@ def _healthy_orchestrator_plugin_status(*, probe=True):
         "endpoint": None,
         "command_available": True,
         "task_index_count": 0,
-        "install": {"installable": True, "installed": True},
+        "install": {
+            "installable": True,
+            "installed": True,
+            "source": "file:///Users/example/.across/plugins/across-orchestrator/packages/across_orchestrator-0.6.1-py3-none-any.whl",
+        },
         "connection_note": "External Across Orchestrator CLI runtime.",
     }
 
@@ -71,6 +75,7 @@ def test_startup_diagnostics_endpoint_reports_safe_runtime_health(monkeypatch, t
     assert body["runtime"]["known_tasks"] == 1
     assert body["paths"]["app_home"] == str(tmp_path)
     assert body["keys"]["providers"]["deepseek"] == "configured"
+    assert body["runtime"]["orchestrator_plugin"]["install"]["source"].startswith("file:///Users/example/.across/")
     assert {check["id"] for check in body["checks"]} >= {
         "backend_health",
         "app_home",

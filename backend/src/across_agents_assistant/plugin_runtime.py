@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.parse
 
 from .paths import component_cache_home, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 
@@ -31,16 +32,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.2",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2",
     ),
 )
 
@@ -93,6 +94,21 @@ def inspect_across_plugin(
 
     installed = manifest_exists or command_exists
     public_status = status or {}
+    actual_install_source = _actual_install_source(plugin_dir, plugin.plugin_id)
+    configured_install_source = _install_source(plugin, source)
+    install_status = public_status.get("install") if isinstance(public_status.get("install"), dict) else None
+    if install_status:
+        install_payload = dict(install_status)
+        install_payload.setdefault("source", actual_install_source or configured_install_source)
+        install_payload.setdefault("install_dir", str(plugin_dir))
+        install_payload.setdefault("installable", True)
+    else:
+        install_payload = {
+            "installable": True,
+            "command": plugin.install_command,
+            "install_dir": str(plugin_dir),
+            "source": actual_install_source or configured_install_source,
+        }
     return {
         "plugin_id": plugin.plugin_id,
         "display_name": str(manifest.get("displayName") or plugin.display_name),
@@ -124,12 +140,7 @@ def inspect_across_plugin(
             "logs": str(across_home / "logs" / plugin.plugin_id),
             "cache": str(across_home / "cache" / plugin.plugin_id),
         },
-        "install": public_status.get("install") or {
-            "installable": True,
-            "command": plugin.install_command,
-            "install_dir": str(plugin_dir),
-            "source": _install_source(plugin, source),
-        },
+        "install": install_payload,
     }
 
 
@@ -259,6 +270,34 @@ def _install_source(plugin: KnownAcrossPlugin, env: Mapping[str, str]) -> str | 
         if configured:
             return configured
     return plugin.default_install_source
+
+
+def _actual_install_source(plugin_dir: Path, plugin_id: str) -> str | None:
+    normalized = plugin_id.replace("-", "_")
+    dashed = plugin_id.replace("_", "-")
+    patterns = {
+        f"venv/lib/python*/site-packages/{normalized}*.dist-info/direct_url.json",
+        f"venv/lib/python*/site-packages/{dashed}*.dist-info/direct_url.json",
+    }
+    install_root = plugin_dir.expanduser().resolve()
+    for pattern in sorted(patterns):
+        for path in sorted(plugin_dir.glob(pattern)):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            url = str(payload.get("url") or "").strip()
+            if not url or _contains_protected_user_reference(url):
+                continue
+            if url.startswith("file:"):
+                parsed = urllib.parse.urlparse(url)
+                local_path = Path(urllib.parse.unquote(parsed.path)).expanduser()
+                if not (local_path.is_absolute() and _is_relative_to(local_path, install_root)):
+                    continue
+            return url
+    return None
 
 
 def _resolve_command(command: str, env: Mapping[str, str]) -> Path:

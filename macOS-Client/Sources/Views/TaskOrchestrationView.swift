@@ -2278,10 +2278,13 @@ struct TaskNewTaskForm: View {
                     }
 
                     HStack(spacing: 8) {
-                        TextField("/path/to/project", text: $projectDir)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.primaryText)
+                        AccessibleTextField(
+                            placeholder: "/path/to/project",
+                            text: $projectDir,
+                            textColor: NSColor.labelColor,
+                            font: .systemFont(ofSize: 13)
+                        )
+                            .frame(height: 16)
                             .padding(10)
                             .background(theme.fieldBackground)
                             .cornerRadius(8)

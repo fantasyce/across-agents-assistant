@@ -521,6 +521,36 @@ def test_orchestrator_plugin_status_rejects_editable_runtime_reference(tmp_path)
     assert not marker_path.exists()
 
 
+def test_orchestrator_plugin_status_reports_actual_wheel_install_source(tmp_path):
+    plugin_home = tmp_path / "plugins"
+    install_dir = plugin_home / "across-orchestrator"
+    cli_path = install_dir / "venv" / "bin" / "across-orchestrator"
+    site_packages = install_dir / "venv" / "lib" / "python3.11" / "site-packages"
+    dist_info = site_packages / "across_orchestrator-0.6.1.dist-info"
+    package_path = install_dir / "packages" / "across_orchestrator-0.6.1-py3-none-any.whl"
+    cli_path.parent.mkdir(parents=True)
+    dist_info.mkdir(parents=True)
+    package_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    cli_path.chmod(cli_path.stat().st_mode | stat.S_IXUSR)
+    package_path.write_text("wheel", encoding="utf-8")
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": package_path.as_uri(), "archive_info": {"hash": "sha256=abc"}}),
+        encoding="utf-8",
+    )
+
+    installer = OrchestratorPluginInstaller(
+        plugin_home=plugin_home,
+        source="git+https://github.com/fantasyce/across-orchestrator.git",
+    )
+
+    status = installer.status()
+
+    assert status["installed"] is True
+    assert status["source"] == package_path.as_uri()
+    assert "github.com/fantasyce/across-orchestrator" not in status["source"]
+
+
 def test_packaged_installer_uses_real_python_instead_of_backend_executable(monkeypatch, tmp_path):
     backend_binary = tmp_path / "backend"
     backend_binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

@@ -1208,6 +1208,7 @@ def _startup_plugin_summary(plugin: Dict[str, Any]) -> Dict[str, Any]:
             "installable": install.get("installable"),
             "installed": install.get("installed"),
             "install_dir": install.get("install_dir", install.get("installDir")),
+            "source": install.get("source"),
         },
         "lifecycle": {
             "actions": lifecycle.get("actions"),

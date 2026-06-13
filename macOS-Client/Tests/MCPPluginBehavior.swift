@@ -248,8 +248,8 @@ func testAcrossContextImplementationLabelsAreStable() {
     plugin.implementationMode = "external"
     assert(plugin.implementationLabelKey == "mcp.implementation.external", "External Across Context should be labeled as the plugin implementation")
 
-    plugin.implementationMode = "builtin_compatibility"
-    assert(plugin.implementationLabelKey == "mcp.implementation.builtinCompatibility", "Fallback should be labeled as built-in compatibility")
+    plugin.implementationMode = "standard_mcp"
+    assert(plugin.implementationLabelKey == "mcp.implementation.standard", "Standard MCP plugins should use the standard MCP label")
 
     plugin.implementationMode = nil
     assert(plugin.implementationLabelKey == nil, "Disconnected plugins should not show a stale implementation label")

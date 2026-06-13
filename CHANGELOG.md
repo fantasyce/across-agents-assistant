@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.2 - 2026-06-13
+
+### Fixed
+
+- Removed the built-in Across Context compatibility runtime so shared memory is
+  resolved only through the external plugin boundary.
+- Startup diagnostics now preserve the installed plugin source reported from
+  managed runtime metadata without leaking protected development checkout paths.
+- The task submission project-directory field now synchronizes accessibility
+  value writes with the SwiftUI binding, so packaged UI automation can submit
+  tasks through the same form path as users.
+
+### Changed
+
+- Managed plugin install sources are pinned to Across Context `v0.7.2` and
+  Across Orchestrator `v0.6.2` for reproducible source-first releases.
+
 ## 0.8.1 - 2026-06-13
 
 ### Fixed

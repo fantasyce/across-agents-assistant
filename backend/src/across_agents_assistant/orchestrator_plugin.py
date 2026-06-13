@@ -41,7 +41,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -276,13 +276,14 @@ class OrchestratorPluginInstaller:
         status = "installed" if installed else str(state.get("status") or "not_installed")
         if command_installed and integrity_issues:
             status = "needs_repair"
+        actual_source = self._actual_install_source()
         return {
             "plugin_id": ORCHESTRATOR_PLUGIN_ID,
             "status": status,
             "installed": installed,
             "wrapper_installed": wrapper_installed,
             "installable": True,
-            "source": self.source,
+            "source": actual_source or str(state.get("source") or self.source),
             "install_dir": str(self.install_dir),
             "venv_dir": str(self.venv_dir),
             "command": str(self.command_path),
@@ -464,6 +465,31 @@ class OrchestratorPluginInstaller:
             if local_path.is_absolute() and not _is_relative_to(local_path, install_root):
                 issues.append(f"{path.name} references local source outside plugin directory")
         return issues
+
+    def _actual_install_source(self) -> Optional[str]:
+        install_root = self.install_dir.resolve()
+        patterns = (
+            "lib/python*/site-packages/across_orchestrator*.dist-info/direct_url.json",
+            "lib/python*/site-packages/across-orchestrator*.dist-info/direct_url.json",
+        )
+        for pattern in patterns:
+            for path in sorted(self.venv_dir.glob(pattern)):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                url = str(payload.get("url") or "").strip()
+                if not url or _contains_protected_user_reference(url):
+                    continue
+                if url.startswith("file:"):
+                    parsed = urllib.parse.urlparse(url)
+                    local_path = Path(urllib.parse.unquote(parsed.path)).expanduser()
+                    if not (local_path.is_absolute() and _is_relative_to(local_path, install_root)):
+                        continue
+                return url
+        return None
 
     def _write_manifest(self, logs: List[str]) -> None:
         try:
