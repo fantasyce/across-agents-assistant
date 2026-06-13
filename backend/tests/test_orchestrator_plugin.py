@@ -447,14 +447,25 @@ def test_orchestrator_plugin_installer_installs_into_app_managed_venv(tmp_path):
     plugin_home = tmp_path / "plugins"
     source = tmp_path / "across-orchestrator-src"
     source.mkdir()
+    stale_source = (
+        plugin_home
+        / "across-orchestrator"
+        / "source"
+        / "src"
+        / "across_agents_assistant"
+        / "__init__.py"
+    )
     stale_pth = plugin_home / "across-orchestrator" / "venv" / "lib" / "python3.11" / "site-packages" / "__editable__.across_orchestrator.pth"
+    stale_source.parent.mkdir(parents=True)
     stale_pth.parent.mkdir(parents=True)
+    stale_source.write_text("# stale AAA namespace\n", encoding="utf-8")
     stale_pth.write_text("/Users/example/Documents/projects/across-orchestrator/src\n", encoding="utf-8")
     calls = []
 
     def fake_run(args, **_kwargs):
         calls.append([str(item) for item in args])
         if str(args[1:3]) == str(["-m", "venv"]):
+            assert not stale_source.exists()
             assert not stale_pth.exists()
             cli_path = plugin_home / "across-orchestrator" / "venv" / "bin" / "across-orchestrator"
             cli_path.parent.mkdir(parents=True, exist_ok=True)
@@ -479,9 +490,44 @@ def test_orchestrator_plugin_installer_installs_into_app_managed_venv(tmp_path):
     assert state["status"] == "installed"
     assert state["installed"] is True
     assert state["command"] == str(plugin_home / "across-orchestrator" / "venv" / "bin" / "across-orchestrator")
+    assert not (plugin_home / "across-orchestrator" / "source").exists()
     assert calls[0][:3] == [installer.python_executable, "-m", "venv"]
     assert calls[1][1:4] == ["-m", "pip", "install"]
     assert calls[2][1:4] == ["-m", "pip", "install"]
+
+
+def test_orchestrator_plugin_status_rejects_stale_aaa_source_tree(tmp_path):
+    plugin_home = tmp_path / "plugins"
+    install_dir = plugin_home / "across-orchestrator"
+    cli_path = install_dir / "venv" / "bin" / "across-orchestrator"
+    marker_path = tmp_path / "cli-was-run"
+    stale_source = install_dir / "source" / "src" / "across_agents_assistant" / "__init__.py"
+    cli_path.parent.mkdir(parents=True)
+    stale_source.parent.mkdir(parents=True)
+    cli_path.write_text(
+        f"#!/bin/sh\ntouch {marker_path}\nprintf '{{\"name\":\"Across Orchestrator\"}}\\n'\n",
+        encoding="utf-8",
+    )
+    cli_path.chmod(cli_path.stat().st_mode | stat.S_IXUSR)
+    stale_source.write_text("# old AAA runtime namespace\n", encoding="utf-8")
+
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command="across-orchestrator",
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=plugin_home,
+        )
+    )
+
+    status = manager.implementation_status(probe=True)
+
+    assert status["available"] is False
+    assert status["command_available"] is False
+    assert status["install"]["status"] == "needs_repair"
+    assert status["install"]["integrity_ok"] is False
+    assert any("stale Across Agents Assistant source" in issue for issue in status["install"]["integrity_issues"])
+    assert not marker_path.exists()
 
 
 def test_orchestrator_plugin_status_rejects_editable_runtime_reference(tmp_path):
@@ -519,6 +565,34 @@ def test_orchestrator_plugin_status_rejects_editable_runtime_reference(tmp_path)
     assert status["install"]["integrity_ok"] is False
     assert "needs repair" in status["error"]
     assert not marker_path.exists()
+
+
+def test_orchestrator_command_override_rejects_protected_user_directory(monkeypatch, tmp_path):
+    protected_root = tmp_path / "Documents"
+    cli_path = protected_root / "projects" / "across-orchestrator" / "bin" / "across-orchestrator"
+    cli_path.parent.mkdir(parents=True)
+    cli_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    cli_path.chmod(cli_path.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(
+        orchestrator_plugin,
+        "_protected_user_reference_roots",
+        lambda: [protected_root],
+    )
+
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(cli_path),
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+
+    status = manager.implementation_status(probe=False)
+
+    assert status["available"] is False
+    assert status["command_available"] is False
+    assert status["error"] == "across-orchestrator not found"
 
 
 def test_orchestrator_plugin_status_reports_actual_wheel_install_source(tmp_path):

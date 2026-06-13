@@ -151,6 +151,70 @@ def test_inspect_across_plugin_rejects_wrapper_referencing_documents(tmp_path):
     assert not marker_path.exists()
 
 
+def test_inspect_across_plugin_rejects_stale_orchestrator_aaa_source_tree(tmp_path):
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    stale_source = plugin_dir / "source" / "src" / "across_agents_assistant" / "__init__.py"
+    bin_dir = across_home / "bin"
+    marker_path = tmp_path / "orchestrator-ran"
+    _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
+    stale_source.parent.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    stale_source.write_text("# old AAA runtime namespace\n", encoding="utf-8")
+    command_path = bin_dir / "across-orchestrator"
+    command_path.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker_path}\n"
+        "printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n'\n",
+        encoding="utf-8",
+    )
+    command_path.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    orchestrator = inspect_across_plugin("across-orchestrator", env=env, probe=True)
+
+    assert orchestrator["status"] == "needs_repair"
+    assert orchestrator["available"] is False
+    assert orchestrator["integrity_ok"] is False
+    assert any("stale Across Agents Assistant source" in issue for issue in orchestrator["integrity_issues"])
+    assert not marker_path.exists()
+
+
+def test_inspect_across_plugin_rejects_orchestrator_editable_direct_url(tmp_path):
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    dist_info = plugin_dir / "venv" / "lib" / "python3.11" / "site-packages" / "across_orchestrator-0.6.2.dist-info"
+    bin_dir = across_home / "bin"
+    marker_path = tmp_path / "orchestrator-ran"
+    _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
+    dist_info.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({
+            "url": "file:///Users/example/Documents/projects/across-orchestrator",
+            "dir_info": {"editable": True},
+        }),
+        encoding="utf-8",
+    )
+    command_path = bin_dir / "across-orchestrator"
+    command_path.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker_path}\n"
+        "printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n'\n",
+        encoding="utf-8",
+    )
+    command_path.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    orchestrator = inspect_across_plugin("across-orchestrator", env=env, probe=True)
+
+    assert orchestrator["status"] == "needs_repair"
+    assert orchestrator["available"] is False
+    assert orchestrator["integrity_ok"] is False
+    assert any("editable install" in issue for issue in orchestrator["integrity_issues"])
+    assert not marker_path.exists()
+
+
 def test_plugins_api_returns_known_plugins(monkeypatch, tmp_path):
     across_home = tmp_path / "across"
     _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")

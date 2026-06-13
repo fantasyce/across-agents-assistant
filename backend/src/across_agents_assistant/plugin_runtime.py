@@ -32,16 +32,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.2",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.3",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.3",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.3",
     ),
 )
 
@@ -81,7 +81,9 @@ def inspect_across_plugin(
     command_path = _resolve_command(plugin.command, source)
     manifest = _read_json_file(manifest_path)
     command_exists = command_path.is_file() and os.access(command_path, os.X_OK)
-    integrity_issues = _command_integrity_issues(command_path, plugin_dir, source) if command_exists else []
+    integrity_issues = _plugin_dir_integrity_issues(plugin.plugin_id, plugin_dir)
+    if command_exists:
+        integrity_issues.extend(_command_integrity_issues(command_path, plugin_dir, source))
     manifest_exists = bool(manifest)
     status: dict[str, Any] | None = None
 
@@ -487,6 +489,75 @@ def _command_integrity_issues(command_path: Path, plugin_dir: Path, env: Mapping
                 issues.append("command wrapper references a protected user directory")
     except Exception:
         pass
+    return issues
+
+
+def _plugin_dir_integrity_issues(plugin_id: str, plugin_dir: Path) -> list[str]:
+    if plugin_id != "across-orchestrator":
+        return []
+    issues: list[str] = []
+    install_root = plugin_dir.expanduser().resolve()
+    venv_root = (plugin_dir / "venv").expanduser().resolve()
+
+    source_dir = plugin_dir / "source"
+    if source_dir.exists():
+        issues.append("source directory remains under plugin runtime")
+        if (source_dir / "src" / "across_agents_assistant").exists() or any(
+            path.name == "across_agents_assistant" for path in source_dir.rglob("across_agents_assistant")
+        ):
+            issues.append("stale Across Agents Assistant source tree remains under plugin runtime")
+
+    for path in plugin_dir.rglob("across_agents_assistant"):
+        if path.exists():
+            issues.append("stale Across Agents Assistant source tree remains under plugin runtime")
+            break
+
+    for path in (plugin_dir / "venv").glob("lib/python*/site-packages/*.pth"):
+        issues.extend(_pth_integrity_issues(path, venv_root))
+
+    for path in (plugin_dir / "venv").glob("lib/python*/site-packages/*.dist-info/direct_url.json"):
+        issues.extend(_direct_url_integrity_issues(path, install_root))
+
+    return sorted(set(issues))
+
+
+def _pth_integrity_issues(path: Path, venv_root: Path) -> list[str]:
+    issues: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return issues
+    for line in lines:
+        value = line.strip()
+        if not value or value.startswith("#") or value.startswith("import "):
+            continue
+        if _contains_protected_user_reference(value):
+            issues.append(f"{path.name} references a protected user directory")
+        candidate = Path(value).expanduser()
+        if candidate.is_absolute() and not _is_relative_to(candidate, venv_root):
+            issues.append(f"{path.name} adds import path outside plugin virtualenv")
+    return issues
+
+
+def _direct_url_integrity_issues(path: Path, install_root: Path) -> list[str]:
+    issues: list[str] = []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return issues
+    if not isinstance(payload, dict):
+        return issues
+    dir_info = payload.get("dir_info")
+    if isinstance(dir_info, dict) and dir_info.get("editable"):
+        issues.append(f"{path.name} records an editable install")
+    url = str(payload.get("url") or "")
+    if _contains_protected_user_reference(url):
+        issues.append(f"{path.name} references a protected user directory")
+    if url.startswith("file:"):
+        parsed = urllib.parse.urlparse(url)
+        local_path = Path(urllib.parse.unquote(parsed.path)).expanduser()
+        if local_path.is_absolute() and not _is_relative_to(local_path, install_root):
+            issues.append(f"{path.name} references local source outside plugin directory")
     return issues
 
 

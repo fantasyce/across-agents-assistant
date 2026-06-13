@@ -41,7 +41,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.3"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -105,6 +105,10 @@ def _contains_protected_user_reference(value: str) -> bool:
     if any(str(root) in expanded for root in _protected_user_reference_roots()):
         return True
     return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
+
+
+def _allow_development_command_override() -> bool:
+    return _truthy(os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ALLOW_DEVELOPMENT_COMMAND"))
 
 
 def _is_safe_python_executable(path: str) -> bool:
@@ -305,9 +309,7 @@ class OrchestratorPluginInstaller:
         self._write_state({"status": "installing", "logs": logs, "updated_at": time.time()})
 
         try:
-            if self.venv_dir.exists():
-                logs.append("Remove stale virtualenv")
-                shutil.rmtree(self.venv_dir)
+            self._remove_stale_runtime_artifacts(logs)
             self._run([self.python_executable, "-m", "venv", str(self.venv_dir)], logs, "Create virtualenv")
             venv_python = str(self.venv_dir / "bin" / "python")
             self._run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], logs, "Upgrade pip")
@@ -344,6 +346,18 @@ class OrchestratorPluginInstaller:
                 }
             )
             raise
+
+    def _remove_stale_runtime_artifacts(self, logs: List[str]) -> None:
+        stale_dirs = [
+            (self.venv_dir, "Remove stale virtualenv"),
+            (self.install_dir / "source", "Remove stale source checkout"),
+            (self.install_dir / "src", "Remove stale source tree"),
+            (self.install_dir / "build", "Remove stale build directory"),
+        ]
+        for path, label in stale_dirs:
+            if path.exists():
+                logs.append(label)
+                shutil.rmtree(path)
 
     def uninstall(self) -> Dict[str, Any]:
         shutil.rmtree(self.install_dir, ignore_errors=True)
@@ -422,7 +436,26 @@ class OrchestratorPluginInstaller:
         for path in self.venv_dir.glob("lib/python*/site-packages/*.dist-info/direct_url.json"):
             issues.extend(self._direct_url_integrity_issues(path, install_root, venv_root))
 
+        issues.extend(self._source_tree_integrity_issues())
+
         return issues
+
+    def _source_tree_integrity_issues(self) -> List[str]:
+        issues: List[str] = []
+        source_dir = self.install_dir / "source"
+        if source_dir.exists():
+            issues.append("source directory remains under plugin runtime")
+            if (source_dir / "src" / "across_agents_assistant").exists() or any(
+                path.name == "across_agents_assistant" for path in source_dir.rglob("across_agents_assistant")
+            ):
+                issues.append("stale Across Agents Assistant source tree remains under plugin runtime")
+
+        for path in self.install_dir.rglob("across_agents_assistant"):
+            if path.exists():
+                issues.append("stale Across Agents Assistant source tree remains under plugin runtime")
+                break
+
+        return sorted(set(issues))
 
     def _text_file_integrity_issues(self, path: Path, install_root: Path, venv_root: Path) -> List[str]:
         try:
@@ -948,6 +981,8 @@ class OrchestratorPluginManager:
         if not command:
             return None
         if os.path.isabs(command) or os.sep in command:
+            if _contains_protected_user_reference(command) and not _allow_development_command_override():
+                return None
             return command if os.path.isfile(command) and os.access(command, os.X_OK) else None
         managed_command = self.installer.command_path
         if managed_command.is_file() and os.access(managed_command, os.X_OK):
@@ -955,7 +990,10 @@ class OrchestratorPluginManager:
         if self.installer.wrapper_path.is_file() and os.access(self.installer.wrapper_path, os.X_OK):
             return str(self.installer.wrapper_path)
         env_path = self._env().get("PATH", "")
-        return shutil.which(command, path=env_path)
+        resolved = shutil.which(command, path=env_path)
+        if resolved and _contains_protected_user_reference(resolved) and not _allow_development_command_override():
+            return None
+        return resolved
 
     def _env(self) -> Dict[str, str]:
         env = _sanitize_python_child_env(os.environ.copy())
