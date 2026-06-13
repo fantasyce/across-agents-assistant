@@ -136,6 +136,47 @@ def mark_subtask_accepted(ost, subtask_id):
     ost.completed_subtasks.add(subtask_id)
 
 
+def test_fix_subtask_dispatch_is_guarded_against_repair_reentry(orchestrator, mock_dispatcher):
+    task = orchestrator._state.create_task("Repair frontend")
+    original = orchestrator._state.add_subtask(
+        task.task_id,
+        "Create frontend",
+        "claude",
+        subtask_id="st-1",
+    )
+    assert original is not None
+    orchestrator._state.update_subtask_status(task.task_id, original.subtask_id, JobStatus.FAILED)
+    orchestrator._orchestrator_states[task.task_id] = make_orchestrator_state(task)
+    mock_dispatcher._get_valid_agents.return_value = ["claude"]
+
+    repair_triggered = False
+
+    def dispatch_side_effect(subtask):
+        nonlocal repair_triggered
+        if subtask.subtask_id == "st-1-fix-1" and not repair_triggered:
+            repair_triggered = True
+            orchestrator.repair_task_dispatch(
+                task.task_id,
+                reason="racy_repair",
+                run_wave_acceptance=False,
+            )
+        return None
+
+    mock_dispatcher.dispatch_subtask.side_effect = dispatch_side_effect
+
+    job = Job(
+        job_id="job-st-1",
+        subtask_id="st-1",
+        agent_id="claude",
+        task_description=original.description,
+    )
+    orchestrator._initiate_fix(job, "Owner acceptance rejected frontend output")
+
+    dispatched_ids = [call.args[0].subtask_id for call in mock_dispatcher.dispatch_subtask.call_args_list]
+    assert dispatched_ids == ["st-1-fix-1"]
+    assert task.fix_rounds == {"st-1": 1}
+
+
 def test_quality_remediation_attempt_keys_include_failure_category(tmp_path, mock_dispatcher, mock_validator, mock_owner_agent):
     state = TaskState()
     state.set_persistence(FakePersistence())

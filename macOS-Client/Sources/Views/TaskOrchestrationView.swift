@@ -1510,7 +1510,8 @@ struct TaskDetailPanel: View {
                     }
 
                     // Issue 46: Show restore button for suspended tasks (not in memory but in DB)
-                    if TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
+                    if task.supportsLegacyLifecycleControls
+                        && TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
                         Button(action: { viewModel.restoreTask(task.taskId) }) {
                             Image(systemName: "arrow.counterclockwise")
                                 .font(.system(size: 12))
@@ -1523,7 +1524,7 @@ struct TaskDetailPanel: View {
                         .help(appPreferences.text("tasks.restore"))
                     }
 
-                    if task.status == "running" {
+                    if task.supportsLegacyLifecycleControls && task.status == "running" {
                         Button(action: { viewModel.pauseTask(task.taskId) }) {
                             Image(systemName: "pause.fill")
                                 .font(.system(size: 12))
@@ -1534,7 +1535,7 @@ struct TaskDetailPanel: View {
                         }
                         .buttonStyle(.plain)
                         .help(appPreferences.text("tasks.pause"))
-                    } else if task.status == "paused" {
+                    } else if task.supportsLegacyLifecycleControls && task.status == "paused" {
                         Button(action: { viewModel.resumeTask(task.taskId) }) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 12))
@@ -1552,6 +1553,7 @@ struct TaskDetailPanel: View {
                         && task.status != "completed_with_failures"
                         && task.status != "failed"
                         && task.status != "cancelled"
+                        && task.supportsLegacyLifecycleControls
                         && !TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
                         Button(action: { viewModel.cancelTask(task.taskId) }) {
                             Image(systemName: "stop.fill")

@@ -334,6 +334,39 @@ def test_release_e2e_uses_external_orchestrator_slot_for_full_task_lifecycle(mon
     assert ("POST", "/tasks/task-api-external/run") in server.requests
 
 
+def test_external_orchestrator_tasks_reject_legacy_lifecycle_controls(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        client = TestClient(app)
+        created = client.post(
+            "/api/release/e2e/tasks",
+            json={
+                "scenario_id": RELEASE_E2E_SCENARIO_ID,
+                "project_dir": str(tmp_path / "project"),
+                "run_label": "legacy-controls",
+            },
+        )
+        assert created.status_code == 200
+        task_id = created.json()["task_id"]
+
+        responses = [
+            client.post(f"/api/tasks/{task_id}/pause"),
+            client.post(f"/api/tasks/{task_id}/resume"),
+            client.post(f"/api/tasks/{task_id}/cancel"),
+        ]
+
+    assert [response.status_code for response in responses] == [409, 409, 409]
+    assert all("external Across Orchestrator" in response.json()["detail"] for response in responses)
+    assert ("POST", f"/tasks/{task_id}/pause") not in server.requests
+    assert ("POST", f"/tasks/{task_id}/resume") not in server.requests
+    assert ("POST", f"/tasks/{task_id}/cancel") not in server.requests
+
+
 def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")

@@ -122,6 +122,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         let projectDir: String?
         let ownerAgent: String?
         let deliveryMode: String?
+        let externalTask: Bool
 
         var id: String { taskId }
 
@@ -135,9 +136,10 @@ class TaskOrchestrationViewModel: ObservableObject {
             case projectDir = "project_dir"
             case ownerAgent = "owner_agent"
             case deliveryMode = "delivery_mode"
+            case externalTask = "external_task"
         }
 
-        init(taskId: String, description: String, status: String, progress: Double, completedCount: Int, totalCount: Int, projectDir: String? = nil, ownerAgent: String? = nil, deliveryMode: String? = nil) {
+        init(taskId: String, description: String, status: String, progress: Double, completedCount: Int, totalCount: Int, projectDir: String? = nil, ownerAgent: String? = nil, deliveryMode: String? = nil, externalTask: Bool = false) {
             self.taskId = taskId
             self.description = description
             self.status = status
@@ -147,6 +149,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             self.projectDir = projectDir
             self.ownerAgent = ownerAgent
             self.deliveryMode = deliveryMode
+            self.externalTask = externalTask
         }
 
         init(from decoder: Decoder) throws {
@@ -160,6 +163,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             projectDir = try container.decodeIfPresent(String.self, forKey: .projectDir)
             ownerAgent = try container.decodeIfPresent(String.self, forKey: .ownerAgent)
             deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode)
+            externalTask = try container.decodeIfPresent(Bool.self, forKey: .externalTask) ?? false
         }
     }
 
@@ -496,6 +500,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         let taskId: String
         let description: String
         let status: String
+        let externalTask: Bool
         let taskTypes: [String]
         let deliveryMode: String?
         let hasOwnerDeliveryContract: Bool
@@ -518,6 +523,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             case taskId = "task_id"
             case description
             case status
+            case externalTask = "external_task"
             case taskTypes = "task_types"
             case deliveryMode = "delivery_mode"
             case ownerDeliveryContract = "owner_delivery_contract"
@@ -541,6 +547,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             taskId: String,
             description: String,
             status: String,
+            externalTask: Bool = false,
             taskTypes: [String] = [],
             deliveryMode: String? = nil,
             hasOwnerDeliveryContract: Bool = false,
@@ -562,6 +569,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             self.taskId = taskId
             self.description = description
             self.status = status
+            self.externalTask = externalTask
             self.taskTypes = taskTypes
             self.deliveryMode = deliveryMode
             self.hasOwnerDeliveryContract = hasOwnerDeliveryContract
@@ -586,6 +594,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             taskId = try container.decode(String.self, forKey: .taskId)
             description = try container.decode(String.self, forKey: .description)
             status = try container.decode(String.self, forKey: .status)
+            externalTask = try container.decodeIfPresent(Bool.self, forKey: .externalTask) ?? false
             taskTypes = (try? container.decode([String].self, forKey: .taskTypes)) ?? []
             deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode)
             hasOwnerDeliveryContract = container.contains(.ownerDeliveryContract)
@@ -605,6 +614,43 @@ class TaskOrchestrationViewModel: ObservableObject {
             qualityHealth = try container.decodeIfPresent(QualityHealth.self, forKey: .qualityHealth)
             deliveryReport = try container.decodeIfPresent(DeliveryReport.self, forKey: .deliveryReport)
             observability = try container.decodeIfPresent(TaskObservability.self, forKey: .observability)
+        }
+
+        func replacing(
+            status: String? = nil,
+            subtasks: [SubtaskDetail]? = nil,
+            waves: [WaveDetail]? = nil,
+            artifacts: [Artifact]? = nil,
+            ownerSessionId: String? = nil,
+            lastOwnerDecision: OwnerDecisionSummary? = nil
+        ) -> TaskDetail {
+            TaskDetail(
+                taskId: taskId,
+                description: description,
+                status: status ?? self.status,
+                externalTask: externalTask,
+                taskTypes: taskTypes,
+                deliveryMode: deliveryMode,
+                hasOwnerDeliveryContract: hasOwnerDeliveryContract,
+                ownerAgent: ownerAgent,
+                allowedSubtaskAgents: allowedSubtaskAgents,
+                projectDir: projectDir,
+                subtasks: subtasks ?? self.subtasks,
+                waves: waves ?? self.waves,
+                artifacts: artifacts ?? self.artifacts,
+                artifactVersions: artifactVersions,
+                ownerSessionId: ownerSessionId ?? self.ownerSessionId,
+                lastOwnerDecision: lastOwnerDecision ?? self.lastOwnerDecision,
+                error: error,
+                hasRequirementManifest: hasRequirementManifest,
+                qualityHealth: qualityHealth,
+                deliveryReport: deliveryReport,
+                observability: observability
+            )
+        }
+
+        var supportsLegacyLifecycleControls: Bool {
+            !externalTask
         }
     }
 
@@ -1516,27 +1562,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 let decoder = JSONDecoder()
                 let decodedTaskDetail = try decoder.decode(TaskDetail.self, from: data)
                 let taskDetail = isSuspendedSummary
-                    ? TaskDetail(
-                        taskId: decodedTaskDetail.taskId,
-                        description: decodedTaskDetail.description,
-                        status: "suspended",
-                        taskTypes: decodedTaskDetail.taskTypes,
-                        deliveryMode: decodedTaskDetail.deliveryMode,
-                        hasOwnerDeliveryContract: decodedTaskDetail.hasOwnerDeliveryContract,
-                        ownerAgent: decodedTaskDetail.ownerAgent,
-                        allowedSubtaskAgents: decodedTaskDetail.allowedSubtaskAgents,
-                        projectDir: decodedTaskDetail.projectDir,
-                        subtasks: decodedTaskDetail.subtasks,
-                        waves: decodedTaskDetail.waves,
-                        artifacts: decodedTaskDetail.artifacts,
-                        artifactVersions: decodedTaskDetail.artifactVersions,
-                        ownerSessionId: decodedTaskDetail.ownerSessionId,
-                        lastOwnerDecision: decodedTaskDetail.lastOwnerDecision,
-                        error: decodedTaskDetail.error,
-                        hasRequirementManifest: decodedTaskDetail.hasRequirementManifest,
-                        qualityHealth: decodedTaskDetail.qualityHealth,
-                        deliveryReport: decodedTaskDetail.deliveryReport
-                    )
+                    ? decodedTaskDetail.replacing(status: "suspended")
                     : decodedTaskDetail
                 selectedTask = taskDetail
                 viewMode = .detail
@@ -1885,7 +1911,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                     completedCount: counts.total,
                     totalCount: counts.total,
                     projectDir: task.projectDir,
-                    ownerAgent: task.ownerAgent
+                    ownerAgent: task.ownerAgent,
+                    deliveryMode: task.deliveryMode,
+                    externalTask: task.externalTask
                 )
             }
             updateSelectedTaskStatus(taskId: taskId, status: "completed")
@@ -1905,7 +1933,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                     completedCount: counts.completed,
                     totalCount: counts.total,
                     projectDir: task.projectDir,
-                    ownerAgent: task.ownerAgent
+                    ownerAgent: task.ownerAgent,
+                    deliveryMode: task.deliveryMode,
+                    externalTask: task.externalTask
                 )
             }
             updateSelectedTaskStatus(taskId: taskId, status: "failed")
@@ -1925,7 +1955,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                     completedCount: counts.completed,
                     totalCount: counts.total,
                     projectDir: task.projectDir,
-                    ownerAgent: task.ownerAgent
+                    ownerAgent: task.ownerAgent,
+                    deliveryMode: task.deliveryMode,
+                    externalTask: task.externalTask
                 )
             }
             updateSelectedTaskStatus(taskId: taskId, status: "completed_with_failures")
@@ -1935,23 +1967,12 @@ class TaskOrchestrationViewModel: ObservableObject {
             stopSSE()
 
         case .taskStatusChanged(let update):
-            let updatedTask = TaskDetail(
-                taskId: task.taskId,
-                description: task.description,
+            let updatedTask = task.replacing(
                 status: update.status,
-                ownerAgent: task.ownerAgent,
-                allowedSubtaskAgents: task.allowedSubtaskAgents,
-                projectDir: task.projectDir,
                 subtasks: update.subtasks,
                 waves: update.waves,
-                artifacts: task.artifacts,
-                artifactVersions: task.artifactVersions,
-                ownerSessionId: update.ownerSessionId ?? task.ownerSessionId,
-                lastOwnerDecision: update.lastOwnerDecision ?? task.lastOwnerDecision,
-                error: task.error,
-                hasRequirementManifest: task.hasRequirementManifest,
-                qualityHealth: task.qualityHealth,
-                deliveryReport: task.deliveryReport
+                ownerSessionId: update.ownerSessionId,
+                lastOwnerDecision: update.lastOwnerDecision
             )
             selectedTask = updatedTask
             task = updatedTask
@@ -1965,7 +1986,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                     completedCount: update.completedCount,
                     totalCount: update.totalCount,
                     projectDir: task.projectDir,
-                    ownerAgent: task.ownerAgent
+                    ownerAgent: task.ownerAgent,
+                    deliveryMode: task.deliveryMode,
+                    externalTask: task.externalTask
                 )
             }
 
@@ -2058,23 +2081,9 @@ class TaskOrchestrationViewModel: ObservableObject {
             let hasRunning = updatedWaves.flatMap { $0.subtasks }.contains { $0.status == "running" }
             let progress = counts.total > 0 ? Double(counts.completed) / Double(counts.total) : 0
 
-            task = TaskDetail(
-                taskId: task.taskId,
-                description: task.description,
+            task = task.replacing(
                 status: hasRunning ? "running" : task.status,
-                ownerAgent: task.ownerAgent,
-                allowedSubtaskAgents: task.allowedSubtaskAgents,
-                projectDir: task.projectDir,
-                subtasks: task.subtasks,
-                waves: updatedWaves,
-                artifacts: task.artifacts,
-                artifactVersions: task.artifactVersions,
-                ownerSessionId: task.ownerSessionId,
-                lastOwnerDecision: task.lastOwnerDecision,
-                error: task.error,
-                hasRequirementManifest: task.hasRequirementManifest,
-                qualityHealth: task.qualityHealth,
-                deliveryReport: task.deliveryReport
+                waves: updatedWaves
             )
 
             selectedTask = task
@@ -2088,7 +2097,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                     completedCount: counts.completed,
                     totalCount: counts.total,
                     projectDir: task.projectDir,
-                    ownerAgent: task.ownerAgent
+                    ownerAgent: task.ownerAgent,
+                    deliveryMode: task.deliveryMode,
+                    externalTask: task.externalTask
                 )
             }
 
@@ -2113,24 +2124,7 @@ class TaskOrchestrationViewModel: ObservableObject {
 
                 updatedWaves[waveIndex] = updatedWave
 
-                task = TaskDetail(
-                    taskId: task.taskId,
-                    description: task.description,
-                    status: task.status,
-                    ownerAgent: task.ownerAgent,
-                    allowedSubtaskAgents: task.allowedSubtaskAgents,
-                    projectDir: task.projectDir,
-                    subtasks: task.subtasks,
-                    waves: updatedWaves,
-                    artifacts: task.artifacts,
-                    artifactVersions: task.artifactVersions,
-                    ownerSessionId: task.ownerSessionId,
-                    lastOwnerDecision: task.lastOwnerDecision,
-                    error: task.error,
-                    hasRequirementManifest: task.hasRequirementManifest,
-                    qualityHealth: task.qualityHealth,
-                    deliveryReport: task.deliveryReport
-                )
+                task = task.replacing(waves: updatedWaves)
 
                 selectedTask = task
             }
@@ -2148,24 +2142,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 updatedArtifacts.append(newArtifact)
             }
 
-            task = TaskDetail(
-                taskId: task.taskId,
-                description: task.description,
-                status: task.status,
-                ownerAgent: task.ownerAgent,
-                allowedSubtaskAgents: task.allowedSubtaskAgents,
-                projectDir: task.projectDir,
-                subtasks: task.subtasks,
-                waves: task.waves,
-                artifacts: updatedArtifacts,
-                artifactVersions: task.artifactVersions,
-                ownerSessionId: task.ownerSessionId,
-                lastOwnerDecision: task.lastOwnerDecision,
-                error: task.error,
-                hasRequirementManifest: task.hasRequirementManifest,
-                qualityHealth: task.qualityHealth,
-                deliveryReport: task.deliveryReport
-            )
+            task = task.replacing(artifacts: updatedArtifacts)
 
             selectedTask = task
 
@@ -2293,7 +2270,9 @@ class TaskOrchestrationViewModel: ObservableObject {
             completedCount: counts.completed,
             totalCount: counts.total,
             projectDir: task.projectDir,
-            ownerAgent: task.ownerAgent
+            ownerAgent: task.ownerAgent,
+            deliveryMode: task.deliveryMode,
+            externalTask: task.externalTask
         )
 
         if let index = tasks.firstIndex(where: { $0.taskId == task.taskId }) {
@@ -2376,23 +2355,10 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
 
         if selectedTask?.taskId == task.taskId {
-            selectedTask = TaskDetail(
-                taskId: task.taskId,
-                description: task.description,
+            selectedTask = task.replacing(
                 status: pollData.status,
-                ownerAgent: task.ownerAgent,
-                allowedSubtaskAgents: task.allowedSubtaskAgents,
-                projectDir: task.projectDir,
                 subtasks: updatedSubtasks,
-                waves: updatedWaves,
-                artifacts: task.artifacts,
-                artifactVersions: task.artifactVersions,
-                ownerSessionId: task.ownerSessionId,
-                lastOwnerDecision: task.lastOwnerDecision,
-                error: task.error,
-                hasRequirementManifest: task.hasRequirementManifest,
-                qualityHealth: task.qualityHealth,
-                deliveryReport: task.deliveryReport
+                waves: updatedWaves
             )
         }
 
@@ -2406,7 +2372,9 @@ class TaskOrchestrationViewModel: ObservableObject {
                 completedCount: counts.completed,
                 totalCount: counts.total,
                 projectDir: task.projectDir,
-                ownerAgent: task.ownerAgent
+                ownerAgent: task.ownerAgent,
+                deliveryMode: task.deliveryMode,
+                externalTask: task.externalTask
             )
         }
     }
@@ -2456,46 +2424,12 @@ class TaskOrchestrationViewModel: ObservableObject {
 
     private func updateSelectedTaskStatus(taskId: String, status: String) {
         guard let task = selectedTask, task.taskId == taskId else { return }
-        selectedTask = TaskDetail(
-            taskId: task.taskId,
-            description: task.description,
-            status: status,
-            ownerAgent: task.ownerAgent,
-            allowedSubtaskAgents: task.allowedSubtaskAgents,
-            projectDir: task.projectDir,
-            subtasks: task.subtasks,
-            waves: task.waves,
-            artifacts: task.artifacts,
-            artifactVersions: task.artifactVersions,
-            ownerSessionId: task.ownerSessionId,
-            lastOwnerDecision: task.lastOwnerDecision,
-            error: task.error,
-            hasRequirementManifest: task.hasRequirementManifest,
-            qualityHealth: task.qualityHealth,
-            deliveryReport: task.deliveryReport
-        )
+        selectedTask = task.replacing(status: status)
     }
 
     private func updateTaskStatus(taskId: String, status: String) {
         if let task = selectedTask, task.taskId == taskId {
-            selectedTask = TaskDetail(
-                taskId: task.taskId,
-                description: task.description,
-                status: status,
-                ownerAgent: task.ownerAgent,
-                allowedSubtaskAgents: task.allowedSubtaskAgents,
-                projectDir: task.projectDir,
-                subtasks: task.subtasks,
-                waves: task.waves,
-                artifacts: task.artifacts,
-                artifactVersions: task.artifactVersions,
-                ownerSessionId: task.ownerSessionId,
-                lastOwnerDecision: task.lastOwnerDecision,
-                error: task.error,
-                hasRequirementManifest: task.hasRequirementManifest,
-                qualityHealth: task.qualityHealth,
-                deliveryReport: task.deliveryReport
-            )
+            selectedTask = task.replacing(status: status)
         }
 
         if let index = tasks.firstIndex(where: { $0.taskId == taskId }) {
@@ -2509,7 +2443,8 @@ class TaskOrchestrationViewModel: ObservableObject {
                 totalCount: oldTask.totalCount,
                 projectDir: oldTask.projectDir,
                 ownerAgent: oldTask.ownerAgent,
-                deliveryMode: oldTask.deliveryMode
+                deliveryMode: oldTask.deliveryMode,
+                externalTask: oldTask.externalTask
             )
         }
     }

@@ -146,6 +146,20 @@ class TaskDispatcher:
         self._state.update_job_status(job.job_id, JobStatus.DISPATCHED)
         self._notify_progress(job.job_id, JobStatus.DISPATCHED, 0.0, "Dispatched")
 
+        self._start_job_thread(job, subtask, valid_agents=valid_agents)
+        return job
+
+    def _start_job_thread(
+        self,
+        job: Job,
+        subtask: SubTask,
+        *,
+        valid_agents: Optional[List[str]] = None,
+    ) -> Job:
+        """Start execution for an already-created job."""
+        if valid_agents is None:
+            valid_agents = self._get_valid_agents()
+
         def run_job():
             with self._job_semaphore:
                 try:
@@ -189,6 +203,8 @@ class TaskDispatcher:
 
         thread = threading.Thread(target=run_job, daemon=True)
         with self._lock:
+            if job.job_id in self._job_threads:
+                return job
             self._job_threads[job.job_id] = thread
 
         thread.start()
@@ -333,7 +349,21 @@ class TaskDispatcher:
                     None
                 )
                 if subtask:
-                    self.dispatch_subtask(subtask)
+                    subtask.agent_id = normalize_agent_id(subtask.agent_id) or subtask.agent_id
+                    job.agent_id = normalize_agent_id(job.agent_id) or job.agent_id
+                    valid_agents = self._get_valid_agents()
+                    if subtask.agent_id not in valid_agents:
+                        error = (
+                            f"Agent '{subtask.agent_id}' not available for orphaned subtask "
+                            f"{subtask.subtask_id}"
+                        )
+                        logger.error(error)
+                        self._state.complete_job(job.job_id, success=False, error=error)
+                        continue
+                    task = self._state.get_task_by_subtask(subtask.subtask_id)
+                    if task:
+                        self._state.update_subtask_status(task.task_id, subtask.subtask_id, JobStatus.DISPATCHED)
+                    self._start_job_thread(job, subtask, valid_agents=valid_agents)
                 else:
                     self._state.complete_job(
                         job.job_id,

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.8.4 - 2026-06-14
+
+### Fixed
+
+- Preserved external task boundary metadata across Swift task-detail state
+  updates, polling, and SSE events so packaged tasks keep their lifecycle
+  controls, delivery mode, task types, owner contract, and observability.
+- Reused existing dispatched jobs during orphan recovery instead of creating
+  duplicate dispatch records for the same orphaned subtask.
+- Preserved strict dependency plans when AAA submits explicit external subtasks
+  to Across Orchestrator through the managed runtime.
+
+### Changed
+
+- Updated the managed Across Orchestrator install pin to `v0.6.4`.
+
+### Validation
+
+- AAA backend tests passed with 924 tests and 18 skipped.
+- SwiftPM Swift Testing passed with 15 tests.
+- Across Orchestrator full check passed with 58 tests, CLI smoke, and
+  sensitive text scan.
+- Across Context full check passed with 55 tests, CLI smoke, and sensitive text
+  scan.
+- Packaged app startup diagnostics passed with 11 checks, and packaged Release
+  E2E produced seven serial dependent tasks, seven artifacts, and quality score
+  100.
+
 ## 0.8.3 - 2026-06-14
 
 ### Fixed
