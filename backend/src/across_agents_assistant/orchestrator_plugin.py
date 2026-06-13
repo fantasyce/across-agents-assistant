@@ -41,7 +41,7 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.3"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.4"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -804,6 +804,13 @@ class OrchestratorPluginManager:
                 args.extend(["--deliverable", deliverable])
             for task_type in clean_task_types:
                 args.extend(["--task-type", task_type])
+            if strict_dependency:
+                args.append("--strict-dependency")
+            if subtasks:
+                args.extend([
+                    "--subtasks-json",
+                    json.dumps(subtasks, ensure_ascii=False, separators=(",", ":")),
+                ])
             args.append("--json")
             task = self._cli_json(args)
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
@@ -1426,6 +1433,7 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
         "task_id": task_id,
         "description": str(task.get("goal") or task.get("description") or ""),
         "status": status,
+        "external_task": True,
         "task_types": task_types,
         "delivery_mode": delivery_mode,
         "owner_delivery_contract": task.get("contract") or {},
@@ -1492,6 +1500,7 @@ def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
         "task_id": str(task.get("task_id") or ""),
         "description": str(task.get("goal") or task.get("description") or ""),
         "status": status,
+        "external_task": True,
         "progress": completed / total if total else _status_progress(status),
         "completed_count": completed,
         "total_count": total,

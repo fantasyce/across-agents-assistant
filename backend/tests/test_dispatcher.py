@@ -40,6 +40,36 @@ def test_dispatch_subtask_marks_parent_subtask_running_before_execution():
     assert state.get_task(task.task_id).subtasks[0].status == JobStatus.COMPLETED
 
 
+def test_recover_dispatched_orphan_reuses_existing_job():
+    state = TaskState()
+    task = state.create_task("Build backend service")
+    subtask = state.add_subtask(task.task_id, "Implement FastAPI backend", "openclaw")
+    existing_job = state.create_job(subtask)
+    state.update_job_status(existing_job.job_id, JobStatus.DISPATCHED)
+
+    dispatcher = TaskDispatcher(state, local_agent_client=object())
+    dispatcher._get_valid_agents = lambda: ["openclaw"]
+    dispatcher._execute_agent_job = lambda job, current_subtask, agent_id: JobResult(
+        job_id=job.job_id,
+        success=True,
+        output=f"done:{current_subtask.subtask_id}:{agent_id}",
+    )
+
+    dispatcher.recover_orphaned_jobs()
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        current_job = state.get_job(existing_job.job_id)
+        if current_job and current_job.status == JobStatus.COMPLETED:
+            break
+        time.sleep(0.01)
+
+    jobs = state.get_all_jobs()
+    assert [job.job_id for job in jobs] == [existing_job.job_id]
+    assert state.get_job(existing_job.job_id).status == JobStatus.COMPLETED
+    assert state.get_task(task.task_id).subtasks[0].status == JobStatus.COMPLETED
+
+
 def test_execute_agent_job_passes_manifest_assigned_writable_files_only():
     state = TaskState()
     task = state.create_task("Build exact release files", project_dir="/tmp/project")

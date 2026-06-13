@@ -65,6 +65,7 @@ class TaskOrchestrator:
         self._owner_agent = owner_agent
         self._orchestrator_states: Dict[str, OrchestratorState] = {}
         self._lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._quality_remediation_lock = threading.Lock()
 
         # Register progress callback (Task 5)
@@ -174,7 +175,7 @@ class TaskOrchestrator:
             logger.info(f"Task {task_id} resuming: dispatching {len(dispatchable)} ready business subtasks")
             for st in dispatchable:
                 logger.info(f"Dispatching resumed business subtask {st.subtask_id} (agent={st.agent_id}, wave={st.wave_number})")
-                self._dispatcher.dispatch_subtask(st)
+                self._dispatch_subtask_once(task, st)
         else:
             if any(self._is_decompose_subtask(st) and st.status == JobStatus.PENDING for st in ready_subtasks):
                 logger.info("Task %s has pending owner decomposition; repair_task_dispatch will restart it", task_id)
@@ -276,7 +277,7 @@ class TaskOrchestrator:
                     logger.info(f"Task {task_id} dispatching {len(ready_subtasks)} ready subtasks")
                     for st in ready_subtasks:
                         logger.info(f"Dispatching initial subtask {st.subtask_id} (agent={st.agent_id}, wave={st.wave_number})")
-                        self._dispatcher.dispatch_subtask(st)
+                        self._dispatch_subtask_once(task, st)
                 else:
                     logger.warning(f"Task {task_id} has no ready subtasks after decomposition")
             except Exception as e:
@@ -714,7 +715,7 @@ class TaskOrchestrator:
                                 rst = st
                                 break
                         if rst and rst.subtask_id in dispatchable_ids:
-                            self._dispatcher.dispatch_subtask(rst)
+                            self._dispatch_subtask_once(task, rst)
 
         await self._maybe_record_wave_acceptance(task, job.subtask_id, ost)
         self.repair_task_dispatch(task.task_id, reason="job_completed")
@@ -726,7 +727,7 @@ class TaskOrchestrator:
         logger.info(f"Task {task.task_id}: {len(ready_subtasks)} ready subtasks found after unlocking DAG")
         for st in ready_subtasks:
             logger.info(f"Dispatching ready subtask {st.subtask_id} (agent={st.agent_id}, wave={st.wave_number})")
-            self._dispatcher.dispatch_subtask(st)
+            self._dispatch_subtask_once(task, st)
         self.repair_task_dispatch(task.task_id, reason="dag_unlock")
 
         # Check if all subtasks are done
@@ -1342,7 +1343,7 @@ class TaskOrchestrator:
             wave_fix_subtask.description = wave_fix_description
 
         self._state._persist_subtask(wave_fix_subtask)
-        wave_fix_job = self._dispatcher.dispatch_subtask(wave_fix_subtask)
+        wave_fix_job = self._dispatch_subtask_once(task, wave_fix_subtask)
         if wave_fix_job:
             logger.info(f"Wave gate blocked Wave {wave_number}: dispatched wave fix job {wave_fix_job.job_id} for task {task.task_id} (attempt {attempt})")
         else:
@@ -1521,7 +1522,7 @@ class TaskOrchestrator:
             task.status = TaskStatus.RUNNING
             task.updated_at = time.time()
             self._state._persist_task(task)
-            self._dispatcher.dispatch_subtask(new_subtask)
+            self._dispatch_subtask_once(task, new_subtask)
             logger.info(f"Reassigned {job.subtask_id} to {new_agent} as {new_subtask_id} (attempt {attempt}, canonical: {canonical_id})")
 
     def _mark_prior_wave_block(self, task: Task, acceptance: AcceptanceResult) -> None:
@@ -2236,7 +2237,7 @@ class TaskOrchestrator:
                     continue
                 if self._has_active_job_for_subtask(st.subtask_id):
                     continue
-                job = self._dispatcher.dispatch_subtask(st)
+                job = self._dispatch_subtask_once(task, st)
                 if job:
                     dispatched.append(st.subtask_id)
 
@@ -2263,6 +2264,9 @@ class TaskOrchestrator:
 
     def _has_active_job_for_subtask(self, subtask_id: str) -> bool:
         """Check whether *subtask_id* has a pending/dispatched/running job in persistence."""
+        memory_job = self._state.get_job_by_subtask(subtask_id)
+        if memory_job and memory_job.status in {JobStatus.PENDING, JobStatus.DISPATCHED, JobStatus.RUNNING}:
+            return True
         try:
             jobs = self._state._persistence.get_jobs_by_subtask(subtask_id) if self._state._persistence else []
         except Exception:
@@ -2271,6 +2275,49 @@ class TaskOrchestrator:
             job.get("status") in {JobStatus.PENDING.value, JobStatus.DISPATCHED.value, JobStatus.RUNNING.value}
             for job in jobs
         )
+
+    def _dispatch_subtask_once(self, task: Task, subtask: SubTask) -> Optional[Job]:
+        """Reserve a pending subtask before dispatch so repair re-entry cannot dispatch it twice."""
+        with self._dispatch_lock:
+            current = next((st for st in task.subtasks if st.subtask_id == subtask.subtask_id), None)
+            if current is None:
+                return None
+            if current.status != JobStatus.PENDING:
+                return None
+            if self._has_active_job_for_subtask(current.subtask_id):
+                return None
+            before_job = self._state.get_job_by_subtask(current.subtask_id)
+            before_job_id = before_job.job_id if before_job else None
+            self._state.update_subtask_status(task.task_id, current.subtask_id, JobStatus.DISPATCHED)
+
+        try:
+            job = self._dispatcher.dispatch_subtask(current)
+        except Exception:
+            self._rollback_dispatch_reservation_if_unused(task, current.subtask_id, before_job_id)
+            raise
+
+        if job:
+            return job
+
+        after_job = self._state.get_job_by_subtask(current.subtask_id)
+        if after_job and after_job.job_id != before_job_id:
+            return after_job
+
+        self._rollback_dispatch_reservation_if_unused(task, current.subtask_id, before_job_id)
+        return None
+
+    def _rollback_dispatch_reservation_if_unused(
+        self,
+        task: Task,
+        subtask_id: str,
+        before_job_id: Optional[str],
+    ) -> None:
+        after_job = self._state.get_job_by_subtask(subtask_id)
+        if after_job and after_job.job_id != before_job_id:
+            return
+        current = next((st for st in task.subtasks if st.subtask_id == subtask_id), None)
+        if current and current.status == JobStatus.DISPATCHED:
+            self._state.update_subtask_status(task.task_id, subtask_id, JobStatus.PENDING)
 
     def _dispatch_ready_orphan_subtasks(
         self, task_id: str, ost: OrchestratorState, *, reason: str
@@ -2287,7 +2334,7 @@ class TaskOrchestrator:
                 continue
             if self._has_active_job_for_subtask(st.subtask_id):
                 continue
-            job = self._dispatcher.dispatch_subtask(st)
+            job = self._dispatch_subtask_once(task, st)
             if job:
                 dispatched.append(st.subtask_id)
 
@@ -3382,7 +3429,7 @@ class TaskOrchestrator:
             for subtask_id in created:
                 subtask = next((st for st in task.subtasks if st.subtask_id == subtask_id), None)
                 if subtask:
-                    self._dispatcher.dispatch_subtask(subtask)
+                    self._dispatch_subtask_once(task, subtask)
             return created
 
         for probe in getattr(quality, "probe_results", []) or []:
@@ -3520,7 +3567,7 @@ class TaskOrchestrator:
             for subtask_id in created:
                 subtask = next((st for st in task.subtasks if st.subtask_id == subtask_id), None)
                 if subtask:
-                    self._dispatcher.dispatch_subtask(subtask)
+                    self._dispatch_subtask_once(task, subtask)
         return created
 
     @staticmethod
@@ -4440,7 +4487,7 @@ The service exposes `GET /items`, `POST /items`, `GET /items/{id}`, and `DELETE 
             task.status = TaskStatus.RUNNING
             task.updated_at = time.time()
             self._state._persist_task(task)
-            fix_job = self._dispatcher.dispatch_subtask(fix_subtask)
+            fix_job = self._dispatch_subtask_once(task, fix_subtask)
             if fix_job:
                 logger.info(f"Dispatched fix subtask {fix_subtask_id} for {canonical_id} (round {current_round}), job={fix_job.job_id}")
             else:
@@ -5022,7 +5069,7 @@ The service exposes `GET /items`, `POST /items`, `GET /items/{id}`, and `DELETE 
                     subtask_id=integration_fix_id,
                 )
                 if fix_subtask:
-                    self._dispatcher.dispatch_subtask(fix_subtask)
+                    self._dispatch_subtask_once(task, fix_subtask)
         except Exception as e:
             logger.error(f"Integration acceptance error for task {task_id}: {e}")
         finally:

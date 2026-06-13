@@ -3,6 +3,7 @@ import Testing
 @testable import AcrossAgentsAssistantClient
 
 @MainActor
+@Suite(.serialized)
 struct AvailabilityAndEnsureTests {
     private func makeViewModel() -> SettingsViewModel {
         UnixSocketProtocol.register()

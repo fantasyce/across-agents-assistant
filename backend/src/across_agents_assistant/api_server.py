@@ -3370,6 +3370,7 @@ class TaskInfo(BaseModel):
     task_id: str
     description: str
     status: str
+    external_task: bool = False
     task_types: List[str] = Field(default_factory=list)
     delivery_mode: str = "legacy"
     owner_delivery_contract: Optional[Dict[str, Any]] = None
@@ -3725,6 +3726,7 @@ class TaskSummaryInfo(BaseModel):
     task_id: str
     description: str
     status: str
+    external_task: bool = False
     progress: float = 0
     completed_count: int = 0
     total_count: int = 0
@@ -5065,6 +5067,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                     task_id=str(task_id),
                     description=str(row.get("description") or ""),
                     status=str(row.get("status") or "pending"),
+                    external_task=True,
                     progress=float(row.get("progress") or 0),
                     completed_count=int(row.get("completed_count") or 0),
                     total_count=int(row.get("total_count") or 0),
@@ -6454,6 +6457,11 @@ async def task_stream(task_id: str):
 async def pause_task(task_id: str):
     """Pause a task."""
     try:
+        if _is_external_orchestrator_task(task_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+            )
         success = _task_state.pause_task(task_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
@@ -6467,6 +6475,11 @@ async def pause_task(task_id: str):
 async def resume_task(task_id: str):
     """Resume a paused task."""
     try:
+        if _is_external_orchestrator_task(task_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+            )
         success = _task_state.resume_task(task_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
@@ -6480,6 +6493,11 @@ async def resume_task(task_id: str):
 async def cancel_task(task_id: str):
     """Cancel a task and all its subtasks."""
     try:
+        if _is_external_orchestrator_task(task_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+            )
         task = _task_state.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")

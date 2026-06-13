@@ -786,3 +786,78 @@ else:
     assert evaluate_app_grade_quality(evidence)["status"] == "passed"
     assert ["submit-release-e2e", "--project", project_dir, "--run-label", "cli-unit", "--json"] in calls
     assert ["run", task_id, "--json"] in calls
+
+
+def test_external_cli_runtime_preserves_strict_dependency_plan(tmp_path):
+    task_id = "task-external-cli-plan"
+    project_dir = str(tmp_path / "project")
+    calls_path = tmp_path / "calls.jsonl"
+    cli_path = tmp_path / "across-orchestrator"
+    cli_path.write_text(
+        f"""#!/usr/bin/env python3
+import json, pathlib, sys
+task_pending = json.loads({json.dumps(_external_task(task_id, project_dir, "pending"))!r})
+calls = pathlib.Path({str(calls_path)!r})
+calls.parent.mkdir(parents=True, exist_ok=True)
+with calls.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(sys.argv[1:]) + "\\n")
+cmd = sys.argv[1]
+if cmd == "agent-card":
+    print(json.dumps({{"name": "Across Orchestrator", "version": "0.2.0"}}))
+elif cmd == "submit":
+    print(json.dumps(task_pending))
+else:
+    print(json.dumps({{"error": "unsupported"}}))
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    cli_path.chmod(cli_path.stat().st_mode | stat.S_IXUSR)
+    subtasks = [
+        {
+            "id": "stage-design",
+            "description": "Create release design note",
+            "path": "README.md",
+            "agent": "openclaw",
+            "wave": 1,
+        },
+        {
+            "id": "stage-build",
+            "description": "Build after release design note",
+            "path": "web/index.html",
+            "agent": "hermes",
+            "wave": 2,
+            "dependencies": ["stage-design"],
+        },
+    ]
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            endpoint=None,
+            command=str(cli_path),
+            registry_path=tmp_path / "tasks.json",
+            auto_run=False,
+        )
+    )
+
+    manager.implementation_status()
+    task = manager.submit_task(
+        goal="Build a serial validation chain",
+        project_dir=project_dir,
+        deliverables=["README.md", "web/index.html"],
+        agent="openclaw",
+        subtasks=subtasks,
+        strict_dependency=True,
+        task_types=["artifact"],
+    )
+    calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+    submit_call = next(call for call in calls if call and call[0] == "submit")
+
+    assert task["task_id"] == task_id
+    assert "--strict-dependency" in submit_call
+    assert "--subtasks-json" in submit_call
+    encoded_subtasks = submit_call[submit_call.index("--subtasks-json") + 1]
+    assert json.loads(encoded_subtasks) == subtasks
+    assert ["--task-type", "artifact"] == submit_call[
+        submit_call.index("--task-type"):submit_call.index("--task-type") + 2
+    ]
