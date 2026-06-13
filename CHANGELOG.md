@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.8.5 - 2026-06-14
+
+### Changed
+
+- Split external task deliverable, owner-agent, and strict-dependency planning
+  out of the FastAPI route module into a dedicated backend planning boundary.
+- Moved Swift task orchestration DTOs out of
+  `TaskOrchestrationViewModel` into model-layer types while keeping nested
+  typealiases for source compatibility.
+- Moved Swift task progress, polling merge, terminal-state, and detail-polling
+  decisions into testable state reducers.
+- Moved Across Orchestrator strict-dependency repair out of `runtime.py` into
+  the planning boundary.
+- Updated the managed Across Orchestrator install pin to `v0.6.5`.
+
+### Validation
+
+- AAA backend tests passed with 928 tests and 18 skipped.
+- SwiftPM Swift Testing passed with 18 tests.
+- Across Orchestrator full check passed with 59 tests, CLI smoke, and
+  sensitive text scan.
+- Across Context full check passed with 55 tests, CLI smoke, and sensitive text
+  scan.
+- Packaged app startup diagnostics passed with 11 checks on version `0.8.5`,
+  loading Across Orchestrator `0.6.5` from the managed `~/.across` wheel.
+- Packaged Release E2E completed through the external Orchestrator runtime with
+  seven serial waves, seven artifacts, all required probes passing, and quality
+  score 100.
+
 ## 0.8.4 - 2026-06-14
 
 ### Fixed
