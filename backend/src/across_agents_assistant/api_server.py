@@ -4871,9 +4871,29 @@ class TaskDispatchResponse(BaseModel):
     dispatched_jobs: List[JobInfo]
     ready_remaining: int
 
-@app.post("/api/tasks/{task_id}/dispatch", response_model=TaskDispatchResponse)
+
+def _legacy_runtime_route_detail(task_id: str, operation: str) -> str:
+    return (
+        f"The historical in-app TaskOrchestrator {operation} endpoint is legacy-only. "
+        f"Use /api/legacy/tasks/{task_id}/{operation} for legacy task maintenance; "
+        "new task orchestration must go through the external Across Orchestrator plugin."
+    )
+
+
+@app.post("/api/tasks/{task_id}/dispatch")
 async def dispatch_task(task_id: str, req: TaskDispatchRequest):
-    """Dispatch subtasks to agents."""
+    """Reject implicit use of the historical in-app TaskOrchestrator."""
+    raise HTTPException(status_code=410, detail=_legacy_runtime_route_detail(task_id, "dispatch"))
+
+
+@app.post("/api/legacy/tasks/{task_id}/dispatch", response_model=TaskDispatchResponse)
+async def dispatch_legacy_task(task_id: str, req: TaskDispatchRequest):
+    """Dispatch subtasks for legacy in-app TaskOrchestrator task data."""
+    return await _dispatch_legacy_task(task_id, req)
+
+
+async def _dispatch_legacy_task(task_id: str, req: TaskDispatchRequest) -> TaskDispatchResponse:
+    """Dispatch subtasks to agents for legacy in-app task maintenance."""
     try:
         task = _task_state.get_task(task_id)
         if not task:
@@ -5887,6 +5907,7 @@ async def create_release_e2e_task(req: ReleaseE2ETaskRequest):
                 plugin.submit_release_e2e_task,
                 project_dir=task_request["project_dir"],
                 run_label=req.run_label,
+                allowed_subtask_agents=task_request["allowed_subtask_agents"],
             )
             return ReleaseE2ETaskResponse(
                 task_id=str(task.get("task_id") or ""),
@@ -6488,7 +6509,18 @@ async def get_resumable_tasks():
 
 @app.post("/api/tasks/{task_id}/restore")
 async def restore_task(task_id: str):
-    """Restore a specific task from persistence to memory.
+    """Reject implicit restore through the historical in-app TaskOrchestrator."""
+    raise HTTPException(status_code=410, detail=_legacy_runtime_route_detail(task_id, "restore"))
+
+
+@app.post("/api/legacy/tasks/{task_id}/restore")
+async def restore_legacy_task(task_id: str):
+    """Restore legacy in-app TaskOrchestrator task data."""
+    return await _restore_legacy_task(task_id)
+
+
+async def _restore_legacy_task(task_id: str):
+    """Restore a specific legacy task from persistence to memory.
 
     Issue 46: Only one task can be running at a time.
     Returns error if another task is already running.
@@ -6512,7 +6544,7 @@ async def restore_task(task_id: str):
             if hasattr(orchestrator, "resume_task"):
                 orchestrator.resume_task(task)
             if hasattr(orchestrator, "repair_task_dispatch"):
-                orchestrator.repair_task_dispatch(task_id, reason="api_restore")
+                orchestrator.repair_task_dispatch(task_id, reason="api_legacy_restore")
             return _task_to_info(task, _task_state)
         return {"status": "success", "task_id": task_id}
     except HTTPException:

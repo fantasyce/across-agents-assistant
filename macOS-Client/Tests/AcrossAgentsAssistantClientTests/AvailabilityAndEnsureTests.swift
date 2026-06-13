@@ -88,7 +88,7 @@ struct AvailabilityAndEnsureTests {
 
         let result = await vm.ensureTaskSubmissionReady(ownerAgentId: "auto")
 
-        #expect(result == "当前没有可用的 Agent 或 LLM，请先前往 Model Settings 完成配置。")
+        #expect(result == "No available Agent or LLM. Open Model Settings to configure one first.")
     }
 
     @Test

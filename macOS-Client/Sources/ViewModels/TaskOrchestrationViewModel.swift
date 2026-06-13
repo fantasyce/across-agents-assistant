@@ -1743,7 +1743,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             }
 
             do {
-                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/restore")
+                let url = baseURL.appendingPathComponent("api/legacy/tasks/\(taskId)/restore")
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Accept")

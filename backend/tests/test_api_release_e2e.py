@@ -41,9 +41,10 @@ def test_release_e2e_task_endpoint_submits_frontend_runnable_complex_task(monkey
                 "connection_note": "fake external runtime",
             }
 
-        def submit_release_e2e_task(self, project_dir, run_label=None):
+        def submit_release_e2e_task(self, project_dir, run_label=None, allowed_subtask_agents=None):
             captured["project_dir"] = project_dir
             captured["run_label"] = run_label
+            captured["allowed_subtask_agents"] = allowed_subtask_agents
             return {"task_id": "task-release-e2e", "status": "pending"}
 
     monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
@@ -74,3 +75,6 @@ def test_release_e2e_task_endpoint_submits_frontend_runnable_complex_task(monkey
     assert body["external_task"] is True
     assert captured["project_dir"] == str(tmp_path / "frontend-release-e2e")
     assert captured["run_label"] == "api-unit"
+    assert {"openclaw", "hermes", "claude", "deepseek", "minimax"}.issubset(
+        set(captured["allowed_subtask_agents"])
+    )

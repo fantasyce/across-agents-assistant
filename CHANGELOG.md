@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 0.8.3 - 2026-06-14
+
+### Fixed
+
+- Hardened managed Across Orchestrator repair so stale runtime artifacts,
+  editable installs, and host-source trees are removed before reinstall.
+- Marked stale Across Orchestrator source trees, `.pth` files, and
+  `direct_url.json` metadata that point at protected development checkouts as
+  plugin integrity failures.
+- Rejected protected-path Across Orchestrator command overrides by default,
+  unless development command overrides are explicitly enabled.
+- Updated the managed Across Context and Across Orchestrator install pins to
+  `v0.7.3` and `v0.6.3`.
+- Aligned the Swift availability test with the current English Model Settings
+  readiness message.
+
+### Changed
+
+- Documented the three-product boundary between Across Agents Assistant,
+  Across Context, and Across Orchestrator.
+- Documented managed plugin runtime paths under `~/.across` and the rule that
+  packaged product paths must not execute plugin runtimes from development
+  checkouts.
+
+### Validation
+
+- AAA backend plugin-boundary, API, and version consistency tests passed with
+  63 tests.
+- Across Context check passed with 55 tests plus CLI and MCP smoke.
+- Across Orchestrator full check passed with 56 tests, CLI smoke, and
+  sensitive text scan.
+- SwiftPM Swift Testing passed with 12 tests.
+- Packaged app smoke verified stale Orchestrator source trees report repair
+  required and clean managed runtimes report installed with passing integrity.
+- Open-source release check passed.
+
+## 0.8.2 - 2026-06-13
+
 ### Documentation
 
 - Clarified the three-product boundary between Across Agents Assistant,
@@ -9,8 +47,6 @@
 - Documented managed plugin runtime paths under `~/.across` and the rule that
   packaged product paths must not execute plugin runtimes from development
   checkouts.
-
-## 0.8.2 - 2026-06-13
 
 ### Fixed
 
