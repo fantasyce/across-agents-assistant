@@ -113,4 +113,25 @@ struct TaskOrchestrationStatusTests {
 
         #expect(summary.externalTask)
     }
+
+    @Test func taskOrchestrationModelsAreUsableOutsideViewModel() throws {
+        let payload = """
+        {
+          "task_id": "task-external",
+          "description": "External task",
+          "status": "running",
+          "progress": 0.4,
+          "completed_count": 1,
+          "total_count": 3,
+          "external_task": true
+        }
+        """.data(using: .utf8)!
+
+        let summary = try JSONDecoder().decode(TaskOrchestrationTaskSummary.self, from: payload)
+        let compatibilitySummary = try JSONDecoder().decode(TaskOrchestrationViewModel.TaskSummary.self, from: payload)
+
+        #expect(summary.taskId == compatibilitySummary.taskId)
+        #expect(summary.externalTask)
+        #expect(compatibilitySummary.externalTask)
+    }
 }
