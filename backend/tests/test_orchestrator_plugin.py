@@ -584,7 +584,11 @@ def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
         )
 
         status = manager.implementation_status()
-        task = manager.submit_release_e2e_task(project_dir=str(tmp_path / "project"), run_label="unit")
+        task = manager.submit_release_e2e_task(
+            project_dir=str(tmp_path / "project"),
+            run_label="unit",
+            allowed_subtask_agents=["openclaw", "deepseek"],
+        )
         completed = manager.run_task(task["task_id"])
         app_task = external_task_to_app_info(completed)
         evidence = manager.get_evidence_bundle(task["task_id"])
@@ -601,6 +605,7 @@ def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
     assert ("POST", "/release-e2e") in server.requests
     assert ("POST", "/tasks/task-external-http/run") in server.requests
     assert server.last_submit["runLabel"] == "unit"
+    assert server.last_submit["allowedSubtaskAgents"] == ["openclaw", "deepseek"]
 
 
 def test_external_generic_task_preserves_task_types_in_app_mapping(tmp_path):
@@ -633,6 +638,21 @@ def test_external_generic_task_preserves_task_types_in_app_mapping(tmp_path):
     assert app_task["task_types"] == ["functional"]
     assert app_task["delivery_mode"] == "functional"
     assert app_task["delivery_report"]["status"] == "passed"
+
+
+def test_external_app_grade_mapping_migrates_legacy_role_agents(tmp_path):
+    task = _external_task("task-legacy-role-agents", str(tmp_path / "project"), "completed")
+    task["agent"] = "app-grade"
+    task["subtasks"] = [
+        {**task["subtasks"][0], "agent": "api-agent"},
+        {**task["subtasks"][1], "agent": "html-agent"},
+    ]
+
+    app_task = external_task_to_app_info(task)
+
+    assert app_task["owner_agent"] == "openclaw"
+    assert app_task["allowed_subtask_agents"] == ["hermes", "openclaw"]
+    assert [item["agent_id"] for item in app_task["subtasks"]] == ["openclaw", "hermes"]
 
 
 def test_external_cli_runtime_uses_canonical_command_protocol(tmp_path):

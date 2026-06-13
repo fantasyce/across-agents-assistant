@@ -47,6 +47,7 @@ ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
 )
 ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE = "External Across Orchestrator runtime is unavailable."
+DEFAULT_APP_GRADE_EXECUTOR_AGENTS = ["openclaw", "hermes", "claude", "deepseek", "minimax"]
 
 
 class OrchestratorPluginError(RuntimeError):
@@ -777,17 +778,28 @@ class OrchestratorPluginManager:
             self.start_task_async(str(task.get("task_id") or ""))
         return task
 
-    def submit_release_e2e_task(self, *, project_dir: str, run_label: Optional[str] = None) -> Dict[str, Any]:
+    def submit_release_e2e_task(
+        self,
+        *,
+        project_dir: str,
+        run_label: Optional[str] = None,
+        allowed_subtask_agents: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         self._ensure_external()
+        clean_agents = _clean_agent_ids(allowed_subtask_agents)
         if self._transport == "http":
             payload = {"projectRoot": project_dir}
             if run_label:
                 payload["runLabel"] = run_label
+            if clean_agents:
+                payload["allowedSubtaskAgents"] = clean_agents
             task = self._http_post("/release-e2e", payload)
         else:
             args = ["submit-release-e2e", "--project", project_dir]
             if run_label:
                 args.extend(["--run-label", run_label])
+            for agent in clean_agents:
+                args.extend(["--allowed-agent", agent])
             args.append("--json")
             task = self._cli_json(args)
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
@@ -1307,6 +1319,18 @@ def _clean_task_types(task_types: Optional[List[Any]]) -> List[str]:
     return clean
 
 
+def _clean_agent_ids(agent_ids: Optional[List[Any]]) -> List[str]:
+    clean: List[str] = []
+    seen: set[str] = set()
+    for item in agent_ids or []:
+        value = str(item or "").strip().lower()
+        if not value or value in seen or value.endswith("-agent"):
+            continue
+        clean.append(value)
+        seen.add(value)
+    return clean
+
+
 def _external_metadata(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     task_metadata = task.get("metadata")
@@ -1349,6 +1373,7 @@ def _external_delivery_mode(task: Dict[str, Any], evidence: Optional[Dict[str, A
 
 
 def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    task = _normalize_external_task_for_app(task)
     task_id = str(task.get("task_id") or "")
     status = _app_status(str(task.get("status") or "pending"))
     subtasks = [_subtask_to_app(item, task_id) for item in task.get("subtasks") or []]
@@ -1420,6 +1445,7 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
 
 
 def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
+    task = _normalize_external_task_for_app(task)
     subtasks = task.get("subtasks") or []
     completed = sum(1 for item in subtasks if item.get("status") == "completed")
     total = len(subtasks)
@@ -1437,6 +1463,54 @@ def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
         "owner_agent": task.get("agent") or "app-grade",
         "delivery_mode": _external_delivery_mode(task),
     }
+
+
+def _normalize_external_task_for_app(task: Dict[str, Any]) -> Dict[str, Any]:
+    if not _is_app_grade(task):
+        return task
+    normalized = dict(task)
+    normalized["subtasks"] = [dict(item) for item in task.get("subtasks") or [] if isinstance(item, dict)]
+    executors = _external_app_grade_executors(normalized)
+    agent = str(normalized.get("agent") or "")
+    if agent == "app-grade" or agent.endswith("-agent"):
+        normalized["agent"] = executors[0]
+    for index, subtask in enumerate(normalized["subtasks"]):
+        role = _legacy_role_from_agent(str(subtask.get("agent") or subtask.get("agent_id") or ""))
+        if not role:
+            continue
+        subtask.setdefault("capability_role", role)
+        subtask["agent"] = executors[index % len(executors)]
+    return normalized
+
+
+def _external_app_grade_executors(task: Dict[str, Any]) -> List[str]:
+    candidates: List[Any] = []
+    metadata = task.get("metadata")
+    if isinstance(metadata, dict):
+        request = metadata.get("app_grade_request")
+        if isinstance(request, dict):
+            request_body = request.get("request")
+            if isinstance(request_body, dict):
+                candidates.extend(request_body.get("executor_agents") or [])
+    contract = task.get("contract")
+    if isinstance(contract, dict):
+        candidates.extend(contract.get("executor_agents") or [])
+    for subtask in task.get("subtasks") or []:
+        if isinstance(subtask, dict):
+            candidates.append(subtask.get("agent") or subtask.get("agent_id"))
+    clean: List[str] = []
+    for item in candidates:
+        value = str(item or "").strip().lower()
+        if value and value not in clean and value != "app-grade" and not value.endswith("-agent"):
+            clean.append(value)
+    return clean or list(DEFAULT_APP_GRADE_EXECUTOR_AGENTS)
+
+
+def _legacy_role_from_agent(agent: str) -> Optional[str]:
+    value = str(agent or "").strip().lower()
+    if value.endswith("-agent"):
+        return value.removesuffix("-agent")
+    return None
 
 
 def _is_app_grade(task: Dict[str, Any]) -> bool:
