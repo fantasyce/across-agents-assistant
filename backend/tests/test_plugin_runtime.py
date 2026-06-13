@@ -106,6 +106,27 @@ def test_inspect_across_plugin_probe_uses_command_status(tmp_path):
     assert context["display_name"] == "Fake across-context"
 
 
+def test_inspect_across_plugin_reports_actual_wheel_install_source_from_direct_url(tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    package_path = plugin_dir / "packages" / "across_orchestrator-0.6.1-py3-none-any.whl"
+    dist_info = plugin_dir / "venv" / "lib" / "python3.11" / "site-packages" / "across_orchestrator-0.6.1.dist-info"
+    package_path.parent.mkdir(parents=True)
+    dist_info.mkdir(parents=True)
+    package_path.write_text("wheel", encoding="utf-8")
+    (dist_info / "direct_url.json").write_text(
+        json.dumps({"url": package_path.as_uri(), "archive_info": {"hash": "sha256=abc"}}),
+        encoding="utf-8",
+    )
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    orchestrator = inspect_across_plugin("across-orchestrator", env=env, probe=False)
+
+    assert orchestrator["install"]["source"] == package_path.as_uri()
+    assert "github.com/fantasyce/across-orchestrator" not in orchestrator["install"]["source"]
+
+
 def test_inspect_across_plugin_rejects_wrapper_referencing_documents(tmp_path):
     across_home = tmp_path / "across"
     bin_dir = across_home / "bin"

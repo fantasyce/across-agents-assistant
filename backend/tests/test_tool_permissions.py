@@ -1,5 +1,6 @@
 import os
 import tempfile
+import textwrap
 import stat
 import pytest
 
@@ -370,19 +371,60 @@ def test_mcp_command_resolution_uses_npm_global_bin(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_across_context_native_connect_exposes_standard_tools(tmp_path):
+async def test_across_context_external_connect_exposes_plugin_tools(tmp_path):
     across_context = tmp_path / "across-context"
-    across_context.write_text("#!/bin/sh\nprintf 'Across Context test CLI\\n'\n", encoding="utf-8")
+    across_context.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import sys
+
+            TOOLS = [
+                {"name": "remember_context", "description": "Store memory", "inputSchema": {"type": "object"}},
+                {"name": "search_context", "description": "Search memory", "inputSchema": {"type": "object"}},
+                {"name": "export_agent_instructions", "description": "Export instructions", "inputSchema": {"type": "object"}},
+            ]
+
+            for line in sys.stdin:
+                if not line.strip():
+                    continue
+                message = json.loads(line)
+                method = message.get("method")
+                message_id = message.get("id")
+                if method == "initialize":
+                    result = {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "across-context", "version": "fake-external"},
+                    }
+                elif method == "notifications/initialized":
+                    continue
+                elif method == "tools/list":
+                    result = {"tools": TOOLS}
+                else:
+                    result = {}
+                if message_id is not None:
+                    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message_id, "result": result}) + "\\n")
+                    sys.stdout.flush()
+            """
+        ),
+        encoding="utf-8",
+    )
     across_context.chmod(across_context.stat().st_mode | stat.S_IXUSR)
 
     manager = MCPClientManager()
-    manager.register_server("across_context", str(across_context), ["mcp"])
+    manager.register_server(
+        "across_context",
+        str(across_context),
+        ["mcp"],
+    )
 
     success, error = await manager.connect_server("across_context")
 
     assert success, error
     assert "across_context" in manager.sessions
-    assert "across_context" in manager._native_across_context_servers
+    assert manager.get_server_implementation("across_context") == "external"
 
     tool_names = {tool["name"] for tool in manager.get_all_tools_schema()}
     assert "across_context__remember_context" in tool_names

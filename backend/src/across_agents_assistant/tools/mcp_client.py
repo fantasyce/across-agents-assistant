@@ -2,12 +2,13 @@ import asyncio
 import logging
 import json
 import os
+import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from .across_context_native import call_across_context_tool
 from ..paths import ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 
 logger = logging.getLogger("across_agents_assistant.mcp")
@@ -47,7 +48,6 @@ class MCPClientManager:
         self.server_configs: Dict[str, StdioServerParameters] = {}
         self.server_tools: Dict[str, List[Dict[str, Any]]] = {}
         self._connecting: set = set()
-        self._native_across_context_servers: set[str] = set()
         self._external_across_context_servers: set[str] = set()
         self._server_implementations: Dict[str, str] = {}
         self._server_connection_notes: Dict[str, str] = {}
@@ -62,14 +62,14 @@ class MCPClientManager:
         merged_env["PATH"] = self._command_search_path(merged_env.get("PATH", ""))
 
         # Try to resolve the command to its absolute path to prevent "command not found" errors
-        resolved_command = shutil.which(command, path=merged_env.get("PATH"))
+        resolved_command = self._resolve_command_path(command, merged_env)
         if resolved_command:
             command = resolved_command
         else:
             if self._is_across_context_command_name(command):
                 logger.info(
-                    "Across Context CLI not found on PATH; auto mode can use built-in "
-                    "compatibility. PATH: %s",
+                    "Across Context CLI not found on PATH; the external plugin runtime "
+                    "must be installed under the Across ecosystem directory. PATH: %s",
                     merged_env.get("PATH", "not set"),
                 )
             else:
@@ -215,7 +215,6 @@ class MCPClientManager:
         """Disconnect from an MCP server."""
         if server_id in self.sessions:
             del self.sessions[server_id]
-        self._native_across_context_servers.discard(server_id)
         self._external_across_context_servers.discard(server_id)
         self._server_implementations.pop(server_id, None)
         self._server_connection_notes.pop(server_id, None)
@@ -247,14 +246,6 @@ class MCPClientManager:
             for file_path in file_args:
                 if not self._is_path_allowed(file_path, sandbox.get('allowed_paths', [])):
                     return f"Error: Access to path '{file_path}' is not allowed. Allowed paths: {sandbox['allowed_paths']}"
-
-        if server_id in self._native_across_context_servers:
-            return await asyncio.to_thread(
-                self._call_across_context_native_tool,
-                server_id,
-                tool_name,
-                arguments,
-            )
 
         if server_id in self._external_across_context_servers:
             return await asyncio.to_thread(
@@ -299,25 +290,24 @@ class MCPClientManager:
         return os.path.basename(str(command)) == "across-context"
 
     async def _connect_across_context(self, server_id: str, params: StdioServerParameters):
-        mode = self._across_context_mode(params)
-        if mode in {"builtin", "native", "builtin_compatibility"}:
-            return self._connect_across_context_native(
-                server_id,
-                "Forced built-in Across Context compatibility mode.",
-            )
+        self._across_context_mode(params)
 
         if not self._command_is_executable(str(params.command), params.env or {}):
             error = (
                 "The external Across Context MCP server is required but the "
                 "`across-context` command is not installed or executable."
             )
-            if mode == "external":
-                logger.error(error)
-                return False, error
-            return self._connect_across_context_native(
-                server_id,
-                "`across-context` command was not found; using built-in compatibility mode.",
+            logger.error(error)
+            return False, error
+
+        integrity_issues = self._across_context_command_integrity_issues(str(params.command), params.env or {})
+        if integrity_issues:
+            error = (
+                "The external Across Context MCP server must be repaired because "
+                "its command references a protected user directory."
             )
+            logger.error("%s Issues: %s", error, integrity_issues)
+            return False, error
 
         ok, error = self._connect_across_context_external(server_id, params)
         if ok:
@@ -325,19 +315,9 @@ class MCPClientManager:
             return True, None
 
         external_error = error or "unknown external MCP connection failure"
-        if mode == "external":
-            message = f"The external Across Context MCP server is required but failed to start: {external_error}"
-            logger.error(message)
-            return False, message
-
-        logger.warning(
-            "External Across Context MCP connection failed; falling back to built-in compatibility: %s",
-            external_error,
-        )
-        return self._connect_across_context_native(
-            server_id,
-            f"External Across Context MCP failed: {external_error}",
-        )
+        message = f"The external Across Context MCP server is required but failed to start: {external_error}"
+        logger.error(message)
+        return False, message
 
     def _connect_across_context_external(self, server_id: str, params: StdioServerParameters):
         timeout = self._across_context_connect_timeout(params)
@@ -437,32 +417,20 @@ class MCPClientManager:
             del self._exit_stacks[server_id]
         self.sessions.pop(server_id, None)
         self.server_tools.pop(server_id, None)
-        self._native_across_context_servers.discard(server_id)
         self._external_across_context_servers.discard(server_id)
         self._server_implementations.pop(server_id, None)
 
-    def _connect_across_context_native(self, server_id: str, note: str):
-        self.sessions[server_id] = None  # type: ignore[assignment]
-        self.server_tools[server_id] = self._across_context_tool_definitions(server_id)
-        self._native_across_context_servers.add(server_id)
-        self._server_implementations[server_id] = "builtin_compatibility"
-        self._server_connection_notes[server_id] = note
-        logger.info(
-            "Connected Across Context through built-in compatibility mode; "
-            "registered %s tools. Reason: %s",
-            len(self.server_tools[server_id]),
-            note,
-        )
-        return True, None
-
     def _across_context_mode(self, params: StdioServerParameters) -> str:
         env = params.env or {}
-        raw = env.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or os.environ.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or "auto"
+        raw = env.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or os.environ.get("ACROSS_AGENTS_ACROSS_CONTEXT_MODE") or "external"
         mode = str(raw).strip().lower().replace("-", "_")
-        if mode in {"auto", "external", "builtin", "native", "builtin_compatibility"}:
-            return mode
-        logger.warning("Unknown Across Context mode %r; using auto.", raw)
-        return "auto"
+        if mode == "external":
+            return "external"
+        logger.warning(
+            "Across Context mode %r is not supported in the host; using external plugin mode.",
+            raw,
+        )
+        return "external"
 
     def _across_context_connect_timeout(self, params: StdioServerParameters) -> float:
         env = params.env or {}
@@ -473,129 +441,34 @@ class MCPClientManager:
             return 5.0
 
     def _command_is_executable(self, command: str, env: Dict[str, str]) -> bool:
-        if os.path.isabs(command) or os.sep in command:
-            return os.path.isfile(command) and os.access(command, os.X_OK)
-        return shutil.which(command, path=env.get("PATH")) is not None
+        return self._resolve_command_path(command, env) is not None
 
-    def _across_context_tool_definitions(self, server_id: str) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": f"{server_id}__remember_context",
-                "description": "Store a user preference, project decision, command, note, or session summary in the local Across Context vault.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                        "scope": {"type": "string", "enum": ["global", "project"], "default": "global"},
-                        "type": {
-                            "type": "string",
-                            "enum": ["preference", "decision", "note", "command", "session"],
-                            "default": "note",
-                        },
-                        "projectRoot": {"type": "string"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "auto": {"type": "boolean", "default": True},
-                        "visibility": {"type": "string", "enum": ["private", "team"], "default": "private"},
-                    },
-                    "required": ["text"],
-                },
-                "risk_level": "high",
-                "original_name": "remember_context",
-            },
-            {
-                "name": f"{server_id}__search_context",
-                "description": "Search global and project memory for relevant context.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "projectRoot": {"type": "string"},
-                        "limit": {"type": "number", "default": 10},
-                        "mode": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "default": "hybrid"},
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "active", "pinned", "archived", "expired"],
-                        },
-                    },
-                    "required": ["query"],
-                },
-                "risk_level": "medium",
-                "original_name": "search_context",
-            },
-            {
-                "name": f"{server_id}__get_project_context",
-                "description": "Return an AGENTS.md style context document for the current project.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"projectRoot": {"type": "string"}},
-                    "required": ["projectRoot"],
-                },
-                "risk_level": "medium",
-                "original_name": "get_project_context",
-            },
-            {
-                "name": f"{server_id}__review_pending_memories",
-                "description": "List automatic memory writes that are pending user review.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"projectRoot": {"type": "string"}},
-                },
-                "risk_level": "high",
-                "original_name": "review_pending_memories",
-            },
-            {
-                "name": f"{server_id}__approve_memory",
-                "description": "Approve a pending memory by id so agents can use it as active context.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"id": {"type": "string"}},
-                    "required": ["id"],
-                },
-                "risk_level": "high",
-                "original_name": "approve_memory",
-            },
-            {
-                "name": f"{server_id}__get_agent_card",
-                "description": "Return the Across Context agent card for A2A-style discovery.",
-                "parameters": {"type": "object", "properties": {}},
-                "risk_level": "medium",
-                "original_name": "get_agent_card",
-            },
-            {
-                "name": f"{server_id}__export_agent_instructions",
-                "description": "Write AGENTS.md, CLAUDE.md, Cursor rules, or Markdown context exports for a project.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "projectRoot": {"type": "string"},
-                        "target": {
-                            "type": "string",
-                            "enum": ["agents", "claude", "cursor", "markdown"],
-                            "default": "agents",
-                        },
-                    },
-                    "required": ["projectRoot"],
-                },
-                "risk_level": "high",
-                "original_name": "export_agent_instructions",
-            },
-        ]
+    def _resolve_command_path(self, command: str, env: Dict[str, str]) -> Optional[str]:
+        return shutil.which(command, path=env.get("PATH"))
 
-    def _call_across_context_native_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
-        params = self.server_configs.get(server_id)
-        if params is None:
-            return f"Error: MCP server {server_id} not registered."
-
-        echo_info = f"【执行的命令】\n工具: {tool_name}\n参数: {json.dumps(arguments, ensure_ascii=False, indent=2)}"
-        logger.info("Calling Across Context native tool %s with args %s", tool_name, arguments)
-
+    def _across_context_command_integrity_issues(self, command: str, env: Dict[str, str]) -> List[str]:
+        resolved = self._resolve_command_path(command, env)
+        if not resolved:
+            return ["command is not executable"]
+        issues: List[str] = []
+        if self._contains_protected_user_reference(resolved):
+            issues.append("command path references a protected user directory")
+        path = Path(resolved)
         try:
-            output = call_across_context_tool(tool_name, arguments, env=params.env)
-        except Exception as exc:
-            logger.error("Exception calling Across Context native tool %s: %s", tool_name, exc)
-            return f"Error executing tool: {exc}"
+            if path.stat().st_size <= 64 * 1024:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                if self._contains_protected_user_reference(text):
+                    issues.append("command wrapper references a protected user directory")
+        except Exception:
+            pass
+        return issues
 
-        return f"{echo_info}\n\n【执行结果】\n{output}"
+    def _contains_protected_user_reference(self, value: str) -> bool:
+        expanded = os.path.expanduser(value or "")
+        home = Path.home()
+        if any(str(root) in expanded for root in (home / "Documents", home / "Desktop", home / "Downloads")):
+            return True
+        return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
 
     def _call_across_context_external_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
         params = self.server_configs.get(server_id)
