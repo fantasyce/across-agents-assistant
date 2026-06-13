@@ -36,6 +36,33 @@ Across Agents Assistant is built for developers who want more than a single chat
 
 The core idea is cross-agent collaboration: pick an owner agent, keep local agents and cloud LLMs visible, break a complex request into waves, and inspect the final delivery. You can also choose a single agent for a focused complex task. Delivery quality is designed to be strong and reviewable, while still acknowledging that some generated artifacts may occasionally need small human refinements.
 
+## Across Product Boundaries
+
+The Across ecosystem is intentionally split into three independently releasable
+products:
+
+- **Across Agents Assistant** is the macOS host and control panel. It owns the
+  Swift UI, local backend API, provider configuration, credentials, macOS
+  permissions, local agent process discovery, tool approvals, task evidence
+  views, and plugin lifecycle UI.
+- **Across Context** is the shared-memory plugin. It owns memory search, memory
+  write policy, pending review, MCP memory tools, and durable memory under
+  `~/.across/data/across-context`. The host discovers it through
+  `~/.across/bin/across-context` after a managed install under
+  `~/.across/plugins/across-context`.
+- **Across Orchestrator** is the task-runtime plugin. It owns task lifecycle,
+  delivery contracts, dependency waves, Agent Loop checkpoints, quality gates,
+  remediation behavior, evidence bundles, and durable task state under
+  `~/.across/data/across-orchestrator`. The host discovers it through
+  `~/.across/bin/across-orchestrator`.
+
+AAA product code must not import or execute plugin implementation files from a
+development checkout such as `~/Documents/projects/...`. Development checkouts
+are valid only as user-selected project roots or explicit developer install
+source overrides. Normal packaged-app runtime paths stay under `~/.across` so
+fresh installs do not trigger macOS Documents permission prompts just because a
+plugin exists.
+
 ## Product Tour
 
 ### Current Dark Theme
@@ -129,13 +156,13 @@ The screenshots above are still the primary entry points: project chat, task orc
 - Native skill readiness checks mark missing binaries, environment variables, or config as unavailable; unavailable native skills stay visible for repair but are not used as strong routing signals.
 - Task capability preflight that recommends the best-fit agent mix before submission and shows which skills matched the request.
 - Delivery quality gates for exact file contracts, workspace hygiene, runnable probes, and static web feature evidence when UI behavior is requested.
-- Built-in release E2E gate that can submit a fixed high-complexity cross-agent task covering exact artifact delivery, Web UI, Node API, CLI checks, browser verification, and quality-gate evidence.
+- Release E2E gate in the AAA host that submits and inspects an app-grade scenario through the external orchestration runtime, covering exact artifact delivery, Web UI, Node API, CLI checks, browser verification, quality-gate evidence, and host-visible remediation.
 - Unified model surface for local agents such as OpenClaw, Hermes, and Claude Code, plus cloud LLMs such as DeepSeek and MiniMax.
 - Project-scoped chat with a real directory tree, session history, file attachments, screenshots, and context-aware prompts.
 - Single-agent mode for sending a complex task to one chosen agent when collaboration is unnecessary.
 - Voice and continuous conversation features that let you talk through work, auto-read assistant replies, and reduce keyboard time.
 - Local tool approval for file search/read/write/edit, browser URL context, Finder context, Xcode context, image OCR, screenshot OCR, Mail drafts, Notes drafts, system volume, dark mode, and MCP-backed tools.
-- MCP plugin settings for Across Context shared memory, local knowledge, external retrieval, SQLite, and filesystem context.
+- MCP plugin settings for host-managed MCP defaults. Across Context is the external shared-memory plugin; local knowledge, external retrieval, SQLite, and filesystem entries remain host-configured MCP integrations.
 - Local runtime state under `~/.across`, kept outside the source tree.
 
 ## Local macOS Swiss Army Knife
@@ -302,7 +329,7 @@ Local runtime state is stored under `~/.across`. Build outputs, local credential
 
 - macOS 14 or newer
 - Xcode command line tools
-- Swift 5.9 or newer
+- Swift 5.10 or newer
 - Python 3.10 or newer
 
 Optional integrations may require local CLI agents, provider API keys, MCP server configuration, or user-granted macOS permissions.
@@ -383,9 +410,10 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.2
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.2
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -408,6 +436,20 @@ External task state stays in `~/.across/data/across-orchestrator`; the app only
 keeps a thin task-id index in
 `~/.across/data/across-agents-assistant/orchestrator-plugin/tasks.json` so the
 main task UI can show external tasks.
+
+### Across Context Memory Plugin
+
+Shared memory is hosted by the external Across Context product. The desktop app
+owns the Plugin Center, memory review surfaces, and host permissions; Across
+Context owns memory policy, CLI/MCP tools, pending write review, and durable
+vault files.
+
+Managed installs place runtime code under
+`~/.across/plugins/across-context`, create the wrapper at
+`~/.across/bin/across-context`, and keep durable memory under
+`~/.across/data/across-context`. The packaged app should discover and repair
+that managed runtime instead of pointing at `npm link`, a source checkout, or a
+path under `~/Documents/projects`.
 
 The historical in-app `TaskOrchestrator` code remains only for legacy task data
 inspection and migration-oriented maintenance paths. It is not a product

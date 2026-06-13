@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- Clarified the three-product boundary between Across Agents Assistant,
+  Across Context, and Across Orchestrator.
+- Documented managed plugin runtime paths under `~/.across` and the rule that
+  packaged product paths must not execute plugin runtimes from development
+  checkouts.
+
 ## 0.8.2 - 2026-06-13
 
 ### Fixed

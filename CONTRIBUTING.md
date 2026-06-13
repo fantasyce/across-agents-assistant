@@ -8,7 +8,7 @@ Recommended environment:
 
 - macOS 14 or newer
 - Xcode command line tools
-- Swift 5.9 or newer
+- Swift 5.10 or newer
 - Python 3.10 or newer
 
 Backend setup:
@@ -40,7 +40,7 @@ Before opening a pull request:
 
 1. Keep the change scoped to one feature, bug fix, or cleanup.
 2. Add or update tests when behavior changes.
-3. Update public root documentation when user-facing setup, configuration, permissions, or APIs change.
+3. Update public root documentation when user-facing setup, configuration, permissions, APIs, or host/plugin contracts change. If the contract belongs to Across Context or Across Orchestrator, update that plugin repository's documentation too.
 4. Run the relevant backend tests, Swift build, and packaged app check for changes that affect app startup or task delivery.
 5. Run complex Release E2E before release-candidate changes to task orchestration, delivery contracts, capability routing, native skills, MCP tools, or quality gates.
 6. Run `bash scripts/open_source_check.sh`; it includes `git diff --check`, forbidden tracked-file checks, common secret scans, README asset checks, and build-script syntax validation.
@@ -48,6 +48,18 @@ Before opening a pull request:
 8. Follow the project [Code of Conduct](CODE_OF_CONDUCT.md).
 
 The public CI workflow in `.github/workflows/quality.yml` runs the same open-source check, backend regression suite, and Swift build on pull requests and pushes to `main`. The Security workflow runs CodeQL analysis for the Python backend, while Dependabot monitors GitHub Actions, Python requirements, and Swift Package Manager dependencies.
+
+## Product Boundary Rules
+
+Across Agents Assistant is the host app. Across Context and Across Orchestrator
+are independent plugin products. Host code should integrate them through their
+published CLI, HTTP, MCP, manifest, and wrapper contracts under `~/.across`;
+it should not import plugin source files or execute wrappers from a development
+checkout such as `~/Documents/projects/...` in packaged product paths.
+
+Development-only install source overrides are allowed for local testing, but
+they must be explicit and must not become default product configuration,
+release documentation, generated manifests, or checked-in tests.
 
 ## Community Support and Feedback
 
