@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.8.6 - 2026-06-14
+
+### Changed
+
+- Moved release verification, external Orchestrator protocol mapping,
+  Orchestrator release-evidence handling, task API schemas, and task
+  observability helpers out of the FastAPI route module into dedicated backend
+  boundaries.
+- Split Swift task orchestration models into Core, Events, Execution, and
+  Quality model files.
+- Added CI validation that `Package.resolved` stays aligned with
+  `Package.swift`.
+
+### Fixed
+
+- Replaced the Pydantic V1-style `KeysRequest.Config` with `ConfigDict`.
+- Constrained the backend package to Python `>=3.10,<3.14` and added a local
+  `.python-version` baseline of `3.11`.
+- Prevented managed Across Orchestrator installs from selecting unsupported
+  Python 3.14 runtimes.
+
+### Validation
+
+- Open-source release check passed.
+- AAA backend tests passed on Python 3.11 with 894 tests and one third-party
+  Starlette/httpx deprecation warning.
+- Complex orchestration E2E checks passed with 24 tests and 4 environment
+  skips.
+- SwiftPM Swift Testing passed with 18 tests.
+- Swift package lock consistency check passed.
+
 ## 0.8.5 - 2026-06-14
 
 ### Changed

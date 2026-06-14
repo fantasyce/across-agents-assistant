@@ -645,6 +645,28 @@ def test_packaged_installer_uses_real_python_instead_of_backend_executable(monke
     assert installer.python_executable == str(real_python)
 
 
+def test_python_resolver_skips_unsupported_python314(monkeypatch, tmp_path):
+    python314 = tmp_path / "python3.14"
+    python314.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python314.chmod(python314.stat().st_mode | stat.S_IXUSR)
+    python311 = tmp_path / "python3.11"
+    python311.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python311.chmod(python311.stat().st_mode | stat.S_IXUSR)
+
+    def fake_which(name, path=None):
+        return {
+            "python3.14": str(python314),
+            "python3.11": str(python311),
+            "python3": str(python314),
+        }.get(name)
+
+    monkeypatch.delenv("ACROSS_AGENTS_ORCHESTRATOR_PYTHON", raising=False)
+    monkeypatch.setattr(orchestrator_plugin.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(orchestrator_plugin.shutil, "which", fake_which)
+
+    assert orchestrator_plugin._resolve_python_executable() == str(python311)
+
+
 def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
     with _FakeOrchestratorHTTPServer(str(tmp_path / "project")) as server:
         manager = OrchestratorPluginManager(

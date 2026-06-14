@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any, Tuple
 import asyncio
 import logging
@@ -171,6 +171,34 @@ from .task_manager.orchestration.orchestrator import TaskOrchestrator
 from .task_manager.orchestration.owner_agent import OwnerAgent
 from .task_manager.orchestration.validator import ContractValidator
 from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
+from .release_verification import (
+    RELEASE_VERIFICATION_EXPECTED_FILES,
+    RELEASE_VERIFICATION_REQUIRED_PROBES,
+    _collect_release_task_rows,
+    _build_release_verification_report,
+    _redact_sensitive_evidence,
+)
+from .task_api_models import (
+    AutoTaskRequest,
+    AutoTaskResponse,
+    JobInfo,
+    ReleaseE2EScenarioListResponse,
+    ReleaseE2ETaskRequest,
+    ReleaseE2ETaskResponse,
+    SubTaskInfo,
+    TaskDispatchRequest,
+    TaskDispatchResponse,
+    TaskInfo,
+    TaskPageResponse,
+    TaskSummaryInfo,
+    WaveInfo,
+    pydantic_dump as _pydantic_dump,
+)
+from .task_api_observability import (
+    build_task_observability_snapshot as _build_task_observability_snapshot,
+    expected_files_from_payload as _expected_files_from_payload,
+    probe_types_from_payload as _probe_types_from_payload,
+)
 from .task_manager.orchestration.release_e2e import (
     RELEASE_E2E_SCENARIO_ID,
     build_release_e2e_scenarios,
@@ -859,6 +887,8 @@ def get_local_agent_client():
     return _local_agent_client
 
 class KeysRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     deepseek: Optional[str] = None
     minimax: Optional[str] = None
     openai: Optional[str] = None
@@ -875,9 +905,6 @@ class KeysRequest(BaseModel):
     openrouter: Optional[str] = None
     together: Optional[str] = None
     fireworks: Optional[str] = None
-
-    class Config:
-        extra = "allow"
 
 
 def _known_provider_ids() -> tuple[str, ...]:
@@ -3342,94 +3369,6 @@ async def revoke_tool_authorization(req: RevokeRequest):
     except Exception as e:
         raise _safe_http_500("Revoke tool authorization", e)
 
-class SubTaskInfo(BaseModel):
-    subtask_id: str
-    description: str
-    agent_id: str
-    priority: int
-    status: str
-    progress: float
-    dependencies: List[str]
-    output_file: Optional[str] = None
-    duration: Optional[float] = None
-    error_message: Optional[str] = None
-    fix_plan: Optional[str] = None
-    wave_number: int = 1
-    owner_decision: Optional[Dict[str, Any]] = None
-    waiting_on_dependencies: List[str] = Field(default_factory=list)
-    blocked_reason: Optional[str] = None
-    running_for_seconds: Optional[float] = None
-    contract: Optional[Dict[str, Any]] = None
-
-class WaveInfo(BaseModel):
-    wave_id: str
-    wave_number: int
-    subtasks: List[SubTaskInfo]
-    status: str
-    is_blocked: bool = False
-    governance_status: Optional[str] = None
-    blocked_by_wave: Optional[int] = None
-    is_revalidating: bool = False
-    owner_decision: Optional[Dict[str, Any]] = None
-
-class TaskInfo(BaseModel):
-    task_id: str
-    description: str
-    status: str
-    external_task: bool = False
-    task_types: List[str] = Field(default_factory=list)
-    delivery_mode: str = "legacy"
-    owner_delivery_contract: Optional[Dict[str, Any]] = None
-    owner_agent: Optional[str] = None
-    allowed_subtask_agents: List[str] = []
-    project_dir: Optional[str] = None
-    subtasks: List[SubTaskInfo]
-    waves: List[WaveInfo] = []
-    artifacts: List[Dict[str, Any]] = []
-    artifact_versions: Dict[str, int] = {}
-    acceptance_records: List[Dict[str, Any]] = []
-    owner_session_id: Optional[str] = None
-    last_owner_decision: Optional[Dict[str, Any]] = None
-    can_handle_directly: bool = False
-    direct_response: Optional[str] = None
-    progress: float
-    completed_count: int = 0
-    total_count: int = 0
-    created_at: float
-    updated_at: float
-    error: Optional[str] = None
-    requirement_manifest: Optional[Dict[str, Any]] = None
-    quality_health: Dict[str, Any] = Field(default_factory=dict)
-    delivery_report: Dict[str, Any] = Field(default_factory=dict)
-    observability: Dict[str, Any] = Field(default_factory=dict)
-
-def _pydantic_dump(model: BaseModel, **kwargs: Any) -> Dict[str, Any]:
-    return model.model_dump(**kwargs) if hasattr(model, "model_dump") else model.dict(**kwargs)
-
-
-SENSITIVE_EVIDENCE_KEY_RE = re.compile(
-    r"(api[_-]?key|secret|token|password|credential|authorization|private[_-]?key|access[_-]?key)",
-    re.IGNORECASE,
-)
-
-
-def _redact_sensitive_evidence(value: Any) -> Any:
-    if isinstance(value, dict):
-        sanitized: Dict[str, Any] = {}
-        for key, item in value.items():
-            key_text = str(key)
-            if SENSITIVE_EVIDENCE_KEY_RE.search(key_text):
-                sanitized[key_text] = "[redacted]"
-            else:
-                sanitized[key_text] = _redact_sensitive_evidence(item)
-        return sanitized
-    if isinstance(value, list):
-        return [_redact_sensitive_evidence(item) for item in value]
-    if isinstance(value, str) and re.search(r"((?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16})", value):
-        return "[redacted]"
-    return value
-
-
 def _public_native_skill(skill: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": str(skill.get("id") or skill.get("name") or ""),
@@ -3504,250 +3443,6 @@ def _load_task_info_read_only(task_id: str) -> "TaskInfo":
             return _task_info_from_db(full_task)
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-
-def _path_hints_from_required(value: Any) -> List[str]:
-    paths: List[str] = []
-    if not isinstance(value, list):
-        return paths
-    for item in value:
-        if isinstance(item, str):
-            hint = item.strip()
-        elif isinstance(item, dict):
-            hint = str(
-                item.get("path_hint")
-                or item.get("path")
-                or item.get("name")
-                or ""
-            ).strip()
-        else:
-            hint = ""
-        if hint and hint not in paths:
-            paths.append(hint)
-    return paths
-
-
-def _probe_types_from_payload(payload: Dict[str, Any]) -> List[str]:
-    delivery_quality = (
-        (payload.get("quality_health") or {}).get("delivery_quality_report")
-        or (payload.get("last_owner_decision") or {}).get("delivery_quality")
-        or {}
-    )
-    quality_report = delivery_quality.get("quality_report") or {}
-    probes: List[Dict[str, Any]] = []
-    for item in delivery_quality.get("probe_results") or []:
-        if isinstance(item, dict):
-            probes.append(item)
-    for item in quality_report.get("gate_results") or []:
-        if isinstance(item, dict):
-            probes.append(item)
-    probe_types: List[str] = []
-    for item in probes:
-        probe_type = str(
-            item.get("probe_type")
-            or item.get("adapter_id")
-            or item.get("gate_id")
-            or item.get("id")
-            or ""
-        ).strip()
-        if probe_type and probe_type not in probe_types:
-            probe_types.append(probe_type)
-    return probe_types
-
-
-def _expected_files_from_payload(payload: Dict[str, Any]) -> List[str]:
-    delivery_quality = (
-        (payload.get("quality_health") or {}).get("delivery_quality_report")
-        or (payload.get("last_owner_decision") or {}).get("delivery_quality")
-        or {}
-    )
-    paths = _path_hints_from_required(delivery_quality.get("produced_required"))
-    if paths:
-        return paths
-    contract = payload.get("owner_delivery_contract") or {}
-    return _path_hints_from_required(contract.get("deliverables"))
-
-
-def _read_obj_value(obj: Any, key: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _status_text(value: Any) -> str:
-    return str(getattr(value, "value", value) or "")
-
-
-def _extract_quality_report_from_decision(decision: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if not isinstance(decision, dict):
-        return {}
-    delivery_quality = decision.get("delivery_quality")
-    if not isinstance(delivery_quality, dict):
-        return {}
-    report = delivery_quality.get("quality_report")
-    return report if isinstance(report, dict) else {}
-
-
-def _extract_agent_mix_from_gates(gate_results: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-    empty = {"actual_agents": [], "local_agents": [], "cloud_agents": []}
-    for gate in gate_results:
-        if gate.get("adapter_id") != "agent_mix" and gate.get("gate_id") != "gate-agent-mix":
-            continue
-        evidence = gate.get("evidence") or {}
-        constraints = evidence.get("satisfied_constraints") or []
-        for constraint in constraints:
-            details = (constraint or {}).get("evidence") or {}
-            if isinstance(details, dict):
-                return {
-                    "actual_agents": list(details.get("actual_agents") or []),
-                    "local_agents": list(details.get("local_agents") or []),
-                    "cloud_agents": list(details.get("cloud_agents") or []),
-                }
-    return empty
-
-
-def _build_task_observability_snapshot(
-    *,
-    task_id: str,
-    description: str,
-    status: str,
-    subtasks: List[Any],
-    waves: List[Any],
-    last_owner_decision: Optional[Dict[str, Any]],
-    created_at: Optional[float] = None,
-    updated_at: Optional[float] = None,
-) -> Dict[str, Any]:
-    """Build a compact, read-only evidence timeline for task details.
-
-    The snapshot intentionally derives only from already-loaded task state. It
-    never resumes tasks, runs probes, or touches the project directory.
-    """
-    decision = last_owner_decision if isinstance(last_owner_decision, dict) else {}
-    quality_report = _extract_quality_report_from_decision(decision)
-    gate_results = [
-        dict(item)
-        for item in (quality_report.get("gate_results") or [])
-        if isinstance(item, dict)
-    ]
-    quality_gates = [
-        {
-            "gate_id": str(gate.get("gate_id") or gate.get("id") or ""),
-            "adapter_id": str(gate.get("adapter_id") or gate.get("probe_type") or "unknown"),
-            "status": str(gate.get("status") or "unknown"),
-            "required": bool(gate.get("required", True)),
-            "summary": str(gate.get("summary") or gate.get("output_tail") or "")[:300],
-        }
-        for gate in gate_results
-    ]
-    timeline: List[Dict[str, Any]] = [
-        {
-            "kind": "task_created",
-            "label": "Task created",
-            "task_id": task_id,
-            "status": status,
-            "at": created_at,
-            "summary": description[:180],
-        }
-    ]
-
-    for wave in sorted(waves or [], key=lambda item: int(_read_obj_value(item, "wave_number", 0) or 0)):
-        wave_number = int(_read_obj_value(wave, "wave_number", 0) or 0)
-        governance = str(_read_obj_value(wave, "governance_status", "") or "")
-        wave_status = _status_text(_read_obj_value(wave, "status", ""))
-        is_blocked = bool(_read_obj_value(wave, "is_blocked", False))
-        if governance == "approved":
-            kind = "wave_approved"
-        elif is_blocked or governance == "blocked":
-            kind = "wave_blocked"
-        elif governance == "revalidating" or bool(_read_obj_value(wave, "is_revalidating", False)):
-            kind = "wave_revalidating"
-        else:
-            kind = "wave_status"
-        timeline.append({
-            "kind": kind,
-            "label": f"Wave {wave_number}",
-            "wave_number": wave_number,
-            "status": governance or wave_status or "pending",
-        })
-
-    for subtask in sorted(
-        subtasks or [],
-        key=lambda item: (
-            int(_read_obj_value(item, "wave_number", 0) or 0),
-            str(_read_obj_value(item, "subtask_id", "")),
-        ),
-    ):
-        subtask_status = _status_text(_read_obj_value(subtask, "status", "pending"))
-        if subtask_status not in {"running", "completed", "failed", "cancelled"}:
-            continue
-        kind = {
-            "running": "subtask_running",
-            "completed": "subtask_completed",
-            "failed": "subtask_failed",
-            "cancelled": "subtask_cancelled",
-        }.get(subtask_status, "subtask_status")
-        timeline.append({
-            "kind": kind,
-            "label": str(_read_obj_value(subtask, "description", ""))[:120],
-            "subtask_id": str(_read_obj_value(subtask, "subtask_id", "")),
-            "agent_id": str(_read_obj_value(subtask, "agent_id", "")),
-            "wave_number": int(_read_obj_value(subtask, "wave_number", 1) or 1),
-            "status": subtask_status,
-        })
-
-    for gate in quality_gates:
-        status_text = gate["status"]
-        timeline.append({
-            "kind": f"quality_gate_{status_text}",
-            "label": gate["adapter_id"],
-            "gate_id": gate["gate_id"],
-            "status": status_text,
-            "required": gate["required"],
-            "summary": gate["summary"],
-        })
-
-    remediation_attempts = dict(decision.get("quality_remediation_attempts") or {})
-    if remediation_attempts:
-        timeline.append({
-            "kind": "remediation_attempted",
-            "label": "Quality remediation",
-            "status": "attempted",
-            "attempts_by_requirement": remediation_attempts,
-        })
-
-    return {
-        "timeline": timeline,
-        "quality_gates": quality_gates,
-        "agent_mix": _extract_agent_mix_from_gates(gate_results),
-        "remediation": {
-            "attempted": bool(remediation_attempts),
-            "attempts_by_requirement": remediation_attempts,
-            "max_attempts": decision.get("max_quality_remediation_attempts", 4),
-            "deterministic_repair_attempted": bool(decision.get("deterministic_delivery_repair_attempted")),
-        },
-        "quality_score": quality_report.get("final_quality_score"),
-        "updated_at": updated_at,
-    }
-
-class TaskSummaryInfo(BaseModel):
-    task_id: str
-    description: str
-    status: str
-    external_task: bool = False
-    progress: float = 0
-    completed_count: int = 0
-    total_count: int = 0
-    created_at: float = 0
-    updated_at: float = 0
-    project_dir: Optional[str] = None
-    owner_agent: Optional[str] = None
-    delivery_mode: str = "legacy"
-
-class TaskPageResponse(BaseModel):
-    tasks: List[TaskSummaryInfo]
-    total: int
-    limit: int
-    offset: int
-    has_more: bool
 
 def _subtask_to_info(st: "SubTask", state: Optional[TaskState] = None, task_id: Optional[str] = None) -> "SubTaskInfo":
     """Convert a SubTask to SubTaskInfo."""
@@ -4860,26 +4555,6 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
         error=task_dict.get('error')
     )
 
-class TaskDispatchRequest(BaseModel):
-    subtask_ids: Optional[List[str]] = None
-
-class JobInfo(BaseModel):
-    job_id: str
-    subtask_id: str
-    agent_id: str
-    task_description: str
-    status: str
-    progress: float
-    logs: List[str]
-    result: Optional[str]
-    error: Optional[str]
-
-class TaskDispatchResponse(BaseModel):
-    task_id: str
-    dispatched_jobs: List[JobInfo]
-    ready_remaining: int
-
-
 def _legacy_runtime_route_detail(task_id: str, operation: str) -> str:
     return (
         f"The historical in-app TaskOrchestrator {operation} endpoint is legacy-only. "
@@ -5107,288 +4782,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
         raise _safe_http_500("List task summaries", e)
 
 
-def _task_row_for_release_evaluation(task: "Task") -> Dict[str, Any]:
-    return {
-        "task_id": task.task_id,
-        "description": task.description,
-        "status": getattr(task.status, "value", task.status),
-        "progress": getattr(task, "progress", 0.0),
-        "completed_count": getattr(task, "completed_count", 0),
-        "total_count": getattr(task, "total_count", 0),
-        "created_at": getattr(task, "created_at", 0.0),
-        "updated_at": getattr(task, "updated_at", 0.0),
-        "project_dir": getattr(task, "project_dir", None),
-        "owner_agent": getattr(task, "owner_agent", None),
-        "allowed_subtask_agents": list(getattr(task, "allowed_subtask_agents", []) or []),
-        "task_types": list(getattr(task, "task_types", []) or []),
-        "delivery_mode": getattr(task, "delivery_mode", "legacy") or "legacy",
-        "last_owner_decision": getattr(task, "last_owner_decision", None) or {},
-    }
-
-
-RELEASE_E2E_DESCRIPTION_MARKER = "Release E2E scenario:"
-RELEASE_VERIFICATION_EXPECTED_FILES = [
-    "README.md",
-    "web/index.html",
-    "web/styles.css",
-    "web/app.js",
-    "api/server.mjs",
-    "cli/quality-check.mjs",
-    "tests/e2e-smoke.mjs",
-]
-RELEASE_VERIFICATION_REQUIRED_PROBES = [
-    "static_web_smoke",
-    "browser_e2e",
-    "api_service",
-    "cli_generic",
-]
-
-
-def _collect_release_task_rows(safe_limit: int = 100) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    seen_task_ids: set[str] = set()
-
-    persistence = getattr(_task_state, "_persistence", None)
-    if persistence and hasattr(persistence, "get_task_summaries"):
-        persisted_rows, _total = persistence.get_task_summaries(limit=safe_limit, offset=0)
-    elif persistence and hasattr(persistence, "get_all_tasks"):
-        persisted_rows = persistence.get_all_tasks()[:safe_limit]
-    else:
-        persisted_rows = []
-
-    for row in persisted_rows:
-        task_id = row.get("task_id")
-        if task_id and task_id not in seen_task_ids:
-            rows.append(dict(row))
-            seen_task_ids.add(task_id)
-
-    for task in _task_state.get_all_tasks():
-        row = _task_row_for_release_evaluation(task)
-        task_id = row.get("task_id")
-        if task_id and task_id not in seen_task_ids:
-            rows.append(row)
-            seen_task_ids.add(task_id)
-
-    try:
-        for row in get_orchestrator_plugin_manager().list_task_summaries():
-            task_id = row.get("task_id")
-            if task_id and task_id not in seen_task_ids:
-                rows.append({
-                    "task_id": task_id,
-                    "description": row.get("description") or "",
-                    "status": row.get("status") or "pending",
-                    "progress": row.get("progress") or 0.0,
-                    "completed_count": row.get("completed_count") or 0,
-                    "total_count": row.get("total_count") or 0,
-                    "created_at": row.get("created_at") or 0.0,
-                    "updated_at": row.get("updated_at") or 0.0,
-                    "project_dir": row.get("project_dir"),
-                    "owner_agent": row.get("owner_agent"),
-                    "allowed_subtask_agents": [],
-                    "task_types": ["functional", "artifact"],
-                    "delivery_mode": row.get("delivery_mode") or "composite",
-                    "last_owner_decision": {
-                        "decision": "external_orchestrator",
-                    },
-                })
-                seen_task_ids.add(str(task_id))
-    except Exception as exc:
-        logger.debug("Skipping external Orchestrator rows for release evaluation: %s", exc)
-
-    return rows[:safe_limit]
-
-
-def _latest_release_e2e_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    release_rows = [
-        dict(row)
-        for row in rows
-        if RELEASE_E2E_DESCRIPTION_MARKER.lower() in str(row.get("description") or "").lower()
-    ]
-    if not release_rows:
-        return None
-    return sorted(
-        release_rows,
-        key=lambda row: row.get("updated_at") or row.get("created_at") or 0,
-        reverse=True,
-    )[0]
-
-
-def _release_verification_status(
-    startup_status: str,
-    latest_release_e2e: Optional[Dict[str, Any]],
-) -> Tuple[str, List[str]]:
-    remediations: List[str] = []
-    if startup_status == "blocked":
-        remediations.append("Resolve failed startup diagnostics before release approval.")
-
-    if latest_release_e2e is None:
-        remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
-    else:
-        benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
-        if benchmark_status != "passed":
-            remediations.append("Review the latest Release E2E benchmark failures and rerun remediation.")
-
-    if startup_status == "blocked":
-        return "blocked", remediations
-    if latest_release_e2e is not None:
-        benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
-        if benchmark_status != "passed":
-            return "blocked", remediations
-    if startup_status == "attention" or latest_release_e2e is None:
-        return "attention", remediations
-    return "ready", remediations
-
-
-def _build_latest_release_e2e_verification(row: Dict[str, Any]) -> Dict[str, Any]:
-    from . import __version__
-    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
-
-    task_id = row.get("task_id")
-    if not task_id:
-        raise ValueError("release E2E row does not include a task_id")
-    task_info = _load_task_info_read_only(str(task_id))
-    payload = _pydantic_dump(task_info) if isinstance(task_info, BaseModel) else dict(task_info)
-    benchmark = evaluate_delivery_benchmark(
-        [payload],
-        benchmark_id=f"task-{task_id}-rc-verification-{__version__}",
-        expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
-        required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
-        min_quality_score=70,
-        max_remediation_attempts=2,
-    )
-    benchmark["app_version"] = __version__
-    sanitized_benchmark = _redact_sensitive_evidence(benchmark)
-    scenario = (sanitized_benchmark.get("scenarios") or [{}])[0]
-    return {
-        "task_id": str(task_id),
-        "description": payload.get("description") or row.get("description") or "",
-        "task_status": payload.get("status") or row.get("status") or "unknown",
-        "project_dir": payload.get("project_dir"),
-        "updated_at": row.get("updated_at") or payload.get("updated_at"),
-        "benchmark": sanitized_benchmark,
-        "summary": {
-            "status": sanitized_benchmark.get("status") or "unknown",
-            "quality_score": scenario.get("quality_score"),
-            "remediation_attempts": scenario.get("remediation_attempts", 0),
-            "failed_scenarios": (sanitized_benchmark.get("summary") or {}).get("failed_scenarios", 0),
-        },
-    }
-
-
-def _release_verification_markdown(report: Dict[str, Any]) -> str:
-    startup_summary = report.get("startup", {}).get("summary", {})
-    latest = report.get("latest_release_e2e")
-    lines = [
-        "# Across Agents Assistant RC Verification",
-        "",
-        f"Status: {report.get('status')}",
-        f"App version: {report.get('app_version')}",
-        f"Generated at: {report.get('generated_at')}",
-        "",
-        "## Startup Diagnostics",
-        (
-            f"Status {startup_summary.get('status')} · "
-            f"{startup_summary.get('passed', 0)} passed · "
-            f"{startup_summary.get('warnings', 0)} warnings · "
-            f"{startup_summary.get('failed', 0)} failed"
-        ),
-        "",
-        "## Latest Release E2E",
-    ]
-    if latest:
-        scenario = (latest.get("benchmark", {}).get("scenarios") or [{}])[0]
-        lines.extend([
-            f"Task: {latest.get('task_id')}",
-            f"Task status: {latest.get('task_status')}",
-            f"Benchmark: {latest.get('benchmark', {}).get('status')}",
-            f"Quality score: {scenario.get('quality_score')}",
-            f"Remediation attempts: {scenario.get('remediation_attempts', 0)}",
-        ])
-        failures = scenario.get("failures") or []
-        if failures:
-            lines.extend(["", "Failures:"])
-            lines.extend([f"- {failure}" for failure in failures])
-    else:
-        lines.append("No Release E2E evidence was found.")
-
-    remediations = report.get("remediations") or []
-    lines.extend(["", "## Remediation"])
-    if remediations:
-        lines.extend([f"- {item}" for item in remediations])
-    else:
-        lines.append("No remediation required.")
-
-    audit = report.get("audit") or {}
-    lines.extend([
-        "",
-        "## Audit",
-        f"Read only: {audit.get('read_only')}",
-        f"Repair or resume triggered: {audit.get('repair_or_resume_triggered')}",
-        f"Secrets redacted: {audit.get('secrets_redacted')}",
-        "",
-    ])
-    return "\n".join(lines)
-
-
-def _write_release_verification_report(report: Dict[str, Any]) -> Dict[str, str]:
-    generated_at = str(report.get("generated_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    safe_stamp = generated_at.replace("-", "").replace(":", "").replace(".", "").replace("+", "Z")
-    safe_stamp = safe_stamp.replace("T", "T").replace("Z", "Z")
-    report_dir = app_subdir("release-reports")
-    report_dir.mkdir(parents=True, exist_ok=True)
-    json_name = f"rc-verification-{safe_stamp}.json"
-    markdown_name = f"rc-verification-{safe_stamp}.md"
-    json_path = report_dir / json_name
-    markdown_path = report_dir / markdown_name
-    report["report_files"] = {
-        "directory": str(report_dir),
-        "json_name": json_name,
-        "json_path": str(json_path),
-        "markdown_name": markdown_name,
-        "markdown_path": str(markdown_path),
-    }
-    json_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    markdown_path.write_text(_release_verification_markdown(report), encoding="utf-8")
-    return report["report_files"]
-
-
-def _build_release_verification_report(*, write_report: bool = True) -> Dict[str, Any]:
-    from . import __version__
-
-    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    startup = _build_startup_diagnostics()
-    rows = _collect_release_task_rows(100)
-    release_evaluation = build_release_evaluation_summary(rows)
-    latest_row = _latest_release_e2e_row(rows)
-    latest_release_e2e = None
-    if latest_row:
-        latest_release_e2e = _build_latest_release_e2e_verification(latest_row)
-
-    status, remediations = _release_verification_status(
-        str(startup.get("status") or "attention"),
-        latest_release_e2e,
-    )
-    report: Dict[str, Any] = {
-        "schema_version": "1.0",
-        "app_version": __version__,
-        "generated_at": generated_at,
-        "status": status,
-        "startup": startup,
-        "release_evaluation": _redact_sensitive_evidence(release_evaluation),
-        "latest_release_e2e": latest_release_e2e,
-        "remediations": remediations,
-        "report_files": {},
-        "audit": {
-            "read_only": True,
-            "repair_or_resume_triggered": False,
-            "secrets_redacted": True,
-            "expected_files": RELEASE_VERIFICATION_EXPECTED_FILES,
-            "required_probes": RELEASE_VERIFICATION_REQUIRED_PROBES,
-        },
-    }
-    if write_report:
-        _write_release_verification_report(report)
-    return report
+# Release verification helper logic lives in release_verification.py.
 
 
 @app.get("/api/release/evaluation")
@@ -5401,7 +4795,12 @@ async def get_release_evaluation(limit: int = 100):
     """
     try:
         safe_limit = max(1, min(int(limit or 100), 500))
-        return _sanitize_public_payload(build_release_evaluation_summary(_collect_release_task_rows(safe_limit)))
+        rows = _collect_release_task_rows(
+            safe_limit,
+            task_state=_task_state,
+            external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
+        )
+        return _sanitize_public_payload(build_release_evaluation_summary(rows))
     except Exception as e:
         raise _safe_http_500("Get release evaluation", e)
 
@@ -5410,7 +4809,25 @@ async def get_release_evaluation(limit: int = 100):
 async def run_release_verification():
     """Create a non-secret release-candidate verification report."""
     try:
-        return _sanitize_public_payload(_build_release_verification_report(write_report=True))
+        try:
+            report = _build_release_verification_report(
+                write_report=True,
+                task_state=_task_state,
+                external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
+                startup_diagnostics=_build_startup_diagnostics(),
+                load_task_payload=_load_task_info_read_only,
+                serialize_task_payload=_pydantic_dump,
+                redact_sensitive=_redact_sensitive_evidence,
+                app_version=None,
+                expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
+                required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
+                write_report_directory=app_subdir("release-reports"),
+            )
+        except TypeError:
+            # Backward-compatible behavior for tests or integrations that monkeypatch
+            # report builders with historical call signatures.
+            report = _build_release_verification_report(write_report=True)
+        return _sanitize_public_payload(report)
     except Exception as e:
         raise _safe_http_500("Run release verification", e)
 
@@ -5551,47 +4968,6 @@ async def cancel_job(task_id: str, job_id: str):
         raise
     except Exception as e:
         raise _safe_http_500("Cancel job", e)
-
-
-class AutoTaskRequest(BaseModel):
-    description: str
-    task_types: List[str] = []
-    owner_agent: Optional[str] = None
-    allowed_subtask_agents: List[str] = []
-    project_dir: Optional[str] = None
-    strict_dependency: bool = True
-    enable_wave_gate: bool = True
-
-
-class AutoTaskResponse(BaseModel):
-    task_id: str
-    status: str
-    message: str
-    implementation: str = "external"
-    external_task: bool = False
-
-
-class ReleaseE2EScenarioListResponse(BaseModel):
-    scenarios: List[Dict[str, Any]]
-
-
-class ReleaseE2ETaskRequest(BaseModel):
-    scenario_id: str = RELEASE_E2E_SCENARIO_ID
-    project_dir: Optional[str] = None
-    run_label: Optional[str] = None
-
-
-class ReleaseE2ETaskResponse(BaseModel):
-    task_id: str
-    status: str
-    message: str
-    scenario_id: str
-    project_dir: str
-    complexity_score: int
-    required_files: List[str]
-    implementation: str = "external"
-    external_task: bool = False
-    orchestrator_transport: Optional[str] = None
 
 
 def _default_external_orchestrator_project_dir() -> str:

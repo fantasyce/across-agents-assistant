@@ -35,5 +35,8 @@ jobs:
         run: |
           pytest -q backend/tests --ignore=backend/tests/e2e
 
+      - name: Swift package lock consistency
+        run: bash scripts/verify_swift_package_lock.sh
+
       - name: Swift build
         run: swift build --package-path macOS-Client --skip-update
