@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.6` | Further backend boundary split for release verification, Orchestrator protocol/evidence handling, task API models, and task observability; Python runtime support is constrained to `>=3.10,<3.14`, and CI now checks Swift package lock consistency. |
 | `0.8.5` | Structural boundary split for external task planning, Swift task orchestration models, Swift state reducers, and Across Orchestrator strict-dependency planning helper; managed Orchestrator pin moves to `v0.6.5`. |
 | `0.8.4` | External task boundary metadata is preserved across Swift status updates, orphan recovery reuses existing dispatched jobs, and explicit strict-dependency plans are preserved through Across Orchestrator `v0.6.4`. |
 | `0.8.3` | Hardened managed Across Orchestrator runtime repair, stale editable-install detection, protected-path command override rejection, and pinned Context/Orchestrator installs to `v0.7.3` and `v0.6.3`. |
@@ -184,7 +185,13 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.5` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.6` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.6` release continues the structural boundary cleanup by moving release
+verification, Orchestrator protocol/evidence helpers, task API models, and task
+observability helpers out of the FastAPI route module. It also constrains
+backend runtime support to Python `>=3.10,<3.14`, adds a local Python 3.11
+baseline, and checks Swift package lock consistency in CI.
 
 The `0.8.5` release moves external task planning out of the FastAPI route
 module, moves Swift task orchestration DTOs and state reducers into model
