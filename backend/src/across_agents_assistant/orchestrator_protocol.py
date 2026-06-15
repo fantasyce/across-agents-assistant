@@ -202,19 +202,65 @@ def _required_files(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = N
     return [str(item) for item in contract.get("requiredArtifacts") or task.get("deliverables") or []]
 
 
+def _format_artifact_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    if size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+
+def _artifact_size_label(raw_size: Any, full_path: str) -> str:
+    if isinstance(raw_size, bool):
+        size_bytes: Optional[int] = None
+    elif isinstance(raw_size, (int, float)) and raw_size >= 0:
+        size_bytes = int(raw_size)
+    elif isinstance(raw_size, str):
+        clean = raw_size.strip()
+        if not clean:
+            size_bytes = None
+        elif clean.isdigit():
+            size_bytes = int(clean)
+        else:
+            return clean
+    else:
+        size_bytes = None
+
+    if size_bytes is None and full_path:
+        try:
+            candidate = Path(full_path)
+            if candidate.is_file():
+                size_bytes = candidate.stat().st_size
+        except OSError:
+            size_bytes = None
+
+    return _format_artifact_size(size_bytes) if size_bytes is not None else "0 B"
+
+
 def _artifact_rows(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    project_root = str(task.get("project_root") or task.get("project_dir") or "")
     if evidence and isinstance(evidence.get("artifacts"), list):
         rows = []
         for item in evidence.get("artifacts") or []:
             path = str(item.get("path") or "")
+            full_path = str(Path(project_root) / path) if path else ""
+            file_size = _artifact_size_label(item.get("size"), full_path)
             rows.append(
                 {
                     "artifact_id": f"external-{path}",
+                    "id": f"external-{path}",
                     "name": path,
-                    "path": str(Path(task.get("project_root") or task.get("project_dir") or "") / path) if path else "",
+                    "file_name": path,
+                    "path": full_path,
+                    "file_path": full_path,
+                    "content_ref": full_path,
+                    "normalized_content_ref": full_path,
                     "path_hint": path,
                     "status": "accepted" if item.get("present") else "missing",
                     "size": item.get("size"),
+                    "file_size": file_size,
                     "sha256": item.get("sha256"),
                     "source": "across_orchestrator",
                 }
@@ -223,10 +269,16 @@ def _artifact_rows(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = No
     return [
         {
             "artifact_id": f"external-{path}",
+            "id": f"external-{path}",
             "name": path,
-            "path": str(Path(task.get("project_root") or "") / path),
+            "file_name": path,
+            "path": str(Path(project_root) / path),
+            "file_path": str(Path(project_root) / path),
+            "content_ref": str(Path(project_root) / path),
+            "normalized_content_ref": str(Path(project_root) / path),
             "path_hint": path,
             "status": "expected",
+            "file_size": _artifact_size_label(None, str(Path(project_root) / path)),
             "source": "across_orchestrator",
         }
         for path in _required_files(task, evidence)

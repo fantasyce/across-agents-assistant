@@ -167,9 +167,7 @@ from .external_task_planning import (
 from .task_manager.state import TaskState
 from .task_manager.dispatcher import TaskDispatcher
 from .task_manager.models import TaskType, JobStatus, TaskStatus
-from .task_manager.orchestration.orchestrator import TaskOrchestrator
-from .task_manager.orchestration.owner_agent import OwnerAgent
-from .task_manager.orchestration.validator import ContractValidator
+from .legacy_task_runtime import build_legacy_task_orchestrator
 from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
 from .release_verification import (
     RELEASE_VERIFICATION_EXPECTED_FILES,
@@ -392,60 +390,17 @@ def get_task_dispatcher() -> TaskDispatcher:
     return _task_dispatcher
 
 
-class _SyncLLMWrapper:
-    """Synchronous wrapper for the async LLMGateway, for OwnerAgent compatibility.
+_task_orchestrator: Optional[Any] = None
 
-    Uses a dedicated background thread with its own event loop to avoid
-    deadlock when called from a thread that already has an event loop
-    (e.g. uvicorn's thread pool via asyncio.to_thread).
-    """
-
-    def __init__(self, gateway):
-        self._gateway = gateway
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-
-    def _ensure_loop(self):
-        with self._lock:
-            if self._loop is None or self._thread is None or not self._thread.is_alive():
-                self._loop = asyncio.new_event_loop()
-                self._thread = threading.Thread(target=self._run_loop, daemon=True)
-                self._thread.start()
-
-    def _run_loop(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
-
-    def __call__(self, system_prompt, message, temperature):
-        self._ensure_loop()
-
-        async def _chat():
-            return await self._gateway.chat(
-                message=message,
-                system_prompt=system_prompt,
-                temperature=temperature
-            )
-
-        future = asyncio.run_coroutine_threadsafe(_chat(), self._loop)
-        return future.result(timeout=300)
-
-
-_task_orchestrator: Optional[TaskOrchestrator] = None
-
-def get_task_orchestrator() -> TaskOrchestrator:
+def get_task_orchestrator() -> Any:
     global _task_orchestrator
     if _task_orchestrator is None:
         dispatcher = get_task_dispatcher()
-        validator = ContractValidator(_task_state)
         gateway = get_gateway()
-        llm_wrapper = _SyncLLMWrapper(gateway)
-        owner_agent = OwnerAgent(llm_wrapper, _task_state)
-        _task_orchestrator = TaskOrchestrator(
+        _task_orchestrator = build_legacy_task_orchestrator(
             state=_task_state,
             dispatcher=dispatcher,
-            validator=validator,
-            owner_agent=owner_agent,
+            gateway=gateway,
         )
     return _task_orchestrator
 
@@ -479,13 +434,14 @@ def _orchestrator_plugin_status(*, probe: bool = True) -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("Failed to inspect Across Orchestrator plugin: %s", exc)
         public_message = _safe_error_message("Across Orchestrator plugin inspection")
+        fallback_config = OrchestratorPluginConfig.from_env()
         return {
-            "mode": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_MODE") or "external",
+            "mode": fallback_config.normalized_mode(),
             "implementation": "unknown",
             "available": False,
             "transport": None,
-            "endpoint": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT"),
-            "command": os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_COMMAND") or "across-orchestrator",
+            "endpoint": fallback_config.endpoint,
+            "command": fallback_config.command,
             "connection_note": public_message,
             "error": public_message,
         }
@@ -1611,6 +1567,11 @@ class AgentLoopStartRequest(BaseModel):
     max_turns: int = 8
     memory_policy: Optional[Dict[str, Any]] = None
     approval_policy: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AgentLoopReasonRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 @app.post("/api/orchestrator/loops")
@@ -1626,6 +1587,7 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
             max_turns=req.max_turns or 8,
             memory_policy=req.memory_policy,
             approval_policy=req.approval_policy,
+            metadata=req.metadata,
         )
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
@@ -1663,6 +1625,58 @@ async def approve_external_agent_loop_action(loop_id: str, action_id: str):
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop approval failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop approval"))
+
+
+@app.post("/api/orchestrator/loops/{loop_id}/actions/{action_id}/reject")
+async def reject_external_agent_loop_action(loop_id: str, action_id: str, req: Optional[AgentLoopReasonRequest] = None):
+    """Reject a pending external Across Orchestrator agent loop action."""
+    try:
+        loop = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().reject_agent_loop_action,
+            loop_id,
+            action_id,
+            req.reason if req else None,
+        )
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop rejection failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop rejection"))
+
+
+@app.post("/api/orchestrator/loops/{loop_id}/cancel")
+async def cancel_external_agent_loop(loop_id: str, req: Optional[AgentLoopReasonRequest] = None):
+    """Cancel a pending or running external Across Orchestrator agent loop."""
+    try:
+        loop = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().cancel_agent_loop,
+            loop_id,
+            req.reason if req else None,
+        )
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop cancel failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop cancel"))
+
+
+@app.post("/api/orchestrator/loops/{loop_id}/steps/{step_id}/retry")
+async def retry_external_agent_loop_step(loop_id: str, step_id: str):
+    """Retry an external Across Orchestrator agent loop from a selected step."""
+    try:
+        loop = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().retry_agent_loop_step,
+            loop_id,
+            step_id,
+        )
+        return _sanitize_public_payload(loop)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop retry failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop retry"))
 
 
 @app.get("/api/orchestrator/loops/{loop_id}")

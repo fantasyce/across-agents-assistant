@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.8.7 - 2026-06-15
+
+### Changed
+
+- Updated managed plugin defaults to Across Orchestrator `v0.6.6` and Across
+  Context `v0.7.4`.
+- Hardened packaged runtime boundaries so managed plugin installs stay under
+  `~/.across` and development checkout paths are rejected from packaged
+  product execution.
+- Preserved external orchestration artifact metadata through task persistence
+  and API surfaces.
+
+### Validation
+
+- AAA backend tests passed with 972 tests and 18 skipped.
+- AAA open-source release check passed.
+- SwiftPM Swift Testing passed with 28 tests.
+- Packaged macOS app build passed for version `0.8.7`; codesign verification
+  passed, and `/Applications/Across Agents Assistant.app` reported version
+  `0.8.7`.
+- Packaged app startup diagnostics passed with 11 checks, 0 warnings, and 0
+  failures.
+- Packaged UI complex E2E passed through Computer Use with AAA `0.8.7`,
+  Across Orchestrator `0.6.6`, and Across Context `0.7.4`: task
+  `task-c4f629165e`, loop `loop-0a85291955`, seven serial dependency waves,
+  seven generated artifacts, quality score 100, required failed count 0, and a
+  pending Across Context memory candidate `mem_84d220c9949e4bcca1`.
+- The generated E2E project passed `node cli/quality-check.mjs` and
+  `node tests/e2e-smoke.mjs`.
+
 ## 0.8.6 - 2026-06-14
 
 ### Changed

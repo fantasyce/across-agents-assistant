@@ -19,6 +19,14 @@ import urllib.request
 import uuid
 
 from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .runtime_boundary import (
+    contains_protected_user_reference,
+    expand_user,
+    is_developer_mode,
+    is_product_mode,
+    safe_runtime_override,
+    sanitized_product_runtime_env,
+)
 from .orchestrator_protocol import (
     DEFAULT_APP_GRADE_EXECUTOR_AGENTS,
     build_external_release_e2e_submission_payload as _protocol_build_external_release_e2e_submission_payload,
@@ -37,7 +45,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.5"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -88,29 +96,48 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
-def _protected_user_reference_roots() -> List[Path]:
-    home = Path.home()
+def _protected_user_reference_roots(env: Optional[Dict[str, str]] = None) -> List[Path]:
+    source = env if env is not None else os.environ
+    configured_home = str(source.get("HOME") or "").strip()
+    home = Path(configured_home).expanduser() if configured_home else Path.home()
     return [home / "Documents", home / "Desktop", home / "Downloads"]
 
 
-def _contains_protected_user_reference(value: str) -> bool:
-    if not value:
-        return False
-    expanded = os.path.expanduser(value)
-    if any(str(root) in expanded for root in _protected_user_reference_roots()):
+def _contains_protected_user_reference(value: str, env: Optional[Dict[str, str]] = None) -> bool:
+    if contains_protected_user_reference(value, env):
         return True
-    return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
+    text = expand_user(str(value or ""), env)
+    try:
+        roots = _protected_user_reference_roots(env)
+    except TypeError:
+        roots = _protected_user_reference_roots()  # type: ignore[call-arg]
+    return any(_references_path_root(text, root) for root in roots)
 
 
-def _allow_development_command_override() -> bool:
-    return _truthy(os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ALLOW_DEVELOPMENT_COMMAND"))
+def _references_path_root(text: str, root: Path) -> bool:
+    root_text = str(root)
+    if not root_text:
+        return False
+    return bool(re.search(re.escape(root_text) + r"(?:/|$)", text))
 
 
-def _is_safe_python_executable(path: str) -> bool:
-    return _is_executable_file(path) and not _contains_protected_user_reference(path)
+def _allow_development_command_override(env: Optional[Dict[str, str]] = None) -> bool:
+    return is_developer_mode(env)
 
 
-SUPPORTED_PYTHON_MIN_VERSION = (3, 10)
+def _is_blocked_product_path(value: str, env: Optional[Dict[str, str]] = None) -> bool:
+    return is_product_mode(env) and not is_developer_mode(env) and _contains_protected_user_reference(value, env)
+
+
+def _is_safe_python_executable(path: str, env: Optional[Dict[str, str]] = None) -> bool:
+    if _is_blocked_product_path(path, env):
+        return False
+    if not _is_executable_file(path):
+        return False
+    return True
+
+
+SUPPORTED_PYTHON_MIN_VERSION = (3, 11)
 SUPPORTED_PYTHON_MAX_EXCLUSIVE_VERSION = (3, 14)
 
 
@@ -141,8 +168,8 @@ def _python_executable_version(path: str) -> Optional[tuple[int, int]]:
     return _parse_python_version_text(f"{completed.stdout}\n{completed.stderr}")
 
 
-def _is_supported_python_executable(path: str) -> bool:
-    if not _is_safe_python_executable(path):
+def _is_supported_python_executable(path: str, env: Optional[Dict[str, str]] = None) -> bool:
+    if not _is_safe_python_executable(path, env):
         return False
     version = _python_executable_version(path)
     if version is None:
@@ -150,10 +177,11 @@ def _is_supported_python_executable(path: str) -> bool:
     return SUPPORTED_PYTHON_MIN_VERSION <= version < SUPPORTED_PYTHON_MAX_EXCLUSIVE_VERSION
 
 
-def _python_search_path() -> str:
-    env_path = os.environ.get("PATH") or ""
+def _python_search_path(env: Optional[Dict[str, str]] = None) -> str:
+    source = env if env is not None else os.environ
+    env_path = source.get("PATH") or ""
     extras = [
-        str(Path.home() / ".local" / "bin"),
+        expand_user("~/.local/bin", source),
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -161,11 +189,54 @@ def _python_search_path() -> str:
         "/usr/bin",
         "/bin",
     ]
-    paths = [item for item in env_path.split(os.pathsep) if item]
+    paths = []
+    for item in env_path.split(os.pathsep):
+        expanded_item = expand_user(item, source)
+        if expanded_item and not _is_blocked_product_path(str(Path(expanded_item) / ".__across_probe__"), source):
+            paths.append(expanded_item)
     for item in extras:
         if item not in paths:
             paths.append(item)
     return os.pathsep.join(paths)
+
+
+def _which_executable(
+    command: str,
+    search_path: str,
+    env: Optional[Dict[str, str]] = None,
+    *,
+    block_protected_user_path: bool = False,
+) -> Optional[str]:
+    source = env if env is not None else os.environ
+    if os.path.isabs(command) or os.sep in command:
+        if (
+            _is_blocked_product_path(command, source)
+            or (
+                block_protected_user_path
+                and not is_developer_mode(source)
+                and _contains_protected_user_reference(command, source)
+            )
+        ):
+            return None
+        candidate = Path(expand_user(command, source))
+        return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+    paths: list[str] = []
+    for item in str(search_path or "").split(os.pathsep):
+        if not item:
+            continue
+        expanded_item = expand_user(item, source)
+        candidate = Path(expanded_item) / command
+        if (
+            _is_blocked_product_path(str(candidate), source)
+            or (
+                block_protected_user_path
+                and not is_developer_mode(source)
+                and _contains_protected_user_reference(str(candidate), source)
+            )
+        ):
+            continue
+        paths.append(expanded_item)
+    return shutil.which(command, path=os.pathsep.join(paths))
 
 
 def _sanitize_python_child_env(env: Dict[str, str]) -> Dict[str, str]:
@@ -200,8 +271,9 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
     explicitly.
     """
 
-    configured = (explicit or os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_PYTHON") or "").strip()
-    if _is_supported_python_executable(configured):
+    source = os.environ
+    configured = (explicit or source.get("ACROSS_AGENTS_ORCHESTRATOR_PYTHON") or "").strip()
+    if _is_supported_python_executable(configured, source):
         return str(Path(configured).expanduser())
 
     sys_executable = str(getattr(sys, "executable", "") or "")
@@ -209,21 +281,20 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
     if (
         not bool(getattr(sys, "frozen", False))
         and "python" in sys_name
-        and _is_supported_python_executable(sys_executable)
+        and _is_supported_python_executable(sys_executable, source)
     ):
         return sys_executable
 
-    search_path = _python_search_path()
+    search_path = _python_search_path(source)
     candidate_names = [
         "python3.11",
         "python3.12",
         "python3.13",
-        "python3.10",
         "python3",
     ]
     for name in candidate_names:
-        resolved = shutil.which(name, path=search_path)
-        if _is_supported_python_executable(resolved or ""):
+        resolved = _which_executable(name, search_path, source)
+        if _is_supported_python_executable(resolved or "", source):
             return str(Path(resolved).expanduser())
 
     fixed_paths = [
@@ -236,11 +307,11 @@ def _resolve_python_executable(explicit: Optional[str] = None) -> str:
         Path("/usr/bin/python3"),
     ]
     for path in fixed_paths:
-        if _is_supported_python_executable(str(path)):
+        if _is_supported_python_executable(str(path), source):
             return str(path)
 
     raise OrchestratorPluginUnavailable(
-        "No supported Python 3.10-3.13 interpreter was found for installing Across Orchestrator. "
+        "No supported Python 3.11-3.13 interpreter was found for installing Across Orchestrator. "
         "Set ACROSS_AGENTS_ORCHESTRATOR_PYTHON to a Python executable."
     )
 
@@ -259,16 +330,18 @@ class OrchestratorPluginConfig:
 
     @classmethod
     def from_env(cls, registry_path: Optional[Path] = None) -> "OrchestratorPluginConfig":
-        plugin_home = (os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME") or "").strip()
+        plugin_home = (safe_runtime_override("ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME") or "").strip()
         install_source = (
-            os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE")
+            safe_runtime_override("ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE")
             or DEFAULT_ORCHESTRATOR_INSTALL_SOURCE
         ).strip() or DEFAULT_ORCHESTRATOR_INSTALL_SOURCE
+        command = (safe_runtime_override("ACROSS_AGENTS_ORCHESTRATOR_COMMAND") or "across-orchestrator").strip()
+        if not command:
+            command = "across-orchestrator"
         return cls(
             mode=_normalize_mode(os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_MODE")),
             endpoint=(os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT") or "").strip() or None,
-            command=(os.environ.get("ACROSS_AGENTS_ORCHESTRATOR_COMMAND") or "across-orchestrator").strip()
-            or "across-orchestrator",
+            command=command,
             registry_path=registry_path,
             plugin_home=Path(plugin_home).expanduser() if plugin_home else None,
             install_source=install_source,
@@ -591,6 +664,7 @@ class OrchestratorPluginInstaller:
 
     def _env(self) -> Dict[str, str]:
         env = _sanitize_python_child_env(os.environ.copy())
+        env, _runtime_boundary_issues = sanitized_product_runtime_env(env)
         env.setdefault("ACROSS_HOME", str(ecosystem_home()))
         env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
         env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
@@ -937,6 +1011,7 @@ class OrchestratorPluginManager:
         max_turns: int = 8,
         memory_policy: Optional[Dict[str, Any]] = None,
         approval_policy: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         payload = {
@@ -949,6 +1024,8 @@ class OrchestratorPluginManager:
             payload["memoryPolicy"] = memory_policy
         if approval_policy:
             payload["approvalPolicy"] = approval_policy
+        if metadata:
+            payload["metadata"] = metadata
         if self._transport == "http":
             return self._http_post("/loops", payload)
         args = [
@@ -961,6 +1038,12 @@ class OrchestratorPluginManager:
             "--max-turns",
             str(max_turns or 8),
         ]
+        if memory_policy:
+            args.extend(["--memory-policy-json", json.dumps(memory_policy, sort_keys=True)])
+        if approval_policy:
+            args.extend(["--approval-policy-json", json.dumps(approval_policy, sort_keys=True)])
+        if metadata:
+            args.extend(["--metadata-json", json.dumps(metadata, sort_keys=True)])
         for action in (approval_policy or {}).get("requireApprovalFor") or []:
             args.extend(["--require-approval-for", str(action)])
         args.append("--json")
@@ -977,6 +1060,34 @@ class OrchestratorPluginManager:
         if self._transport == "http":
             return self._http_post(f"/loops/{loop_id}/actions/{action_id}/approve", {})
         return self._cli_json(["loop-approve", loop_id, action_id, "--json"])
+
+    def reject_agent_loop_action(self, loop_id: str, action_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            payload = {"reason": reason} if reason else {}
+            return self._http_post(f"/loops/{loop_id}/actions/{action_id}/reject", payload)
+        args = ["loop-reject", loop_id, action_id]
+        if reason:
+            args.extend(["--reason", reason])
+        args.append("--json")
+        return self._cli_json(args)
+
+    def cancel_agent_loop(self, loop_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            payload = {"reason": reason} if reason else {}
+            return self._http_post(f"/loops/{loop_id}/cancel", payload)
+        args = ["loop-cancel", loop_id]
+        if reason:
+            args.extend(["--reason", reason])
+        args.append("--json")
+        return self._cli_json(args)
+
+    def retry_agent_loop_step(self, loop_id: str, step_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_post(f"/loops/{loop_id}/steps/{step_id}/retry", {})
+        return self._cli_json(["loop-retry", loop_id, step_id, "--json"])
 
     def get_agent_loop(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
@@ -1018,8 +1129,9 @@ class OrchestratorPluginManager:
         command = self.config.command
         if not command:
             return None
+        env = self._env()
         if os.path.isabs(command) or os.sep in command:
-            if _contains_protected_user_reference(command) and not _allow_development_command_override():
+            if _contains_protected_user_reference(command, env) and not _allow_development_command_override(env):
                 return None
             return command if os.path.isfile(command) and os.access(command, os.X_OK) else None
         managed_command = self.installer.command_path
@@ -1027,14 +1139,11 @@ class OrchestratorPluginManager:
             return str(managed_command)
         if self.installer.wrapper_path.is_file() and os.access(self.installer.wrapper_path, os.X_OK):
             return str(self.installer.wrapper_path)
-        env_path = self._env().get("PATH", "")
-        resolved = shutil.which(command, path=env_path)
-        if resolved and _contains_protected_user_reference(resolved) and not _allow_development_command_override():
-            return None
-        return resolved
+        return _which_executable(command, env.get("PATH", ""), env, block_protected_user_path=True)
 
     def _env(self) -> Dict[str, str]:
         env = _sanitize_python_child_env(os.environ.copy())
+        env, _runtime_boundary_issues = sanitized_product_runtime_env(env)
         extras = [
             str(ecosystem_bin_dir()),
             os.path.expanduser("~/.local/bin"),
@@ -1044,7 +1153,7 @@ class OrchestratorPluginManager:
             "/usr/local/bin",
             "/usr/local/sbin",
         ]
-        paths = [item for item in str(env.get("PATH") or "").split(os.pathsep) if item]
+        paths = [expand_user(item, env) for item in str(env.get("PATH") or "").split(os.pathsep) if item]
         for item in extras:
             if item not in paths:
                 paths.append(item)
@@ -1054,6 +1163,10 @@ class OrchestratorPluginManager:
         env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
         env.setdefault("ACROSS_ORCHESTRATOR_MEMORY_PROVIDER", "across-context")
         env.setdefault("ACROSS_CONTEXT_COMMAND", str(ecosystem_bin_dir() / "across-context"))
+        if is_product_mode(env):
+            env.setdefault("ACROSS_ORCHESTRATOR_PRODUCT_MODE", "1")
+        if is_developer_mode(env):
+            env.setdefault("ACROSS_ORCHESTRATOR_DEVELOPER_MODE", "1")
         return env
 
     def shutdown(self) -> None:
@@ -1164,7 +1277,7 @@ class OrchestratorPluginManager:
         current_info = self._sidecar_runtime_info_path()
         if not run_root.exists():
             return
-        for info_path in run_root.glob("aaa-*.json"):
+        for info_path in run_root.glob("*.json"):
             if info_path == current_info:
                 continue
             try:
@@ -1174,12 +1287,16 @@ class OrchestratorPluginManager:
                 continue
             pid = int(payload.get("pid") or 0)
             if pid > 0 and self._is_orchestrator_sidecar_pid(pid):
+                if not info_path.name.startswith("aaa-"):
+                    continue
                 try:
                     os.kill(pid, 15)
                 except ProcessLookupError:
                     pass
                 except PermissionError:
                     continue
+            elif pid > 0 and self._pid_exists(pid):
+                continue
             info_path.unlink(missing_ok=True)
 
     def _is_orchestrator_sidecar_pid(self, pid: int) -> bool:
@@ -1196,6 +1313,15 @@ class OrchestratorPluginManager:
             return False
         command = completed.stdout.strip()
         return "across-orchestrator" in command and " serve " in f" {command} "
+
+    def _pid_exists(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
 
     def _resolved_endpoint(self) -> str:
         endpoint = (self._endpoint or self.config.endpoint or "").rstrip("/")

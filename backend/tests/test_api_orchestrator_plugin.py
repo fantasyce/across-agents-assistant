@@ -215,6 +215,18 @@ class FakeHTTPOrchestrator:
                     owner.loop_status = "running"
                     self._json(owner._loop_payload("running", approved=True))
                     return
+                if self.path == f"/loops/{owner.loop_id}/actions/{owner.loop_action_id}/reject":
+                    owner.loop_status = "stopped"
+                    self._json(owner._loop_payload("stopped", rejected=True))
+                    return
+                if self.path == f"/loops/{owner.loop_id}/cancel":
+                    owner.loop_status = "cancelled"
+                    self._json(owner._loop_payload("cancelled"))
+                    return
+                if self.path == f"/loops/{owner.loop_id}/steps/step-api-quality/retry":
+                    owner.loop_status = "running"
+                    self._json(owner._loop_payload("running"))
+                    return
                 self._json({"error": "not_found"}, 404)
 
         self.last_submit = {}
@@ -235,7 +247,7 @@ class FakeHTTPOrchestrator:
         self._server.server_close()
         self._thread.join(timeout=5)
 
-    def _loop_payload(self, status: str, approved: bool = False) -> dict:
+    def _loop_payload(self, status: str, approved: bool = False, rejected: bool = False) -> dict:
         if status == "awaiting_approval":
             steps = [
                 {"action": {"type": "memory_search"}},
@@ -246,6 +258,19 @@ class FakeHTTPOrchestrator:
                         "type": "task_dispatch",
                         "requires_approval": True,
                         "approval_status": "pending",
+                    },
+                },
+            ]
+        elif rejected:
+            steps = [
+                {"action": {"type": "memory_search"}},
+                {
+                    "status": "rejected",
+                    "action": {
+                        "action_id": self.loop_action_id,
+                        "type": "task_dispatch",
+                        "requires_approval": True,
+                        "approval_status": "rejected",
                     },
                 },
             ]
@@ -282,6 +307,7 @@ class FakeHTTPOrchestrator:
             "approval_policy": self.last_loop_submit.get("approvalPolicy") or {"requireApprovalFor": []},
             "steps": steps,
             "final_output": "Agent loop completed for: API loop smoke" if status == "completed" else None,
+            "error": "approval_rejected" if rejected else None,
         }
 
 
@@ -384,6 +410,8 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
                 "project_dir": str(tmp_path / "project"),
                 "agent": "owner",
                 "max_turns": 8,
+                "memory_policy": {"read": False, "writeCandidates": False},
+                "metadata": {"scenario": "aaa-api"},
             },
         )
         assert created.status_code == 200
@@ -398,6 +426,8 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert events.json()[0]["type"] == "loop.completed"
     assert ("POST", "/loops") in server.requests
+    assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
+    assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
 
 
 def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
@@ -427,6 +457,57 @@ def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
     assert approved.status_code == 200
     assert approved.json()["steps"][-1]["action"]["approval_status"] == "approved"
     assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/approve") in server.requests
+
+
+def test_api_proxies_external_agent_loop_control_actions(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        client = TestClient(app)
+
+        created = client.post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "API loop controls",
+                "project_dir": str(tmp_path / "project"),
+                "approval_policy": {"requireApprovalFor": ["task_dispatch"]},
+            },
+        )
+        loop_id = created.json()["loop_id"]
+        waiting = client.post(f"/api/orchestrator/loops/{loop_id}/run").json()
+        action_id = waiting["steps"][-1]["action"]["action_id"]
+
+        rejected = client.post(
+            f"/api/orchestrator/loops/{loop_id}/actions/{action_id}/reject",
+            json={"reason": "operator rejected"},
+        )
+        cancel_created = client.post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "API loop cancel",
+                "project_dir": str(tmp_path / "project"),
+            },
+        )
+        cancel_loop_id = cancel_created.json()["loop_id"]
+        cancelled = client.post(
+            f"/api/orchestrator/loops/{cancel_loop_id}/cancel",
+            json={"reason": "operator cancelled"},
+        )
+        retry = client.post(f"/api/orchestrator/loops/{loop_id}/steps/step-api-quality/retry")
+
+    assert rejected.status_code == 200
+    assert rejected.json()["steps"][-1]["action"]["approval_status"] == "rejected"
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "running"
+    assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/reject") in server.requests
+    assert ("POST", f"/loops/{server.loop_id}/cancel") in server.requests
+    assert ("POST", f"/loops/{server.loop_id}/steps/step-api-quality/retry") in server.requests
 
 
 def test_task_page_and_startup_diagnostics_include_orchestrator_plugin(monkeypatch, tmp_path):

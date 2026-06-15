@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.7` | Product-mode runtime boundary hardening across the packaged app, managed Context/Orchestrator discovery, Agent Loop reject/cancel/retry controls, and host artifact metadata for external Orchestrator tasks; managed pins move to Context `v0.7.4` and Orchestrator `v0.6.6`. |
 | `0.8.6` | Further backend boundary split for release verification, Orchestrator protocol/evidence handling, task API models, and task observability; Python runtime support is constrained to `>=3.10,<3.14`, and CI now checks Swift package lock consistency. |
 | `0.8.5` | Structural boundary split for external task planning, Swift task orchestration models, Swift state reducers, and Across Orchestrator strict-dependency planning helper; managed Orchestrator pin moves to `v0.6.5`. |
 | `0.8.4` | External task boundary metadata is preserved across Swift status updates, orphan recovery reuses existing dispatched jobs, and explicit strict-dependency plans are preserved through Across Orchestrator `v0.6.4`. |
@@ -185,7 +186,16 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.6` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.7` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.7` release closes the product-mode runtime boundary across the
+packaged app, backend plugin discovery, managed plugin installers, and Swift
+local path selection. Protected checkout paths under user project folders are
+ignored unless developer mode is explicit, Agent Loop host controls now cover
+approve, reject, cancel, and retry paths, external Orchestrator artifact
+metadata includes host-readable file paths and sizes, and managed plugin
+installs are pinned to Across Context `v0.7.4` and Across Orchestrator
+`v0.6.6`.
 
 The `0.8.6` release continues the structural boundary cleanup by moving release
 verification, Orchestrator protocol/evidence helpers, task API models, and task
@@ -231,9 +241,9 @@ The `0.8.0` release moves Agent Loop from a probe-level lifecycle into an
 adapter-backed external runtime path. Across Orchestrator owns dynamic loop
 planning, remediation dispatch, checkpoints, approval execution, and memory
 provider hooks. Across Agents Assistant starts the sidecar with
-`ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context`, proxies approval actions,
-and surfaces Agent Loop v2 capability metadata without embedding orchestration
-logic in the app.
+`ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context`, proxies approval,
+rejection, cancellation, and retry actions, and surfaces Agent Loop v2 capability
+metadata without embedding orchestration logic in the app.
 Plugin Center memory review includes project-scoped pending summaries from
 Across Context, so Agent Loop write candidates can be approved from the host UI.
 
@@ -436,13 +446,29 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.5
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.3
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.4
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
+
+In packaged or product mode, set `ACROSS_AGENTS_PRODUCT_MODE=1`. Protected
+runtime overrides such as `ACROSS_HOME`, `ACROSS_PLUGIN_HOME`,
+`ACROSS_BIN_HOME`, `ACROSS_CONTEXT_COMMAND`, and
+`ACROSS_AGENTS_BACKEND_DIR` are ignored when they point under user project
+locations such as `~/Documents`, `~/Desktop`, or `~/Downloads`; the host uses
+the managed `~/.across` runtime instead. The same rule applies to
+`ACROSS_AGENTS_HOME`, `ACROSS_AGENTS_DB_PATH`, plugin install-source overrides,
+`ACROSS_CONTEXT_HOME`, and `ACROSS_ORCHESTRATOR_HOME`. Product diagnostics and
+MCP auto-connect also ignore protected `across-context` or
+`across-orchestrator` commands found through `PATH` instead of reading or
+executing those wrappers. Source checkout paths are accepted only when
+`ACROSS_AGENTS_DEVELOPER_MODE=1` or
+`ACROSS_AGENTS_ALLOW_DEVELOPMENT_RUNTIME_PATHS=1` is set intentionally. The
+same boundary is applied when plugin child environments carry
+`ACROSS_CONTEXT_PRODUCT_MODE=1` or `ACROSS_ORCHESTRATOR_PRODUCT_MODE=1`.
 
 When an endpoint is configured, the app talks to that external HTTP runtime. If
 no endpoint is configured, it discovers the wrapper at
@@ -454,9 +480,12 @@ metadata from `~/.across/run/across-orchestrator`. The UI calls
 the configured source.
 
 Packaged builds cannot use the backend binary itself to create Python
-virtualenvs. The installer auto-discovers a Python 3 interpreter from common
+virtualenvs. The managed Across Orchestrator installer requires Python
+`>=3.11,<3.14` and auto-discovers a supported interpreter from common
 locations; set `ACROSS_AGENTS_ORCHESTRATOR_PYTHON` only when you need to force a
-specific interpreter.
+specific interpreter. Product mode rejects interpreters under protected user
+project locations unless developer mode is explicitly enabled. The AAA backend source runtime remains Python
+`>=3.10,<3.14`.
 
 External task state stays in `~/.across/data/across-orchestrator`; the app only
 keeps a thin task-id index in

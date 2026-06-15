@@ -5,12 +5,18 @@ from pathlib import Path
 from typing import Any, Mapping
 import json
 import os
-import re
 import shutil
 import subprocess
 import urllib.parse
 
 from .paths import component_cache_home, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .runtime_boundary import (
+    contains_protected_user_reference,
+    expand_user,
+    is_developer_mode,
+    is_product_mode,
+    sanitized_product_runtime_env,
+)
 
 
 @dataclass(frozen=True)
@@ -32,16 +38,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.3",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.4",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.5",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.5",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6",
     ),
 )
 
@@ -74,7 +80,7 @@ def inspect_across_plugin(
     if plugin is None:
         raise ValueError(f"Unknown Across plugin: {plugin_id}")
 
-    source = env if env is not None else os.environ
+    source, runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     across_home = ecosystem_home(source)
     plugin_dir = ecosystem_plugin_root(source) / plugin.plugin_id
     manifest_path = plugin_dir / "manifest.json"
@@ -122,6 +128,7 @@ def inspect_across_plugin(
         "probe": bool(probe),
         "integrity_ok": not integrity_issues,
         "integrity_issues": integrity_issues,
+        "runtime_boundary_issues": runtime_boundary_issues,
         "manifest": manifest,
         "capabilities": manifest.get("capabilities") or {},
         "compatibility": manifest.get("compatibility") or {},
@@ -309,10 +316,33 @@ def _resolve_command(command: str, env: Mapping[str, str]) -> Path:
     for item in str(env.get("PATH") or "").split(os.pathsep):
         if not item:
             continue
-        candidate = Path(item) / command
+        candidate = Path(expand_user(item, env)) / command
+        if _is_blocked_product_path(str(candidate), env):
+            continue
         if candidate.exists():
             return candidate
     return bin_path
+
+
+def _is_blocked_product_path(value: str, env: Mapping[str, str]) -> bool:
+    return is_product_mode(env) and not is_developer_mode(env) and contains_protected_user_reference(value, env)
+
+
+def _which_runtime_command(command: str, env: Mapping[str, str]) -> str | None:
+    if os.path.isabs(command) or os.sep in command:
+        if _is_blocked_product_path(command, env):
+            return None
+        candidate = Path(expand_user(command, env))
+        return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+    for item in str(env.get("PATH") or "").split(os.pathsep):
+        if not item:
+            continue
+        candidate = Path(expand_user(item, env)) / command
+        if _is_blocked_product_path(str(candidate), env):
+            continue
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def _install_across_context(
@@ -321,7 +351,7 @@ def _install_across_context(
     runner: Any = subprocess.run,
     force_reinstall: bool = False,
 ) -> dict[str, Any]:
-    source = env if env is not None else os.environ
+    source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     across_home = ecosystem_home(source)
     command_path = _resolve_command("across-context", source)
     command_integrity_issues = (
@@ -342,7 +372,7 @@ def _install_across_context(
         )
         return inspect_across_plugin("across-context", probe=True, env=source)
 
-    npm = shutil.which("npm", path=source.get("PATH"))
+    npm = _which_runtime_command("npm", source)
     if not npm:
         raise PluginLifecycleError("npm is required to install Across Context when no existing command is available")
 
@@ -368,7 +398,7 @@ def _install_across_context(
 
 
 def _uninstall_managed_plugin(plugin_id: str, command: str, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    source = env if env is not None else os.environ
+    source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     plugin_dir = ecosystem_plugin_root(source) / plugin_id
     wrapper = ecosystem_bin_dir(source) / command
     shutil.rmtree(plugin_dir, ignore_errors=True)
@@ -393,12 +423,11 @@ def _run_checked(
     runner: Any = subprocess.run,
     timeout: int = 900,
 ) -> None:
-    safe_env = os.environ.copy()
-    safe_env.update({str(key): str(value) for key, value in env.items()})
-    safe_env.setdefault("ACROSS_HOME", str(ecosystem_home(env)))
-    safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root(env)))
-    safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir(env)))
-    npm_cache = component_cache_home(env=env) / "npm"
+    safe_env = _child_env_with_product_boundary(env)
+    safe_env.setdefault("ACROSS_HOME", str(ecosystem_home(safe_env)))
+    safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root(safe_env)))
+    safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir(safe_env)))
+    npm_cache = component_cache_home(env=safe_env) / "npm"
     npm_cache.mkdir(parents=True, exist_ok=True)
     safe_env.setdefault("NPM_CONFIG_CACHE", str(npm_cache))
     completed = runner(
@@ -415,16 +444,22 @@ def _run_checked(
 
 
 def _safe_plugin_env(env: Mapping[str, str]) -> dict[str, str]:
-    safe_env = os.environ.copy()
-    safe_env.update({str(key): str(value) for key, value in env.items()})
-    safe_env.setdefault("ACROSS_HOME", str(ecosystem_home(env)))
-    safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root(env)))
-    safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir(env)))
+    safe_env = _child_env_with_product_boundary(env)
+    safe_env.setdefault("ACROSS_HOME", str(ecosystem_home(safe_env)))
+    safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root(safe_env)))
+    safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir(safe_env)))
+    return safe_env
+
+
+def _child_env_with_product_boundary(env: Mapping[str, str]) -> dict[str, str]:
+    source = os.environ.copy()
+    source.update({str(key): str(value) for key, value in env.items()})
+    safe_env, _runtime_boundary_issues = sanitized_product_runtime_env(source)
     return safe_env
 
 
 def _run_context_cli_json(args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 15) -> Any:
-    source = env if env is not None else os.environ
+    source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     command_path = _resolve_command("across-context", source)
     if not command_path.is_file() or not os.access(command_path, os.X_OK):
         raise PluginLifecycleError("Across Context plugin is not installed")
@@ -464,16 +499,8 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
-def _protected_user_reference_roots() -> list[Path]:
-    home = Path.home()
-    return [home / "Documents", home / "Desktop", home / "Downloads"]
-
-
 def _contains_protected_user_reference(value: str) -> bool:
-    expanded = os.path.expanduser(value or "")
-    if any(str(root) in expanded for root in _protected_user_reference_roots()):
-        return True
-    return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
+    return contains_protected_user_reference(value)
 
 
 def _command_integrity_issues(command_path: Path, plugin_dir: Path, env: Mapping[str, str]) -> list[str]:
@@ -482,6 +509,8 @@ def _command_integrity_issues(command_path: Path, plugin_dir: Path, env: Mapping
     resolved = command_path.expanduser().resolve()
     if not (_is_relative_to(resolved, bin_dir) or _is_relative_to(resolved, plugin_dir)):
         issues.append("command is outside the Across plugin runtime directory")
+    if _contains_protected_user_reference(str(resolved)):
+        issues.append("command path references a protected user directory")
     try:
         if command_path.stat().st_size <= 64 * 1024:
             text = command_path.read_text(encoding="utf-8", errors="ignore")

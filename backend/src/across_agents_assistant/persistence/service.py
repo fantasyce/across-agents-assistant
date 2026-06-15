@@ -12,11 +12,12 @@ from .audit_logger import AuditLogger
 from .permissions import ToolPermissionStore
 from .task_persistence import TaskPersistenceService
 from ..paths import app_subdir, data_file
+from ..runtime_boundary import safe_runtime_override
 
 logger = logging.getLogger("across_agents_assistant.persistence")
 
 # Default DB path inside the app-owned local data root.
-DEFAULT_DB_PATH = os.environ.get("ACROSS_AGENTS_DB_PATH", str(data_file("assistant.db")))
+DEFAULT_DB_PATH = safe_runtime_override("ACROSS_AGENTS_DB_PATH") or str(data_file("assistant.db"))
 
 
 def _normalize_local_path(path: str) -> str:
