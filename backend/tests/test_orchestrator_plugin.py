@@ -342,6 +342,72 @@ def test_external_http_runtime_proxies_agent_loop_lifecycle(tmp_path):
     assert ("POST", "/loops/loop-external-http/run") in server.requests
 
 
+def test_external_cli_agent_loop_start_passes_policy_and_metadata(monkeypatch, tmp_path):
+    captured = {}
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(tmp_path / "across-orchestrator"),
+            registry_path=tmp_path / "tasks.json",
+            auto_run=False,
+        )
+    )
+    manager._transport = "cli"
+    monkeypatch.setattr(manager, "_ensure_external", lambda: None)
+
+    def fake_cli_json(args):
+        captured["args"] = args
+        return {"loop_id": "loop-cli", "status": "pending"}
+
+    monkeypatch.setattr(manager, "_cli_json", fake_cli_json)
+
+    loop = manager.start_agent_loop(
+        goal="CLI loop smoke",
+        project_dir=str(tmp_path / "project"),
+        memory_policy={"read": False, "writeCandidates": False},
+        approval_policy={"requireApprovalFor": ["task_dispatch"]},
+        metadata={"scenario": "cli-fallback"},
+    )
+
+    assert loop["loop_id"] == "loop-cli"
+    args = captured["args"]
+    assert "--memory-policy-json" in args
+    assert json.loads(args[args.index("--memory-policy-json") + 1]) == {"read": False, "writeCandidates": False}
+    assert "--approval-policy-json" in args
+    assert json.loads(args[args.index("--approval-policy-json") + 1]) == {"requireApprovalFor": ["task_dispatch"]}
+    assert "--metadata-json" in args
+    assert json.loads(args[args.index("--metadata-json") + 1]) == {"scenario": "cli-fallback"}
+    assert args.count("--require-approval-for") == 1
+
+
+def test_external_cli_agent_loop_control_actions(monkeypatch, tmp_path):
+    captured = []
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(tmp_path / "across-orchestrator"),
+            registry_path=tmp_path / "tasks.json",
+            auto_run=False,
+        )
+    )
+    manager._transport = "cli"
+    monkeypatch.setattr(manager, "_ensure_external", lambda: None)
+
+    def fake_cli_json(args):
+        captured.append(args)
+        return {"loop_id": "loop-cli", "status": "ok"}
+
+    monkeypatch.setattr(manager, "_cli_json", fake_cli_json)
+
+    manager.cancel_agent_loop("loop-cli", reason="operator cancelled")
+    manager.reject_agent_loop_action("loop-cli", "action-cli", reason="operator rejected")
+    manager.retry_agent_loop_step("loop-cli", "step-cli")
+
+    assert captured[0] == ["loop-cancel", "loop-cli", "--reason", "operator cancelled", "--json"]
+    assert captured[1] == ["loop-reject", "loop-cli", "action-cli", "--reason", "operator rejected", "--json"]
+    assert captured[2] == ["loop-retry", "loop-cli", "step-cli", "--json"]
+
+
 def test_builtin_mode_is_normalized_to_external_plugin_boundary(tmp_path):
     manager = OrchestratorPluginManager(
         OrchestratorPluginConfig(
@@ -702,6 +768,48 @@ def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
     assert ("POST", "/tasks/task-external-http/run") in server.requests
     assert server.last_submit["runLabel"] == "unit"
     assert server.last_submit["allowedSubtaskAgents"] == ["openclaw", "deepseek"]
+
+
+def test_external_app_task_artifacts_include_client_file_metadata(tmp_path):
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    task = _external_task("task-external-artifacts", str(project_dir), "completed")
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["artifacts"][0] = {
+        "path": "README.md",
+        "present": True,
+        "size": 6,
+        "sha256": "c" * 64,
+    }
+
+    app_task = external_task_to_app_info(task, evidence)
+    artifact = next(item for item in app_task["artifacts"] if item["name"] == "README.md")
+
+    assert artifact["id"] == "external-README.md"
+    assert artifact["file_name"] == "README.md"
+    assert artifact["file_path"].endswith("README.md")
+    assert artifact["content_ref"] == artifact["file_path"]
+    assert artifact["normalized_content_ref"] == artifact["file_path"]
+    assert artifact["file_size"] == "6 B"
+    assert artifact["size"] == 6
+
+
+def test_external_expected_artifacts_compute_size_from_project_file(tmp_path):
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    task = _external_task("task-external-expected-artifacts", str(project_dir), "pending")
+    task["contract"]["requiredArtifacts"] = ["README.md"]
+
+    app_task = external_task_to_app_info(task)
+    artifact = app_task["artifacts"][0]
+
+    assert artifact["name"] == "README.md"
+    assert artifact["file_name"] == "README.md"
+    assert artifact["file_path"].endswith("README.md")
+    assert artifact["file_size"] == "6 B"
+    assert artifact["status"] == "expected"
 
 
 def test_external_generic_task_preserves_task_types_in_app_mapping(tmp_path):

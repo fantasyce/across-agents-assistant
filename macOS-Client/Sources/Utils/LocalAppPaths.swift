@@ -2,19 +2,15 @@ import Foundation
 
 enum LocalAppPaths {
     static var acrossRoot: URL {
-        let env = ProcessInfo.processInfo.environment["ACROSS_HOME"]
-        let path = env?.isEmpty == false ? env! : "~/.across"
-        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        RuntimeBoundary.safeAcrossRoot(
+            bundledBackendAvailable: AppDelegate.backendExecutablePath != nil
+        )
     }
 
     static var root: URL {
-        let env = ProcessInfo.processInfo.environment["ACROSS_AGENTS_HOME"]
-        if env?.isEmpty == false {
-            return URL(fileURLWithPath: (env! as NSString).expandingTildeInPath)
-        }
-        return acrossRoot
-            .appendingPathComponent("data", isDirectory: true)
-            .appendingPathComponent("across-agents-assistant", isDirectory: true)
+        RuntimeBoundary.safeAppHome(
+            bundledBackendAvailable: AppDelegate.backendExecutablePath != nil
+        )
     }
 
     static var logsDir: URL {
@@ -26,7 +22,7 @@ enum LocalAppPaths {
     }
 
     static var tmpDir: URL {
-        if ProcessInfo.processInfo.environment["ACROSS_AGENTS_HOME"]?.isEmpty == false {
+        if hasAllowedAppHomeOverride {
             return subdir("tmp")
         }
         let url = acrossRoot
@@ -62,7 +58,7 @@ enum LocalAppPaths {
     }
 
     private static func runtimeDir(section: String, legacyName: String) -> URL {
-        if ProcessInfo.processInfo.environment["ACROSS_AGENTS_HOME"]?.isEmpty == false {
+        if hasAllowedAppHomeOverride {
             return subdir(legacyName)
         }
         let url = acrossRoot
@@ -70,5 +66,11 @@ enum LocalAppPaths {
             .appendingPathComponent("across-agents-assistant", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private static var hasAllowedAppHomeOverride: Bool {
+        RuntimeBoundary.hasAllowedAppHomeOverride(
+            bundledBackendAvailable: AppDelegate.backendExecutablePath != nil
+        )
     }
 }

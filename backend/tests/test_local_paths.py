@@ -113,3 +113,34 @@ def test_across_agents_home_override_controls_runtime_paths(monkeypatch, tmp_pat
     assert paths.data_file("assistant.db") == custom_home / "assistant.db"
     assert paths.log_dir() == custom_home / "logs"
     assert paths.backend_socket_path() == str(custom_home / "run/across-agents.sock")
+
+
+def test_product_mode_ignores_protected_across_agents_home_for_runtime_paths(monkeypatch, tmp_path):
+    protected_home = tmp_path / "Documents" / "projects" / "app-home"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ACROSS_AGENTS_PRODUCT_MODE", "1")
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(protected_home))
+
+    import across_agents_assistant.paths as paths
+
+    paths = importlib.reload(paths)
+
+    assert paths.data_file("assistant.db") == tmp_path / ".across/data/across-agents-assistant/assistant.db"
+    assert paths.log_dir() == tmp_path / ".across/logs/across-agents-assistant"
+    assert paths.run_dir() == tmp_path / ".across/run/across-agents-assistant"
+    assert "Documents" not in str(paths.backend_socket_path())
+
+
+def test_product_mode_ignores_protected_db_path(monkeypatch, tmp_path):
+    protected_db = tmp_path / "Documents" / "projects" / "assistant.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ACROSS_AGENTS_PRODUCT_MODE", "1")
+    monkeypatch.setenv("ACROSS_AGENTS_DB_PATH", str(protected_db))
+
+    import across_agents_assistant.persistence.service as service_mod
+
+    service_mod = importlib.reload(service_mod)
+
+    assert service_mod.DEFAULT_DB_PATH == str(
+        tmp_path / ".across/data/across-agents-assistant/assistant.db"
+    )

@@ -231,10 +231,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static func findBackendProjectDir() -> URL? {
         let fm = FileManager.default
 
-        // 1. Check environment variable
-        if let envPath = ProcessInfo.processInfo.environment["ACROSS_AGENTS_BACKEND_DIR"],
-           !envPath.isEmpty {
-            let url = URL(fileURLWithPath: envPath)
+        // 1. Check explicit development backend override.
+        if let url = RuntimeBoundary.safeBackendProjectDirectoryOverride(
+            bundledBackendAvailable: Self.backendExecutablePath != nil
+        ) {
             if fm.fileExists(atPath: url.appendingPathComponent("main.py").path) {
                 return url
             }
@@ -343,9 +343,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         backendProcess = Process()
 
-        if let envDir = ProcessInfo.processInfo.environment["ACROSS_AGENTS_BACKEND_DIR"],
-           !envDir.isEmpty {
-            let backendProjectDir = URL(fileURLWithPath: envDir)
+        if let backendProjectDir = RuntimeBoundary.safeBackendProjectDirectoryOverride(
+            bundledBackendAvailable: Self.backendExecutablePath != nil
+        ) {
             if let process = backendProcess,
                !configurePythonBackendProcess(process, backendProjectDir: backendProjectDir, label: "via ENV") {
                 return

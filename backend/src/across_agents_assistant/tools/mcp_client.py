@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +9,13 @@ from typing import Dict, Any, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from ..paths import ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from ..runtime_boundary import (
+    contains_protected_user_reference,
+    expand_user,
+    is_developer_mode,
+    is_product_mode,
+    sanitized_product_runtime_env,
+)
 
 logger = logging.getLogger("across_agents_assistant.mcp")
 
@@ -59,10 +65,14 @@ class MCPClientManager:
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
-        merged_env["PATH"] = self._command_search_path(merged_env.get("PATH", ""))
+        merged_env["PATH"] = self._command_search_path(merged_env.get("PATH", ""), merged_env)
 
         # Try to resolve the command to its absolute path to prevent "command not found" errors
-        resolved_command = self._resolve_command_path(command, merged_env)
+        resolved_command = self._resolve_command_path(
+            command,
+            merged_env,
+            block_protected_product_path=server_id == "across_context",
+        )
         if resolved_command:
             command = resolved_command
         else:
@@ -92,17 +102,18 @@ class MCPClientManager:
             'readonly': readonly
         }
 
-    def _command_search_path(self, current_path: str) -> str:
-        plugin_bin = str(ecosystem_bin_dir())
+    def _command_search_path(self, current_path: str, env: Optional[Dict[str, str]] = None) -> str:
+        source = env if env is not None else os.environ
+        plugin_bin = str(ecosystem_bin_dir(source))
         paths = [plugin_bin]
         paths.extend(
-            path
+            expand_user(path, source)
             for path in str(current_path or "").split(os.pathsep)
-            if path and path not in paths
+            if path and expand_user(path, source) not in paths
         )
         for path in [
-            os.path.expanduser("~/.local/bin"),
-            os.path.expanduser("~/.npm-global/bin"),
+            expand_user("~/.local/bin", source),
+            expand_user("~/.npm-global/bin", source),
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
             "/usr/local/bin",
@@ -111,14 +122,15 @@ class MCPClientManager:
             if path not in paths:
                 paths.append(path)
 
-        npm = self._which_in_paths("npm", paths)
-        npm_global_bin = self._npm_global_bin(npm, paths)
+        npm = self._which_in_paths("npm", paths, source)
+        npm_global_bin = self._npm_global_bin(npm, paths, source)
         if npm_global_bin and npm_global_bin not in paths:
             paths.append(npm_global_bin)
 
         return os.pathsep.join(paths)
 
     def _privacy_safe_across_context_env(self, env: Dict[str, str]) -> Dict[str, str]:
+        env, _runtime_boundary_issues = sanitized_product_runtime_env(env)
         base_keys = {
             "HOME",
             "USER",
@@ -147,18 +159,23 @@ class MCPClientManager:
         }
         safe_env["PWD"] = "/"
         safe_env["OLDPWD"] = "/"
-        safe_env.setdefault("ACROSS_HOME", str(ecosystem_home()))
-        safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root()))
-        safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir()))
-        safe_env.setdefault("ACROSS_CONTEXT_HOME", str(ecosystem_home() / "data" / "across-context"))
+        safe_env.setdefault("ACROSS_HOME", str(ecosystem_home(safe_env)))
+        safe_env.setdefault("ACROSS_PLUGIN_HOME", str(ecosystem_plugin_root(safe_env)))
+        safe_env.setdefault("ACROSS_BIN_HOME", str(ecosystem_bin_dir(safe_env)))
+        safe_env.setdefault("ACROSS_CONTEXT_HOME", str(ecosystem_home(safe_env) / "data" / "across-context"))
         return safe_env
 
-    def _which_in_paths(self, command: str, paths: List[str]) -> Optional[str]:
-        import shutil
+    def _which_in_paths(self, command: str, paths: List[str], env: Dict[str, str]) -> Optional[str]:
+        for path in paths:
+            candidate = str(Path(path) / command)
+            if self._is_blocked_product_path(candidate, env):
+                continue
+            resolved = shutil.which(command, path=path)
+            if resolved:
+                return resolved
+        return None
 
-        return shutil.which(command, path=os.pathsep.join(paths))
-
-    def _npm_global_bin(self, npm_command: Optional[str], paths: List[str]) -> Optional[str]:
+    def _npm_global_bin(self, npm_command: Optional[str], paths: List[str], env: Dict[str, str]) -> Optional[str]:
         if not npm_command:
             return None
         try:
@@ -168,7 +185,7 @@ class MCPClientManager:
                 capture_output=True,
                 text=True,
                 timeout=2,
-                env={**os.environ, "PATH": os.pathsep.join(paths)},
+                env={**os.environ, **env, "PATH": os.pathsep.join(self._safe_lookup_paths(paths, env))},
             )
         except Exception as exc:
             logger.debug("Unable to resolve npm global prefix from %s: %s", npm_command, exc)
@@ -292,7 +309,11 @@ class MCPClientManager:
     async def _connect_across_context(self, server_id: str, params: StdioServerParameters):
         self._across_context_mode(params)
 
-        if not self._command_is_executable(str(params.command), params.env or {}):
+        if not self._command_is_executable(
+            str(params.command),
+            params.env or {},
+            block_protected_product_path=True,
+        ):
             error = (
                 "The external Across Context MCP server is required but the "
                 "`across-context` command is not installed or executable."
@@ -440,14 +461,98 @@ class MCPClientManager:
         except ValueError:
             return 5.0
 
-    def _command_is_executable(self, command: str, env: Dict[str, str]) -> bool:
-        return self._resolve_command_path(command, env) is not None
+    def _command_is_executable(
+        self,
+        command: str,
+        env: Dict[str, str],
+        *,
+        block_protected_product_path: bool = False,
+    ) -> bool:
+        return self._resolve_command_path(
+            command,
+            env,
+            block_protected_product_path=block_protected_product_path,
+        ) is not None
 
-    def _resolve_command_path(self, command: str, env: Dict[str, str]) -> Optional[str]:
-        return shutil.which(command, path=env.get("PATH"))
+    def _resolve_command_path(
+        self,
+        command: str,
+        env: Dict[str, str],
+        *,
+        block_protected_product_path: bool = False,
+    ) -> Optional[str]:
+        if not block_protected_product_path:
+            return shutil.which(command, path=env.get("PATH"))
+        if os.path.isabs(command) or os.sep in command:
+            return self._resolve_direct_command_path(command, env)
+        for path in self._safe_lookup_paths(str(env.get("PATH") or "").split(os.pathsep), env):
+            resolved = shutil.which(command, path=path)
+            if resolved:
+                return resolved
+        return None
+
+    def _resolve_direct_command_path(self, command: str, env: Dict[str, str]) -> Optional[str]:
+        expanded = expand_user(command, env)
+        if not expanded or self._is_blocked_product_path(expanded, env):
+            return None
+        directory, name = os.path.split(os.path.normpath(expanded))
+        if not directory or not name:
+            return None
+        if self._is_product_mode(env) and not self._is_developer_mode(env):
+            if not self._is_managed_product_command_path(expanded, env):
+                return None
+        return shutil.which(name, path=directory)
+
+    def _is_managed_product_command_path(self, value: str, env: Dict[str, str]) -> bool:
+        roots = (
+            ecosystem_bin_dir(env),
+            ecosystem_plugin_root(env),
+        )
+        return any(self._is_under_path(value, root) for root in roots)
+
+    def _is_under_path(self, value: str, root: Path) -> bool:
+        try:
+            child = os.path.abspath(value)
+            parent = os.path.abspath(str(root))
+            return os.path.commonpath([child, parent]) == parent
+        except ValueError:
+            return False
+
+    def _safe_lookup_paths(self, paths: List[str], env: Dict[str, str]) -> List[str]:
+        safe_paths: List[str] = []
+        for path in paths:
+            expanded = expand_user(path, env)
+            if expanded and not self._is_blocked_product_path(str(Path(expanded) / ".__across_probe__"), env):
+                safe_paths.append(expanded)
+        return safe_paths
+
+    def _is_blocked_product_path(self, value: str, env: Dict[str, str]) -> bool:
+        return (
+            self._is_product_mode(env)
+            and not self._is_developer_mode(env)
+            and contains_protected_user_reference(value, env)
+        )
+
+    def _is_product_mode(self, env: Dict[str, str]) -> bool:
+        return is_product_mode(env) or str(env.get("ACROSS_CONTEXT_PRODUCT_MODE") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+            "y",
+        }
+
+    def _is_developer_mode(self, env: Dict[str, str]) -> bool:
+        return is_developer_mode(env) or str(env.get("ACROSS_CONTEXT_DEVELOPER_MODE") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+            "y",
+        }
 
     def _across_context_command_integrity_issues(self, command: str, env: Dict[str, str]) -> List[str]:
-        resolved = self._resolve_command_path(command, env)
+        resolved = self._resolve_command_path(command, env, block_protected_product_path=True)
         if not resolved:
             return ["command is not executable"]
         issues: List[str] = []
@@ -464,11 +569,7 @@ class MCPClientManager:
         return issues
 
     def _contains_protected_user_reference(self, value: str) -> bool:
-        expanded = os.path.expanduser(value or "")
-        home = Path.home()
-        if any(str(root) in expanded for root in (home / "Documents", home / "Desktop", home / "Downloads")):
-            return True
-        return bool(re.search(r"(?:~|/Users/[^/]+)/(Documents|Desktop|Downloads)(?:/|$)", expanded))
+        return contains_protected_user_reference(value)
 
     def _call_across_context_external_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
         params = self.server_configs.get(server_id)
