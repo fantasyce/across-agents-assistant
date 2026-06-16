@@ -308,10 +308,6 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
         lambda: [],
     )
     monkeypatch.setattr(
-        "across_agents_assistant.api_server.get_task_orchestrator",
-        lambda: (_ for _ in ()).throw(AssertionError("internal orchestrator must not be used")),
-    )
-    monkeypatch.setattr(
         "across_agents_assistant.api_server.get_native_skill_manager",
         lambda: manager,
     )

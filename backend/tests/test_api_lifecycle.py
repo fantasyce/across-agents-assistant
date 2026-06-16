@@ -121,27 +121,12 @@ os.environ["ACROSS_AGENTS_AUTO_RESUME_ORPHANS"] = "1"
 
 import across_agents_assistant.api_server as srv
 
-calls = {"orchestrator": 0}
-
-class DummyDispatcher:
-    pass
-
-class DummyOrchestrator:
-    pass
-
-def fake_get_task_orchestrator():
-    calls["orchestrator"] += 1
-    d = DummyDispatcher()
-    d.dispatch_subtask = lambda st: None
-    return DummyOrchestrator()
-
-srv.get_task_orchestrator = fake_get_task_orchestrator
 srv._task_persistence_initialized = False
 
 with TestClient(srv.app):
     pass
 
-print(f"ORCHESTRATOR_CALLS={calls['orchestrator']}")
+print("STARTUP_COMPLETED=1")
 """
 
     env = dict(os.environ)
@@ -155,7 +140,7 @@ print(f"ORCHESTRATOR_CALLS={calls['orchestrator']}")
         check=True,
     )
 
-    assert "ORCHESTRATOR_CALLS=0" in result.stdout
+    assert "STARTUP_COMPLETED=1" in result.stdout
 
 
 def test_health_endpoint_reports_backend_socket_and_database(monkeypatch, tmp_path):

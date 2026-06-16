@@ -41,7 +41,7 @@ struct SettingsViewModelStatusCacheBehavior {
           "status": "ready",
           "summary": {"status": "ready", "passed": 9, "warnings": 0, "failed": 0, "check_count": 9},
           "paths": {"app_home": "/tmp/a", "logs_dir": "/tmp/l", "run_dir": "/tmp/r", "tmp_dir": "/tmp/t", "evidence_dir": "/tmp/e", "socket_path": "/tmp/s", "database_path": "/tmp/db"},
-          "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 0, "persistence_initialized": true, "orchestrator_initialized": true, "dispatcher_initialized": true},
+          "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 0, "persistence_initialized": true, "dispatcher_initialized": true},
           "keys": {"has_any_key": true, "providers": {"deepseek": "configured", "minimax": "not_configured"}, "readiness_blockers": []},
           "checks": []
         }
@@ -66,7 +66,7 @@ struct SettingsViewModelStatusCacheBehavior {
             "status": "ready",
             "summary": {"status": "ready", "passed": 10, "warnings": 0, "failed": 0, "check_count": 10},
             "paths": {"app_home": "/tmp/a", "logs_dir": "/tmp/l", "run_dir": "/tmp/r", "tmp_dir": "/tmp/t", "evidence_dir": "/tmp/e", "socket_path": "/tmp/s", "database_path": "/tmp/db"},
-            "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 1, "persistence_initialized": true, "orchestrator_initialized": true, "dispatcher_initialized": true},
+            "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 1, "persistence_initialized": true, "dispatcher_initialized": true},
             "keys": {"has_any_key": true, "providers": {"deepseek": "configured"}, "readiness_blockers": []},
             "checks": []
           },

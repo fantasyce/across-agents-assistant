@@ -690,10 +690,6 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
         lambda: [],
     )
     monkeypatch.setattr(
-        "across_agents_assistant.api_server.get_task_orchestrator",
-        lambda: (_ for _ in ()).throw(AssertionError("internal orchestrator must not be used")),
-    )
-    monkeypatch.setattr(
         "across_agents_assistant.api_server.get_agent_capability_store",
         lambda: store,
     )

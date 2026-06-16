@@ -50,7 +50,7 @@ struct TaskOrchestrationStatusTests {
         #expect(!TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus("completed"))
     }
 
-    @Test func externalTasksDoNotSupportLegacyLifecycleControls() throws {
+    @Test func externalTasksDoNotSupportLocalLifecycleControls() throws {
         let payload = """
         {
           "task_id": "task-external",

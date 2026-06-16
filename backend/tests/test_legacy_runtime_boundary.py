@@ -1,62 +1,76 @@
+import importlib.util
+import os
 from pathlib import Path
-import threading
-import time
+import subprocess
+import sys
 
+import across_agents_assistant
 import across_agents_assistant.api_server as api_server
-import across_agents_assistant.legacy_task_runtime as legacy_task_runtime
-from across_agents_assistant.legacy_task_runtime import SyncLLMWrapper
 
 
-def test_api_server_does_not_import_historical_task_orchestrator_directly():
+PACKAGE_ROOT = Path(across_agents_assistant.__file__).resolve().parent
+
+
+def test_legacy_runtime_module_is_not_packaged():
+    assert importlib.util.find_spec("across_agents_assistant.legacy_task_runtime") is None
+    assert not (PACKAGE_ROOT / "legacy_task_runtime.py").exists()
+
+
+def test_api_server_exposes_only_external_orchestrator_boundary():
     source = Path(api_server.__file__).read_text(encoding="utf-8")
 
     assert "task_manager.orchestration.orchestrator import TaskOrchestrator" not in source
-    assert "from .legacy_task_runtime import build_legacy_task_orchestrator" in source
+    assert "from .legacy_task_runtime import build_legacy_task_orchestrator" not in source
+    assert "build_legacy_task_orchestrator" not in source
+    assert "get_task_orchestrator" not in source
+    assert "_task_orchestrator" not in source
+    assert "/api/legacy/tasks" not in source
+    assert "historical in-app TaskOrchestrator" not in source
 
 
-def test_legacy_runtime_module_owns_historical_task_orchestrator_import():
-    source = Path(legacy_task_runtime.__file__).read_text(encoding="utf-8")
+def test_production_code_does_not_import_historical_runtime_construction():
+    forbidden = {
+        "legacy_task_runtime",
+        "task_manager.orchestration.orchestrator import TaskOrchestrator",
+        "task_manager.orchestration.owner_agent import OwnerAgent",
+        "task_manager.orchestration.validator import ContractValidator",
+    }
+    offenders: dict[str, list[str]] = {}
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        rel = path.relative_to(PACKAGE_ROOT)
+        if rel.parts[:2] == ("task_manager", "orchestration"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        matches = sorted(token for token in forbidden if token in source)
+        if matches:
+            offenders[str(rel)] = matches
 
-    assert "task_manager.orchestration.orchestrator import TaskOrchestrator" in source
+    assert offenders == {}
 
 
-def test_sync_llm_wrapper_starts_one_loop_under_concurrent_first_use(monkeypatch):
-    class Gateway:
-        async def chat(self, **_kwargs):
-            return "ok"
+def test_api_import_does_not_load_historical_runtime_modules():
+    script = """
+import sys
+import across_agents_assistant.api_server
+forbidden = [
+    "across_agents_assistant.task_manager.orchestration.orchestrator",
+    "across_agents_assistant.task_manager.orchestration.owner_agent",
+    "across_agents_assistant.task_manager.orchestration.validator",
+]
+loaded = [name for name in forbidden if name in sys.modules]
+if loaded:
+    raise SystemExit("loaded historical runtime modules: " + ", ".join(loaded))
+"""
+    env = dict(os.environ)
+    package_src = str(PACKAGE_ROOT.parent)
+    env["PYTHONPATH"] = f"{package_src}{os.pathsep}{env.get('PYTHONPATH', '')}"
 
-    wrapper = SyncLLMWrapper(Gateway())
-    real_new_event_loop = legacy_task_runtime.asyncio.new_event_loop
-    calls = 0
-    calls_lock = threading.Lock()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
-    def slow_new_event_loop():
-        nonlocal calls
-        with calls_lock:
-            calls += 1
-        time.sleep(0.05)
-        return real_new_event_loop()
-
-    monkeypatch.setattr(legacy_task_runtime.asyncio, "new_event_loop", slow_new_event_loop)
-    errors: list[BaseException] = []
-
-    def ensure_loop():
-        try:
-            wrapper._ensure_loop()
-        except BaseException as exc:
-            errors.append(exc)
-
-    threads = [threading.Thread(target=ensure_loop) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=2)
-
-    try:
-        assert errors == []
-        assert calls == 1
-    finally:
-        if wrapper._loop and wrapper._loop.is_running():
-            wrapper._loop.call_soon_threadsafe(wrapper._loop.stop)
-        if wrapper._thread:
-            wrapper._thread.join(timeout=2)
+    assert result.returncode == 0, result.stderr or result.stdout
