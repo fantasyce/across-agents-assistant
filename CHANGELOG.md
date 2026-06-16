@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.8.8 - 2026-06-16
+
+### Changed
+
+- Removed the legacy in-app task orchestration runtime from production task API
+  initialization and startup diagnostics; the Swift restore flow now uses the
+  current task API boundary.
+- Updated managed plugin defaults to Across Orchestrator `v0.6.7` and Across
+  Context `v0.7.5`.
+- Integrated the generic, declarative Across Orchestrator agent adapter
+  contract while preserving AAA host compatibility.
+- Strengthened Agent Loop checkpointing, host action-plan handoff, repeated
+  action handling, and dispatch-to-quality ordering.
+
+### Validation
+
+- AAA backend tests passed with 975 tests and 18 skipped.
+- SwiftPM Swift Testing passed with 28 tests.
+- Across Orchestrator tests passed with 89 tests.
+- Across Context checks passed with 63 tests.
+- Packaged UI task-orchestration E2E passed through Computer Use on a temporary
+  packaged app with task `task-c39eff9ae5`, loop `loop-f8fa09a60a`, two serial
+  waves, two generated artifacts, five loop checkpoints, and the
+  `serial_wave_dependencies` quality gate.
+
 ## 0.8.7 - 2026-06-15
 
 ### Changed

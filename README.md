@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.8` | Removes the legacy in-app task runtime from product task APIs, keeps task orchestration on the external Across Orchestrator boundary, adds host-neutral declarative agent adapters, strengthens Agent Loop checkpoint/action-plan handling, and moves managed pins to Context `v0.7.5` and Orchestrator `v0.6.7`. |
 | `0.8.7` | Product-mode runtime boundary hardening across the packaged app, managed Context/Orchestrator discovery, Agent Loop reject/cancel/retry controls, and host artifact metadata for external Orchestrator tasks; managed pins move to Context `v0.7.4` and Orchestrator `v0.6.6`. |
 | `0.8.6` | Further backend boundary split for release verification, Orchestrator protocol/evidence handling, task API models, and task observability; Python runtime support is constrained to `>=3.10,<3.14`, and CI now checks Swift package lock consistency. |
 | `0.8.5` | Structural boundary split for external task planning, Swift task orchestration models, Swift state reducers, and Across Orchestrator strict-dependency planning helper; managed Orchestrator pin moves to `v0.6.5`. |
@@ -186,7 +187,15 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.7` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.8` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.8` release removes the legacy in-app task runtime from product task
+API startup and diagnostics. Task orchestration stays on the external Across
+Orchestrator boundary, now using Orchestrator `v0.6.7` generic declarative agent
+adapters while preserving AAA's existing task UI and restore flow. Agent Loop
+checkpointing, host action-plan handoff, repeated action handling, and
+dispatch-to-quality ordering are strengthened, and managed plugin installs are
+pinned to Across Context `v0.7.5` and Across Orchestrator `v0.6.7`.
 
 The `0.8.7` release closes the product-mode runtime boundary across the
 packaged app, backend plugin discovery, managed plugin installers, and Swift
@@ -446,10 +455,10 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.7
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.4
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.5
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```

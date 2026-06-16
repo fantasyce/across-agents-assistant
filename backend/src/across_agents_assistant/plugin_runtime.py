@@ -38,16 +38,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.4",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.5",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.7",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.6",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.7",
     ),
 )
 

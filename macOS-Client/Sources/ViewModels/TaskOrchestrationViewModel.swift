@@ -754,7 +754,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
     }
 
-    // Issue 46: Restore a task from persistence
+    // Restore a task from persistence through the current task API.
     func restoreTask(_ taskId: String) {
         Task { @MainActor in
             errorMessage = nil
@@ -765,7 +765,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             }
 
             do {
-                let url = baseURL.appendingPathComponent("api/legacy/tasks/\(taskId)/restore")
+                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/restore")
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Accept")

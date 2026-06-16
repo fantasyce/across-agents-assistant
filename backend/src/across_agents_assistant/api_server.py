@@ -24,7 +24,6 @@ logger = logging.getLogger("across_agents_assistant")
 
 # Issue 47: Global flag for graceful shutdown
 _shutdown_requested = False
-_finalization_repairs_inflight: set[str] = set()
 
 
 def _safe_error_message(operation: str) -> str:
@@ -167,7 +166,6 @@ from .external_task_planning import (
 from .task_manager.state import TaskState
 from .task_manager.dispatcher import TaskDispatcher
 from .task_manager.models import TaskType, JobStatus, TaskStatus
-from .legacy_task_runtime import build_legacy_task_orchestrator
 from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
 from .release_verification import (
     RELEASE_VERIFICATION_EXPECTED_FILES,
@@ -185,7 +183,6 @@ from .task_api_models import (
     ReleaseE2ETaskResponse,
     SubTaskInfo,
     TaskDispatchRequest,
-    TaskDispatchResponse,
     TaskInfo,
     TaskPageResponse,
     TaskSummaryInfo,
@@ -389,22 +386,6 @@ def get_task_dispatcher() -> TaskDispatcher:
                                           llm_gateway=gateway)
     return _task_dispatcher
 
-
-_task_orchestrator: Optional[Any] = None
-
-def get_task_orchestrator() -> Any:
-    global _task_orchestrator
-    if _task_orchestrator is None:
-        dispatcher = get_task_dispatcher()
-        gateway = get_gateway()
-        _task_orchestrator = build_legacy_task_orchestrator(
-            state=_task_state,
-            dispatcher=dispatcher,
-            gateway=gateway,
-        )
-    return _task_orchestrator
-
-
 _orchestrator_plugin_manager: Optional[OrchestratorPluginManager] = None
 _orchestrator_plugin_signature: Optional[Tuple[Any, ...]] = None
 
@@ -485,10 +466,12 @@ def _repair_active_tasks_waiting_for_keys(*, reason: str) -> Optional[Dict[str, 
     if not task_ids:
         return None
 
-    orchestrator = get_task_orchestrator()
-    if hasattr(orchestrator, "repair_tasks_waiting_for_keys"):
-        return orchestrator.repair_tasks_waiting_for_keys(reason=reason, task_ids=task_ids)
-    return None
+    return {
+        "task_ids": task_ids,
+        "reason": reason,
+        "repaired": [],
+        "skipped": "external_orchestrator_only",
+    }
 
 
 def _resolve_tool(tool_name: str) -> Optional[Dict[str, Any]]:
@@ -1288,7 +1271,6 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
         "remediation": None if task_runtime_status == "passed" else "Restart the app if task history does not load.",
         "metadata": {
             "known_tasks": known_tasks,
-            "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
             "persistence_initialized": _task_persistence_initialized,
         },
@@ -1353,7 +1335,6 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
             "uptime_sec": max(0, time.time() - _server_started_at),
             "known_tasks": known_tasks,
             "persistence_initialized": _task_persistence_initialized,
-            "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
             "orchestrator_plugin": orchestrator_plugin_summary,
             "ecosystem_plugins": ecosystem_plugins,
@@ -1369,7 +1350,6 @@ async def get_readiness():
     return {
         "backend": "ready",
         "keys": key_readiness,
-        "orchestrator_initialized": _task_orchestrator is not None,
         "dispatcher_initialized": _task_dispatcher is not None,
     }
 
@@ -1734,7 +1714,6 @@ async def get_health():
         "orchestrator": {
             "known_tasks": known_tasks,
             "persistence_initialized": _task_persistence_initialized,
-            "orchestrator_initialized": _task_orchestrator is not None,
             "dispatcher_initialized": _task_dispatcher is not None,
         },
     }
@@ -1779,8 +1758,8 @@ async def save_agent_config(req: AgentConfigRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Keep the legacy agent manager in sync for older execution paths and
-    # persisted installations that still read ``llm_agents.json`` directly.
+    # Keep the mirrored agent manager config in sync for persisted installations
+    # that still read ``llm_agents.json`` directly.
     agent_config = agent_manager.get_agent_config(agent_id) or {}
     if req.executable_path and req.executable_path.strip():
         agent_config["executable_path"] = req.executable_path.strip()
@@ -3576,11 +3555,7 @@ def _compute_task_status(task: "Task", state: TaskState) -> str:
     return "pending"
 
 def _repair_task_dispatch_if_possible(task_id: str, *, reason: str) -> Dict[str, Any]:
-    """Best-effort dispatch repair for polling endpoints.
-
-    Only initializes the orchestrator when the task is already in memory,
-    so DB-only historical reads don't trigger heavyweight orchestrator construction.
-    """
+    """Report that dispatch repair is owned by the external orchestrator."""
     try:
         task = _task_state.get_task(task_id)
         if not task:
@@ -3592,43 +3567,6 @@ def _repair_task_dispatch_if_possible(task_id: str, *, reason: str) -> Dict[str,
                 "reason": reason,
                 "skipped": "task_not_in_memory",
             }
-        orchestrator = get_task_orchestrator()
-        all_terminal = False
-        try:
-            all_terminal = bool(_task_state.is_all_subtasks_terminal(task_id))
-        except Exception:
-            all_terminal = False
-        if (
-            task.status not in {
-                TaskStatus.COMPLETED,
-                TaskStatus.COMPLETED_WITH_FAILURES,
-                TaskStatus.FAILED,
-                TaskStatus.CANCELLED,
-            }
-            and all_terminal
-            and task_id not in _finalization_repairs_inflight
-            and hasattr(orchestrator, "_finalize_task_status")
-        ):
-            _finalization_repairs_inflight.add(task_id)
-
-            def _run_finalize_repair() -> None:
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(orchestrator._finalize_task_status(task_id))
-                except Exception as exc:
-                    logger.debug("Finalization repair skipped for %s after %s: %s", task_id, reason, exc)
-                finally:
-                    _finalization_repairs_inflight.discard(task_id)
-                    loop.close()
-
-            threading.Thread(target=_run_finalize_repair, daemon=True).start()
-        if hasattr(orchestrator, "repair_task_dispatch"):
-            return orchestrator.repair_task_dispatch(
-                task_id,
-                reason=reason,
-                run_wave_acceptance=False,
-            )
     except Exception as exc:
         logger.debug("Dispatch repair skipped for %s after %s: %s", task_id, reason, exc)
     return {
@@ -3637,7 +3575,7 @@ def _repair_task_dispatch_if_possible(task_id: str, *, reason: str) -> Dict[str,
         "waves_approved": [],
         "dispatched_subtasks": [],
         "reason": reason,
-        "skipped": "orchestrator_unavailable",
+        "skipped": "external_orchestrator_only",
     }
 
 
@@ -4569,67 +4507,17 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
         error=task_dict.get('error')
     )
 
-def _legacy_runtime_route_detail(task_id: str, operation: str) -> str:
+def _removed_in_app_orchestration_detail(task_id: str, operation: str) -> str:
     return (
-        f"The historical in-app TaskOrchestrator {operation} endpoint is legacy-only. "
-        f"Use /api/legacy/tasks/{task_id}/{operation} for legacy task maintenance; "
-        "new task orchestration must go through the external Across Orchestrator plugin."
+        f"Task {task_id} cannot run {operation} through the AAA API process. "
+        "Task orchestration is provided by the external Across Orchestrator plugin."
     )
 
 
 @app.post("/api/tasks/{task_id}/dispatch")
 async def dispatch_task(task_id: str, req: TaskDispatchRequest):
-    """Reject implicit use of the historical in-app TaskOrchestrator."""
-    raise HTTPException(status_code=410, detail=_legacy_runtime_route_detail(task_id, "dispatch"))
-
-
-@app.post("/api/legacy/tasks/{task_id}/dispatch", response_model=TaskDispatchResponse)
-async def dispatch_legacy_task(task_id: str, req: TaskDispatchRequest):
-    """Dispatch subtasks for legacy in-app TaskOrchestrator task data."""
-    return await _dispatch_legacy_task(task_id, req)
-
-
-async def _dispatch_legacy_task(task_id: str, req: TaskDispatchRequest) -> TaskDispatchResponse:
-    """Dispatch subtasks to agents for legacy in-app task maintenance."""
-    try:
-        task = _task_state.get_task(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        if req.subtask_ids:
-            subtasks_to_dispatch = [st for st in task.subtasks if st.subtask_id in req.subtask_ids]
-        else:
-            subtasks_to_dispatch = _task_state.get_ready_subtasks(task_id)
-
-        dispatcher = get_task_dispatcher()
-        dispatched = []
-
-        for subtask in subtasks_to_dispatch:
-            job = dispatcher.dispatch_subtask(subtask)
-            if job:
-                dispatched.append(JobInfo(
-                    job_id=job.job_id,
-                    subtask_id=job.subtask_id,
-                    agent_id=job.agent_id,
-                    task_description=job.task_description,
-                    status=job.status.value,
-                    progress=job.progress,
-                    logs=job.logs,
-                    result=job.result,
-                    error=job.error
-                ))
-
-        remaining = len(_task_state.get_ready_subtasks(task_id))
-
-        return TaskDispatchResponse(
-            task_id=task_id,
-            dispatched_jobs=dispatched,
-            ready_remaining=remaining
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise _safe_http_500("Dispatch ready subtasks", e)
+    """Reject in-process task dispatch; external orchestrator owns execution."""
+    raise HTTPException(status_code=410, detail=_removed_in_app_orchestration_detail(task_id, "dispatch"))
 
 @app.get("/api/tasks/page", response_model=TaskPageResponse)
 async def list_task_summaries(limit: int = 50, offset: int = 0):
@@ -5647,7 +5535,7 @@ async def pause_task(task_id: str):
         if _is_external_orchestrator_task(task_id):
             raise HTTPException(
                 status_code=409,
-                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+                detail="Task is owned by external Across Orchestrator; local lifecycle controls are unavailable.",
             )
         success = _task_state.pause_task(task_id)
         if not success:
@@ -5665,7 +5553,7 @@ async def resume_task(task_id: str):
         if _is_external_orchestrator_task(task_id):
             raise HTTPException(
                 status_code=409,
-                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+                detail="Task is owned by external Across Orchestrator; local lifecycle controls are unavailable.",
             )
         success = _task_state.resume_task(task_id)
         if not success:
@@ -5683,7 +5571,7 @@ async def cancel_task(task_id: str):
         if _is_external_orchestrator_task(task_id):
             raise HTTPException(
                 status_code=409,
-                detail="Task is owned by external Across Orchestrator; legacy lifecycle controls are unavailable.",
+                detail="Task is owned by external Across Orchestrator; local lifecycle controls are unavailable.",
             )
         task = _task_state.get_task(task_id)
         if not task:
@@ -5714,48 +5602,8 @@ async def get_resumable_tasks():
 
 @app.post("/api/tasks/{task_id}/restore")
 async def restore_task(task_id: str):
-    """Reject implicit restore through the historical in-app TaskOrchestrator."""
-    raise HTTPException(status_code=410, detail=_legacy_runtime_route_detail(task_id, "restore"))
-
-
-@app.post("/api/legacy/tasks/{task_id}/restore")
-async def restore_legacy_task(task_id: str):
-    """Restore legacy in-app TaskOrchestrator task data."""
-    return await _restore_legacy_task(task_id)
-
-
-async def _restore_legacy_task(task_id: str):
-    """Restore a specific legacy task from persistence to memory.
-
-    Issue 46: Only one task can be running at a time.
-    Returns error if another task is already running.
-    """
-    try:
-        success = _task_state.restore_task(task_id)
-        if not success:
-            # Check if it's because another task is running
-            for tid, t in _task_state._tasks.items():
-                if t.status not in ('completed', 'failed', 'cancelled'):
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"Cannot restore task: task {tid} is already running. Only one task can be active at a time."
-                    )
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found or cannot be restored")
-
-        # Return restored task info
-        task = _task_state.get_task(task_id)
-        if task:
-            orchestrator = get_task_orchestrator()
-            if hasattr(orchestrator, "resume_task"):
-                orchestrator.resume_task(task)
-            if hasattr(orchestrator, "repair_task_dispatch"):
-                orchestrator.repair_task_dispatch(task_id, reason="api_legacy_restore")
-            return _task_to_info(task, _task_state)
-        return {"status": "success", "task_id": task_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise _safe_http_500("Restore task", e)
+    """Reject in-process task restore; external orchestrator owns execution."""
+    raise HTTPException(status_code=410, detail=_removed_in_app_orchestration_detail(task_id, "restore"))
 
 
 if __name__ == "__main__":

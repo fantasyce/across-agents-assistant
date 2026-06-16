@@ -244,7 +244,7 @@ def test_quality_health_blocked_by_wave_gate_not_counted_as_repair_needed():
     assert health["dispatch_repair_needed"] is False
 
 
-def test_repair_task_dispatch_if_possible_initializes_orchestrator_for_memory_task(monkeypatch):
+def test_repair_task_dispatch_if_possible_skips_removed_legacy_runtime(monkeypatch):
     import across_agents_assistant.api_server as srv
 
     from across_agents_assistant.task_manager.models import Task as TaskModel
@@ -255,24 +255,18 @@ def test_repair_task_dispatch_if_possible_initializes_orchestrator_for_memory_ta
         def get_task(self, task_id):
             return task if task_id == task.task_id else None
 
-    class DummyOrchestrator:
-        def repair_task_dispatch(self, task_id, *, reason, run_wave_acceptance=True):
-            assert run_wave_acceptance is False
-            return {
-                "task_id": task_id,
-                "state_created": True,
-                "waves_approved": [],
-                "dispatched_subtasks": ["st-1"],
-                "decomposition_restarted": False,
-                "reason": reason,
-            }
-
     monkeypatch.setattr(srv, "_task_state", DummyState())
-    monkeypatch.setattr(srv, "get_task_orchestrator", lambda: DummyOrchestrator())
 
     result = srv._repair_task_dispatch_if_possible(task.task_id, reason="api_status_poll")
 
-    assert result["dispatched_subtasks"] == ["st-1"]
+    assert result == {
+        "task_id": task.task_id,
+        "state_created": False,
+        "waves_approved": [],
+        "dispatched_subtasks": [],
+        "reason": "api_status_poll",
+        "skipped": "external_orchestrator_only",
+    }
 
 
 def test_quality_health_wave_zero_governance_not_applicable():
@@ -406,11 +400,10 @@ def test_quality_health_detects_terminal_inconsistency():
     assert "failed_task_has_nonterminal_subtasks" in health["terminal_inconsistencies"]
 
 
-def test_update_keys_triggers_waiting_task_repair(monkeypatch):
+def test_update_keys_reports_waiting_tasks_without_legacy_repair(monkeypatch):
     import asyncio
     import across_agents_assistant.api_server as srv
 
-    calls = {"repair": 0}
     waiting_task = Task.new(description="waiting for keys")
     waiting_task.status = TaskStatus.PENDING
     waiting_task.last_owner_decision = {"blocked_reason": "waiting_for_keys"}
@@ -418,12 +411,6 @@ def test_update_keys_triggers_waiting_task_repair(monkeypatch):
     class FakeState:
         def get_all_tasks(self):
             return [waiting_task]
-
-    class DummyOrchestrator:
-        def repair_tasks_waiting_for_keys(self, *, reason, task_ids=None):
-            calls["repair"] += 1
-            assert task_ids == [waiting_task.task_id]
-            return {"repaired": [{"task_id": "task-wait"}], "skipped": []}
 
     class DummyAgentManager:
         def get_agent_config(self, agent_id):
@@ -435,7 +422,6 @@ def test_update_keys_triggers_waiting_task_repair(monkeypatch):
         def save_many(self, values, source):
             return dict(values)
 
-    monkeypatch.setattr(srv, "get_task_orchestrator", lambda: DummyOrchestrator())
     monkeypatch.setattr(srv, "_task_state", FakeState())
     monkeypatch.setattr(srv, "_keychain_cache", {}, raising=False)
     monkeypatch.setattr(srv, "agent_manager", DummyAgentManager())
@@ -444,15 +430,18 @@ def test_update_keys_triggers_waiting_task_repair(monkeypatch):
     response = asyncio.run(srv.update_keys(srv.KeysRequest(deepseek="unit-valid-deepseek-key")))
 
     assert response["status"] == "ok"
-    assert calls["repair"] == 1
-    assert response["repair"]["repaired"][0]["task_id"] == "task-wait"
+    assert response["repair"] == {
+        "task_ids": [waiting_task.task_id],
+        "reason": "keys_synced",
+        "repaired": [],
+        "skipped": "external_orchestrator_only",
+    }
 
 
-def test_check_keys_triggers_waiting_task_repair(monkeypatch):
+def test_check_keys_does_not_initialize_legacy_repair_for_waiting_tasks(monkeypatch):
     import asyncio
     import across_agents_assistant.api_server as srv
 
-    calls = {"repair": 0}
     waiting_task = Task.new(description="waiting for keys")
     waiting_task.status = TaskStatus.PENDING
     waiting_task.last_owner_decision = {"blocked_reason": "waiting_for_keys"}
@@ -461,27 +450,25 @@ def test_check_keys_triggers_waiting_task_repair(monkeypatch):
         def get_all_tasks(self):
             return [waiting_task]
 
-    class DummyOrchestrator:
-        def repair_tasks_waiting_for_keys(self, *, reason, task_ids=None):
-            calls["repair"] += 1
-            assert reason == "keys_checked"
-            assert task_ids == [waiting_task.task_id]
-            return {"repaired": [{"task_id": "task-wait"}], "skipped": []}
-
     class EmptyStore:
         def get(self, provider_id: str):
             return None
 
     monkeypatch.setattr(srv, "_credential_cache", {"deepseek": "unit-valid-deepseek-key"}, raising=False)
     monkeypatch.setattr(srv, "_get_credential_store", lambda: EmptyStore())
-    monkeypatch.setattr(srv, "get_task_orchestrator", lambda: DummyOrchestrator())
     monkeypatch.setattr(srv, "_task_state", FakeState())
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
 
+    repair = srv._repair_active_tasks_waiting_for_keys(reason="keys_checked")
     response = asyncio.run(srv.check_keys())
 
-    assert calls["repair"] == 1
+    assert repair == {
+        "task_ids": [waiting_task.task_id],
+        "reason": "keys_checked",
+        "repaired": [],
+        "skipped": "external_orchestrator_only",
+    }
     assert any(item.provider_id == "deepseek" and item.status == "configured" for item in response.results)
 
 
@@ -497,12 +484,8 @@ def test_check_keys_does_not_initialize_orchestrator_without_active_waiting_task
         def get(self, provider_id: str):
             return None
 
-    def fail_get_task_orchestrator():
-        raise AssertionError("key check must not initialize task orchestrator without active waiting tasks")
-
     monkeypatch.setattr(srv, "_credential_cache", {"deepseek": "unit-valid-deepseek-key"}, raising=False)
     monkeypatch.setattr(srv, "_get_credential_store", lambda: EmptyStore())
-    monkeypatch.setattr(srv, "get_task_orchestrator", fail_get_task_orchestrator)
     monkeypatch.setattr(srv, "_task_state", FakeState())
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
