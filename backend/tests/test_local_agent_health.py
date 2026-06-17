@@ -9,9 +9,6 @@ from across_agents_assistant.agent_ids import normalize_agent_id
 from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
 from across_agents_assistant import local_agent_health
 from across_agents_assistant.api_server import app
-from across_agents_assistant.task_manager.dispatcher import TaskDispatcher
-from across_agents_assistant.task_manager.orchestration.owner_agent import OwnerAgent
-from across_agents_assistant.task_manager.state import TaskState
 
 
 ROOT = local_agent_health.Path(__file__).resolve().parents[2]
@@ -69,12 +66,9 @@ def test_deferred_local_ide_integrations_leave_no_app_surface():
         ROOT / "README.md",
         ROOT / "THIRD_PARTY_NOTICES.md",
         ROOT / "AGENT_ICON_WORKFLOW.md",
-        ROOT / "backend/src/across_agents_assistant/app.py",
         ROOT / "backend/src/across_agents_assistant/assets/web/index.html",
         ROOT / "backend/src/across_agents_assistant/local_agent/client.py",
-        ROOT / "backend/src/across_agents_assistant/task_manager/task_decomposer.py",
-        ROOT / "backend/src/across_agents_assistant/task_manager/orchestration/owner_agent.py",
-        ROOT / "backend/src/across_agents_assistant/task_manager/orchestration/contract_acceptance.py",
+        ROOT / "backend/src/across_agents_assistant/task_review/contract_acceptance.py",
         ROOT / "macOS-Client/Sources/Models/AgentCapabilityModels.swift",
         ROOT / "macOS-Client/Sources/Models/AgentConfig.swift",
         ROOT / "macOS-Client/Sources/ViewModels/SessionViewModel.swift",
@@ -343,61 +337,3 @@ def test_missing_agent_does_not_return_fake_candidate_paths(monkeypatch):
     assert detected["openclaw"]["status"] == "not_found"
     assert detected["openclaw"]["path"] is None
     assert detected["openclaw"]["candidate_paths"] == []
-
-
-def test_dispatcher_valid_agents_excludes_unresponsive_local_agent(monkeypatch):
-    local_agent_health.clear_local_agent_health_cache()
-    monkeypatch.setattr(
-        local_agent_health,
-        "detect_local_agents",
-        lambda: {
-            "openclaw": {
-                "found": True,
-                "available": False,
-                "status": "unavailable",
-                "path": "/usr/local/bin/openclaw",
-                "version": "Local Agent 1.0",
-            },
-            "hermes": {
-                "found": True,
-                "available": True,
-                "status": "available",
-                "path": "/usr/local/bin/hermes",
-                "version": "Hermes 1.0",
-            },
-            "claude": {
-                "found": False,
-                "available": False,
-                "status": "not_found",
-                "path": None,
-                "version": None,
-            },
-            "codex": {
-                "found": True,
-                "available": True,
-                "status": "available",
-                "path": "/usr/local/bin/codex",
-                "version": "codex-cli 1.0",
-            },
-        },
-    )
-
-    dispatcher = TaskDispatcher(TaskState(), local_agent_client=object())
-
-    assert "openclaw" not in dispatcher._get_valid_agents()
-    assert "hermes" in dispatcher._get_valid_agents()
-
-
-def test_owner_agent_available_agents_excludes_unresponsive_local_agent(monkeypatch):
-    local_agent_health.clear_local_agent_health_cache()
-    monkeypatch.setattr(
-        local_agent_health,
-        "is_local_agent_available",
-        lambda agent_id: agent_id == "hermes",
-    )
-
-    owner = OwnerAgent(lambda *_args, **_kwargs: None, TaskState())
-
-    assert owner._is_agent_available("hermes") is True
-    assert owner._is_agent_available("openclaw") is False
-    assert owner._is_agent_available("codex") is False

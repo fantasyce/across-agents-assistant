@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import sys
 from typing import Any, Optional
 
 
@@ -53,33 +54,78 @@ def deliverables_for_external_task(req: ExternalTaskPlanningRequest) -> list[str
 
 
 def external_owner_agent(req: ExternalTaskPlanningRequest) -> str:
-    owner = str(req.owner_agent or "").strip()
+    owner = _normalize_external_agent_id(req.owner_agent)
     if owner and owner != "auto":
         return owner
     for agent in req.allowed_subtask_agents or []:
-        value = str(agent or "").strip()
+        value = _normalize_external_agent_id(agent)
         if value:
             return value
     return "demo"
 
 
 def external_subtask_agents(req: ExternalTaskPlanningRequest) -> list[str]:
-    agents = [str(agent).strip() for agent in req.allowed_subtask_agents or [] if str(agent).strip()]
+    agents = [
+        value
+        for agent in req.allowed_subtask_agents or []
+        if (value := _normalize_external_agent_id(agent))
+    ]
     if not agents:
         owner = external_owner_agent(req)
         agents = [owner] if owner else ["demo"]
     return agents or ["demo"]
 
 
+def agent_adapters_for_external_task(req: ExternalTaskPlanningRequest) -> dict[str, dict[str, Any]]:
+    """Declare AAA host execution adapters for non-demo external task agents."""
+    agents: list[str] = []
+    owner = external_owner_agent(req)
+    if owner:
+        agents.append(owner)
+    agents.extend(external_subtask_agents(req))
+
+    specs: dict[str, dict[str, Any]] = {}
+    for agent in agents:
+        agent_id = _normalize_external_agent_id(agent)
+        if not agent_id or agent_id == "demo" or agent_id in specs:
+            continue
+        specs[agent_id] = {
+            "type": "command",
+            "command": host_agent_adapter_command(agent_id),
+            "description": "AAA host-provided agent execution adapter.",
+        }
+    return specs
+
+
+def host_agent_adapter_command(agent_id: str) -> list[str]:
+    clean_agent_id = _normalize_external_agent_id(agent_id) or str(agent_id or "").strip()
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            "orchestrator-agent-adapter",
+            "--agent",
+            clean_agent_id,
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "across_agents_assistant.orchestrator_agent_adapter",
+        "--agent",
+        clean_agent_id,
+    ]
+
+
+def _normalize_external_agent_id(agent_id: Any) -> str:
+    return str(agent_id or "").strip().lower()
+
+
 def planned_subtasks_for_external_task(req: ExternalTaskPlanningRequest, deliverables: list[str]) -> list[dict[str, Any]]:
     """Build an explicit serial plan for the external generic runtime.
 
     The generic Across Orchestrator sidecar owns orchestration state and
-    evidence, but not host-native agent execution. Its executable adapter is
-    therefore usually `demo`; the fixed release E2E path remains the multi-agent
-    quality scenario. This helper preserves user-authored Wave N structure so
-    the UI can verify dependency/wave behavior instead of collapsing to a
-    single README.
+    evidence. AAA declares host-native agent execution through explicit command
+    adapters. This helper preserves user-authored Wave N structure so the UI can
+    verify dependency/wave behavior instead of collapsing to a single README.
     """
     if not req.strict_dependency:
         return []

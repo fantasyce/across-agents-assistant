@@ -139,8 +139,8 @@ from .harness import (
     MAX_AGENT_LOOP_ITERATIONS,
     post_process_llm_response,
     execute_tool_with_retry,
-    AgentLoopState,
-    AgentLoopStateMachine,
+    ChatToolLoopState,
+    ChatToolLoopStateMachine,
     OutputClassification,
 )
 
@@ -157,16 +157,16 @@ from .attachments import (
 )
 from .external_task_planning import (
     ExternalTaskPlanningRequest,
+    agent_adapters_for_external_task,
     deliverables_for_external_task,
     external_owner_agent,
     planned_subtasks_for_external_task,
 )
 
 # Task Manager imports
-from .task_manager.state import TaskState
-from .task_manager.dispatcher import TaskDispatcher
-from .task_manager.models import TaskType, JobStatus, TaskStatus
-from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
+from .legacy_task_history.state import TaskState
+from .legacy_task_history.models import TaskType, JobStatus, TaskStatus
+from .task_review.release_evaluation import build_release_evaluation_summary
 from .release_verification import (
     RELEASE_VERIFICATION_EXPECTED_FILES,
     RELEASE_VERIFICATION_REQUIRED_PROBES,
@@ -194,7 +194,7 @@ from .task_api_observability import (
     expected_files_from_payload as _expected_files_from_payload,
     probe_types_from_payload as _probe_types_from_payload,
 )
-from .task_manager.orchestration.release_e2e import (
+from .task_review.release_e2e import (
     RELEASE_E2E_SCENARIO_ID,
     build_release_e2e_scenarios,
     build_release_e2e_task_request,
@@ -367,24 +367,6 @@ def _cached_key_is_configured(provider_id: str) -> bool:
     """Check whether the in-memory cache holds a usable key for *provider_id*."""
     value = _credential_cache.get(provider_id)
     return _is_usable_api_key(value)
-
-_task_dispatcher: Optional[TaskDispatcher] = None
-
-def get_task_dispatcher() -> TaskDispatcher:
-    global _task_dispatcher
-    if _task_dispatcher is None:
-        from .local_agent.client import UniversalAgentClient
-        from .agent_manager import AgentManager
-        from .persistence.permissions import ToolPermissionStore
-        from .persistence.service import DEFAULT_DB_PATH
-        agent_manager = AgentManager()
-        local_agent_client = UniversalAgentClient(agent_manager)
-        perm_store = ToolPermissionStore(DEFAULT_DB_PATH)
-        gateway = get_gateway()
-        _task_dispatcher = TaskDispatcher(_task_state, local_agent_client,
-                                          permission_store=perm_store,
-                                          llm_gateway=gateway)
-    return _task_dispatcher
 
 _orchestrator_plugin_manager: Optional[OrchestratorPluginManager] = None
 _orchestrator_plugin_signature: Optional[Tuple[Any, ...]] = None
@@ -1261,7 +1243,7 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
     task_runtime_status = "passed" if _task_persistence_initialized else "warning"
     checks.append({
         "id": "task_runtime",
-        "title": "Task runtime",
+        "title": "Task history",
         "status": task_runtime_status,
         "detail": (
             "Task persistence is initialized."
@@ -1271,7 +1253,6 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
         "remediation": None if task_runtime_status == "passed" else "Restart the app if task history does not load.",
         "metadata": {
             "known_tasks": known_tasks,
-            "dispatcher_initialized": _task_dispatcher is not None,
             "persistence_initialized": _task_persistence_initialized,
         },
     })
@@ -1335,7 +1316,6 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
             "uptime_sec": max(0, time.time() - _server_started_at),
             "known_tasks": known_tasks,
             "persistence_initialized": _task_persistence_initialized,
-            "dispatcher_initialized": _task_dispatcher is not None,
             "orchestrator_plugin": orchestrator_plugin_summary,
             "ecosystem_plugins": ecosystem_plugins,
         },
@@ -1350,7 +1330,7 @@ async def get_readiness():
     return {
         "backend": "ready",
         "keys": key_readiness,
-        "dispatcher_initialized": _task_dispatcher is not None,
+        "persistence_initialized": _task_persistence_initialized,
     }
 
 
@@ -1714,7 +1694,6 @@ async def get_health():
         "orchestrator": {
             "known_tasks": known_tasks,
             "persistence_initialized": _task_persistence_initialized,
-            "dispatcher_initialized": _task_dispatcher is not None,
         },
     }
 
@@ -2756,7 +2735,7 @@ async def chat_endpoint(req: ChatRequest):
         if ctx_parts:
             system_msg += "\n\n【系统上下文】\n" + "\n".join(ctx_parts)
 
-    return await _run_agent_loop(
+    return await _run_chat_tool_loop(
         req.session_id,
         req.agent_id,
         system_prompt=system_msg,
@@ -2810,12 +2789,12 @@ async def _handle_local_chat(req: ChatRequest, image_context: str = "") -> ChatR
     )
 
 
-async def _run_agent_loop(
+async def _run_chat_tool_loop(
     session_id: str,
     agent_id: str,
     system_prompt: Optional[str] = None,
     iteration_count: int = 0,
-    state_machine: AgentLoopStateMachine = None,
+    state_machine: ChatToolLoopStateMachine = None,
     current_attachments: Optional[List[ChatAttachment]] = None,
     current_image_context: str = "",
 ) -> ChatResponse:
@@ -2823,24 +2802,24 @@ async def _run_agent_loop(
 
     # Initialize state machine on first entry
     if state_machine is None:
-        state_machine = AgentLoopStateMachine(session_id=session_id, agent_id=agent_id)
+        state_machine = ChatToolLoopStateMachine(session_id=session_id, agent_id=agent_id)
 
     # Iteration guard
     if iteration_count >= MAX_AGENT_LOOP_ITERATIONS:
         logger.warning(
-            "Agent loop iteration limit reached (%d) for session=%s agent=%s",
+            "Chat tool loop iteration limit reached (%d) for session=%s agent=%s",
             MAX_AGENT_LOOP_ITERATIONS,
             session_id,
             agent_id,
         )
-        state_machine.transition(AgentLoopState.DONE)
+        state_machine.transition(ChatToolLoopState.DONE)
         return ChatResponse(
             text="任务执行步数超出限制，请简化请求或检查工具逻辑",
             session_id=session_id,
         )
 
     logger.debug(
-        "Agent loop iteration %d/%d for session=%s agent=%s",
+        "Chat tool loop iteration %d/%d for session=%s agent=%s",
         iteration_count,
         MAX_AGENT_LOOP_ITERATIONS,
         session_id,
@@ -2950,7 +2929,7 @@ async def _run_agent_loop(
         logger.debug(f"  [{i}] role={m['role']}{tc_info}{tc_id_info}")
 
     # --- HARNESS: State transition to THINKING ---
-    state_machine.transition(AgentLoopState.THINKING)
+    state_machine.transition(ChatToolLoopState.THINKING)
 
     reply = await agent_client.chat(agent_id, valid_messages, all_schemas)
 
@@ -2975,7 +2954,7 @@ async def _run_agent_loop(
             if processed.classification == OutputClassification.NORMAL:
                 break
         else:
-            state_machine.transition(AgentLoopState.DONE)
+            state_machine.transition(ChatToolLoopState.DONE)
             return ChatResponse(
                 text="模型输出异常，请重试",
                 session_id=session_id,
@@ -2988,7 +2967,7 @@ async def _run_agent_loop(
             session_id,
             agent_id,
         )
-        state_machine.transition(AgentLoopState.DONE)
+        state_machine.transition(ChatToolLoopState.DONE)
         return ChatResponse(
             text="任务执行步数超出限制，请简化请求",
             session_id=session_id,
@@ -3010,7 +2989,7 @@ async def _run_agent_loop(
             if processed.classification == OutputClassification.NORMAL:
                 break
         else:
-            state_machine.transition(AgentLoopState.DONE)
+            state_machine.transition(ChatToolLoopState.DONE)
             return ChatResponse(
                 text="模型未返回有效内容，请重试",
                 session_id=session_id,
@@ -3040,7 +3019,7 @@ async def _run_agent_loop(
         if _is_tool_unavailable(tool_name):
             err_msg = f"工具 `{tool_name}` 已在工具权限中设为不可用。"
             persistence.add_message(session_id=session_id, role="tool", content=err_msg, tool_call_id=tool_call_id)
-            return await _run_agent_loop(
+            return await _run_chat_tool_loop(
                 session_id, agent_id,
                 system_prompt=system_prompt,
                 iteration_count=iteration_count + 1,
@@ -3054,7 +3033,7 @@ async def _run_agent_loop(
             persistence.add_audit_log(session_id, tool_name, tool_args, "medium", "auto_approve")
 
             # --- HARNESS: State transition to TOOL_EXECUTING ---
-            state_machine.transition(AgentLoopState.TOOL_EXECUTING)
+            state_machine.transition(ChatToolLoopState.TOOL_EXECUTING)
 
             try:
                 result_text = await execute_tool_with_retry(
@@ -3066,8 +3045,8 @@ async def _run_agent_loop(
             except Exception as e:
                 logger.error("Tool execution failed after retries: %s", e)
                 result_text = f"Error executing tool: {str(e)}"
-                state_machine.transition(AgentLoopState.ERROR_CLASSIFY)
-                state_machine.transition(AgentLoopState.DONE)
+                state_machine.transition(ChatToolLoopState.ERROR_CLASSIFY)
+                state_machine.transition(ChatToolLoopState.DONE)
 
             persistence.add_message(
                 session_id=session_id,
@@ -3076,7 +3055,7 @@ async def _run_agent_loop(
                 tool_call_id=tool_call_id,
             )
 
-            return await _run_agent_loop(
+            return await _run_chat_tool_loop(
                 session_id, agent_id,
                 system_prompt=system_prompt,
                 iteration_count=iteration_count + 1,
@@ -3090,7 +3069,7 @@ async def _run_agent_loop(
         if not matched_schema:
             err_msg = f"错误：工具 `{tool_name}` 不存在。请从已注册的工具中选择：{', '.join(t['name'] for t in all_schemas[:30])}"
             persistence.add_message(session_id=session_id, role="tool", content=err_msg, tool_call_id=tool_call_id)
-            return await _run_agent_loop(
+            return await _run_chat_tool_loop(
                 session_id, agent_id,
                 system_prompt=system_prompt,
                 iteration_count=iteration_count + 1,
@@ -3100,7 +3079,7 @@ async def _run_agent_loop(
             )
 
         # --- HARNESS: State transition to WAIT_APPROVAL ---
-        state_machine.transition(AgentLoopState.WAIT_APPROVAL)
+        state_machine.transition(ChatToolLoopState.WAIT_APPROVAL)
 
         return ChatResponse(
             text=f"请求调用工具：{tool_name}",
@@ -3122,7 +3101,7 @@ async def _run_agent_loop(
             session_id,
             agent_id,
         )
-        state_machine.transition(AgentLoopState.DONE)
+        state_machine.transition(ChatToolLoopState.DONE)
         return ChatResponse(text=reply_text, session_id=session_id)
 
     persistence.add_message(session_id=session_id, role="assistant", content=reply_text)
@@ -3134,7 +3113,7 @@ async def _run_agent_loop(
         )
 
     # --- HARNESS: Final state transition to DONE ---
-    state_machine.transition(AgentLoopState.DONE)
+    state_machine.transition(ChatToolLoopState.DONE)
 
     return ChatResponse(text=reply_text, session_id=session_id)
 
@@ -3439,7 +3418,7 @@ def _load_task_info_read_only(task_id: str) -> "TaskInfo":
 
 def _subtask_to_info(st: "SubTask", state: Optional[TaskState] = None, task_id: Optional[str] = None) -> "SubTaskInfo":
     """Convert a SubTask to SubTaskInfo."""
-    from .task_manager.models import SubTask as SubTaskModel
+    from .legacy_task_history.models import SubTask as SubTaskModel
     observability: Dict[str, Any] = {}
     if state is not None and task_id:
         observability = state.get_subtask_observability(task_id, st.subtask_id)
@@ -3466,7 +3445,7 @@ def _subtask_to_info(st: "SubTask", state: Optional[TaskState] = None, task_id: 
 
 def _wave_to_info(wave: "Wave", state: Optional[TaskState] = None, task_id: Optional[str] = None) -> "WaveInfo":
     """Convert a Wave to WaveInfo."""
-    from .task_manager.models import Wave as WaveModel
+    from .legacy_task_history.models import Wave as WaveModel
     return WaveInfo(
         wave_id=wave.wave_id,
         wave_number=wave.wave_number,
@@ -3502,7 +3481,7 @@ def _compute_task_status(task: "Task", state: TaskState) -> str:
       - ``paused``: task has been explicitly paused
       - ``pending``: no subtask is actively running (waiting for dispatch or dependencies)
     """
-    from .task_manager.models import JobStatus, TaskStatus
+    from .legacy_task_history.models import JobStatus, TaskStatus
     if task.status == TaskStatus.COMPLETED:
         return "completed"
     if task.status == TaskStatus.FAILED:
@@ -3514,7 +3493,7 @@ def _compute_task_status(task: "Task", state: TaskState) -> str:
     if task.status == TaskStatus.DECOMPOSING:
         return "decomposing"
     if not task.subtasks:
-        return "created" if task.status == TaskStatus.CREATED else "failed"
+        return "created" if task.status == TaskStatus.PENDING else "failed"
     delivery_contract = None
     try:
         delivery_contract = state.get_delivery_contract(task.task_id)
@@ -3726,7 +3705,7 @@ def _delivery_quality_from_contract_for_task(task: "Task", state: TaskState) -> 
     except Exception:
         artifacts = []
     try:
-        from .task_manager.orchestration.contract_acceptance import run_delivery_contract_acceptance
+        from .task_review.contract_acceptance import run_delivery_contract_acceptance
         return run_delivery_contract_acceptance(task, contract, artifacts, run_probes=False)
     except Exception as exc:
         logger.warning("Failed to derive delivery quality for %s from ODC: %s", task.task_id, exc)
@@ -3743,7 +3722,7 @@ def _delivery_quality_from_contract_for_db(task_dict: Dict[str, Any]) -> Optiona
         project_dir = task_dict.get("project_dir") or contract.get("project_dir")
 
     try:
-        from .task_manager.orchestration.contract_acceptance import run_delivery_contract_acceptance
+        from .task_review.contract_acceptance import run_delivery_contract_acceptance
         return run_delivery_contract_acceptance(
             _TaskView(),
             contract,
@@ -3987,8 +3966,8 @@ def _build_quality_health(
 
 def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
     """Convert a Task to TaskInfo with its subtasks and waves."""
-    from .task_manager.models import JobStatus
-    from .task_manager.orchestration.delivery_report import build_delivery_report
+    from .legacy_task_history.models import JobStatus
+    from .task_review.delivery_report import build_delivery_report
     status = _compute_task_status(task, state)
     if status == "completed_with_failures":
         failed_subtasks = [st.subtask_id for st in task.subtasks if st.status in (JobStatus.FAILED, JobStatus.CANCELLED)]
@@ -4090,7 +4069,7 @@ def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
         description=task.description,
         status=status,
         task_types=list(getattr(task, "task_types", []) or []),
-        delivery_mode=getattr(task, "delivery_mode", "legacy") or "legacy",
+        delivery_mode=getattr(task, "delivery_mode", "external") or "external",
         owner_delivery_contract=owner_delivery_contract,
         owner_agent=task.owner_agent,
         allowed_subtask_agents=task.allowed_subtask_agents,
@@ -4359,7 +4338,7 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
 
     This ensures fix subtasks are included with full description and agent info.
     """
-    from .task_manager.models import JobStatus
+    from .legacy_task_history.models import JobStatus
 
     task_id = task_dict['task_id']
     status = task_dict.get('status', 'created')
@@ -4451,7 +4430,7 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
         progress,
     )
     from types import SimpleNamespace
-    from .task_manager.orchestration.delivery_report import build_delivery_report
+    from .task_review.delivery_report import build_delivery_report
     task_like = SimpleNamespace(
         task_id=task_id,
         status=status,
@@ -4472,7 +4451,7 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
         description=task_dict.get('description', ''),
         status=status,
         task_types=task_dict.get("task_types") or [],
-        delivery_mode=task_dict.get("delivery_mode") or "legacy",
+        delivery_mode=task_dict.get("delivery_mode") or "external",
         owner_delivery_contract=task_dict.get("owner_delivery_contract"),
         owner_agent=task_dict.get('owner_agent'),
         allowed_subtask_agents=task_dict.get('allowed_subtask_agents') or [],
@@ -4565,7 +4544,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                 updated_at=task.updated_at,
                 project_dir=task.project_dir,
                 owner_agent=task.owner_agent,
-                delivery_mode=getattr(task, "delivery_mode", "legacy") or "legacy",
+                delivery_mode=getattr(task, "delivery_mode", "external") or "external",
             )
 
         persistence = getattr(_task_state, "_persistence", None)
@@ -4627,7 +4606,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                 updated_at=float(row.get("updated_at") or 0),
                 project_dir=row.get("project_dir"),
                 owner_agent=row.get("owner_agent"),
-                delivery_mode=row.get("delivery_mode") or "legacy",
+                delivery_mode=row.get("delivery_mode") or "external",
             ))
 
         if not persistence:
@@ -4861,8 +4840,7 @@ async def cancel_job(task_id: str, job_id: str):
         if job.subtask_id not in subtask_ids:
             raise HTTPException(status_code=400, detail=f"Job {job_id} does not belong to task {task_id}")
 
-        dispatcher = get_task_dispatcher()
-        success = dispatcher.cancel_job(job_id)
+        success = _task_state.cancel_job(job_id, error="Cancelled by user")
         if not success:
             raise HTTPException(status_code=400, detail=f"Cannot cancel job {job_id}")
         return {"status": "success", "job_id": job_id}
@@ -4916,6 +4894,10 @@ def _planned_subtasks_for_external_task(req: AutoTaskRequest, deliverables: List
     return planned_subtasks_for_external_task(_external_task_planning_request(req), deliverables)
 
 
+def _agent_adapters_for_external_task(req: AutoTaskRequest) -> Dict[str, Dict[str, Any]]:
+    return agent_adapters_for_external_task(_external_task_planning_request(req))
+
+
 def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -> HTTPException:
     return HTTPException(
         status_code=503,
@@ -4945,6 +4927,7 @@ async def _submit_auto_orchestrated_task(
                 subtasks=planned_subtasks,
                 strict_dependency=req.strict_dependency,
                 task_types=req.task_types,
+                agent_adapters=_agent_adapters_for_external_task(req),
             )
             return AutoTaskResponse(
                 task_id=str(task.get("task_id") or ""),
@@ -5014,7 +4997,7 @@ async def create_release_e2e_task(req: ReleaseE2ETaskRequest):
 async def auto_task(req: AutoTaskRequest):
     """Auto-orchestrated task submission.
 
-    Creates a task, decomposes it via the OwnerAgent, and dispatches ready subtasks automatically.
+    Creates an external Across Orchestrator task and returns its host-visible task id.
 
     Before submission, checks that LLM providers have API keys configured.
     If keys are missing, returns a clear 412 error listing the missing providers
@@ -5046,7 +5029,7 @@ async def get_task_status(task_id: str):
     always has full information including fix subtasks.
     """
     try:
-        from .task_manager.orchestration.delivery_report import build_delivery_report
+        from .task_review.delivery_report import build_delivery_report
         if _is_external_orchestrator_task(task_id):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
@@ -5189,7 +5172,7 @@ async def get_task_status(task_id: str):
             "progress": progress,
             "status": status,
             "task_types": list(getattr(task, "task_types", []) or []),
-            "delivery_mode": getattr(task, "delivery_mode", "legacy") or "legacy",
+            "delivery_mode": getattr(task, "delivery_mode", "external") or "external",
             "owner_delivery_contract": _task_state.get_delivery_contract(task_id) if _task_state else None,
             "owner_session_id": getattr(task, "owner_session_id", None),
             "last_owner_decision": getattr(task, "last_owner_decision", None),
@@ -5233,7 +5216,7 @@ async def get_task_quality_benchmark(
 ):
     """Evaluate a task status payload against release-quality benchmark gates."""
     from . import __version__
-    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+    from .task_review.quality_benchmark import evaluate_delivery_benchmark
 
     if _is_external_orchestrator_task(task_id):
         evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
@@ -5275,7 +5258,7 @@ async def get_task_evidence_bundle(
 ):
     """Return a read-only, sanitized audit bundle for a task delivery."""
     from . import __version__
-    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+    from .task_review.quality_benchmark import evaluate_delivery_benchmark
 
     if _is_external_orchestrator_task(task_id):
         evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
@@ -5312,7 +5295,7 @@ async def get_task_evidence_bundle(
         "description": sanitized.get("description"),
         "task_status": sanitized.get("status"),
         "task_types": sanitized.get("task_types") or [],
-        "delivery_mode": sanitized.get("delivery_mode") or "legacy",
+        "delivery_mode": sanitized.get("delivery_mode") or "external",
         "project_dir": sanitized.get("project_dir"),
         "owner_agent": sanitized.get("owner_agent"),
         "allowed_subtask_agents": sanitized.get("allowed_subtask_agents") or [],
@@ -5474,7 +5457,7 @@ async def task_stream(task_id: str):
 
                     current_task = _task_state.get_task(task_id)
                     if current_task:
-                        from .task_manager.models import TaskStatus
+                        from .legacy_task_history.models import TaskStatus
                         if _task_state.is_all_subtasks_completed(task_id):
                             current_task.status = TaskStatus.COMPLETED
                         elif _task_state.is_all_subtasks_terminal(task_id):

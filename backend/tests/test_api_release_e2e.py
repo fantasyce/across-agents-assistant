@@ -9,7 +9,7 @@ os.makedirs(os.path.dirname(os.environ["ACROSS_AGENTS_DB_PATH"]), exist_ok=True)
 from fastapi.testclient import TestClient
 
 from across_agents_assistant.api_server import app
-from across_agents_assistant.task_manager.orchestration.release_e2e import (
+from across_agents_assistant.task_review.release_e2e import (
     RELEASE_E2E_SCENARIO_ID,
 )
 

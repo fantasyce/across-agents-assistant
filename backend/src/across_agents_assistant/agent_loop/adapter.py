@@ -1,7 +1,7 @@
 """
-LLM Gateway Adapter for AgentLoop.
+LLM Gateway Adapter for ChatToolLoop.
 
-Bridges the LLMGateway interface with AgentLoop's expected interface.
+Bridges the LLMGateway interface with ChatToolLoop's expected interface.
 """
 import copy
 import json
@@ -15,9 +15,9 @@ logger = logging.getLogger("across_agents_assistant.agent_loop.adapter")
 
 class LLMGatewayAdapter:
     """
-    Adapter that bridges LLMGateway with AgentLoop.
+    Adapter that bridges LLMGateway with ChatToolLoop.
 
-    AgentLoop expects: llm.chat(messages=[...], tools=[...])
+    ChatToolLoop expects: llm.chat(messages=[...], tools=[...])
     LLMGateway provides: gateway.chat(message=..., system_prompt=..., context=...)
     """
 
@@ -38,7 +38,7 @@ class LLMGatewayAdapter:
 
     async def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """
-        Bridge method that converts AgentLoop's interface to LLMGateway's interface.
+        Bridge method that converts ChatToolLoop's interface to LLMGateway's interface.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -74,7 +74,7 @@ class LLMGatewayAdapter:
                 max_tokens=8192,
             )
 
-            # Convert LLMResponse to AgentLoop format
+            # Convert LLMResponse to ChatToolLoop format
             result = {
                 'content': response.text,
                 'tool_calls': [],
@@ -121,7 +121,7 @@ class LLMGatewayAdapter:
             }
 
     def _parse_tool_calls(self, tool_calls: List[Dict]) -> List[Dict]:
-        """Parse tool calls from LLM response to AgentLoop format."""
+        """Parse tool calls from LLM response to ChatToolLoop format."""
         parsed = []
         for tc in tool_calls:
             if isinstance(tc, dict):

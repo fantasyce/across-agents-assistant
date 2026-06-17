@@ -1,11 +1,10 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from across_agents_assistant.task_manager.models import (
+from across_agents_assistant.legacy_task_history.models import (
     Task, SubTask, Job, JobStatus, TaskType
 )
-from across_agents_assistant.task_manager.state import TaskState
-from across_agents_assistant.task_manager.dispatcher import TaskDispatcher
+from across_agents_assistant.legacy_task_history.state import TaskState
 
 
 class FakeAgentBridge:

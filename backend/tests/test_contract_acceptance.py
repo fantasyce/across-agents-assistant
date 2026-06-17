@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from across_agents_assistant.task_manager.orchestration import contract_acceptance
-from across_agents_assistant.task_manager.orchestration.contract_acceptance import run_delivery_contract_acceptance
+from across_agents_assistant.task_review import contract_acceptance
+from across_agents_assistant.task_review.contract_acceptance import run_delivery_contract_acceptance
 
 
 class FakeTask:

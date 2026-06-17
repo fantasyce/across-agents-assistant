@@ -17,8 +17,6 @@ from across_agents_assistant.native_agent_skills import (
     NativeSkillManager,
     NativeSkillRequest,
 )
-from across_agents_assistant.task_manager.orchestration.owner_agent import OwnerAgent
-from across_agents_assistant.task_manager.state import TaskState
 
 
 class RecordingRunner:
@@ -40,31 +38,6 @@ class FailingRunner:
             "RuntimeError: private native skill failure",
             status_code=502,
         )
-
-
-class MockLLMResponse:
-    def __init__(self, text: str):
-        self.text = text
-
-
-class MockLLMGateway:
-    def __init__(self, response_text: str):
-        self._response_text = response_text
-
-    def __call__(self, system_prompt: str, message: str, temperature: float):
-        return MockLLMResponse(self._response_text)
-
-
-def _local_agents():
-    return [
-        {"id": "claude", "name": "Claude Code", "characteristics": "architecture"},
-        {"id": "hermes", "name": "Hermes", "characteristics": "frontend"},
-        {"id": "openclaw", "name": "OpenClaw", "characteristics": "general"},
-    ]
-
-
-def _business_subtasks(task):
-    return [st for st in task.subtasks if not st.subtask_id.endswith("-decompose")]
 
 
 def test_claude_adapter_creates_lists_and_removes_managed_user_skill(tmp_path):
@@ -293,7 +266,18 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
+        def submit_task(
+            self,
+            *,
+            goal,
+            project_dir,
+            deliverables=None,
+            agent=None,
+            subtasks=None,
+            strict_dependency=False,
+            task_types=None,
+            agent_adapters=None,
+        ):
             captured["goal"] = goal
             captured["project_dir"] = project_dir
             captured["deliverables"] = deliverables
@@ -301,6 +285,7 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
             captured["subtasks"] = subtasks
             captured["strict_dependency"] = strict_dependency
             captured["task_types"] = task_types
+            captured["agent_adapters"] = agent_adapters
             return {"task_id": "task-native-skills", "status": "pending"}
 
     monkeypatch.setattr(
@@ -335,59 +320,12 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
         "subtasks": [],
         "strict_dependency": True,
         "task_types": ["functional"],
-    }
-
-
-def test_native_skill_context_from_cli_adapter_routes_owner_agent(monkeypatch, tmp_path):
-    runner = RecordingRunner(
-        {
-            ("hermes", "skills", "list", "--source", "all"): "Keyboard Accessibility Review    enabled\n",
-            ("openclaw", "skills", "list", "--json"): '{"skills":[]}',
-        }
-    )
-    manager = NativeSkillManager(
-        command_runner=runner,
-        claude_user_skills_dir=tmp_path / "claude-skills",
-    )
-    monkeypatch.setattr(
-        "across_agents_assistant.api_server.get_native_skill_manager",
-        lambda: manager,
-    )
-
-    capability_context = api_server._append_native_skill_context(
-        {},
-        ["claude", "hermes", "openclaw"],
-        "Review keyboard accessibility and screen reader behavior for the settings workflow.",
-    )
-    state = TaskState()
-    task = state.create_task(
-        "Review keyboard accessibility and screen reader behavior for the settings workflow.",
-        project_dir=str(tmp_path),
-        owner_agent="claude",
-        allowed_subtask_agents=["claude", "hermes", "openclaw"],
-        task_types=["functional"],
-    )
-    owner = OwnerAgent(
-        MockLLMGateway(
-            """{"subtasks": [
-                {"id": "a11y", "description": "Review keyboard accessibility and screen reader behavior for the settings workflow", "agent": "claude", "priority": 1, "dependencies": []}
-            ]}"""
-        ),
-        state,
-    )
-    owner._get_available_agents = _local_agents
-
-    result = owner.decompose_and_assign(
-        task,
-        context={
-            "owner_agent": "claude",
-            "allowed_subtask_agents": ["claude", "hermes", "openclaw"],
-            "task_types": ["functional"],
-            "agent_capabilities": capability_context,
+        "agent_adapters": {
+            "claude": {
+                "type": "command",
+                "command": captured["agent_adapters"]["claude"]["command"],
+                "description": "AAA host-provided agent execution adapter.",
+            },
         },
-    )
-
-    subtask = _business_subtasks(result)[0]
-    assert subtask.agent_id == "hermes"
-    assert "Native skill match: Keyboard Accessibility Review" in subtask.description
-    assert ("hermes", "skills", "list", "--source", "all") in [tuple(command) for command in runner.commands]
+    }
+    assert captured["agent_adapters"]["claude"]["command"][-2:] == ["--agent", "claude"]

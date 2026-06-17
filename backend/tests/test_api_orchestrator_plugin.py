@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.api_server import app
-from across_agents_assistant.task_manager.orchestration.release_e2e import RELEASE_E2E_SCENARIO_ID
+from across_agents_assistant.task_review.release_e2e import RELEASE_E2E_SCENARIO_ID
 
 
 REQUIRED_FILES = [

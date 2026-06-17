@@ -66,7 +66,7 @@ struct TaskOrchestrationStatusTests {
         let task = try JSONDecoder().decode(TaskOrchestrationViewModel.TaskDetail.self, from: payload)
 
         #expect(task.externalTask)
-        #expect(!task.supportsLegacyLifecycleControls)
+        #expect(!task.supportsHostLocalLifecycleControls)
     }
 
     @Test func taskDetailReplacementPreservesBoundaryMetadata() throws {
@@ -93,7 +93,7 @@ struct TaskOrchestrationStatusTests {
         #expect(updated.taskTypes == ["functional", "artifact"])
         #expect(updated.deliveryMode == "functional_artifact")
         #expect(updated.hasOwnerDeliveryContract)
-        #expect(!updated.supportsLegacyLifecycleControls)
+        #expect(!updated.supportsHostLocalLifecycleControls)
     }
 
     @Test func taskSummaryDecodesExternalTaskMarker() throws {

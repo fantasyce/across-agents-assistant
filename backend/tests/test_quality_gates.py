@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from across_agents_assistant.task_manager.orchestration.quality_gates import (
+from across_agents_assistant.task_review.quality_gates import (
     ProbeAdapterRegistry,
     QualityGateResult,
     build_quality_report,

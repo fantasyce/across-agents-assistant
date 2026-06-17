@@ -488,7 +488,7 @@ struct TaskEvidenceBundle: Decodable, Identifiable {
         description = try container.decodeIfPresent(String.self, forKey: .description)
         taskStatus = try container.decodeIfPresent(String.self, forKey: .taskStatus) ?? "unknown"
         taskTypes = try container.decodeIfPresent([String].self, forKey: .taskTypes) ?? []
-        deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode) ?? "legacy"
+        deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode) ?? "external"
         projectDir = try container.decodeIfPresent(String.self, forKey: .projectDir)
         ownerAgent = try container.decodeIfPresent(String.self, forKey: .ownerAgent)
         allowedSubtaskAgents = try container.decodeIfPresent([String].self, forKey: .allowedSubtaskAgents) ?? []

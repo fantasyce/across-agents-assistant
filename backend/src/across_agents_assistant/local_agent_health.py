@@ -1,8 +1,8 @@
 """Shared local-agent readiness detection.
 
-Executable discovery alone is not enough for task orchestration: a CLI may be
+Executable discovery alone is not enough for local-agent routing: a CLI may be
 installed but unable to complete a real invocation.  This module keeps one
-cached probe result that the API, OwnerAgent, and dispatcher can all trust.
+cached probe result that the API and external Orchestrator bridge can trust.
 """
 
 from __future__ import annotations

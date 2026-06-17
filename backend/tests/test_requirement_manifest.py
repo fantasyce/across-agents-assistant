@@ -3,7 +3,7 @@
 Phase 1 of the delivery-quality engineering implementation.
 """
 
-from across_agents_assistant.task_manager.orchestration.requirements import (
+from across_agents_assistant.task_review.requirements import (
     extract_requirement_manifest,
     extract_forbidden_path_hints,
     extract_required_path_hints,
@@ -385,7 +385,7 @@ class TestPathDeduplication:
         assert "test_api.py" not in hints
 
     def test_requirements_txt_is_config_file(self):
-        from across_agents_assistant.task_manager.orchestration.requirements import infer_artifact_type
+        from across_agents_assistant.task_review.requirements import infer_artifact_type
         assert infer_artifact_type("requirements.txt") == "config_file"
 
 

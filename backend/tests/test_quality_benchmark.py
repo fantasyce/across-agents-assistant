@@ -1,4 +1,4 @@
-from across_agents_assistant.task_manager.orchestration.quality_benchmark import (
+from across_agents_assistant.task_review.quality_benchmark import (
     evaluate_delivery_benchmark,
 )
 

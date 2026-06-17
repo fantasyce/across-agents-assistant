@@ -15,7 +15,7 @@ from .errors import (
 )
 from .processor import post_process_llm_response, ProcessedResponse, OutputClassification
 from .executor import execute_tool_with_retry
-from .state_machine import AgentLoopState, AgentLoopStateMachine
+from .state_machine import ChatToolLoopState, ChatToolLoopStateMachine
 
 __all__ = [
     "MAX_AGENT_LOOP_ITERATIONS",
@@ -33,6 +33,6 @@ __all__ = [
     "ProcessedResponse",
     "OutputClassification",
     "execute_tool_with_retry",
-    "AgentLoopState",
-    "AgentLoopStateMachine",
+    "ChatToolLoopState",
+    "ChatToolLoopStateMachine",
 ]

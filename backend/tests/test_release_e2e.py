@@ -3,18 +3,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from across_agents_assistant.task_manager.orchestration import contract_acceptance
-from across_agents_assistant.task_manager.orchestration.release_e2e import (
+from across_agents_assistant.task_review import contract_acceptance
+from across_agents_assistant.task_review.release_e2e import (
     RELEASE_E2E_SCENARIO_ID,
     build_release_e2e_scenarios,
     build_release_e2e_subtasks,
     build_release_e2e_task_request,
     write_release_e2e_reference_artifact,
 )
-from across_agents_assistant.task_manager.orchestration.delivery_contract import (
+from across_agents_assistant.task_review.delivery_contract import (
     build_owner_delivery_contract,
 )
-from across_agents_assistant.task_manager.orchestration.requirements import (
+from across_agents_assistant.task_review.requirements import (
     extract_requirement_manifest,
     extract_required_path_hints,
 )
@@ -54,6 +54,7 @@ def test_release_e2e_scenario_is_cross_stack_and_cross_agent():
 
 def test_release_e2e_task_request_forces_exact_deliverables_and_verification(tmp_path):
     project_dir = tmp_path / "release-e2e"
+    assert not project_dir.exists()
 
     request = build_release_e2e_task_request(
         scenario_id=RELEASE_E2E_SCENARIO_ID,
@@ -63,6 +64,7 @@ def test_release_e2e_task_request_forces_exact_deliverables_and_verification(tmp
 
     description = request["description"]
     assert request["project_dir"] == str(project_dir)
+    assert not project_dir.exists()
     assert request["task_types"] == ["functional", "artifact"]
     assert request["strict_dependency"] is True
     assert request["enable_wave_gate"] is True
@@ -103,6 +105,26 @@ def test_release_e2e_task_request_forces_exact_deliverables_and_verification(tmp
     assert "avoid a section that lists scanner/security terms" in description
     for relative_path in request["required_files"]:
         assert relative_path in description
+
+
+def test_release_e2e_task_request_rejects_relative_project_dir():
+    with pytest.raises(ValueError, match="Release E2E project_dir"):
+        build_release_e2e_task_request(
+            scenario_id=RELEASE_E2E_SCENARIO_ID,
+            project_dir="../unsafe-release-e2e",
+        )
+
+
+def test_release_e2e_task_request_rejects_home_directory(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    with pytest.raises(ValueError, match="Release E2E project_dir"):
+        build_release_e2e_task_request(
+            scenario_id=RELEASE_E2E_SCENARIO_ID,
+            project_dir=str(home),
+        )
 
 
 def test_release_e2e_manifest_extraction_keeps_only_required_files(tmp_path):

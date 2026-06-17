@@ -132,7 +132,8 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
-| `0.8.8` | Removes the legacy in-app task runtime from product task APIs, keeps task orchestration on the external Across Orchestrator boundary, adds host-neutral declarative agent adapters, strengthens Agent Loop checkpoint/action-plan handling, and moves managed pins to Context `v0.7.5` and Orchestrator `v0.6.7`. |
+| `0.8.9` | Synchronizes external Orchestrator task terminal status with Agent Loop terminal states, keeps `stopped` as a loop detail while exposing AAA-compatible task statuses, and moves managed pins to Context `v0.7.6` and Orchestrator `v0.6.8`. |
+| `0.8.8` | Removes the retired in-app task runtime from product task APIs, keeps task orchestration on the external Across Orchestrator boundary, adds host-neutral declarative agent adapters, strengthens Agent Loop checkpoint/action-plan handling, and moves managed pins to Context `v0.7.5` and Orchestrator `v0.6.7`. |
 | `0.8.7` | Product-mode runtime boundary hardening across the packaged app, managed Context/Orchestrator discovery, Agent Loop reject/cancel/retry controls, and host artifact metadata for external Orchestrator tasks; managed pins move to Context `v0.7.4` and Orchestrator `v0.6.6`. |
 | `0.8.6` | Further backend boundary split for release verification, Orchestrator protocol/evidence handling, task API models, and task observability; Python runtime support is constrained to `>=3.10,<3.14`, and CI now checks Swift package lock consistency. |
 | `0.8.5` | Structural boundary split for external task planning, Swift task orchestration models, Swift state reducers, and Across Orchestrator strict-dependency planning helper; managed Orchestrator pin moves to `v0.6.5`. |
@@ -187,9 +188,15 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.8` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.9` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.8.8` release removes the legacy in-app task runtime from product task
+The `0.8.9` release aligns AAA with Across Orchestrator `v0.6.8` and Across
+Context `v0.7.6`. External task runs now receive terminal task statuses from
+the Orchestrator Agent Loop lifecycle: cancelled loops surface as `cancelled`,
+and stopped loops such as approval rejection or max-turn exhaustion surface as
+`failed` while preserving the detailed loop status in metadata and events.
+
+The `0.8.8` release removes the retired in-app task runtime from product task
 API startup and diagnostics. Task orchestration stays on the external Across
 Orchestrator boundary, now using Orchestrator `v0.6.7` generic declarative agent
 adapters while preserving AAA's existing task UI and restore flow. Agent Loop
@@ -289,7 +296,7 @@ under `~/.across/plugins/across-orchestrator`, launches it as a local sidecar
 HTTP runtime by default, and keeps CLI/MCP as external protocol adapters. If
 the external plugin is not installed or connected, task orchestration is
 unavailable and the UI offers one-click installation; new task submission does
-not fall back to the historical in-app TaskOrchestrator.
+not fall back to any in-app task runtime.
 
 Startup diagnostics discover Across-owned plugins by reading manifests and
 wrappers under `~/.across/plugins` and `~/.across/bin`. That discovery path is
@@ -446,7 +453,7 @@ curl --unix-socket "$HOME/.across/run/across-agents-assistant/across-agents.sock
 
 Task orchestration is hosted by an external Across Orchestrator product. The
 desktop app is the console and plugin host; it does not silently fall back to
-the historical in-app orchestrator in normal product mode. If the plugin is not
+any in-app task runtime in normal product mode. If the plugin is not
 installed or connected, the task orchestration entry is shown as unavailable
 with a one-click install action.
 
@@ -455,10 +462,10 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.7
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.8
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.5
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.6
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -515,9 +522,10 @@ Managed installs place runtime code under
 that managed runtime instead of pointing at `npm link`, a source checkout, or a
 path under `~/Documents/projects`.
 
-The historical in-app `TaskOrchestrator` code remains only for legacy task data
-inspection and migration-oriented maintenance paths. It is not a product
-runtime for new task submission.
+AAA no longer packages an in-app task orchestration runtime. Task execution,
+loop state, checkpoints, remediation, and final evidence are owned by the
+external Across Orchestrator plugin; AAA keeps only host UI, API projection, and
+read-only evidence views for task records.
 
 External Release E2E evidence is accepted only when the app-grade benchmark
 passes artifact integrity, workspace hygiene, security/privacy, agent mix,

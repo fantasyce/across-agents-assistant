@@ -8,12 +8,12 @@ import pytest
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from across_agents_assistant.api_server import _task_to_info
-from across_agents_assistant.task_manager.models import (
+from across_agents_assistant.legacy_task_history.models import (
     Artifact,
     RequirementDeliverable,
     RequirementManifest,
 )
-from across_agents_assistant.task_manager.state import TaskState
+from across_agents_assistant.legacy_task_history.state import TaskState
 
 
 def test_task_info_includes_requirement_manifest():
@@ -37,7 +37,7 @@ def test_task_info_includes_requirement_manifest():
 
 
 def test_task_info_exposes_observability_timeline_and_quality_evidence():
-    from across_agents_assistant.task_manager.models import JobStatus, SubTask, Wave
+    from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Wave
 
     state = TaskState()
     task = state.create_task(
@@ -532,7 +532,7 @@ def test_task_info_artifacts_include_client_aliases(tmp_path):
         name="main.py",
         metadata={"file_size": "10 B", "normalized_content_ref": str(file_path)},
     )
-    from across_agents_assistant.task_manager.models import JobStatus
+    from across_agents_assistant.legacy_task_history.models import JobStatus
     artifact.status = JobStatus.COMPLETED.value
     state.save_artifact_record(artifact)
 

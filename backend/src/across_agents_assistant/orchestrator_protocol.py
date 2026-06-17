@@ -14,6 +14,7 @@ _TASK_SUBMIT_KEYS = {
     "strict_dependency": "strictDependency",
     "task_types": "taskTypes",
     "subtasks": "subtasks",
+    "agent_adapters": "agentAdapters",
     "run_label": "runLabel",
     "allowed_subtask_agents": "allowedSubtaskAgents",
 }
@@ -54,6 +55,7 @@ def build_external_task_submission_payload(
     strict_dependency: bool = False,
     task_types: Optional[Sequence[Any]] = None,
     subtasks: Optional[Sequence[Dict[str, Any]]] = None,
+    agent_adapters: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Build the explicit HTTP/CLI payload for submitting a generic external task."""
     payload: Dict[str, Any] = {
@@ -68,6 +70,8 @@ def build_external_task_submission_payload(
         payload[_TASK_SUBMIT_KEYS["task_types"]] = clean_task_types
     if subtasks:
         payload[_TASK_SUBMIT_KEYS["subtasks"]] = list(subtasks)
+    if agent_adapters:
+        payload[_TASK_SUBMIT_KEYS["agent_adapters"]] = dict(agent_adapters)
     return payload
 
 
@@ -378,6 +382,53 @@ def _external_delivery_mode(task: Dict[str, Any], evidence: Optional[Dict[str, A
     return task_types[0] if task_types else "artifact"
 
 
+def _external_quality_summary(
+    task: Dict[str, Any],
+    *,
+    evidence: Optional[Dict[str, Any]],
+    status: str,
+    required_files: List[str],
+    artifacts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    quality = (evidence and (evidence.get("quality") or evidence.get("app_grade") or {})) or {}
+    if isinstance(quality, dict) and quality.get("quality_report"):
+        return quality
+    if _is_app_grade(task):
+        return evaluate_app_grade_quality(
+            evidence or {"status": status, "contract": task.get("contract") or {}}
+        )
+
+    artifact_statuses = {
+        str(item.get("name") or item.get("path_hint") or item.get("path") or ""): str(item.get("status") or "")
+        for item in artifacts
+        if item.get("name") or item.get("path_hint") or item.get("path")
+    }
+    missing_files = [
+        path
+        for path in required_files
+        if artifact_statuses.get(path) == "missing"
+        or (artifact_statuses.get(path) not in {"accepted", "expected"} and status == "completed")
+    ]
+    passed = status == "completed" and not missing_files
+    return {
+        "status": "passed" if passed else ("failed" if status == "failed" else status),
+        "quality_gate": "passed" if passed else ("failed" if status == "failed" else status),
+        "delivery_quality": "passed" if passed else ("failed" if status == "failed" else status),
+        "quality_score": 100 if passed else 0,
+        "checks": {
+            "artifact_integrity": passed,
+        },
+        "failures": [f"{path} is missing" for path in missing_files],
+        "produced_files": [
+            path
+            for path in required_files
+            if path not in missing_files and status == "completed"
+        ],
+        "required_files": required_files,
+        "gate_results": {},
+    }
+
+
 def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
     task = _normalize_external_task_for_app(task)
     subtasks = task.get("subtasks") or []
@@ -408,13 +459,14 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
     completed = sum(1 for item in subtasks if item.get("status") == "completed")
     total = len(subtasks)
     required_files = _required_files(task, evidence)
-    quality = (evidence and (evidence.get("quality") or evidence.get("app_grade") or {})) or {"status": status}
-    if isinstance(quality, dict) and not quality.get("quality_report"):
-        from .orchestrator_release_evidence import evaluate_app_grade_quality
-        quality = evaluate_app_grade_quality(
-            evidence or {"status": status, "contract": task.get("contract") or {}}
-        )
     artifacts = _artifact_rows(task, evidence)
+    quality = _external_quality_summary(
+        task,
+        evidence=evidence,
+        status=status,
+        required_files=required_files,
+        artifacts=artifacts,
+    )
     task_types = _external_task_types(task, evidence)
     delivery_mode = _external_delivery_mode(task, evidence)
     return {

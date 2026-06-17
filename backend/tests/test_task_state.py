@@ -2,8 +2,8 @@ import os
 from typing import Dict, List
 
 import pytest
-from across_agents_assistant.task_manager.state import TaskState
-from across_agents_assistant.task_manager.models import JobStatus
+from across_agents_assistant.legacy_task_history.state import TaskState
+from across_agents_assistant.legacy_task_history.models import JobStatus
 
 
 class TestTaskTypePersistence:
@@ -17,15 +17,15 @@ class TestTaskTypePersistence:
         assert types == ["functional"]
         assert mode == "functional"
 
-    def test_normalize_delivery_task_types_legacy(self):
+    def test_normalize_delivery_task_types_defaults_to_external(self):
         types, mode = TaskState._normalize_delivery_task_types(None)
         assert types == []
-        assert mode == "legacy"
+        assert mode == "external"
 
     def test_normalize_delivery_task_types_empty(self):
         types, mode = TaskState._normalize_delivery_task_types([])
         assert types == []
-        assert mode == "legacy"
+        assert mode == "external"
 
     def test_normalize_delivery_task_types_rejects_unknown(self):
         try:
@@ -45,11 +45,11 @@ class TestTaskTypePersistence:
         assert task.task_types == ["functional", "artifact"]
         assert task.delivery_mode == "composite"
 
-    def test_create_task_without_task_types_remains_legacy_compatible(self):
+    def test_create_task_without_task_types_defaults_to_external_boundary(self):
         state = TaskState()
-        task = state.create_task(description="Legacy internal task")
+        task = state.create_task(description="External Orchestrator task")
         assert task.task_types == []
-        assert task.delivery_mode == "legacy"
+        assert task.delivery_mode == "external"
 
     def test_create_task_persists_task_types_to_db(self):
         state = TaskState()
@@ -453,7 +453,7 @@ class RecordingPersistence:
 class TestRestoreCancelledDownstream:
     def test_restore_cancelled_downstream_persists_restored_subtasks(self):
         """restore_cancelled_downstream should persist each restored subtask."""
-        from across_agents_assistant.task_manager.models import SubTask
+        from across_agents_assistant.legacy_task_history.models import SubTask
 
         state = TaskState()
         persistence = RecordingPersistence()
@@ -481,7 +481,7 @@ class TestCancelDownstreamSubtasks:
     """NEW-4: cancelled downstream subtasks must be persisted."""
 
     def test_cancel_downstream_persists_cancelled_subtasks(self):
-        from across_agents_assistant.task_manager.models import SubTask
+        from across_agents_assistant.legacy_task_history.models import SubTask
 
         state = TaskState()
         persistence = RecordingPersistence()
@@ -507,7 +507,7 @@ class TestEffectiveSubtaskStatus:
     """NEW-5: _get_subtask_status should be remediation-aware."""
 
     def test_get_subtask_status_treats_successful_fix_as_completed_dependency(self):
-        from across_agents_assistant.task_manager.models import SubTask
+        from across_agents_assistant.legacy_task_history.models import SubTask
 
         state = TaskState()
         task = state.create_task("effective status")
@@ -524,7 +524,7 @@ class TestEffectiveSubtaskStatus:
         assert [st.subtask_id for st in ready] == ["st-b"]
 
     def test_get_subtask_status_treats_successful_reassign_as_completed_dependency(self):
-        from across_agents_assistant.task_manager.models import SubTask
+        from across_agents_assistant.legacy_task_history.models import SubTask
 
         state = TaskState()
         task = state.create_task("effective reassign status")
@@ -541,7 +541,7 @@ class TestEffectiveSubtaskStatus:
         assert [st.subtask_id for st in ready] == ["st-b"]
 
     def test_get_subtask_status_does_not_satisfy_dependency_when_all_remediations_failed(self):
-        from across_agents_assistant.task_manager.models import SubTask
+        from across_agents_assistant.legacy_task_history.models import SubTask
 
         state = TaskState()
         task = state.create_task("failed remediation status")
@@ -862,7 +862,7 @@ class TestOrphanRecovery:
 
 
 def test_derive_persisted_final_status_all_business_completed():
-    from across_agents_assistant.task_manager.models import SubTask
+    from across_agents_assistant.legacy_task_history.models import SubTask
     persistence = FakePersistenceWithTasks()
     persistence.tasks["task-done"] = {
         "task_id": "task-done",
@@ -972,7 +972,7 @@ def test_derive_persisted_final_status_defers_with_active_remediation():
 
 
 def test_recover_orphaned_repairs_stale_running_completed_task_instead_of_pausing():
-    from across_agents_assistant.task_manager.models import SubTask
+    from across_agents_assistant.legacy_task_history.models import SubTask
     persistence = FakePersistenceWithTasks()
     persistence.tasks["task-done"] = {
         "task_id": "task-done",
@@ -997,7 +997,7 @@ def test_recover_orphaned_repairs_stale_running_completed_task_instead_of_pausin
 
 
 def test_recover_orphaned_repairs_stale_running_failed_task_instead_of_suspending():
-    from across_agents_assistant.task_manager.models import SubTask
+    from across_agents_assistant.legacy_task_history.models import SubTask
     persistence = FakePersistenceWithTasks()
     persistence.tasks["task-failed"] = {
         "task_id": "task-failed",

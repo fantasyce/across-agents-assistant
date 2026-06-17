@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from across_agents_assistant.agent_loop.adapter import LLMGatewayAdapter
-from across_agents_assistant.agent_loop.agent_loop import AgentLoop
+from across_agents_assistant.agent_loop import ChatToolLoop
 from across_agents_assistant.agent_loop.config import LoopConfig
 from across_agents_assistant.llm_gateway.base_adapter import LLMResponse
 
@@ -135,8 +135,8 @@ async def test_llm_gateway_adapter_returns_full_assistant_message():
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_preserves_full_assistant_tool_history():
-    loop = AgentLoop(
+async def test_chat_tool_loop_preserves_full_assistant_tool_history():
+    loop = ChatToolLoop(
         llm_client=ScriptedLLM(),
         tool_registry=ToolRegistryStub(),
         config=LoopConfig(max_iterations=3),

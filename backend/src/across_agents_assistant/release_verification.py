@@ -86,7 +86,7 @@ def _task_row_for_release_evaluation(task: Any) -> Dict[str, Any]:
         "owner_agent": getattr(task, "owner_agent", None),
         "allowed_subtask_agents": list(getattr(task, "allowed_subtask_agents", []) or []),
         "task_types": list(getattr(task, "task_types", []) or []),
-        "delivery_mode": getattr(task, "delivery_mode", "legacy") or "legacy",
+        "delivery_mode": getattr(task, "delivery_mode", "external") or "external",
         "last_owner_decision": getattr(task, "last_owner_decision", None) or {},
     }
 
@@ -229,7 +229,7 @@ def _build_latest_release_e2e_verification(
     required_probes: Optional[Sequence[str]] = None,
     app_version: Optional[str] = None,
 ) -> Dict[str, Any]:
-    from .task_manager.orchestration.quality_benchmark import evaluate_delivery_benchmark
+    from .task_review.quality_benchmark import evaluate_delivery_benchmark
 
     task_id = row.get("task_id")
     if not task_id:
@@ -360,7 +360,7 @@ def _build_release_verification_report(
     required_probes: Optional[Sequence[str]] = None,
     write_report_directory: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    from .task_manager.orchestration.release_evaluation import build_release_evaluation_summary
+    from .task_review.release_evaluation import build_release_evaluation_summary
 
     from . import __version__
 

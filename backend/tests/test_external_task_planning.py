@@ -1,8 +1,10 @@
 from across_agents_assistant.external_task_planning import (
     ExternalTaskPlanningRequest,
+    agent_adapters_for_external_task,
     deliverables_for_external_task,
     external_owner_agent,
     external_subtask_agents,
+    host_agent_adapter_command,
     planned_subtasks_for_external_task,
 )
 
@@ -52,3 +54,37 @@ def test_owner_agent_can_seed_subtask_agents():
 
     assert external_owner_agent(req) == "openclaw"
     assert external_subtask_agents(req) == ["openclaw"]
+
+
+def test_real_agent_selection_declares_aaa_host_command_adapters():
+    req = ExternalTaskPlanningRequest(
+        description="Build a dashboard",
+        owner_agent="OpenClaw",
+        allowed_subtask_agents=["hermes", "demo", "claude", "hermes"],
+    )
+
+    adapters = agent_adapters_for_external_task(req)
+
+    assert set(adapters) == {"openclaw", "hermes", "claude"}
+    for agent_id, spec in adapters.items():
+        assert spec["type"] == "command"
+        assert spec["command"][-4:] == [
+            "-m",
+            "across_agents_assistant.orchestrator_agent_adapter",
+            "--agent",
+            agent_id,
+        ]
+
+
+def test_packaged_host_agent_adapter_command_uses_backend_subcommand(monkeypatch):
+    import across_agents_assistant.external_task_planning as planning
+
+    monkeypatch.setattr(planning.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(planning.sys, "executable", "/Applications/Across Agents Assistant.app/Contents/Resources/backend/backend")
+
+    assert host_agent_adapter_command("Claude") == [
+        "/Applications/Across Agents Assistant.app/Contents/Resources/backend/backend",
+        "orchestrator-agent-adapter",
+        "--agent",
+        "claude",
+    ]

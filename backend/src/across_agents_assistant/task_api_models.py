@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from .task_manager.orchestration.release_e2e import RELEASE_E2E_SCENARIO_ID
+from .task_review.release_e2e import RELEASE_E2E_SCENARIO_ID
 
 
 class SubTaskInfo(BaseModel):
@@ -45,7 +45,7 @@ class TaskInfo(BaseModel):
     status: str
     external_task: bool = False
     task_types: List[str] = Field(default_factory=list)
-    delivery_mode: str = "legacy"
+    delivery_mode: str = "external"
     owner_delivery_contract: Optional[Dict[str, Any]] = None
     owner_agent: Optional[str] = None
     allowed_subtask_agents: List[str] = Field(default_factory=list)
@@ -83,7 +83,7 @@ class TaskSummaryInfo(BaseModel):
     updated_at: float = 0
     project_dir: Optional[str] = None
     owner_agent: Optional[str] = None
-    delivery_mode: str = "legacy"
+    delivery_mode: str = "external"
 
 
 class TaskPageResponse(BaseModel):

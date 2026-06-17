@@ -5,7 +5,7 @@ from typing import List, Tuple
 logger = logging.getLogger("across_agents_assistant.harness")
 
 
-class AgentLoopState(str, Enum):
+class ChatToolLoopState(str, Enum):
     THINKING = "thinking"
     TOOL_EXECUTING = "tool_executing"
     WAIT_APPROVAL = "wait_approval"
@@ -17,55 +17,55 @@ class AgentLoopState(str, Enum):
 
 # Valid state transitions
 _VALID_TRANSITIONS = {
-    AgentLoopState.THINKING: {
-        AgentLoopState.THINKING,
-        AgentLoopState.TOOL_EXECUTING,
-        AgentLoopState.WAIT_APPROVAL,
-        AgentLoopState.ERROR_CLASSIFY,
-        AgentLoopState.DONE,
+    ChatToolLoopState.THINKING: {
+        ChatToolLoopState.THINKING,
+        ChatToolLoopState.TOOL_EXECUTING,
+        ChatToolLoopState.WAIT_APPROVAL,
+        ChatToolLoopState.ERROR_CLASSIFY,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.TOOL_EXECUTING: {
-        AgentLoopState.THINKING,
-        AgentLoopState.WAIT_APPROVAL,
-        AgentLoopState.ERROR_CLASSIFY,
-        AgentLoopState.DONE,
+    ChatToolLoopState.TOOL_EXECUTING: {
+        ChatToolLoopState.THINKING,
+        ChatToolLoopState.WAIT_APPROVAL,
+        ChatToolLoopState.ERROR_CLASSIFY,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.WAIT_APPROVAL: {
-        AgentLoopState.TOOL_EXECUTING,
-        AgentLoopState.DONE,
+    ChatToolLoopState.WAIT_APPROVAL: {
+        ChatToolLoopState.TOOL_EXECUTING,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.ERROR_CLASSIFY: {
-        AgentLoopState.RECOVER,
-        AgentLoopState.DONE,
+    ChatToolLoopState.ERROR_CLASSIFY: {
+        ChatToolLoopState.RECOVER,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.RECOVER: {
-        AgentLoopState.THINKING,
-        AgentLoopState.DONE,
+    ChatToolLoopState.RECOVER: {
+        ChatToolLoopState.THINKING,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.COMPACTING: {
-        AgentLoopState.THINKING,
-        AgentLoopState.DONE,
+    ChatToolLoopState.COMPACTING: {
+        ChatToolLoopState.THINKING,
+        ChatToolLoopState.DONE,
     },
-    AgentLoopState.DONE: set(),  # Terminal state
+    ChatToolLoopState.DONE: set(),  # Terminal state
 }
 
 
-class AgentLoopStateMachine:
-    """Explicit state machine for the Agent Loop execution flow."""
+class ChatToolLoopStateMachine:
+    """Explicit state machine for the host chat/tool execution flow."""
 
     def __init__(self, session_id: str = "", agent_id: str = ""):
-        self._current = AgentLoopState.THINKING
-        self._history: List[Tuple[AgentLoopState, float]] = [
-            (AgentLoopState.THINKING, __import__("time").time())
+        self._current = ChatToolLoopState.THINKING
+        self._history: List[Tuple[ChatToolLoopState, float]] = [
+            (ChatToolLoopState.THINKING, __import__("time").time())
         ]
         self._session_id = session_id
         self._agent_id = agent_id
 
     @property
-    def current_state(self) -> AgentLoopState:
+    def current_state(self) -> ChatToolLoopState:
         return self._current
 
-    def transition(self, to_state: AgentLoopState) -> None:
+    def transition(self, to_state: ChatToolLoopState) -> None:
         """Transition to a new state, validating the transition is legal."""
         if to_state not in _VALID_TRANSITIONS.get(self._current, set()):
             raise ValueError(
@@ -85,6 +85,6 @@ class AgentLoopStateMachine:
             to_state.value,
         )
 
-    def get_state_history(self) -> List[Tuple[AgentLoopState, float]]:
+    def get_state_history(self) -> List[Tuple[ChatToolLoopState, float]]:
         """Return the full state transition history."""
         return list(self._history)

@@ -153,7 +153,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
         )
     }
 
-    var supportsLegacyLifecycleControls: Bool {
+    var supportsHostLocalLifecycleControls: Bool {
         !externalTask
     }
 }

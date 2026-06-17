@@ -26,6 +26,11 @@ if len(sys.argv) > 2 and sys.argv[1] == "mcp":
         mcp_filesystem.main()
         sys.exit(0)
 
+if len(sys.argv) > 1 and sys.argv[1] == "orchestrator-agent-adapter":
+    from across_agents_assistant.orchestrator_agent_adapter import main as adapter_main
+
+    sys.exit(adapter_main(sys.argv[2:]))
+
 from across_agents_assistant.api_server import start_api_server
 from across_agents_assistant.paths import backend_socket_path
 

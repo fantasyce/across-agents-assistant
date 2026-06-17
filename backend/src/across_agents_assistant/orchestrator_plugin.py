@@ -45,7 +45,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.7"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.8"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -888,6 +888,7 @@ class OrchestratorPluginManager:
         subtasks: Optional[List[Dict[str, Any]]] = None,
         strict_dependency: bool = False,
         task_types: Optional[List[str]] = None,
+        agent_adapters: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         deliverables = deliverables or ["README.md"]
@@ -900,6 +901,7 @@ class OrchestratorPluginManager:
             strict_dependency=strict_dependency,
             task_types=task_types,
             subtasks=subtasks,
+            agent_adapters=agent_adapters,
         )
         if self._transport == "http":
             task = self._http_post("/tasks", payload)
@@ -915,6 +917,11 @@ class OrchestratorPluginManager:
                 args.extend([
                     "--subtasks-json",
                     json.dumps(subtasks, ensure_ascii=False, separators=(",", ":")),
+                ])
+            if agent_adapters:
+                args.extend([
+                    "--agent-adapters-json",
+                    json.dumps(agent_adapters, ensure_ascii=False, separators=(",", ":")),
                 ])
             args.append("--json")
             task = self._cli_json(args)
