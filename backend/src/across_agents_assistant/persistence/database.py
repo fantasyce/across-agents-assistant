@@ -135,7 +135,7 @@ class Database:
                     owner_state_summary TEXT,
                     last_owner_decision TEXT,
                     task_types TEXT,
-                    delivery_mode TEXT DEFAULT 'legacy',
+                    delivery_mode TEXT DEFAULT 'external',
                     is_paused INTEGER DEFAULT 0,
                     created_at REAL,
                     updated_at REAL
@@ -363,7 +363,7 @@ class Database:
             self._ensure_column(cursor, "tasks", "owner_state_summary", "TEXT")
             self._ensure_column(cursor, "tasks", "last_owner_decision", "TEXT")
             self._ensure_column(cursor, "tasks", "task_types", "TEXT")
-            self._ensure_column(cursor, "tasks", "delivery_mode", "TEXT DEFAULT 'legacy'")
+            self._ensure_column(cursor, "tasks", "delivery_mode", "TEXT DEFAULT 'external'")
             self._ensure_column(cursor, "delivery_contracts", "contract_version", "TEXT DEFAULT '1.0'")
             self._ensure_column(cursor, "delivery_contracts", "delivery_facets", "TEXT DEFAULT '[]'")
             self._ensure_column(cursor, "delivery_contracts", "technology_hypotheses", "TEXT DEFAULT '[]'")

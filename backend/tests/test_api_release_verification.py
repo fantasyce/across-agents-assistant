@@ -34,7 +34,6 @@ def _startup_report(status: str = "ready"):
             "uptime_sec": 4.0,
             "known_tasks": 1,
             "persistence_initialized": True,
-            "dispatcher_initialized": True,
         },
         "keys": {
             "has_any_key": True,

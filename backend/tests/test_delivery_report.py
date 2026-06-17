@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from across_agents_assistant.task_manager.models import Task, TaskStatus
-from across_agents_assistant.task_manager.orchestration.delivery_report import build_delivery_report
+from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
+from across_agents_assistant.task_review.delivery_report import build_delivery_report
 
 
 def test_delivery_report_passed_summary():

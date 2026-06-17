@@ -61,7 +61,6 @@ def test_startup_diagnostics_endpoint_reports_safe_runtime_health(monkeypatch, t
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
     monkeypatch.setattr(api_server, "_task_persistence_initialized", True)
-    monkeypatch.setattr(api_server, "_task_dispatcher", object())
 
     response = TestClient(app).get("/api/diagnostics/startup")
 
@@ -73,6 +72,7 @@ def test_startup_diagnostics_endpoint_reports_safe_runtime_health(monkeypatch, t
     assert body["summary"]["warnings"] == 0
     assert body["runtime"]["known_tasks"] == 1
     assert "orchestrator_initialized" not in body["runtime"]
+    assert "dispatcher_initialized" not in body["runtime"]
     assert body["paths"]["app_home"] == str(tmp_path)
     assert body["keys"]["providers"]["deepseek"] == "configured"
     assert body["runtime"]["orchestrator_plugin"]["install"]["source"].startswith("file:///Users/example/.across/")
@@ -122,7 +122,6 @@ def test_startup_diagnostics_warns_when_no_provider_key(monkeypatch, tmp_path):
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
     monkeypatch.setattr(api_server, "_task_persistence_initialized", False)
-    monkeypatch.setattr(api_server, "_task_dispatcher", None)
 
     response = TestClient(app).get("/api/diagnostics/startup")
 
@@ -176,7 +175,6 @@ def test_startup_diagnostics_blocks_default_when_orchestrator_plugin_missing(mon
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
     monkeypatch.setattr(api_server, "_task_persistence_initialized", True)
-    monkeypatch.setattr(api_server, "_task_dispatcher", None)
 
     response = TestClient(app).get("/api/diagnostics/startup")
 

@@ -1509,8 +1509,8 @@ struct TaskDetailPanel: View {
                         .help(appPreferences.text("tasks.evidence.export"))
                     }
 
-                    // Issue 46: Show restore button for suspended tasks (not in memory but in DB)
-                    if task.supportsLegacyLifecycleControls
+                    // Show restore only for host-local task rows; external tasks restore through Orchestrator.
+                    if task.supportsHostLocalLifecycleControls
                         && TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
                         Button(action: { viewModel.restoreTask(task.taskId) }) {
                             Image(systemName: "arrow.counterclockwise")
@@ -1524,7 +1524,7 @@ struct TaskDetailPanel: View {
                         .help(appPreferences.text("tasks.restore"))
                     }
 
-                    if task.supportsLegacyLifecycleControls && task.status == "running" {
+                    if task.supportsHostLocalLifecycleControls && task.status == "running" {
                         Button(action: { viewModel.pauseTask(task.taskId) }) {
                             Image(systemName: "pause.fill")
                                 .font(.system(size: 12))
@@ -1535,7 +1535,7 @@ struct TaskDetailPanel: View {
                         }
                         .buttonStyle(.plain)
                         .help(appPreferences.text("tasks.pause"))
-                    } else if task.supportsLegacyLifecycleControls && task.status == "paused" {
+                    } else if task.supportsHostLocalLifecycleControls && task.status == "paused" {
                         Button(action: { viewModel.resumeTask(task.taskId) }) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 12))
@@ -1553,7 +1553,7 @@ struct TaskDetailPanel: View {
                         && task.status != "completed_with_failures"
                         && task.status != "failed"
                         && task.status != "cancelled"
-                        && task.supportsLegacyLifecycleControls
+                        && task.supportsHostLocalLifecycleControls
                         && !TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
                         Button(action: { viewModel.cancelTask(task.taskId) }) {
                             Image(systemName: "stop.fill")
@@ -1763,7 +1763,7 @@ struct TaskDetailPanel: View {
                                 status: finalQualityScore >= 80 ? "passed" : "partial"
                             )
                         }
-                        if let deliveryMode = task.deliveryMode, deliveryMode != "legacy" {
+                        if let deliveryMode = task.deliveryMode, deliveryMode != "external" {
                             qualityMetricChip(
                                 title: appPreferences.text("tasks.mode"),
                                 value: displayStatus(deliveryMode),

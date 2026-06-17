@@ -51,7 +51,7 @@ class TaskPersistenceService:
                 json.dumps(task.get('owner_state_summary', {})),
                 json.dumps(task.get('last_owner_decision', {})),
                 json.dumps(task.get('task_types', [])),
-                task.get('delivery_mode', 'legacy'),
+                task.get('delivery_mode', 'external'),
                 1 if task.get('is_paused') else 0,
                 task.get('created_at'),
                 task.get('updated_at')
@@ -76,7 +76,7 @@ class TaskPersistenceService:
                     item[key] = json.loads(item[key]) if item.get(key) else []
                 except json.JSONDecodeError:
                     item[key] = []
-            item['delivery_mode'] = item.get('delivery_mode') or 'legacy'
+            item['delivery_mode'] = item.get('delivery_mode') or 'external'
             return item
 
     def get_all_tasks(self) -> List[Dict[str, Any]]:
@@ -97,7 +97,7 @@ class TaskPersistenceService:
                         item[key] = json.loads(item[key]) if item.get(key) else []
                     except json.JSONDecodeError:
                         item[key] = []
-                item['delivery_mode'] = item.get('delivery_mode') or 'legacy'
+                item['delivery_mode'] = item.get('delivery_mode') or 'external'
                 result.append(item)
             return result
 
@@ -739,7 +739,7 @@ class TaskPersistenceService:
                 contract['task_id'],
                 contract.get('contract_version', '1.0'),
                 json.dumps(contract.get('task_types', [])),
-                contract.get('delivery_mode', 'legacy'),
+                contract.get('delivery_mode', 'external'),
                 json.dumps(contract.get('delivery_facets', [])),
                 json.dumps(contract.get('technology_hypotheses', [])),
                 json.dumps(contract.get('capabilities', [])),
@@ -928,7 +928,7 @@ class TaskPersistenceService:
             item[key] = self._decode_json(item.get(key), {})
         for key in ('allowed_subtask_agents', 'task_types'):
             item[key] = self._decode_json(item.get(key), [])
-        item['delivery_mode'] = item.get('delivery_mode') or 'legacy'
+        item['delivery_mode'] = item.get('delivery_mode') or 'external'
         return item
 
     def _decode_subtask_row(self, row: Any) -> Dict[str, Any]:

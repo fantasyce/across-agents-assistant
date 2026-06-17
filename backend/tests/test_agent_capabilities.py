@@ -675,7 +675,18 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
+        def submit_task(
+            self,
+            *,
+            goal,
+            project_dir,
+            deliverables=None,
+            agent=None,
+            subtasks=None,
+            strict_dependency=False,
+            task_types=None,
+            agent_adapters=None,
+        ):
             captured["goal"] = goal
             captured["project_dir"] = project_dir
             captured["deliverables"] = deliverables
@@ -683,6 +694,7 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
             captured["subtasks"] = subtasks
             captured["strict_dependency"] = strict_dependency
             captured["task_types"] = task_types
+            captured["agent_adapters"] = agent_adapters
             return {"task_id": "task-capabilities", "status": "pending"}
 
     monkeypatch.setattr(
@@ -721,4 +733,18 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
         "subtasks": [],
         "strict_dependency": True,
         "task_types": ["functional"],
+        "agent_adapters": {
+            "hermes": {
+                "type": "command",
+                "command": captured["agent_adapters"]["hermes"]["command"],
+                "description": "AAA host-provided agent execution adapter.",
+            },
+            "deepseek": {
+                "type": "command",
+                "command": captured["agent_adapters"]["deepseek"]["command"],
+                "description": "AAA host-provided agent execution adapter.",
+            },
+        },
     }
+    assert captured["agent_adapters"]["hermes"]["command"][-2:] == ["--agent", "hermes"]
+    assert captured["agent_adapters"]["deepseek"]["command"][-2:] == ["--agent", "deepseek"]

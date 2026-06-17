@@ -1,6 +1,6 @@
 """Tests for decomposition coverage gate (Phase 2)."""
 
-from across_agents_assistant.task_manager.orchestration.coverage import (
+from across_agents_assistant.task_review.coverage import (
     evaluate_decomposition_coverage,
     find_matching_contract_deliverable,
     normalize_hint,

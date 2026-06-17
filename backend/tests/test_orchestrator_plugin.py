@@ -237,6 +237,10 @@ class _FakeOrchestratorHTTPServer:
                     owner.last_submit = payload
                     self._json(_external_task(owner.task_id, owner.project_dir, "pending"), 201)
                     return
+                if self.path == "/tasks":
+                    owner.last_submit = payload
+                    self._json(_external_task(owner.task_id, owner.project_dir, "pending"), 201)
+                    return
                 if self.path == f"/tasks/{owner.task_id}/run":
                     owner.status = "completed"
                     self._json(_external_task(owner.task_id, owner.project_dir, "completed"))
@@ -770,6 +774,42 @@ def test_external_http_runtime_submits_runs_and_maps_app_task(tmp_path):
     assert server.last_submit["allowedSubtaskAgents"] == ["openclaw", "deepseek"]
 
 
+def test_external_http_runtime_forwards_declared_agent_adapters(tmp_path):
+    agent_adapters = {
+        "claude": {
+            "type": "command",
+            "command": ["python3", "-m", "across_agents_assistant.orchestrator_agent_adapter", "--agent", "claude"],
+        },
+        "hermes": {
+            "type": "command",
+            "command": ["python3", "-m", "across_agents_assistant.orchestrator_agent_adapter", "--agent", "hermes"],
+        },
+    }
+    with _FakeOrchestratorHTTPServer(str(tmp_path / "project")) as server:
+        manager = OrchestratorPluginManager(
+            OrchestratorPluginConfig(
+                mode="external",
+                endpoint=server.endpoint,
+                command="missing-across-orchestrator",
+                registry_path=tmp_path / "tasks.json",
+                auto_run=False,
+            )
+        )
+
+        manager.implementation_status()
+        task = manager.submit_task(
+            goal="Build with host-provided agents",
+            project_dir=str(tmp_path / "project"),
+            deliverables=["README.md"],
+            agent="claude",
+            subtasks=[{"id": "stage-1", "path": "README.md", "agent": "hermes"}],
+            agent_adapters=agent_adapters,
+        )
+
+    assert task["task_id"] == "task-external-http"
+    assert server.last_submit["agentAdapters"] == agent_adapters
+
+
 def test_external_app_task_artifacts_include_client_file_metadata(tmp_path):
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -810,6 +850,31 @@ def test_external_expected_artifacts_compute_size_from_project_file(tmp_path):
     assert artifact["file_path"].endswith("README.md")
     assert artifact["file_size"] == "6 B"
     assert artifact["status"] == "expected"
+
+
+def test_external_generic_artifact_task_quality_does_not_require_release_probes(tmp_path):
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    task = _external_task("task-generic-artifact", str(project_dir), "completed")
+    task["agent"] = "demo"
+    task["subtasks"] = [{**task["subtasks"][0], "agent": "demo", "path": "README.md"}]
+    task["contract"] = {
+        "contractVersion": "0.1",
+        "goal": "Create README.md",
+        "qualityGates": ["required_artifacts_present", "no_artifacts_outside_project"],
+        "requiredArtifacts": ["README.md"],
+    }
+    task["metadata"] = {
+        "task_types": ["artifact"],
+        "delivery_mode": "artifact",
+    }
+
+    app_task = external_task_to_app_info(task)
+
+    assert app_task["quality_health"]["delivery_quality"] == "passed"
+    assert app_task["delivery_report"]["status"] == "passed"
+    assert app_task["delivery_report"]["checks"] == {"artifact_integrity": True}
 
 
 def test_external_generic_task_preserves_task_types_in_app_mapping(tmp_path):
@@ -971,6 +1036,16 @@ else:
     )
 
     manager.implementation_status()
+    agent_adapters = {
+        "openclaw": {
+            "type": "command",
+            "command": ["python3", "-m", "across_agents_assistant.orchestrator_agent_adapter", "--agent", "openclaw"],
+        },
+        "hermes": {
+            "type": "command",
+            "command": ["python3", "-m", "across_agents_assistant.orchestrator_agent_adapter", "--agent", "hermes"],
+        },
+    }
     task = manager.submit_task(
         goal="Build a serial validation chain",
         project_dir=project_dir,
@@ -979,6 +1054,7 @@ else:
         subtasks=subtasks,
         strict_dependency=True,
         task_types=["artifact"],
+        agent_adapters=agent_adapters,
     )
     calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
     submit_call = next(call for call in calls if call and call[0] == "submit")
@@ -986,8 +1062,11 @@ else:
     assert task["task_id"] == task_id
     assert "--strict-dependency" in submit_call
     assert "--subtasks-json" in submit_call
+    assert "--agent-adapters-json" in submit_call
     encoded_subtasks = submit_call[submit_call.index("--subtasks-json") + 1]
     assert json.loads(encoded_subtasks) == subtasks
+    encoded_agent_adapters = submit_call[submit_call.index("--agent-adapters-json") + 1]
+    assert json.loads(encoded_agent_adapters) == agent_adapters
     assert ["--task-type", "artifact"] == submit_call[
         submit_call.index("--task-type"):submit_call.index("--task-type") + 2
     ]

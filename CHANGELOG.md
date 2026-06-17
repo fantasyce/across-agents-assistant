@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.8.9 - 2026-06-17
+
+### Fixed
+
+- Released with Across Orchestrator `v0.6.8`, which synchronizes task terminal
+  status with Agent Loop terminal states so cancelled, rejected, and max-turns
+  stopped loops no longer leave host-visible tasks in `running`.
+- Kept `stopped` as an Orchestrator loop detail while mapping host task status
+  to AAA-supported terminal states (`failed` or `cancelled`).
+
+### Changed
+
+- Updated managed plugin defaults to Across Orchestrator `v0.6.8` and Across
+  Context `v0.7.6`.
+
+### Validation
+
+- AAA backend tests passed with 694 tests and 20 skipped.
+- SwiftPM Swift Testing passed with 28 tests.
+- Across Orchestrator checks passed with 104 tests.
+- Across Context checks passed with 63 tests.
+- AAA open-source release check passed.
+
 ## 0.8.8 - 2026-06-16
 
 ### Changed

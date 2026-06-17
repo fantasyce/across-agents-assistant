@@ -114,7 +114,6 @@ struct StartupDiagnosticsRuntime: Decodable {
     let uptimeSec: Double
     let knownTasks: Int
     let persistenceInitialized: Bool
-    let dispatcherInitialized: Bool
 
     enum CodingKeys: String, CodingKey {
         case pid
@@ -122,7 +121,6 @@ struct StartupDiagnosticsRuntime: Decodable {
         case uptimeSec = "uptime_sec"
         case knownTasks = "known_tasks"
         case persistenceInitialized = "persistence_initialized"
-        case dispatcherInitialized = "dispatcher_initialized"
     }
 }
 

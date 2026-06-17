@@ -31,7 +31,18 @@ def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
+        def submit_task(
+            self,
+            *,
+            goal,
+            project_dir,
+            deliverables=None,
+            agent=None,
+            subtasks=None,
+            strict_dependency=False,
+            task_types=None,
+            agent_adapters=None,
+        ):
             captured["goal"] = goal
             captured["project_dir"] = project_dir
             captured["deliverables"] = deliverables
@@ -39,6 +50,7 @@ def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
             captured["subtasks"] = subtasks
             captured["strict_dependency"] = strict_dependency
             captured["task_types"] = task_types
+            captured["agent_adapters"] = agent_adapters
             return {"task_id": "task-unit123", "status": "pending"}
 
     monkeypatch.setattr("across_agents_assistant.api_server._check_llm_provider_readiness", lambda: [])
@@ -62,6 +74,8 @@ def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
     assert captured["subtasks"] == []
     assert captured["strict_dependency"] is True
     assert captured["task_types"] == ["functional", "artifact"]
+    assert captured["agent_adapters"]["claude"]["type"] == "command"
+    assert captured["agent_adapters"]["claude"]["command"][-2:] == ["--agent", "claude"]
 
 
 def test_auto_task_external_extracts_serial_wave_plan(monkeypatch, tmp_path):
@@ -77,12 +91,24 @@ def test_auto_task_external_extracts_serial_wave_plan(monkeypatch, tmp_path):
                 "connection_note": "fake external runtime",
             }
 
-        def submit_task(self, *, goal, project_dir, deliverables=None, agent=None, subtasks=None, strict_dependency=False, task_types=None):
+        def submit_task(
+            self,
+            *,
+            goal,
+            project_dir,
+            deliverables=None,
+            agent=None,
+            subtasks=None,
+            strict_dependency=False,
+            task_types=None,
+            agent_adapters=None,
+        ):
             captured["deliverables"] = deliverables
             captured["agent"] = agent
             captured["subtasks"] = subtasks
             captured["strict_dependency"] = strict_dependency
             captured["task_types"] = task_types
+            captured["agent_adapters"] = agent_adapters
             return {"task_id": "task-serial", "status": "pending"}
 
     monkeypatch.setattr("across_agents_assistant.api_server._check_llm_provider_readiness", lambda: [])
@@ -135,3 +161,6 @@ def test_auto_task_external_extracts_serial_wave_plan(monkeypatch, tmp_path):
     assert captured["subtasks"][2]["dependencies"] == ["wave-1-1", "wave-1-2"]
     assert captured["subtasks"][3]["dependencies"] == ["wave-2-1"]
     assert captured["subtasks"][6]["dependencies"] == ["wave-3-1", "wave-3-2", "wave-3-3"]
+    assert set(captured["agent_adapters"]) == {"hermes", "deepseek"}
+    assert captured["agent_adapters"]["hermes"]["command"][-2:] == ["--agent", "hermes"]
+    assert captured["agent_adapters"]["deepseek"]["command"][-2:] == ["--agent", "deepseek"]

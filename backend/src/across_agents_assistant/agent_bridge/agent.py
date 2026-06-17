@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from ..agent_loop import AgentLoop, LoopConfig, LLMGatewayAdapter
+from ..agent_loop import ChatToolLoop, LoopConfig, LLMGatewayAdapter
 from ..approval.executor import ToolExecutor
 from ..llm_gateway.provider_registry import get_default_provider_ids
 from ..tools.tool_registry import ToolRegistry, ToolDefinition, registry as global_tool_registry
@@ -287,7 +287,7 @@ class AgentSession:
         tool_executor = ToolExecutor(tool_registry, approval_service=None)
         llm_adapter.set_tools(tool_registry)
 
-        loop = AgentLoop(
+        loop = ChatToolLoop(
             llm_client=llm_adapter,
             tool_registry=tool_registry,
             config=LoopConfig(max_iterations=8),

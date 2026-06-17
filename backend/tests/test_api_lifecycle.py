@@ -23,7 +23,7 @@ import tempfile
 
 os.environ["ACROSS_AGENTS_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
 
-from across_agents_assistant.task_manager.state import TaskState
+from across_agents_assistant.legacy_task_history.state import TaskState
 
 def fake_recovery(self, *args, **kwargs):
     print("RECOVERY_CALLED")
@@ -63,7 +63,7 @@ from fastapi.testclient import TestClient
 
 os.environ["ACROSS_AGENTS_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
 
-from across_agents_assistant.task_manager.state import TaskState
+from across_agents_assistant.legacy_task_history.state import TaskState
 
 calls = {"recovery": 0, "restore_scan": 0}
 
@@ -198,7 +198,7 @@ def test_backend_singleton_lock_rejects_duplicate_socket_owner(monkeypatch, tmp_
 
 def test_shutdown_suspends_running_tasks_instead_of_cancelling(monkeypatch, tmp_path):
     import across_agents_assistant.api_server as srv
-    from across_agents_assistant.task_manager.models import TaskStatus
+    from across_agents_assistant.legacy_task_history.models import TaskStatus
 
     calls = []
 

@@ -1,4 +1,4 @@
-from across_agents_assistant.task_manager.orchestration.release_evaluation import (
+from across_agents_assistant.task_review.release_evaluation import (
     build_release_evaluation_summary,
 )
 
@@ -58,11 +58,11 @@ def _task(
 def test_release_evaluation_reports_no_evidence_without_quality_reports():
     summary = build_release_evaluation_summary([
         {
-            "task_id": "task-legacy",
-            "description": "Legacy task",
+            "task_id": "task-external",
+            "description": "External task",
             "status": "completed",
             "task_types": ["functional"],
-            "delivery_mode": "legacy",
+            "delivery_mode": "external",
             "last_owner_decision": {},
         }
     ])

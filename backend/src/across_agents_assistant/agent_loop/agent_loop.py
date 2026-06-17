@@ -20,8 +20,8 @@ class ChatMessage:
     tool_calls: Optional[List[Dict]] = None
     tool_call_id: Optional[str] = None
 
-class AgentLoop:
-    """Agent 推理循环"""
+class ChatToolLoop:
+    """Chat-oriented LLM tool-calling loop used by AAA host agents."""
 
     def __init__(
         self,
@@ -150,7 +150,7 @@ class AgentLoop:
                 self._audit_logger.log_tool_call(
                     task_id=self._task_id,
                     tool_name=tool_name,
-                    risk_level='medium',  # Default risk level for agent loop tools
+                    risk_level='medium',  # Default risk level for chat tool loop tools
                     params=params
                 )
             except Exception as e:
