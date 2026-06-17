@@ -3246,17 +3246,6 @@ def _suspend_running_tasks_for_shutdown(signum: int) -> List[str]:
     return suspended
 
 
-def _cancel_running_tasks():
-    """Cancel all running/pending tasks to speed up shutdown."""
-    try:
-        for task_id, task in list(_task_state._tasks.items()):
-            if task.status not in ('completed', 'failed', 'cancelled'):
-                logger.info(f"Cancelling task {task_id} during shutdown")
-                _task_state.cancel_task(task_id)
-    except Exception as e:
-        logger.warning(f"Error cancelling tasks during shutdown: {e}")
-
-
 def start_api_server():
     # Initialize logging
     from .logging_setup import setup_logger

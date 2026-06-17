@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.10` | Removes an unused legacy shutdown cancellation helper and moves the managed Orchestrator pin to `v0.6.9`, keeping AAA aligned with the latest Agent Loop lease, cancellation, routing, and failure-type propagation hardening. |
 | `0.8.9` | Synchronizes external Orchestrator task terminal status with Agent Loop terminal states, keeps `stopped` as a loop detail while exposing AAA-compatible task statuses, and moves managed pins to Context `v0.7.6` and Orchestrator `v0.6.8`. |
 | `0.8.8` | Removes the retired in-app task runtime from product task APIs, keeps task orchestration on the external Across Orchestrator boundary, adds host-neutral declarative agent adapters, strengthens Agent Loop checkpoint/action-plan handling, and moves managed pins to Context `v0.7.5` and Orchestrator `v0.6.7`. |
 | `0.8.7` | Product-mode runtime boundary hardening across the packaged app, managed Context/Orchestrator discovery, Agent Loop reject/cancel/retry controls, and host artifact metadata for external Orchestrator tasks; managed pins move to Context `v0.7.4` and Orchestrator `v0.6.6`. |
@@ -188,7 +189,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.9` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.10` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.10` release removes an unused legacy shutdown cancellation helper from
+the backend and aligns AAA with Across Orchestrator `v0.6.9` and Across Context
+`v0.7.6`. The Orchestrator update includes Agent Loop running leases, heartbeat
+renewal, cancellation guard behavior, command adapter subprocess termination,
+metadata routing, and root `failure_type` propagation across loop and task
+terminal events.
 
 The `0.8.9` release aligns AAA with Across Orchestrator `v0.6.8` and Across
 Context `v0.7.6`. External task runs now receive terminal task statuses from
@@ -462,7 +470,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.8
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.9
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.6
