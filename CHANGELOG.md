@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.8.10 - 2026-06-17
+
+### Fixed
+
+- Removed an unused legacy shutdown helper that cancelled running tasks during
+  old shutdown flows; current shutdown uses task suspension through
+  `_suspend_running_tasks_for_shutdown()`.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.9` while
+  keeping Across Context pinned to `v0.7.6`.
+
+### Validation
+
+- AAA backend tests passed with 694 tests and 20 skipped.
+- SwiftPM Swift Testing passed with 28 tests.
+- AAA open-source release check passed.
+
 ## 0.8.9 - 2026-06-17
 
 ### Fixed
