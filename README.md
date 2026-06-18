@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.12` | Adds read-only Agent Loop health inspection from Across Orchestrator `v0.6.11`, proxies health through the AAA backend, and surfaces current action, approval, and lease state in the Plugin Center loop probe. |
 | `0.8.11` | Removes the remaining host-side task-manager and legacy task-history compatibility packages, keeps host task history on the explicit `task_history` boundary, and moves the managed Orchestrator pin to `v0.6.10` for terminal task idempotency. |
 | `0.8.10` | Removes an unused shutdown cancellation helper and moves the managed Orchestrator pin to `v0.6.9`, keeping AAA aligned with the latest Agent Loop lease, cancellation, routing, and failure-type propagation hardening. |
 | `0.8.9` | Synchronizes external Orchestrator task terminal status with Agent Loop terminal states, keeps `stopped` as a loop detail while exposing AAA-compatible task statuses, and moves managed pins to Context `v0.7.6` and Orchestrator `v0.6.8`. |
@@ -190,15 +191,19 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.11` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.12` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.12` release aligns AAA with Across Orchestrator `v0.6.11` and Across
+Context `v0.7.6`. AAA now proxies the Orchestrator read-only Agent Loop health
+endpoint through the backend and shows loop probe health hints in the Plugin
+Center, including the current action, pending approval state, and execution
+lease state. Health fetching is best-effort so a successful probe is not marked
+failed if the optional health snapshot is temporarily unavailable.
 
 The `0.8.11` release removes the remaining host-side task-manager and legacy
 task-history compatibility packages from the backend, keeps host-visible task
 history on the explicit `task_history` boundary, and aligns AAA with Across
-Orchestrator `v0.6.10` and Across Context `v0.7.6`. The Orchestrator update
-keeps terminal external tasks idempotent after cancellation or approval
-rejection and normalizes older `stopped` task rows to `failed` without duplicate
-task events.
+Orchestrator `v0.6.10` and Across Context `v0.7.6`.
 
 The `0.8.9` release aligns AAA with Across Orchestrator `v0.6.8` and Across
 Context `v0.7.6`. External task runs now receive terminal task statuses from
@@ -472,7 +477,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.10
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.11
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.6

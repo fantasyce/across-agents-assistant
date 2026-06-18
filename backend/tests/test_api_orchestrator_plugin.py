@@ -179,6 +179,9 @@ class FakeHTTPOrchestrator:
                 if self.path == f"/loops/{owner.loop_id}":
                     self._json(owner._loop_payload(owner.loop_status))
                     return
+                if self.path == f"/loops/{owner.loop_id}/health":
+                    self._json(owner._loop_health_payload(owner.loop_status))
+                    return
                 if self.path == f"/loops/{owner.loop_id}/events":
                     self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
                     return
@@ -310,6 +313,29 @@ class FakeHTTPOrchestrator:
             "error": "approval_rejected" if rejected else None,
         }
 
+    def _loop_health_payload(self, status: str) -> dict:
+        awaiting_approval = status == "awaiting_approval"
+        return {
+            "schema_version": "0.1",
+            "loop_id": self.loop_id,
+            "status": status,
+            "current_action_type": "task_dispatch" if awaiting_approval else None,
+            "current_step_id": "step-api-dispatch" if awaiting_approval else None,
+            "pending_approval": {
+                "step_id": "step-api-dispatch",
+                "action_id": self.loop_action_id,
+                "action_type": "task_dispatch",
+                "title": "Dispatch work through host adapter",
+                "approval_status": "pending",
+            } if awaiting_approval else None,
+            "lease": {"active": False, "lease_seconds": 300.0, "heartbeat_at": 1_700_000_001.0},
+            "detached_dispatch_count": 0,
+            "recent_failure_types": {},
+            "executable_actions": ["approve", "reject", "cancel", "retry"] if awaiting_approval else [],
+            "cancellation_requested": False,
+            "cancel_ack_pending": False,
+        }
+
 
 def _reset_plugin_manager():
     api_server._orchestrator_plugin_manager = None
@@ -419,13 +445,17 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
 
         run = client.post(f"/api/orchestrator/loops/{loop_id}/run")
         status = client.get(f"/api/orchestrator/loops/{loop_id}")
+        health = client.get(f"/api/orchestrator/loops/{loop_id}/health")
         events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
 
     assert loop_id == "loop-api-external"
     assert run.json()["status"] == "completed"
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
+    assert health.json()["status"] == "completed"
+    assert health.json()["loop_id"] == "loop-api-external"
     assert events.json()[0]["type"] == "loop.completed"
     assert ("POST", "/loops") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
 

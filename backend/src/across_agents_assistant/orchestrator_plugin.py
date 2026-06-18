@@ -45,7 +45,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.10"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.11"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -1102,6 +1102,12 @@ class OrchestratorPluginManager:
             return self._http_get(f"/loops/{loop_id}")
         return self._cli_json(["loop-status", loop_id, "--json"])
 
+    def get_agent_loop_health(self, loop_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_get(f"/loops/{loop_id}/health")
+        return self._cli_json(["loop-health", loop_id, "--json"])
+
     def get_agent_loop_events(self, loop_id: str) -> List[Dict[str, Any]]:
         self._ensure_external()
         if self._transport == "http":
@@ -1338,8 +1344,18 @@ class OrchestratorPluginManager:
 
     def _http_get(self, path: str) -> Any:
         endpoint = self._resolved_endpoint()
-        with urllib.request.urlopen(endpoint + path, timeout=self.config.connect_timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+        request = urllib.request.Request(
+            endpoint + path,
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.connect_timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            logger.warning("Across Orchestrator HTTP GET failed with %s: %s", exc.code, detail[:1000])
+            raise OrchestratorPluginError(f"HTTP {exc.code}: Across Orchestrator request failed.") from exc
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:
         endpoint = self._resolved_endpoint()

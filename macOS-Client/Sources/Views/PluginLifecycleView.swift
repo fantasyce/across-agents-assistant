@@ -246,6 +246,18 @@ struct PluginLifecycleView: View {
                     metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
                     metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
                     metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                    if let health = viewModel.agentLoopHealth {
+                        if let currentAction = health.currentActionType {
+                            metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
+                        }
+                        if health.pendingApproval != nil {
+                            metadataChip(appPreferences.text("plugins.loop.pendingApproval"))
+                        } else if health.lease?.active == true, let remaining = health.lease?.remainingSeconds {
+                            metadataChip(String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded())))
+                        } else {
+                            metadataChip(appPreferences.text("plugins.loop.leaseIdle"))
+                        }
+                    }
                 } else {
                     Color.clear.frame(height: 22)
                 }

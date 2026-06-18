@@ -206,6 +206,72 @@ struct AgentLoopRunResponse: Decodable, Equatable {
     }
 }
 
+struct AgentLoopHealthResponse: Decodable, Equatable {
+    let loopId: String
+    let status: String
+    let currentActionType: String?
+    let currentStepId: String?
+    let pendingApproval: AgentLoopPendingApproval?
+    let lease: AgentLoopLeaseHealth?
+    let detachedDispatchCount: Int?
+    let recentFailureTypes: [String: Int]?
+    let executableActions: [String]?
+    let cancellationRequested: Bool?
+    let cancelAckPending: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case loopId = "loop_id"
+        case status
+        case currentActionType = "current_action_type"
+        case currentStepId = "current_step_id"
+        case pendingApproval = "pending_approval"
+        case lease
+        case detachedDispatchCount = "detached_dispatch_count"
+        case recentFailureTypes = "recent_failure_types"
+        case executableActions = "executable_actions"
+        case cancellationRequested = "cancellation_requested"
+        case cancelAckPending = "cancel_ack_pending"
+    }
+}
+
+struct AgentLoopPendingApproval: Decodable, Equatable {
+    let stepId: String?
+    let actionId: String?
+    let actionType: String?
+    let title: String?
+    let approvalStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case stepId = "step_id"
+        case actionId = "action_id"
+        case actionType = "action_type"
+        case title
+        case approvalStatus = "approval_status"
+    }
+}
+
+struct AgentLoopLeaseHealth: Decodable, Equatable {
+    let active: Bool?
+    let leaseId: String?
+    let leaseSeconds: Double?
+    let heartbeatAt: Double?
+    let expiresAt: Double?
+    let remainingSeconds: Double?
+    let expired: Bool?
+    let renewalCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case active
+        case leaseId = "lease_id"
+        case leaseSeconds = "lease_seconds"
+        case heartbeatAt = "heartbeat_at"
+        case expiresAt = "expires_at"
+        case remainingSeconds = "remaining_seconds"
+        case expired
+        case renewalCount = "renewal_count"
+    }
+}
+
 struct AgentLoopStep: Decodable, Equatable {
     let status: String?
     let action: AgentLoopAction?
