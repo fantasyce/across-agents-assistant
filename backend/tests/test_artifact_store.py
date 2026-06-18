@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from across_agents_assistant.legacy_task_history.models import Artifact
+from across_agents_assistant.task_history.models import Artifact
 from across_agents_assistant.task_review.artifact_store import ArtifactStore
 
 

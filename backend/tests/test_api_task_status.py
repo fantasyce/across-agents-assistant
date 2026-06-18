@@ -10,8 +10,8 @@ import tempfile
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from across_agents_assistant.api_server import _compute_task_status
-from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Task, TaskStatus
-from across_agents_assistant.legacy_task_history.state import TaskState
+from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
+from across_agents_assistant.task_history.state import TaskState
 
 
 def test_compute_task_status_pending_task_without_subtasks_returns_created():
@@ -210,7 +210,7 @@ def test_quality_health_does_not_treat_paused_remediation_as_active_when_deliver
 
 def test_quality_health_wave_zero_completed_when_decompose_done():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Wave
+    from across_agents_assistant.task_history.models import Wave
     state = TaskState()
     task = state.create_task("wave zero")
     decompose = SubTask(subtask_id=f"{task.task_id}-decompose", description="decompose", agent_id="owner")
@@ -228,7 +228,7 @@ def test_quality_health_wave_zero_completed_when_decompose_done():
 
 def test_quality_health_blocked_by_wave_gate_not_counted_as_repair_needed():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Wave
+    from across_agents_assistant.task_history.models import Wave
     state = TaskState()
     task = state.create_task("blocked")
     st1 = SubTask(subtask_id="st-1", description="A", agent_id="deepseek")
@@ -254,7 +254,7 @@ def test_quality_health_blocked_by_wave_gate_not_counted_as_repair_needed():
 def test_repair_task_dispatch_if_possible_skips_removed_legacy_runtime(monkeypatch):
     import across_agents_assistant.api_server as srv
 
-    from across_agents_assistant.legacy_task_history.models import Task as TaskModel
+    from across_agents_assistant.task_history.models import Task as TaskModel
     task = TaskModel.new(description="pending task")
     task.status = TaskStatus.PENDING
 
@@ -278,8 +278,8 @@ def test_repair_task_dispatch_if_possible_skips_removed_legacy_runtime(monkeypat
 
 def test_quality_health_wave_zero_governance_not_applicable():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Wave
-    from across_agents_assistant.legacy_task_history.state import TaskState as TS
+    from across_agents_assistant.task_history.models import Wave
+    from across_agents_assistant.task_history.state import TaskState as TS
     task = Task.new(description="quality diagnostic")
     decompose = SubTask(
         task_id=task.task_id,
@@ -385,8 +385,8 @@ def test_key_readiness_rejects_placeholder_cache(monkeypatch):
 
 def test_quality_health_detects_terminal_inconsistency():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Wave
-    from across_agents_assistant.legacy_task_history.state import TaskState as TS
+    from across_agents_assistant.task_history.models import Wave
+    from across_agents_assistant.task_history.state import TaskState as TS
 
     task = Task.new(description="inconsistent")
     task.status = TaskStatus.FAILED
@@ -504,7 +504,7 @@ def test_check_keys_does_not_initialize_orchestrator_without_active_waiting_task
 
 def test_quality_health_waiting_for_keys_gate():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.state import TaskState as TS
+    from across_agents_assistant.task_history.state import TaskState as TS
 
     task = Task.new(description="waiting")
     task.status = TaskStatus.PENDING
@@ -523,7 +523,7 @@ def test_quality_health_waiting_for_keys_gate():
 
 def test_quality_health_missing_manifest_gate():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.state import TaskState as TS
+    from across_agents_assistant.task_history.state import TaskState as TS
 
     task = Task.new(description="missing manifest")
     task.status = TaskStatus.FAILED
@@ -543,8 +543,8 @@ def test_quality_health_missing_manifest_gate():
 
 def test_quality_health_manifest_partial_gate():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     task = Task.new(description="partial")
     task.status = TaskStatus.RUNNING
@@ -565,8 +565,8 @@ def test_quality_health_manifest_partial_gate():
 
 def test_quality_health_manifest_passed_gate():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     task = Task.new(description="passed")
     task.status = TaskStatus.COMPLETED
@@ -587,8 +587,8 @@ def test_quality_health_manifest_passed_gate():
 
 def test_quality_health_active_quality_remediation_next_action():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     task = Task.new("quality remediation")
     task.status = TaskStatus.RUNNING
@@ -604,8 +604,8 @@ def test_quality_health_active_quality_remediation_next_action():
 
 def test_compute_task_status_waiting_for_keys_is_pending_even_with_error():
     from across_agents_assistant.api_server import _compute_task_status
-    from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="waiting")
@@ -633,8 +633,8 @@ def test_compute_task_status_waiting_for_keys_is_pending_even_with_error():
 
 def test_compute_task_status_non_recoverable_error_still_failed():
     from across_agents_assistant.api_server import _compute_task_status
-    from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="broken")
@@ -657,8 +657,8 @@ def test_compute_task_status_non_recoverable_error_still_failed():
 
 def test_quality_health_waiting_for_keys_matches_computed_status():
     from across_agents_assistant.api_server import _build_quality_health, _compute_task_status
-    from across_agents_assistant.legacy_task_history.models import JobStatus, SubTask, Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="waiting")
@@ -691,8 +691,8 @@ def test_quality_health_waiting_for_keys_matches_computed_status():
 
 def test_has_inconsistent_acceptance_judge_passed_with_failed_checks():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="test")
@@ -717,8 +717,8 @@ def test_has_inconsistent_acceptance_judge_passed_with_failed_checks():
 
 def test_has_inconsistent_acceptance_approve_with_failed_checks():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="test")
@@ -743,8 +743,8 @@ def test_has_inconsistent_acceptance_approve_with_failed_checks():
 
 def test_has_inconsistent_acceptance_fix_with_approve_recommended():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="test")
@@ -769,8 +769,8 @@ def test_has_inconsistent_acceptance_fix_with_approve_recommended():
 
 def test_has_inconsistent_acceptance_consistent_record():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="test")
@@ -795,8 +795,8 @@ def test_has_inconsistent_acceptance_consistent_record():
 
 def test_has_inconsistent_acceptance_false_for_normalized_wave_fix_record():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Task, TaskStatus
-    from across_agents_assistant.legacy_task_history.state import TaskState
+    from across_agents_assistant.task_history.models import Task, TaskStatus
+    from across_agents_assistant.task_history.state import TaskState
 
     state = TaskState()
     task = Task.new(description="wave acceptance normalized")
@@ -1082,7 +1082,7 @@ def test_delivery_quality_adjusts_completed_status_to_failed_when_contract_fails
 
 def test_quality_health_marks_terminal_task_with_running_remediation_as_inconsistent():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import SubTask, TaskStatus
+    from across_agents_assistant.task_history.models import SubTask, TaskStatus
 
     state = TaskState()
     task = state.create_task("terminal but retry running")
@@ -1109,7 +1109,7 @@ def test_quality_health_marks_terminal_task_with_running_remediation_as_inconsis
 
 def test_quality_health_treats_failed_business_subtask_as_residue_when_delivery_passed():
     from across_agents_assistant.api_server import _build_quality_health
-    from across_agents_assistant.legacy_task_history.models import Wave, SubTask, TaskStatus
+    from across_agents_assistant.task_history.models import Wave, SubTask, TaskStatus
 
     state = TaskState()
     task = state.create_task("terminal but wave failed")

@@ -236,10 +236,6 @@ class TaskPersistenceService:
                 result.append(d)
             return result
 
-    def get_task_subtasks(self, task_id: str) -> List[Dict[str, Any]]:
-        """Backward-compatible alias for restored task loading."""
-        return self.get_subtasks(task_id)
-
     def update_subtask_status(self, subtask_id: str, status: str,
                               progress: float = None, error_message: str = None) -> None:
         """更新子任务状态。"""

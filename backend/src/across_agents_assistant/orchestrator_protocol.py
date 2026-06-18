@@ -126,12 +126,10 @@ def _app_status(status: str) -> str:
 
 
 def _clean_task_types(task_types: Optional[List[Any]]) -> List[str]:
-    # Backward-compatible internal name kept for existing call sites.
     return normalize_task_types(task_types)
 
 
 def _clean_agent_ids(agent_ids: Optional[Sequence[Any]]) -> List[str]:
-    # Backward-compatible internal name kept for existing call sites.
     return normalize_external_agent_ids(agent_ids)
 
 
@@ -312,7 +310,7 @@ def _external_app_grade_executors(task: Dict[str, Any]) -> List[str]:
     return clean or list(DEFAULT_APP_GRADE_EXECUTOR_AGENTS)
 
 
-def _legacy_role_from_agent(agent: str) -> Optional[str]:
+def _capability_role_from_agent_id(agent: str) -> Optional[str]:
     value = str(agent or "").strip().lower()
     if value.endswith("-agent"):
         return value.removesuffix("-agent")
@@ -333,7 +331,7 @@ def _normalize_external_task_for_app(task: Dict[str, Any]) -> Dict[str, Any]:
     if agent == "app-grade" or agent.endswith("-agent"):
         normalized["agent"] = executors[0]
     for index, subtask in enumerate(normalized["subtasks"]):
-        role = _legacy_role_from_agent(str(subtask.get("agent") or subtask.get("agent_id") or ""))
+        role = _capability_role_from_agent_id(str(subtask.get("agent") or subtask.get("agent_id") or ""))
         if not role:
             continue
         subtask.setdefault("capability_role", role)

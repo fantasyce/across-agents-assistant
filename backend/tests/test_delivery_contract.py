@@ -6,7 +6,7 @@ from across_agents_assistant.task_review.requirements import (
     extract_requirement_manifest,
     extract_required_path_hints,
 )
-from across_agents_assistant.legacy_task_history.state import TaskState
+from across_agents_assistant.task_history.state import TaskState
 
 
 def test_normalize_delivery_task_types_composite():

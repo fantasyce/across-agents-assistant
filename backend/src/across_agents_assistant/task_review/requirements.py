@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from across_agents_assistant.legacy_task_history.models import (
+from across_agents_assistant.task_history.models import (
     AcceptanceCheck,
     RequirementDeliverable,
     RequirementManifest,

@@ -118,7 +118,7 @@ def test_release_verification_endpoint_sanitizes_report_payload(monkeypatch):
     monkeypatch.setattr(
         api_server,
         "_build_release_verification_report",
-        lambda write_report=True: {
+        lambda **_kwargs: {
             "status": "blocked",
             "startup": {"checks": [{"detail": TRACEBACK_TEXT}]},
             "release_evaluation": {"error": TRACEBACK_TEXT},

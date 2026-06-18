@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.8.11 - 2026-06-19
+
+### Changed
+
+- Removed the remaining host-side `task_manager` and `legacy_task_history`
+  compatibility packages; host task history now lives under
+  `across_agents_assistant.task_history`.
+- Removed stale compatibility aliases for local-agent exports, task persistence
+  subtask loading, release verification monkeypatch signatures, and the
+  shadowed `/api/tasks/resumable` route.
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.10` while
+  keeping Across Context pinned to `v0.7.6`.
+
+### Fixed
+
+- Released with Across Orchestrator `v0.6.10`, which keeps terminal external
+  tasks idempotent after cancellation or approval rejection and normalizes older
+  `stopped` task rows to `failed` without duplicate task events.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed with 671 tests and 1 warning.
+- AAA focused boundary regression passed with 90 tests and 1 warning.
+- Swift package lock verification and Swift build passed.
+- Across Orchestrator checks passed with 122 tests and 2 subtests.
+- Across Context checks passed with 63 tests.
+
 ## 0.8.10 - 2026-06-17
 
 ### Fixed

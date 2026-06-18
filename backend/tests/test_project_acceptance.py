@@ -1,6 +1,6 @@
 """Tests for project-level quality acceptance (Phase 4)."""
 
-from across_agents_assistant.legacy_task_history.models import Task
+from across_agents_assistant.task_history.models import Task
 from across_agents_assistant.task_review.project_acceptance import (
     run_project_acceptance,
 )
@@ -153,7 +153,7 @@ class TestProjectAcceptanceAliases:
 
 def test_reports_empty_required_file_as_invalid_required(tmp_path):
     from across_agents_assistant.task_review.project_acceptance import run_project_acceptance
-    from across_agents_assistant.legacy_task_history.models import Task
+    from across_agents_assistant.task_history.models import Task
     manifest = {
         "deliverables": [
             {"requirement_id": "req-empty", "path_hint": "empty.py", "artifact_type": "api_service_source", "required": True}
@@ -176,7 +176,7 @@ def test_reports_empty_required_file_as_invalid_required(tmp_path):
 
 def test_reports_python_syntax_error_as_invalid_required(tmp_path):
     from across_agents_assistant.task_review.project_acceptance import run_project_acceptance
-    from across_agents_assistant.legacy_task_history.models import Task
+    from across_agents_assistant.task_history.models import Task
     manifest = {
         "deliverables": [
             {"requirement_id": "req-broken", "path_hint": "broken.py", "artifact_type": "api_service_source", "required": True}
@@ -260,7 +260,7 @@ class TestBarePathResolution:
 
 
 def test_project_acceptance_rejects_flask_when_fastapi_requested(tmp_path):
-    from across_agents_assistant.legacy_task_history.models import Task
+    from across_agents_assistant.task_history.models import Task
     from across_agents_assistant.task_review.project_acceptance import run_project_acceptance
 
     (tmp_path / "app.py").write_text("from flask import Flask\napp = Flask(__name__)\n")
@@ -275,7 +275,7 @@ def test_project_acceptance_rejects_flask_when_fastapi_requested(tmp_path):
 
 
 def test_project_acceptance_rejects_postgresql_when_sqlite_requested(tmp_path):
-    from across_agents_assistant.legacy_task_history.models import Task
+    from across_agents_assistant.task_history.models import Task
     from across_agents_assistant.task_review.project_acceptance import run_project_acceptance
 
     (tmp_path / "app").mkdir()
@@ -294,7 +294,7 @@ def test_project_acceptance_rejects_postgresql_when_sqlite_requested(tmp_path):
 
 
 def test_project_acceptance_accepts_fastapi_when_requested(tmp_path):
-    from across_agents_assistant.legacy_task_history.models import Task
+    from across_agents_assistant.task_history.models import Task
     from across_agents_assistant.task_review.project_acceptance import run_project_acceptance
 
     (tmp_path / "app.py").write_text("from fastapi import FastAPI\nDATABASE_URL = 'sqlite+aiosqlite:///./app.db'\napp = FastAPI()\n")

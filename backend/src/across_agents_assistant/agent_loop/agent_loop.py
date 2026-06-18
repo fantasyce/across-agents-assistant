@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from .config import LoopConfig, LoopResult
 
 if TYPE_CHECKING:
-    from backend.src.across_agents_assistant.persistence.audit_logger import AuditLogger
+    from across_agents_assistant.persistence.audit_logger import AuditLogger
 
 logger = logging.getLogger("across_agents_assistant.agent_loop")
 

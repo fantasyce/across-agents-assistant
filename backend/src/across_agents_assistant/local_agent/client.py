@@ -121,7 +121,7 @@ class UniversalAgentClient:
 
         executable_path = resolve_local_agent_executable(agent_id)
 
-        # Backward compatibility for older llm_agents.json configurations.
+        # Fallback for agent-manager provided executable overrides.
         if not executable_path:
             configured_path = config.get("executable_path")
             if configured_path and os.path.isfile(os.path.expanduser(configured_path)) and os.access(os.path.expanduser(configured_path), os.X_OK):
@@ -523,7 +523,7 @@ class UniversalAgentClient:
 
         executable_path = resolve_local_agent_executable(agent_id)
 
-        # Backward compatibility for older llm_agents.json configurations.
+        # Fallback for agent-manager provided executable overrides.
         if not executable_path:
             configured_path = config.get("executable_path")
             if configured_path and os.path.isfile(os.path.expanduser(configured_path)) and os.access(os.path.expanduser(configured_path), os.X_OK):
@@ -665,7 +665,3 @@ class UniversalAgentClient:
             clean = ansi_pattern.sub("", extracted)
             return clean.split()[0] if clean else None
         return None
-
-
-# Backward compatibility alias
-LocalAgentClient = UniversalAgentClient

@@ -1,3 +1,3 @@
-from .client import LocalAgentClient
+from .client import UniversalAgentClient
 
-__all__ = ["LocalAgentClient"]
+__all__ = ["UniversalAgentClient"]
