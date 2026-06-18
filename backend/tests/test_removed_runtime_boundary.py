@@ -7,15 +7,22 @@ import sys
 import across_agents_assistant
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.task_api_models import TaskInfo, TaskSummaryInfo
-from across_agents_assistant.legacy_task_history.state import TaskState
+from across_agents_assistant.task_history.state import TaskState
 
 
 PACKAGE_ROOT = Path(across_agents_assistant.__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parents[2]
 
 
-def test_legacy_runtime_module_is_not_packaged():
-    assert importlib.util.find_spec("across_agents_assistant.legacy_task_runtime") is None
+def _missing_module_spec(module_name: str):
+    try:
+        return importlib.util.find_spec(module_name)
+    except ModuleNotFoundError:
+        return None
+
+
+def test_removed_runtime_module_is_not_packaged():
+    assert _missing_module_spec("across_agents_assistant.legacy_task_runtime") is None
     assert not (PACKAGE_ROOT / "legacy_task_runtime.py").exists()
 
 
@@ -55,6 +62,7 @@ def test_production_code_does_not_import_historical_runtime_construction():
 
 def test_historical_runtime_source_modules_are_removed():
     for module_path in (
+        PACKAGE_ROOT / "task_manager",
         PACKAGE_ROOT / "task_manager/orchestration/orchestrator.py",
         PACKAGE_ROOT / "task_manager/orchestration/owner_agent.py",
         PACKAGE_ROOT / "task_manager/orchestration/validator.py",
@@ -64,16 +72,20 @@ def test_historical_runtime_source_modules_are_removed():
         assert not module_path.exists()
 
     for module_name in (
+        "across_agents_assistant.task_manager",
+        "across_agents_assistant.task_manager.models",
+        "across_agents_assistant.task_manager.state",
+        "across_agents_assistant.task_manager.orchestration",
         "across_agents_assistant.task_manager.orchestration.orchestrator",
         "across_agents_assistant.task_manager.orchestration.owner_agent",
         "across_agents_assistant.task_manager.orchestration.validator",
         "across_agents_assistant.task_manager.dispatcher",
         "across_agents_assistant.task_manager.task_decomposer",
     ):
-        assert importlib.util.find_spec(module_name) is None
+        assert _missing_module_spec(module_name) is None
 
 
-def test_legacy_desktop_runtime_entrypoints_are_removed():
+def test_removed_desktop_runtime_entrypoints_are_removed():
     for module_path in (
         PACKAGE_ROOT / "app.py",
         PACKAGE_ROOT / "main_ui.py",
@@ -155,7 +167,7 @@ def test_readme_does_not_describe_historical_task_orchestrator_residue():
     assert "legacy task data inspection" not in readme
 
 
-def test_task_api_defaults_are_external_not_legacy():
+def test_task_api_defaults_are_external():
     assert TaskInfo.model_fields["delivery_mode"].default == "external"
     assert TaskSummaryInfo.model_fields["delivery_mode"].default == "external"
     assert TaskState._normalize_delivery_task_types(None) == ([], "external")
@@ -190,10 +202,6 @@ def test_task_review_helpers_are_exposed_outside_orchestration_namespace():
     assert review_spec.origin is not None
     assert "task_review/contract_acceptance.py" in review_spec.origin
 
-    legacy_init = (PACKAGE_ROOT / "task_manager/orchestration/__init__.py").read_text(encoding="utf-8")
-    assert "Deprecated compatibility import path" in legacy_init
-    assert "does not dispatch" in legacy_init
-
 
 def test_task_review_modules_own_their_implementation_source():
     review_dir = PACKAGE_ROOT / "task_review"
@@ -208,25 +216,41 @@ def test_task_review_modules_own_their_implementation_source():
     assert offenders == {}
 
 
-def test_legacy_orchestration_modules_are_compatibility_shims_only():
-    legacy_dir = PACKAGE_ROOT / "task_manager/orchestration"
-    offenders = {}
-    for path in legacy_dir.glob("*.py"):
-        if path.name == "__init__.py":
-            continue
-        source = path.read_text(encoding="utf-8")
-        expected_import = f"from across_agents_assistant.task_review.{path.stem} import *"
-        if expected_import not in source or len(source.splitlines()) > 6:
-            offenders[path.name] = "not a minimal task_review compatibility shim"
-
-    assert offenders == {}
+def test_removed_task_manager_package_is_removed():
+    assert not (PACKAGE_ROOT / "task_manager").exists()
+    for module_name in (
+        "across_agents_assistant.task_manager",
+        "across_agents_assistant.task_manager.models",
+        "across_agents_assistant.task_manager.state",
+        "across_agents_assistant.task_manager.orchestration",
+    ):
+        assert _missing_module_spec(module_name) is None
 
 
-def test_tests_use_task_review_path_except_compatibility_boundary_tests():
+def test_removed_task_history_package_name_is_removed():
+    assert not (PACKAGE_ROOT / "legacy_task_history").exists()
+    for module_name in (
+        "across_agents_assistant.legacy_task_history",
+        "across_agents_assistant.legacy_task_history.models",
+        "across_agents_assistant.legacy_task_history.state",
+    ):
+        assert _missing_module_spec(module_name) is None
+
+
+def test_local_agent_package_does_not_export_removed_alias():
+    import across_agents_assistant.local_agent as local_agent_pkg
+
+    assert hasattr(local_agent_pkg, "UniversalAgentClient")
+    assert "UniversalAgentClient" in getattr(local_agent_pkg, "__all__", [])
+    assert not hasattr(local_agent_pkg, "LocalAgentClient")
+    assert "LocalAgentClient" not in getattr(local_agent_pkg, "__all__", [])
+
+
+def test_tests_use_task_review_path_except_removed_boundary_tests():
     offenders: dict[str, list[str]] = {}
     for path in (PROJECT_ROOT / "backend/tests").rglob("*.py"):
         rel = path.relative_to(PROJECT_ROOT)
-        if path.name == "test_legacy_runtime_boundary.py":
+        if path.name == "test_removed_runtime_boundary.py":
             continue
         source = path.read_text(encoding="utf-8")
         matches = [
@@ -243,39 +267,25 @@ def test_tests_use_task_review_path_except_compatibility_boundary_tests():
     assert offenders == {}
 
 
-def test_legacy_task_history_owns_task_state_and_models_source():
+def test_task_history_owns_task_state_and_models_source():
     for module_name in ("models", "state"):
-        spec = importlib.util.find_spec(f"across_agents_assistant.legacy_task_history.{module_name}")
+        spec = importlib.util.find_spec(f"across_agents_assistant.task_history.{module_name}")
         assert spec is not None
         assert spec.origin is not None
-        assert f"legacy_task_history/{module_name}.py" in spec.origin
+        assert f"task_history/{module_name}.py" in spec.origin
 
-    legacy_state_source = (PACKAGE_ROOT / "legacy_task_history/state.py").read_text(encoding="utf-8")
-    legacy_models_source = (PACKAGE_ROOT / "legacy_task_history/models.py").read_text(encoding="utf-8")
-    assert "class TaskState" in legacy_state_source
-    assert "class OrchestratorState" in legacy_models_source
-
-
-def test_task_manager_models_and_state_are_compatibility_shims_only():
-    expected = {
-        "models.py": "from across_agents_assistant.legacy_task_history.models import *",
-        "state.py": "from across_agents_assistant.legacy_task_history.state import *",
-    }
-    offenders = {}
-    for file_name, expected_import in expected.items():
-        source = (PACKAGE_ROOT / f"task_manager/{file_name}").read_text(encoding="utf-8")
-        if expected_import not in source or len(source.splitlines()) > 6:
-            offenders[file_name] = "not a minimal legacy_task_history compatibility shim"
-
-    assert offenders == {}
+    state_source = (PACKAGE_ROOT / "task_history/state.py").read_text(encoding="utf-8")
+    models_source = (PACKAGE_ROOT / "task_history/models.py").read_text(encoding="utf-8")
+    assert "class TaskState" in state_source
+    assert "class OrchestratorState" in models_source
 
 
-def test_production_code_uses_legacy_task_history_not_task_manager_state_or_models():
+def test_production_code_uses_task_history_not_task_manager_state_or_models():
     offenders: dict[str, list[str]] = {}
     for path in PACKAGE_ROOT.rglob("*.py"):
         rel = path.relative_to(PACKAGE_ROOT)
         rel_text = str(rel)
-        if rel_text.startswith("task_manager/") or rel_text.startswith("legacy_task_history/"):
+        if rel_text.startswith("task_history/"):
             continue
 
         source = path.read_text(encoding="utf-8")
@@ -294,11 +304,50 @@ def test_production_code_uses_legacy_task_history_not_task_manager_state_or_mode
     assert offenders == {}
 
 
-def test_tests_use_legacy_task_history_path_except_boundary_tests():
+def test_production_code_does_not_reference_task_manager_namespace():
+    offenders: dict[str, list[str]] = {}
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        rel = path.relative_to(PACKAGE_ROOT)
+        source = path.read_text(encoding="utf-8")
+        matches = [
+            token
+            for token in (
+                "task_manager",
+                "task manager",
+            )
+            if token in source
+        ]
+        if matches:
+            offenders[str(rel)] = matches
+
+    assert offenders == {}
+
+
+def test_production_code_does_not_reference_source_tree_import_prefix():
+    offenders: dict[str, list[str]] = {}
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        rel = path.relative_to(PACKAGE_ROOT)
+        source = path.read_text(encoding="utf-8")
+        matches = [
+            token
+            for token in (
+                "backend.src.",
+                "from backend.src",
+                "import backend.src",
+            )
+            if token in source
+        ]
+        if matches:
+            offenders[str(rel)] = matches
+
+    assert offenders == {}
+
+
+def test_tests_use_task_history_path_except_removed_boundary_tests():
     offenders: dict[str, list[str]] = {}
     for path in (PROJECT_ROOT / "backend/tests").rglob("*.py"):
         rel = path.relative_to(PROJECT_ROOT)
-        if path.name == "test_legacy_runtime_boundary.py":
+        if path.name == "test_removed_runtime_boundary.py":
             continue
         source = path.read_text(encoding="utf-8")
         matches = [
@@ -306,6 +355,7 @@ def test_tests_use_legacy_task_history_path_except_boundary_tests():
             for token in (
                 "across_agents_assistant.task_manager.models",
                 "across_agents_assistant.task_manager.state",
+                "across_agents_assistant.legacy_task_history",
             )
             if token in source
         ]

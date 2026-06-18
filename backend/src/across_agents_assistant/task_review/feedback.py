@@ -4,7 +4,7 @@ import threading
 import uuid
 from typing import Dict, List, Optional
 
-from across_agents_assistant.legacy_task_history.models import Feedback
+from across_agents_assistant.task_history.models import Feedback
 
 
 class FeedbackChannel:

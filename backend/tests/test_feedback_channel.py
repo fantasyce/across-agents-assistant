@@ -1,6 +1,6 @@
 import pytest
 
-from across_agents_assistant.legacy_task_history.models import Feedback
+from across_agents_assistant.task_history.models import Feedback
 from across_agents_assistant.task_review.feedback import FeedbackChannel
 
 

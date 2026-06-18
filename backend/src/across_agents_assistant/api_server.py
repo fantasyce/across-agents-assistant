@@ -163,9 +163,9 @@ from .external_task_planning import (
     planned_subtasks_for_external_task,
 )
 
-# Task Manager imports
-from .legacy_task_history.state import TaskState
-from .legacy_task_history.models import TaskType, JobStatus, TaskStatus
+# Task history imports
+from .task_history.state import TaskState
+from .task_history.models import TaskType, JobStatus, TaskStatus
 from .task_review.release_evaluation import build_release_evaluation_summary
 from .release_verification import (
     RELEASE_VERIFICATION_EXPECTED_FILES,
@@ -219,7 +219,7 @@ from .plugin_runtime import (
     update_context_memory_status,
 )
 
-# Global Task Manager instances
+# Global task history state
 _task_state = TaskState()
 _task_persistence_initialized = False
 _server_started_at = time.time()
@@ -3407,7 +3407,7 @@ def _load_task_info_read_only(task_id: str) -> "TaskInfo":
 
 def _subtask_to_info(st: "SubTask", state: Optional[TaskState] = None, task_id: Optional[str] = None) -> "SubTaskInfo":
     """Convert a SubTask to SubTaskInfo."""
-    from .legacy_task_history.models import SubTask as SubTaskModel
+    from .task_history.models import SubTask as SubTaskModel
     observability: Dict[str, Any] = {}
     if state is not None and task_id:
         observability = state.get_subtask_observability(task_id, st.subtask_id)
@@ -3434,7 +3434,7 @@ def _subtask_to_info(st: "SubTask", state: Optional[TaskState] = None, task_id: 
 
 def _wave_to_info(wave: "Wave", state: Optional[TaskState] = None, task_id: Optional[str] = None) -> "WaveInfo":
     """Convert a Wave to WaveInfo."""
-    from .legacy_task_history.models import Wave as WaveModel
+    from .task_history.models import Wave as WaveModel
     return WaveInfo(
         wave_id=wave.wave_id,
         wave_number=wave.wave_number,
@@ -3470,7 +3470,7 @@ def _compute_task_status(task: "Task", state: TaskState) -> str:
       - ``paused``: task has been explicitly paused
       - ``pending``: no subtask is actively running (waiting for dispatch or dependencies)
     """
-    from .legacy_task_history.models import JobStatus, TaskStatus
+    from .task_history.models import JobStatus, TaskStatus
     if task.status == TaskStatus.COMPLETED:
         return "completed"
     if task.status == TaskStatus.FAILED:
@@ -3955,7 +3955,7 @@ def _build_quality_health(
 
 def _task_to_info(task: "Task", state: TaskState) -> "TaskInfo":
     """Convert a Task to TaskInfo with its subtasks and waves."""
-    from .legacy_task_history.models import JobStatus
+    from .task_history.models import JobStatus
     from .task_review.delivery_report import build_delivery_report
     status = _compute_task_status(task, state)
     if status == "completed_with_failures":
@@ -4327,7 +4327,7 @@ def _task_info_from_db(task_dict: Dict[str, Any]) -> "TaskInfo":
 
     This ensures fix subtasks are included with full description and agent info.
     """
-    from .legacy_task_history.models import JobStatus
+    from .task_history.models import JobStatus
 
     task_id = task_dict['task_id']
     status = task_dict.get('status', 'created')
@@ -4679,24 +4679,19 @@ async def get_release_evaluation(limit: int = 100):
 async def run_release_verification():
     """Create a non-secret release-candidate verification report."""
     try:
-        try:
-            report = _build_release_verification_report(
-                write_report=True,
-                task_state=_task_state,
-                external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
-                startup_diagnostics=_build_startup_diagnostics(),
-                load_task_payload=_load_task_info_read_only,
-                serialize_task_payload=_pydantic_dump,
-                redact_sensitive=_redact_sensitive_evidence,
-                app_version=None,
-                expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
-                required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
-                write_report_directory=app_subdir("release-reports"),
-            )
-        except TypeError:
-            # Backward-compatible behavior for tests or integrations that monkeypatch
-            # report builders with historical call signatures.
-            report = _build_release_verification_report(write_report=True)
+        report = _build_release_verification_report(
+            write_report=True,
+            task_state=_task_state,
+            external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
+            startup_diagnostics=_build_startup_diagnostics(),
+            load_task_payload=_load_task_info_read_only,
+            serialize_task_payload=_pydantic_dump,
+            redact_sensitive=_redact_sensitive_evidence,
+            app_version=None,
+            expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
+            required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
+            write_report_directory=app_subdir("release-reports"),
+        )
         return _sanitize_public_payload(report)
     except Exception as e:
         raise _safe_http_500("Run release verification", e)
@@ -5446,7 +5441,7 @@ async def task_stream(task_id: str):
 
                     current_task = _task_state.get_task(task_id)
                     if current_task:
-                        from .legacy_task_history.models import TaskStatus
+                        from .task_history.models import TaskStatus
                         if _task_state.is_all_subtasks_completed(task_id):
                             current_task.status = TaskStatus.COMPLETED
                         elif _task_state.is_all_subtasks_terminal(task_id):
@@ -5557,13 +5552,10 @@ async def cancel_task(task_id: str):
 
 
 @app.get("/api/resumable_tasks", response_model=List[Dict[str, Any]])
-@app.get("/api/tasks/resumable", response_model=List[Dict[str, Any]])
 async def get_resumable_tasks():
     """Get list of tasks that can be resumed from persistence.
 
     `/api/resumable_tasks` avoids the `/api/tasks/{task_id}` route conflict.
-    Keep `/api/tasks/resumable` as a compatibility alias for older clients,
-    even though the dynamic task detail route may shadow it.
     """
     try:
         resumable = _task_state.get_resumable_tasks()

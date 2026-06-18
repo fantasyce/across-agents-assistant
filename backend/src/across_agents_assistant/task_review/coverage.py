@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from across_agents_assistant.legacy_task_history.models import RequirementDeliverable
+from across_agents_assistant.task_history.models import RequirementDeliverable
 from .requirements import canonical_requirement_key
 
 

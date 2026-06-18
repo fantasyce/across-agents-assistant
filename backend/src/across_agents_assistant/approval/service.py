@@ -7,7 +7,7 @@ from typing import Dict, List, Set, Callable, Optional, TYPE_CHECKING
 from .models import RiskLevel, ApprovalStatus, ApprovalRequest
 
 if TYPE_CHECKING:
-    from backend.src.across_agents_assistant.persistence.permissions import ToolPermissionStore
+    from across_agents_assistant.persistence.permissions import ToolPermissionStore
 
 logger = logging.getLogger("across_agents_assistant.approval")
 

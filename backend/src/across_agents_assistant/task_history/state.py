@@ -24,7 +24,7 @@ from .models import (
 )
 from across_agents_assistant.workspace_hygiene import is_workspace_noise_path
 
-logger = logging.getLogger("across_agents_assistant.task_manager")
+logger = logging.getLogger("across_agents_assistant.task_history")
 
 
 def _is_original_business_subtask_id(subtask_id: str) -> bool:
@@ -1286,13 +1286,7 @@ class TaskState:
             task.task_types = task_row.get('task_types') or []
             task.delivery_mode = task_row.get('delivery_mode') or 'external'
 
-            # Restore subtasks. Older callers used get_task_subtasks(); the
-            # current persistence service exposes get_subtasks().
-            get_subtasks = getattr(self._persistence, "get_subtasks", None) or getattr(
-                self._persistence,
-                "get_task_subtasks",
-            )
-            subtask_rows = get_subtasks(task_id)
+            subtask_rows = self._persistence.get_subtasks(task_id)
             for st_row in subtask_rows:
                 subtask = SubTask(
                     task_id=task_id,
