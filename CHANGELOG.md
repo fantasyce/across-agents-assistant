@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.8.12 - 2026-06-19
+
+### Added
+
+- Proxied Across Orchestrator Agent Loop health through
+  `/api/orchestrator/loops/{loop_id}/health`.
+- Added macOS Plugin Center loop health decoding and probe chips for current
+  action, pending approval, and execution lease state.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.11` while
+  keeping Across Context pinned to `v0.7.6`.
+- Made Plugin Center health fetching best-effort so a successful loop probe is
+  not marked failed when the optional health snapshot is unavailable.
+- Normalized external Orchestrator HTTP GET error wrapping to match POST
+  behavior.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed with 672 tests and 1 warning.
+- Swift package lock verification and Swift build passed.
+- Across Orchestrator checks passed with 124 tests and 2 subtests.
+- Across Context checks passed with 63 tests.
+- Complex Agent Loop health E2E passed through a real Orchestrator HTTP sidecar.
+
 ## 0.8.11 - 2026-06-19
 
 ### Changed

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import socket
@@ -224,6 +225,9 @@ class _FakeOrchestratorHTTPServer:
                 if self.path == f"/loops/{owner.loop_id}":
                     self._json(owner._loop_payload("completed"))
                     return
+                if self.path == f"/loops/{owner.loop_id}/health":
+                    self._json(owner._loop_health_payload("completed"))
+                    return
                 if self.path == f"/loops/{owner.loop_id}/events":
                     self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
                     return
@@ -297,6 +301,22 @@ class _FakeOrchestratorHTTPServer:
             "final_output": "Agent loop completed for: External loop smoke" if status == "completed" else None,
         }
 
+    def _loop_health_payload(self, status: str) -> dict:
+        return {
+            "schema_version": "0.1",
+            "loop_id": self.loop_id,
+            "status": status,
+            "current_action_type": None if status == "completed" else "memory_search",
+            "current_step_id": None,
+            "pending_approval": None,
+            "lease": {"active": False, "lease_seconds": 300.0, "heartbeat_at": 1_700_000_001.0},
+            "detached_dispatch_count": 0,
+            "recent_failure_types": {},
+            "executable_actions": [],
+            "cancellation_requested": False,
+            "cancel_ack_pending": False,
+        }
+
 
 def test_auto_mode_without_external_runtime_requires_plugin(tmp_path):
     manager = OrchestratorPluginManager(
@@ -336,14 +356,57 @@ def test_external_http_runtime_proxies_agent_loop_lifecycle(tmp_path):
         )
         completed = manager.run_agent_loop(loop["loop_id"])
         status = manager.get_agent_loop(loop["loop_id"])
+        health = manager.get_agent_loop_health(loop["loop_id"])
         events = manager.get_agent_loop_events(loop["loop_id"])
 
     assert loop["loop_id"] == "loop-external-http"
     assert completed["status"] == "completed"
     assert status["final_output"] == "Agent loop completed for: External loop smoke"
+    assert health["status"] == "completed"
+    assert health["loop_id"] == "loop-external-http"
     assert events[0]["type"] == "loop.completed"
     assert ("POST", "/loops") in server.requests
     assert ("POST", "/loops/loop-external-http/run") in server.requests
+    assert ("GET", "/loops/loop-external-http/health") in server.requests
+
+
+def test_external_http_get_wraps_http_errors(monkeypatch, tmp_path):
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            endpoint="http://127.0.0.1:9",
+            registry_path=tmp_path / "tasks.json",
+            auto_run=False,
+        )
+    )
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["accept"] = request.get_header("Accept")
+        raise orchestrator_plugin.urllib.error.HTTPError(
+            request.full_url,
+            404,
+            "Not Found",
+            hdrs={},
+            fp=io.BytesIO(b'{"error":"not_found"}'),
+        )
+
+    monkeypatch.setattr(orchestrator_plugin.urllib.request, "urlopen", fake_urlopen)
+
+    try:
+        manager._http_get("/loops/missing")
+    except orchestrator_plugin.OrchestratorPluginError as exc:
+        assert "HTTP 404" in str(exc)
+    else:
+        raise AssertionError("_http_get should wrap HTTPError as OrchestratorPluginError")
+
+    assert captured == {
+        "url": "http://127.0.0.1:9/loops/missing",
+        "method": "GET",
+        "accept": "application/json",
+    }
 
 
 def test_external_cli_agent_loop_start_passes_policy_and_metadata(monkeypatch, tmp_path):
@@ -406,10 +469,12 @@ def test_external_cli_agent_loop_control_actions(monkeypatch, tmp_path):
     manager.cancel_agent_loop("loop-cli", reason="operator cancelled")
     manager.reject_agent_loop_action("loop-cli", "action-cli", reason="operator rejected")
     manager.retry_agent_loop_step("loop-cli", "step-cli")
+    manager.get_agent_loop_health("loop-cli")
 
     assert captured[0] == ["loop-cancel", "loop-cli", "--reason", "operator cancelled", "--json"]
     assert captured[1] == ["loop-reject", "loop-cli", "action-cli", "--reason", "operator rejected", "--json"]
     assert captured[2] == ["loop-retry", "loop-cli", "step-cli", "--json"]
+    assert captured[3] == ["loop-health", "loop-cli", "--json"]
 
 
 def test_builtin_mode_is_normalized_to_external_plugin_boundary(tmp_path):

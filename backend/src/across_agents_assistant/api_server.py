@@ -1652,6 +1652,19 @@ async def get_external_agent_loop(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop status"))
 
 
+@app.get("/api/orchestrator/loops/{loop_id}/health")
+async def get_external_agent_loop_health(loop_id: str):
+    """Fetch external Across Orchestrator agent loop health."""
+    try:
+        health = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_health, loop_id)
+        return _sanitize_public_payload(health)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop health failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop health"))
+
+
 @app.get("/api/orchestrator/loops/{loop_id}/events")
 async def get_external_agent_loop_events(loop_id: str):
     """Fetch external Across Orchestrator agent loop events."""

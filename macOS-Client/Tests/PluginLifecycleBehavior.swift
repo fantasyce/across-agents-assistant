@@ -85,11 +85,56 @@ func testAgentLoopRunResponseDecodesProbeResult() throws {
     assert(loop.steps[1].action?.approvalStatus == "approved", "Action approval status should decode")
 }
 
+func testAgentLoopHealthResponseDecodesProbeHealth() throws {
+    let json = """
+    {
+      "schema_version": "0.1",
+      "loop_id": "loop-ui",
+      "status": "awaiting_approval",
+      "current_action_type": "task_dispatch",
+      "current_step_id": "step-ui",
+      "pending_approval": {
+        "step_id": "step-ui",
+        "action_id": "action-ui",
+        "action_type": "task_dispatch",
+        "title": "Dispatch work through host adapter",
+        "approval_status": "pending"
+      },
+      "lease": {
+        "active": true,
+        "lease_id": "lease-ui",
+        "lease_seconds": 300,
+        "heartbeat_at": 1700000000,
+        "expires_at": 1700000300,
+        "remaining_seconds": 240,
+        "expired": false,
+        "renewal_count": 1
+      },
+      "detached_dispatch_count": 0,
+      "recent_failure_types": {"quality_failed": 1},
+      "executable_actions": ["approve", "reject", "cancel"],
+      "cancellation_requested": false,
+      "cancel_ack_pending": false
+    }
+    """.data(using: .utf8)!
+
+    let health = try JSONDecoder().decode(AgentLoopHealthResponse.self, from: json)
+
+    assert(health.loopId == "loop-ui", "Health loop id should decode from snake_case")
+    assert(health.currentActionType == "task_dispatch", "Current action should decode")
+    assert(health.pendingApproval?.actionId == "action-ui", "Pending approval should decode")
+    assert(health.lease?.active == true, "Lease active flag should decode")
+    assert(health.lease?.remainingSeconds == 240, "Lease remaining seconds should decode")
+    assert(health.recentFailureTypes?["quality_failed"] == 1, "Failure type counts should decode")
+    assert(health.executableActions == ["approve", "reject", "cancel"], "Executable actions should decode")
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
         try testPluginStatusDecodesAgentLoopCapabilities()
         try testAgentLoopRunResponseDecodesProbeResult()
+        try testAgentLoopHealthResponseDecodesProbeHealth()
         print("PluginLifecycleBehavior passed")
     }
 }
