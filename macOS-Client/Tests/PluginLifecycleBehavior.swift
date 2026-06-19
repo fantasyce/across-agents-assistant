@@ -229,6 +229,23 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.memoryCandidates?.candidates?.first?.provider == "across-context", "Memory candidate provider should decode")
     assert(summary.memoryCandidates?.candidates?.first?.memoryStatus == "pending", "Memory candidate status should decode")
     assert(summary.memoryCandidates?.candidates?.first?.memoryId == "memory-ui", "Memory candidate id should decode")
+    if let candidate = summary.memoryCandidates?.candidates?.first {
+        assert(PluginLifecycleViewModel.memoryReviewStatusFilter(for: candidate) == "pending", "Memory candidate review filter should use memory status")
+    } else {
+        assert(false, "Memory candidate should be present")
+    }
+    let missingStatusCandidate = AgentLoopEvidenceMemoryCandidate(
+        stepId: "step-missing-status",
+        turn: 4,
+        status: "completed",
+        provider: "across-context",
+        memoryStatus: " ",
+        memoryId: nil
+    )
+    assert(
+        PluginLifecycleViewModel.memoryReviewStatusFilter(for: missingStatusCandidate) == "pending",
+        "Memory candidate review filter should fall back to pending"
+    )
 }
 
 func testAgentLoopEventResponseDecodesNestedPayloads() throws {

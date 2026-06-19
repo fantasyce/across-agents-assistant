@@ -15,10 +15,15 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopEvidenceSummary: AgentLoopEvidenceSummaryResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
     @Published var agentLoopEventsLive = false
+    @Published var highlightedMemoryId: String?
     @Published var message: String?
     @Published var errorMessage: String?
 
     private let backendBase = "http://backend"
+
+    var agentLoopMemoryCandidates: [AgentLoopEvidenceMemoryCandidate] {
+        agentLoopEvidenceSummary?.memoryCandidates?.candidates ?? []
+    }
 
     func load(probe: Bool = false) async {
         await loadPlugins(probe: probe)
@@ -155,6 +160,20 @@ final class PluginLifecycleViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func focusMemoryCandidate(_ candidate: AgentLoopEvidenceMemoryCandidate) async {
+        highlightedMemoryId = candidate.memoryId
+        memoryStatusFilter = Self.memoryReviewStatusFilter(for: candidate)
+        await loadMemories()
+    }
+
+    nonisolated static func memoryReviewStatusFilter(for candidate: AgentLoopEvidenceMemoryCandidate) -> String {
+        let status = candidate.memoryStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let status, !status.isEmpty {
+            return status
+        }
+        return "pending"
     }
 
     func runAgentLoopProbe() async {

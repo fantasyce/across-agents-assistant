@@ -695,6 +695,10 @@ struct PluginLifecycleView: View {
                 .help(appPreferences.text("settings.refresh"))
             }
 
+            if !viewModel.agentLoopMemoryCandidates.isEmpty {
+                loopMemoryCandidateList(viewModel.agentLoopMemoryCandidates)
+            }
+
             HStack(spacing: 10) {
                 TextField(appPreferences.text("plugins.memory.placeholder"), text: $viewModel.newMemoryText)
                     .textFieldStyle(.plain)
@@ -735,8 +739,71 @@ struct PluginLifecycleView: View {
         .padding(.top, 4)
     }
 
+    private func loopMemoryCandidateList(_ candidates: [AgentLoopEvidenceMemoryCandidate]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(appPreferences.text("plugins.memory.loopCandidates"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(textColor)
+                Spacer()
+                metadataChip(String(format: appPreferences.text("plugins.memory.loopCandidateCount"), candidates.count))
+            }
+            ForEach(Array(candidates.enumerated()), id: \.offset) { _, candidate in
+                loopMemoryCandidateRow(candidate)
+            }
+        }
+    }
+
+    private func loopMemoryCandidateRow(_ candidate: AgentLoopEvidenceMemoryCandidate) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 5) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        if let provider = displayToken(candidate.provider) {
+                            metadataChip(provider)
+                        }
+                        metadataChip(displayToken(candidate.memoryStatus ?? candidate.status) ?? appPreferences.text("plugins.loop.none"))
+                        if let turn = candidate.turn {
+                            metadataChip(String(format: appPreferences.text("plugins.loop.memoryCandidateTurn"), turn))
+                        }
+                        if let memoryId = candidate.memoryId {
+                            metadataChip(shortIdentifier(memoryId))
+                        }
+                    }
+                }
+                .frame(height: 22, alignment: .leading)
+                if let stepId = candidate.stepId {
+                    Text(stepId)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 10)
+
+            Button {
+                Task { await viewModel.focusMemoryCandidate(candidate) }
+            } label: {
+                Image(systemName: "scope")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 28, height: 26)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(textColor)
+            .background(fieldColor)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .help(appPreferences.text("plugins.memory.focusCandidate"))
+        }
+        .padding(10)
+        .background(fieldColor.opacity(colorScheme == .dark ? 0.48 : 0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private func memoryRow(_ memory: AcrossMemoryEntry) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        let isHighlighted = viewModel.highlightedMemoryId == memory.id
+        return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     metadataChip(memory.status)
@@ -773,8 +840,12 @@ struct PluginLifecycleView: View {
             }
         }
         .padding(12)
-        .background(fieldColor.opacity(colorScheme == .dark ? 0.7 : 1.0))
+        .background(isHighlighted ? accentColor.opacity(0.10) : fieldColor.opacity(colorScheme == .dark ? 0.7 : 1.0))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isHighlighted ? accentColor.opacity(0.7) : Color.clear, lineWidth: 1)
+        )
     }
 
     private func memoryAction(_ memory: AcrossMemoryEntry, status: String, icon: String, title: String) -> some View {
@@ -798,6 +869,13 @@ struct PluginLifecycleView: View {
         case "across-orchestrator": return "point.3.connected.trianglepath.dotted"
         default: return "puzzlepiece"
         }
+    }
+
+    private func shortIdentifier(_ value: String) -> String {
+        if value.count <= 18 {
+            return value
+        }
+        return "\(value.prefix(10))...\(value.suffix(5))"
     }
 
     @ViewBuilder
