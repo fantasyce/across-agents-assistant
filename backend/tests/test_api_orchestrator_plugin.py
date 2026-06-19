@@ -187,7 +187,16 @@ class FakeHTTPOrchestrator:
                     self._json({"status": "passed"})
                     return
                 if self.path == f"/tasks/{owner.task_id}/events":
-                    self._json([{"type": "task.completed", "task_id": owner.task_id}])
+                    self._json([
+                        {
+                            "event_id": "task-event-api-1",
+                            "sequence": 1,
+                            "type": "task.completed",
+                            "task_id": owner.task_id,
+                            "loop_id": owner.loop_id,
+                            "correlation_id": f"loop:{owner.loop_id}",
+                        }
+                    ])
                     return
                 if self.path == f"/loops/{owner.loop_id}":
                     self._json(owner._loop_payload(owner.loop_status))
@@ -196,14 +205,25 @@ class FakeHTTPOrchestrator:
                     self._json(owner._loop_health_payload(owner.loop_status))
                     return
                 if self.path == f"/loops/{owner.loop_id}/events":
-                    self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
+                    self._json([
+                        {
+                            "event_id": "loop-event-api-1",
+                            "sequence": 1,
+                            "type": "loop.completed",
+                            "loop_id": owner.loop_id,
+                            "correlation_id": f"loop:{owner.loop_id}",
+                        }
+                    ])
                     return
                 if self.path == f"/loops/{owner.loop_id}/events/stream":
                     self._sse(
                         [
                             {
+                                "event_id": "loop-event-api-1",
+                                "sequence": 1,
                                 "type": "loop.completed",
                                 "loop_id": owner.loop_id,
+                                "correlation_id": f"loop:{owner.loop_id}",
                                 "payload": {
                                     "status": "completed",
                                     "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
@@ -482,9 +502,14 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
     assert events.json()[0]["type"] == "loop.completed"
+    assert events.json()[0]["event_id"] == "loop-event-api-1"
+    assert events.json()[0]["sequence"] == 1
+    assert events.json()[0]["correlation_id"] == "loop:loop-api-external"
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert "event: loop.completed" in stream.text
+    assert '"event_id": "loop-event-api-1"' in stream.text
+    assert '"correlation_id": "loop:loop-api-external"' in stream.text
     assert "Internal operation failed" in stream.text
     assert "Traceback" not in stream.text
     assert ("POST", "/loops") in server.requests

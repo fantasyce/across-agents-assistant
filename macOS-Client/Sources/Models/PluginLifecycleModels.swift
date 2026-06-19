@@ -326,16 +326,35 @@ enum AgentLoopJSONValue: Decodable, Equatable {
 }
 
 struct AgentLoopEventResponse: Decodable, Equatable {
+    let eventId: String?
+    let sequence: Int?
     let type: String
     let loopId: String?
+    let correlationId: String?
+    let stepId: String?
+    let actionId: String?
+    let taskId: String?
+    let subtaskId: String?
     let timestamp: Double?
     let payload: [String: AgentLoopJSONValue]?
 
     enum CodingKeys: String, CodingKey {
+        case eventId = "event_id"
+        case sequence
         case type
         case loopId = "loop_id"
+        case correlationId = "correlation_id"
+        case stepId = "step_id"
+        case actionId = "action_id"
+        case taskId = "task_id"
+        case subtaskId = "subtask_id"
         case timestamp
         case payload
+    }
+
+    var sequenceLabel: String? {
+        guard let sequence else { return nil }
+        return "#\(sequence)"
     }
 
     var compactLabel: String {
