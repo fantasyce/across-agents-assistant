@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.26` | Hardens pre-release verification with a reusable live E2E runner, manual Live E2E workflow, Swift behavior checks in Quality CI, and broader shell syntax checks. |
 | `0.8.25` | Documents Agent Loop SSE snapshot/live semantics, keeps timeline source localization covered, and improves live E2E Orchestrator runtime diagnostics. |
 | `0.8.24` | Adds Plugin Center Agent Loop Live/Snapshot timeline mode controls and documents nullable synthesized external acceptance timestamps. |
 | `0.8.23` | Folds detailed Agent Loop evidence inside Plugin Center health details, stabilizes external acceptance records, and moves managed Orchestrator pins to `v0.6.17`. |
@@ -204,7 +205,12 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.25` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.26` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.26` release hardens the pre-release verification workflow. It adds a
+reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift
+behavior checks in Quality CI, and broader shell syntax coverage for
+`build_app.sh` plus every script under `scripts/`.
 
 The `0.8.25` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center Agent Loop timelines now expose a
