@@ -467,6 +467,14 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
     )
     task_types = _external_task_types(task, evidence)
     delivery_mode = _external_delivery_mode(task, evidence)
+    acceptance_records = _external_acceptance_records(
+        task=task,
+        task_id=task_id,
+        status=status,
+        required_files=required_files,
+        artifacts=artifacts,
+        quality=quality,
+    )
     return {
         "task_id": task_id,
         "description": str(task.get("goal") or task.get("description") or ""),
@@ -482,7 +490,7 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
         "waves": _waves_from_subtasks(subtasks, task_id),
         "artifacts": artifacts,
         "artifact_versions": {item["name"]: 1 for item in artifacts if item.get("name")},
-        "acceptance_records": [],
+        "acceptance_records": acceptance_records,
         "owner_session_id": None,
         "last_owner_decision": {
             "decision": "external_orchestrator",
@@ -526,3 +534,54 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
             }
         },
     }
+
+
+def _external_acceptance_records(
+    *,
+    task: Dict[str, Any],
+    task_id: str,
+    status: str,
+    required_files: List[str],
+    artifacts: List[Dict[str, Any]],
+    quality: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    if status not in {"completed", "completed_with_failures", "failed"}:
+        return []
+    if not required_files and not artifacts:
+        return []
+
+    produced = {
+        str(item.get("name") or item.get("path_hint") or item.get("file_name") or "").strip()
+        for item in artifacts
+        if item.get("name") or item.get("path_hint") or item.get("file_name")
+    }
+    missing = [path for path in required_files if path not in produced]
+    failures = [str(item) for item in quality.get("failures") or [] if str(item).strip()]
+    passed = quality.get("status") == "passed" and not missing and not failures
+    artifact_ids = [
+        str(item.get("artifact_id") or item.get("id") or item.get("name") or "")
+        for item in artifacts
+        if item.get("artifact_id") or item.get("id") or item.get("name")
+    ]
+    return [
+        {
+            "acceptance_id": f"acc-external-{task_id}",
+            "task_id": task_id,
+            "level": "task",
+            "decision": "approve" if passed else "fix",
+            "deterministic_passed": passed,
+            "judge_passed": passed,
+            "subtask_id": None,
+            "wave_number": None,
+            "failed_checks": failures,
+            "missing_artifacts": missing,
+            "feedback": "External Orchestrator delivery quality passed." if passed else "External Orchestrator delivery quality needs attention.",
+            "root_cause_scope": "unknown",
+            "root_cause_wave": None,
+            "root_cause_artifact_ids": artifact_ids,
+            "recommended_action": "approve" if passed else "fix",
+            "preferred_agent": task.get("agent") or "app-grade",
+            "owner_session_id": None,
+            "created_at": float(task.get("updated_at") or task.get("created_at") or time.time()),
+        }
+    ]
