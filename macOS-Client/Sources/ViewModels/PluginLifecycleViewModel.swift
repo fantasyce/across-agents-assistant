@@ -12,6 +12,7 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var isRunningAgentLoopProbe = false
     @Published var agentLoopProbe: AgentLoopRunResponse?
     @Published var agentLoopHealth: AgentLoopHealthResponse?
+    @Published var agentLoopEvents: [AgentLoopEventResponse] = []
     @Published var message: String?
     @Published var errorMessage: String?
 
@@ -160,6 +161,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         message = nil
         errorMessage = nil
         agentLoopHealth = nil
+        agentLoopEvents = []
         defer {
             isRunningAgentLoopProbe = false
             isWorking = false
@@ -202,6 +204,17 @@ final class PluginLifecycleViewModel: ObservableObject {
             } catch {
                 agentLoopHealth = nil
                 message = "Agent Loop Probe: \(completed.status) (health unavailable)"
+            }
+
+            let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/events")!
+            var eventsRequest = URLRequest(url: eventsURL)
+            eventsRequest.httpMethod = "GET"
+            do {
+                let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
+                try Self.validate(eventsResponse)
+                agentLoopEvents = try JSONDecoder().decode([AgentLoopEventResponse].self, from: eventsData)
+            } catch {
+                agentLoopEvents = []
             }
         } catch {
             errorMessage = error.localizedDescription

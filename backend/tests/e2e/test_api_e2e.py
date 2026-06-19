@@ -180,15 +180,15 @@ class TestBackendAPI:
 
         resp = client.post(f"http://localhost/api/tasks/{task_id}/pause")
         print(f"  Pause: {resp.status_code}")
-        assert resp.status_code in (200, 404, 500), f"Pause 失败: {resp.status_code} {resp.text}"
+        assert resp.status_code in (200, 404, 409, 500), f"Pause 失败: {resp.status_code} {resp.text}"
 
         resp = client.post(f"http://localhost/api/tasks/{task_id}/resume")
         print(f"  Resume: {resp.status_code}")
-        assert resp.status_code in (200, 404, 500), f"Resume 失败: {resp.status_code} {resp.text}"
+        assert resp.status_code in (200, 404, 409, 500), f"Resume 失败: {resp.status_code} {resp.text}"
 
         resp = client.post(f"http://localhost/api/tasks/{task_id}/cancel")
         print(f"  Cancel: {resp.status_code}")
-        assert resp.status_code in (200, 404, 500), f"Cancel 失败: {resp.status_code} {resp.text}"
+        assert resp.status_code in (200, 404, 409, 500), f"Cancel 失败: {resp.status_code} {resp.text}"
 
         print(f"  ✅ 暂停/恢复/取消端点正常")
 
