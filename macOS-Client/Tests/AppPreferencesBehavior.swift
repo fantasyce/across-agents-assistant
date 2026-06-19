@@ -135,6 +135,18 @@ func testLocalizedStringsFallbackToEnglish() {
         "Host capability registry redaction marker should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("capabilities.registrySynced", localeIdentifier: "en") == "Registry synced",
+        "Host capability registry sync state should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("capabilities.registryDrift", localeIdentifier: "zh-Hans") == "检测到注册表漂移",
+        "Host capability registry drift state should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("capabilities.registryCheck.nativeSkills", localeIdentifier: "en") == "Native skills",
+        "Host capability registry native-skill check should be localized in English"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )
