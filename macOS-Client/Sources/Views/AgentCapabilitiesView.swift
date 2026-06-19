@@ -351,6 +351,10 @@ struct AgentCapabilitiesView: View {
                     .help(appPreferences.text("capabilities.registryRefresh"))
                 }
 
+                if let summary = viewModel.registrySyncSummary(for: agent.id) {
+                    registrySyncPanel(summary)
+                }
+
                 if let descriptor = viewModel.hostRegistry?.descriptor(for: agent.id) {
                     registryDescriptor(descriptor)
                 } else {
@@ -389,6 +393,71 @@ struct AgentCapabilitiesView: View {
         .padding(10)
         .background(softColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func registrySyncPanel(_ summary: HostAgentCapabilityRegistrySyncSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: summary.isSynced ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(summary.isSynced ? .green : .orange)
+                    .frame(width: 16)
+                Text(registrySyncTitle(summary))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(textColor)
+                if !summary.isSynced {
+                    registryChip(String(format: appPreferences.text("capabilities.registryIssueCount"), summary.issues.count))
+                }
+                Spacer()
+            }
+
+            ForEach(summary.issues.prefix(4)) { issue in
+                registrySyncIssueRow(issue)
+            }
+        }
+        .padding(10)
+        .background(softColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func registrySyncIssueRow(_ issue: HostAgentCapabilityRegistrySyncIssue) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(appPreferences.text(issue.titleKey))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.secondary)
+            Text("\(appPreferences.text("capabilities.registryExpected")): \(registryValuesSummary(issue.expected))")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text("\(appPreferences.text("capabilities.registryExported")): \(registryValuesSummary(issue.exported))")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func registrySyncTitle(_ summary: HostAgentCapabilityRegistrySyncSummary) -> String {
+        if summary.isSynced {
+            return appPreferences.text("capabilities.registrySynced")
+        }
+        if summary.isMissing {
+            return appPreferences.text("capabilities.registryMissing")
+        }
+        return appPreferences.text("capabilities.registryDrift")
+    }
+
+    private func registryValuesSummary(_ values: [String]) -> String {
+        if values.isEmpty {
+            return appPreferences.text("capabilities.registryNone")
+        }
+        let visible = values.prefix(6).map { $0.replacingOccurrences(of: "_", with: " ") }
+        if values.count > 6 {
+            return visible.joined(separator: ", ") + ", +\(values.count - 6)"
+        }
+        return visible.joined(separator: ", ")
     }
 
     @ViewBuilder

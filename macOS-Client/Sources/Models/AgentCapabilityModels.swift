@@ -239,6 +239,115 @@ struct HostAgentCapabilityRegistry: Codable, Equatable {
         let normalized = AgentIDs.normalized(agentId) ?? agentId
         return agents.first { $0.agentId == normalized }
     }
+
+    func syncSummary(
+        for profile: AgentCapabilityProfile,
+        nativeSkillState: NativeSkillAgentState? = nil
+    ) -> HostAgentCapabilityRegistrySyncSummary {
+        guard let descriptor = descriptor(for: profile.agentId) else {
+            return HostAgentCapabilityRegistrySyncSummary(
+                agentId: profile.agentId,
+                descriptor: nil,
+                issues: [
+                    HostAgentCapabilityRegistrySyncIssue(
+                        titleKey: "capabilities.registryCheck.descriptor",
+                        expected: [profile.agentId],
+                        exported: []
+                    )
+                ]
+            )
+        }
+
+        var issues: [HostAgentCapabilityRegistrySyncIssue] = []
+        appendSyncIssue(
+            titleKey: "capabilities.registryCheck.skills",
+            expected: profile.enabledSkillIds,
+            exported: descriptor.configuredSkillIds,
+            to: &issues
+        )
+        appendSyncIssue(
+            titleKey: "capabilities.registryCheck.plugins",
+            expected: profile.enabledPluginIds,
+            exported: descriptor.enabledPluginIds,
+            to: &issues
+        )
+        appendSyncIssue(
+            titleKey: "capabilities.registryCheck.tools",
+            expected: profile.enabledToolNames,
+            exported: descriptor.enabledToolNames,
+            to: &issues
+        )
+        if let nativeSkillState {
+            appendSyncIssue(
+                titleKey: "capabilities.registryCheck.nativeSkills",
+                expected: nativeSkillState.skills.filter(\.isActive).map(\.id),
+                exported: descriptor.nativeSkillIds,
+                to: &issues
+            )
+        }
+        appendSyncIssue(
+            titleKey: "capabilities.registryCheck.strictScope",
+            expected: [profile.strictToolScope ? "enabled" : "disabled"],
+            exported: [descriptor.strictToolScope ? "enabled" : "disabled"],
+            to: &issues
+        )
+
+        return HostAgentCapabilityRegistrySyncSummary(
+            agentId: profile.agentId,
+            descriptor: descriptor,
+            issues: issues
+        )
+    }
+}
+
+struct HostAgentCapabilityRegistrySyncSummary: Equatable {
+    let agentId: String
+    let descriptor: HostAgentCapabilityDescriptor?
+    let issues: [HostAgentCapabilityRegistrySyncIssue]
+
+    var isMissing: Bool {
+        descriptor == nil
+    }
+
+    var isSynced: Bool {
+        descriptor != nil && issues.isEmpty
+    }
+}
+
+struct HostAgentCapabilityRegistrySyncIssue: Identifiable, Equatable {
+    var id: String { titleKey }
+    let titleKey: String
+    let expected: [String]
+    let exported: [String]
+}
+
+private func appendSyncIssue(
+    titleKey: String,
+    expected: [String],
+    exported: [String],
+    to issues: inout [HostAgentCapabilityRegistrySyncIssue]
+) {
+    let normalizedExpected = normalizedRegistryValues(expected)
+    let normalizedExported = normalizedRegistryValues(exported)
+    guard normalizedExpected != normalizedExported else { return }
+    issues.append(
+        HostAgentCapabilityRegistrySyncIssue(
+            titleKey: titleKey,
+            expected: normalizedExpected,
+            exported: normalizedExported
+        )
+    )
+}
+
+private func normalizedRegistryValues(_ values: [String]) -> [String] {
+    Array(
+        Set(
+            values
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+    )
+    .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
 }
 
 struct HostAgentCapabilityRegistrySecurity: Codable, Equatable {
