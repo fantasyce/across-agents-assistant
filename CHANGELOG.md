@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Plugin Center Agent Loop timelines now expose a Live/Snapshot mode control
+  and distinguish live, snapshot, fallback, and unavailable timeline sources.
+- External Orchestrator task acceptance records document that synthesized
+  `created_at` can be `null` when upstream task timestamps are absent.
+
 ## 0.8.23 - 2026-06-19
 
 ### Changed

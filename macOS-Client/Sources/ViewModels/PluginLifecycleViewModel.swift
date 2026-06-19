@@ -1,5 +1,35 @@
 import Foundation
 
+enum AgentLoopTimelineMode: String, CaseIterable, Identifiable {
+    case live
+    case snapshot
+
+    var id: String { rawValue }
+    var followStream: Bool { self == .live }
+}
+
+enum AgentLoopTimelineSource: String, Equatable {
+    case live
+    case snapshot
+    case fallback
+    case unavailable
+
+    var isLive: Bool { self == .live }
+
+    var localizationKey: String {
+        switch self {
+        case .live:
+            return "plugins.loop.eventsLive"
+        case .snapshot:
+            return "plugins.loop.eventsSnapshot"
+        case .fallback:
+            return "plugins.loop.eventsFallback"
+        case .unavailable:
+            return "plugins.loop.eventsUnavailable"
+        }
+    }
+}
+
 @MainActor
 final class PluginLifecycleViewModel: ObservableObject {
     @Published var plugins: [AcrossPluginStatus] = []
@@ -15,6 +45,8 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopEvidenceSummary: AgentLoopEvidenceSummaryResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
     @Published var agentLoopEventsLive = false
+    @Published var agentLoopTimelineMode: AgentLoopTimelineMode = .live
+    @Published var agentLoopTimelineSource: AgentLoopTimelineSource?
     @Published var highlightedMemoryId: String?
     @Published var message: String?
     @Published var errorMessage: String?
@@ -185,6 +217,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         agentLoopEvidenceSummary = nil
         agentLoopEvents = []
         agentLoopEventsLive = false
+        agentLoopTimelineSource = nil
         defer {
             isRunningAgentLoopProbe = false
             isWorking = false
@@ -208,9 +241,10 @@ final class PluginLifecycleViewModel: ObservableObject {
             let started = try JSONDecoder().decode(AgentLoopRunResponse.self, from: startData)
 
             let escaped = started.loopId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? started.loopId
-            let eventStreamTask = Task {
-                try await fetchAgentLoopEventStream(escapedLoopId: escaped, follow: true, liveUpdate: true)
-            }
+            let timelineMode = agentLoopTimelineMode
+            let eventStreamTask: Task<[AgentLoopEventResponse], Error>? = timelineMode == .live
+                ? Task { try await fetchAgentLoopEventStream(escapedLoopId: escaped, follow: true, liveUpdate: true) }
+                : nil
             let runURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/run")!
             var runRequest = URLRequest(url: runURL)
             runRequest.httpMethod = "POST"
@@ -220,7 +254,7 @@ final class PluginLifecycleViewModel: ObservableObject {
                 try Self.validate(runResponse)
                 completed = try JSONDecoder().decode(AgentLoopRunResponse.self, from: runData)
             } catch {
-                eventStreamTask.cancel()
+                eventStreamTask?.cancel()
                 throw error
             }
             agentLoopProbe = completed
@@ -249,9 +283,14 @@ final class PluginLifecycleViewModel: ObservableObject {
                 agentLoopEvidenceSummary = nil
             }
 
-            let eventResult = await fetchAgentLoopEvents(escapedLoopId: escaped, streamTask: eventStreamTask)
+            let eventResult = await fetchAgentLoopEvents(
+                escapedLoopId: escaped,
+                mode: timelineMode,
+                streamTask: eventStreamTask
+            )
             agentLoopEvents = eventResult.events
-            agentLoopEventsLive = eventResult.live
+            agentLoopTimelineSource = eventResult.source
+            agentLoopEventsLive = eventResult.source.isLive
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -259,24 +298,29 @@ final class PluginLifecycleViewModel: ObservableObject {
 
     private func fetchAgentLoopEvents(
         escapedLoopId: String,
+        mode: AgentLoopTimelineMode,
         streamTask: Task<[AgentLoopEventResponse], Error>? = nil
-    ) async -> (events: [AgentLoopEventResponse], live: Bool) {
+    ) async -> (events: [AgentLoopEventResponse], source: AgentLoopTimelineSource) {
         if let streamTask {
             do {
                 let events = try await streamTask.value
                 let snapshot = (try? await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId)) ?? []
                 let merged = Self.mergedAgentLoopEvents(events, snapshot)
                 if !merged.isEmpty {
-                    return (merged, !events.isEmpty)
+                    return (merged, events.isEmpty ? .snapshot : .live)
                 }
             } catch {
                 // Snapshot fetch below is the compatibility path for older AAA backends.
             }
         } else {
             do {
-                let events = try await fetchAgentLoopEventStream(escapedLoopId: escapedLoopId, follow: false, liveUpdate: false)
-                if !events.isEmpty {
-                    return (events, false)
+                let events = try await fetchAgentLoopEventStream(
+                    escapedLoopId: escapedLoopId,
+                    follow: mode.followStream,
+                    liveUpdate: false
+                )
+                if !events.isEmpty || mode == .snapshot {
+                    return (events, mode == .live ? .live : .snapshot)
                 }
             } catch {
                 // Snapshot fetch below is the compatibility path for older AAA backends.
@@ -284,9 +328,9 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
 
         do {
-            return (try await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId), false)
+            return (try await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId), .fallback)
         } catch {
-            return ([], false)
+            return ([], .unavailable)
         }
     }
 
@@ -328,6 +372,7 @@ final class PluginLifecycleViewModel: ObservableObject {
             if liveUpdate {
                 agentLoopEvents = Self.mergedAgentLoopEvents(agentLoopEvents, decoded)
                 agentLoopEventsLive = true
+                agentLoopTimelineSource = .live
             }
         }
 

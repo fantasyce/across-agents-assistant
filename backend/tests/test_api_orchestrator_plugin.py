@@ -222,7 +222,11 @@ class FakeHTTPOrchestrator:
                         }
                     ])
                     return
-                if self.path == f"/loops/{owner.loop_id}/events/stream":
+                if self.path in {
+                    f"/loops/{owner.loop_id}/events/stream",
+                    f"/loops/{owner.loop_id}/events/stream?follow=true",
+                    f"/loops/{owner.loop_id}/events/stream?follow=false",
+                }:
                     self._sse(
                         [
                             {
@@ -567,7 +571,8 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         health = client.get(f"/api/orchestrator/loops/{loop_id}/health")
         summary = client.get(f"/api/orchestrator/loops/{loop_id}/evidence-summary")
         events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
-        stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream")
+        stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream", params={"follow": "true"})
+        snapshot_stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream", params={"follow": "false"})
 
     assert loop_id == "loop-api-external"
     run_body = run.json()
@@ -594,6 +599,8 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert '"correlation_id": "loop:loop-api-external"' in stream.text
     assert "Internal operation failed" in stream.text
     assert "Traceback" not in stream.text
+    assert snapshot_stream.status_code == 200
+    assert "event: loop.completed" in snapshot_stream.text
     assert ("POST", "/loops") in server.requests
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/health")) >= 2
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/evidence-summary")) >= 2
@@ -855,6 +862,34 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
     assert body["install"]["status"] == "installed"
     assert body["runtime"]["available"] is True
     assert fake.install_called is True
+
+
+def test_external_agent_loop_event_stream_snapshot_does_not_follow(monkeypatch):
+    class FakeManager:
+        def __init__(self):
+            self.event_calls = 0
+
+        def get_agent_loop_events(self, loop_id):
+            self.event_calls += 1
+            return [
+                {
+                    "event_id": f"event-{self.event_calls}",
+                    "sequence": self.event_calls,
+                    "type": "loop.step.started",
+                    "loop_id": loop_id,
+                    "payload": {"status": "running"},
+                }
+            ]
+
+    fake = FakeManager()
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: fake)
+
+    response = TestClient(app).get("/api/orchestrator/loops/loop-snapshot/events/stream", params={"follow": "false"})
+
+    assert response.status_code == 200
+    assert "event: loop.step.started" in response.text
+    assert '"event_id": "event-1"' in response.text
+    assert fake.event_calls == 1
 
 
 def test_external_agent_loop_health_forwards_orchestrator_404(monkeypatch):
