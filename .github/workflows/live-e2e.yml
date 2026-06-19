@@ -43,5 +43,16 @@ jobs:
           PYTHON: python
         run: |
           ORCHESTRATOR_COMMAND="$(python -c 'import shutil, sys; command = shutil.which("across-orchestrator"); sys.exit("across-orchestrator not found on PATH") if not command else print(command)')"
+          EVIDENCE_PATH="${RUNNER_TEMP}/github-live-e2e-gate-evidence.json"
           ACROSS_AGENTS_ORCHESTRATOR_COMMAND="$ORCHESTRATOR_COMMAND" \
+            ACROSS_AGENTS_LIVE_E2E_GATE_ID="github_live_e2e" \
+            ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$EVIDENCE_PATH" \
             bash scripts/run_live_e2e.sh "${{ inputs.tier }}"
+
+      - name: Upload live E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e-gate-evidence
+          path: ${{ runner.temp }}/github-live-e2e-gate-evidence.json
+          if-no-files-found: warn

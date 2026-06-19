@@ -71,6 +71,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Pre-release gate section should be localized in English"
     )
     assert(
+        AppPreferences.localizedString("releaseVerification.missingGatePaths", localeIdentifier: "en") == "Missing required gate paths",
+        "Missing gate path section should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("releaseVerification.gateStatus.passed", localeIdentifier: "zh-Hans") == "已通过",
+        "Passed pre-release gate state should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("releaseVerification.gateStatus.manual_required", localeIdentifier: "zh-Hans") == "手动",
         "Manual pre-release gate state should be localized in Simplified Chinese"
     )

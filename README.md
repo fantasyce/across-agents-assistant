@@ -661,9 +661,12 @@ The script creates temporary `ACROSS_HOME` and `ACROSS_AGENTS_HOME` roots,
 starts the backend on a temporary Unix socket, runs
 `backend/tests/e2e/run_e2e.py`, and then runs the legacy socket-backed
 `backend/tests/e2e/test_api_e2e.py` with `ACROSS_AGENTS_RUN_LIVE_E2E=1`.
+It writes a non-secret gate evidence JSON file to
+`$HOME/.across/data/across-agents-assistant/release-reports/` by default; set
+`ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH` to store it elsewhere.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
 `workflow_dispatch` job and installs Across Orchestrator `v0.6.17` before
-running it.
+running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence.
 

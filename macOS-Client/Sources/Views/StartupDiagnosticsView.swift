@@ -303,10 +303,22 @@ struct StartupDiagnosticsView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Text(String(format: appPreferences.text("releaseVerification.gateSummary"), report.gateSummary.configured, report.gateSummary.manualRequired, report.gateSummary.missing))
+                    Text(
+                        String(
+                            format: appPreferences.text("releaseVerification.gateSummary"),
+                            report.gateSummary.passed,
+                            report.gateSummary.configured,
+                            report.gateSummary.manualRequired,
+                            report.gateSummary.missing
+                        )
+                    )
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(gateSummaryColor(report.gateSummary))
                         .lineLimit(1)
+                }
+
+                if !report.preReleaseGateMissingPaths.isEmpty {
+                    missingGatePaths(report.preReleaseGateMissingPaths)
                 }
 
                 ForEach(gates) { gate in
@@ -359,11 +371,61 @@ struct StartupDiagnosticsView: View {
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
+                if let evidence = gate.evidence {
+                    Text(gateEvidenceSummary(evidence))
+                        .font(.system(size: 10))
+                        .foregroundColor(gateStatusColor(evidence.status))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let runURL = evidence.runURL ?? evidence.workflowRunURL, !runURL.isEmpty {
+                        Text(runURL)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
             }
         }
         .padding(10)
         .background(fieldColor)
         .cornerRadius(8)
+    }
+
+    private func missingGatePaths(_ paths: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(appPreferences.text("releaseVerification.missingGatePaths"))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Color(hex: "ff453a"))
+            ForEach(paths.prefix(5), id: \.self) { path in
+                Text(path)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if paths.count > 5 {
+                Text(String(format: appPreferences.text("releaseVerification.morePaths"), paths.count - 5))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(fieldColor)
+        .cornerRadius(8)
+    }
+
+    private func gateEvidenceSummary(_ evidence: ReleaseVerificationPreReleaseGateEvidence) -> String {
+        var parts = [appPreferences.text("releaseVerification.gateEvidence"), localizedGateStatus(evidence.status)]
+        if let tier = evidence.tier, !tier.isEmpty {
+            parts.append(tier)
+        }
+        if let completedAt = evidence.completedAt, !completedAt.isEmpty {
+            parts.append(completedAt)
+        }
+        if let duration = evidence.durationSeconds {
+            parts.append("\(duration)s")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func releaseVerificationEmptyEvidence(_ report: ReleaseVerificationReport) -> some View {
@@ -698,10 +760,10 @@ struct StartupDiagnosticsView: View {
     }
 
     private func gateSummaryColor(_ summary: ReleaseVerificationPreReleaseGateSummary) -> Color {
-        if summary.requiredMissing > 0 || summary.missing > 0 {
+        if summary.requiredFailed > 0 || summary.failed > 0 || summary.requiredMissing > 0 || summary.missing > 0 {
             return Color(hex: "ff453a")
         }
-        if summary.manualRequired > 0 {
+        if summary.requiredManual > 0 || summary.manualRequired > 0 {
             return Color(hex: "ff9f0a")
         }
         return Color(hex: "30d158")

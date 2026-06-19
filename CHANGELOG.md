@@ -9,6 +9,9 @@
   E2E, GitHub Live E2E, and Quality CI; the Diagnostics UI renders the gate
   checklist and the Swift behavior runner now covers release-verification model
   decoding.
+- Live E2E now writes non-secret gate evidence JSON, the manual GitHub workflow
+  uploads that evidence as an artifact, and RC verification consumes gate
+  evidence plus machine-readable missing required gate paths.
 
 ## 0.8.26 - 2026-06-20
 
