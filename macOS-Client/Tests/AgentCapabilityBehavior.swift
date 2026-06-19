@@ -254,6 +254,66 @@ func testPreflightResponseFindsBestRecommendation() {
     assert(preflight.agentSummaries[1].nativeSkillRepairSuggestions.count == 1, "Preflight should keep native skill repair guidance")
 }
 
+func testPreflightResponseDecodesRoutingEvidence() throws {
+    let json = """
+    {
+      "selected_agent_ids": ["hermes", "openclaw"],
+      "recommended_agent_ids": ["openclaw"],
+      "agent_summaries": [
+        {
+          "agent_id": "openclaw",
+          "score": 4,
+          "matched_skill_ids": [],
+          "matched_native_skill_ids": ["apple-notes"],
+          "unavailable_native_skill_ids": [],
+          "native_skill_repair_suggestions": [],
+          "routing_evidence": [
+            {
+              "source": "native_skill",
+              "status": "available",
+              "skill_id": "apple-notes",
+              "skill_name": "Apple Notes",
+              "reason": "native_skill_name_match"
+            }
+          ],
+          "configured_count": 1,
+          "warnings": []
+        },
+        {
+          "agent_id": "hermes",
+          "score": 0,
+          "matched_skill_ids": [],
+          "matched_native_skill_ids": [],
+          "unavailable_native_skill_ids": ["apple-notes"],
+          "native_skill_repair_suggestions": ["Install required binary `memo` and make it available on PATH."],
+          "routing_evidence": [
+            {
+              "source": "native_skill",
+              "status": "unavailable",
+              "skill_id": "apple-notes",
+              "skill_name": "Apple Notes",
+              "reason": "missing requirements",
+              "repair_suggestions": ["Install required binary `memo` and make it available on PATH."]
+            }
+          ],
+          "configured_count": 0,
+          "warnings": ["hermes native skill Apple Notes is unavailable: missing requirements."]
+        }
+      ],
+      "warnings": [],
+      "prompt_preview": "- openclaw: native skill available"
+    }
+    """.data(using: .utf8)!
+
+    let preflight = try JSONDecoder().decode(AgentCapabilityPreflightResponse.self, from: json)
+
+    assert(preflight.bestRecommendedAgentId == "openclaw", "Preflight should decode best recommended agent")
+    assert(preflight.bestSummary?.routingEvidence.first?.source == "native_skill", "Routing evidence source should decode")
+    assert(preflight.bestSummary?.routingEvidence.first?.status == "available", "Routing evidence status should decode")
+    assert(preflight.bestSummary?.routingEvidence.first?.skillName == "Apple Notes", "Routing evidence skill name should decode")
+    assert(preflight.agentSummaries[1].routingEvidence.first?.repairSuggestions.count == 1, "Routing evidence repair suggestions should decode")
+}
+
 func testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest() throws {
     let json = """
     {
@@ -445,6 +505,7 @@ struct AgentCapabilityBehavior {
         testHostCapabilityRegistrySyncSummaryAcceptsMatchingDescriptor()
         testHostCapabilityRegistrySyncSummaryFlagsMissingDescriptor()
         testPreflightResponseFindsBestRecommendation()
+        try! testPreflightResponseDecodesRoutingEvidence()
         try! testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest()
         try! testReleaseEvaluationSummaryDecodesBackendPayload()
         try! testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter()

@@ -465,6 +465,50 @@ struct AgentCapabilityPreflightRequest: Encodable {
     }
 }
 
+struct AgentCapabilityRoutingEvidence: Codable, Equatable {
+    let source: String?
+    let status: String?
+    let skillId: String?
+    let skillName: String?
+    let reason: String?
+    let repairSuggestions: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case status
+        case skillId = "skill_id"
+        case skillName = "skill_name"
+        case reason
+        case repairSuggestions = "repair_suggestions"
+    }
+
+    init(
+        source: String?,
+        status: String?,
+        skillId: String?,
+        skillName: String?,
+        reason: String?,
+        repairSuggestions: [String] = []
+    ) {
+        self.source = source
+        self.status = status
+        self.skillId = skillId
+        self.skillName = skillName
+        self.reason = reason
+        self.repairSuggestions = repairSuggestions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        skillId = try container.decodeIfPresent(String.self, forKey: .skillId)
+        skillName = try container.decodeIfPresent(String.self, forKey: .skillName)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        repairSuggestions = try container.decodeIfPresent([String].self, forKey: .repairSuggestions) ?? []
+    }
+}
+
 struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
     var id: String { agentId }
     let agentId: String
@@ -473,6 +517,7 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
     let matchedNativeSkillIds: [String]
     let unavailableNativeSkillIds: [String]
     let nativeSkillRepairSuggestions: [String]
+    let routingEvidence: [AgentCapabilityRoutingEvidence]
     let configuredCount: Int
     let warnings: [String]
 
@@ -483,6 +528,7 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
         case matchedNativeSkillIds = "matched_native_skill_ids"
         case unavailableNativeSkillIds = "unavailable_native_skill_ids"
         case nativeSkillRepairSuggestions = "native_skill_repair_suggestions"
+        case routingEvidence = "routing_evidence"
         case configuredCount = "configured_count"
         case warnings
     }
@@ -494,6 +540,7 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
         matchedNativeSkillIds: [String] = [],
         unavailableNativeSkillIds: [String] = [],
         nativeSkillRepairSuggestions: [String] = [],
+        routingEvidence: [AgentCapabilityRoutingEvidence] = [],
         configuredCount: Int,
         warnings: [String]
     ) {
@@ -503,6 +550,7 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
         self.matchedNativeSkillIds = matchedNativeSkillIds
         self.unavailableNativeSkillIds = unavailableNativeSkillIds
         self.nativeSkillRepairSuggestions = nativeSkillRepairSuggestions
+        self.routingEvidence = routingEvidence
         self.configuredCount = configuredCount
         self.warnings = warnings
     }
@@ -515,6 +563,7 @@ struct AgentCapabilityPreflightAgentSummary: Codable, Identifiable, Equatable {
         matchedNativeSkillIds = try container.decodeIfPresent([String].self, forKey: .matchedNativeSkillIds) ?? []
         unavailableNativeSkillIds = try container.decodeIfPresent([String].self, forKey: .unavailableNativeSkillIds) ?? []
         nativeSkillRepairSuggestions = try container.decodeIfPresent([String].self, forKey: .nativeSkillRepairSuggestions) ?? []
+        routingEvidence = try container.decodeIfPresent([AgentCapabilityRoutingEvidence].self, forKey: .routingEvidence) ?? []
         configuredCount = try container.decodeIfPresent(Int.self, forKey: .configuredCount) ?? 0
         warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }

@@ -424,6 +424,29 @@ class FakeHTTPOrchestrator:
                 "category": "user_requested" if status == "cancelled" else None,
                 "reason": "operator cancelled" if status == "cancelled" else None,
             },
+            "host_release_evidence": {
+                "schema_version": "0.1",
+                "readiness": "attention",
+                "loop_status": status,
+                "checks": [
+                    {"id": "event_audit", "status": "passed", "summary": "6 events complete."},
+                    {
+                        "id": "memory_candidates",
+                        "status": "attention",
+                        "summary": "1 structured memory candidate is pending host review.",
+                        "candidate_count": 1,
+                    },
+                ],
+                "risks": [
+                    {
+                        "id": "memory_review_pending",
+                        "severity": "low",
+                        "summary": "Structured memory candidates should be reviewed before release.",
+                    }
+                ],
+                "risk_count": 1,
+                "next_actions": ["Review pending structured memory candidates in Across Context."],
+            },
         }
 
 
@@ -549,12 +572,14 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert run_body["health"]["status"] == "completed"
     assert run_body["evidence_summary"]["schema_version"] == "0.1"
     assert run_body["evidence_summary"]["event_audit"]["sequence_contiguous"] is True
+    assert run_body["evidence_summary"]["host_release_evidence"]["readiness"] == "attention"
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
     assert summary.json()["schema_version"] == "0.1"
     assert summary.json()["routing"]["capability_hint_route_count"] == 1
     assert summary.json()["event_audit"]["sequence_contiguous"] is True
+    assert summary.json()["host_release_evidence"]["risk_count"] == 1
     assert events.json()[0]["type"] == "loop.completed"
     assert events.json()[0]["event_id"] == "loop-event-api-1"
     assert events.json()[0]["sequence"] == 1

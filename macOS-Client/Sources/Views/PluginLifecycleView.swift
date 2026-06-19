@@ -323,6 +323,8 @@ struct PluginLifecycleView: View {
             healthDetailLine(appPreferences.text("plugins.loop.detailExecutableActions"), actionSummary(health.executableActions ?? []))
             if let summary = viewModel.agentLoopEvidenceSummary {
                 Divider().opacity(0.25)
+                healthDetailLine(appPreferences.text("plugins.loop.detailReleaseEvidence"), hostReleaseEvidenceSummary(summary.hostReleaseEvidence))
+                hostReleaseEvidenceDetailLines(summary.hostReleaseEvidence)
                 healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
                 healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
                 healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
@@ -381,6 +383,61 @@ struct PluginLifecycleView: View {
 
     private func actionSummary(_ actions: [String]) -> String {
         actions.isEmpty ? appPreferences.text("plugins.loop.none") : actions.joined(separator: ", ")
+    }
+
+    private func hostReleaseEvidenceSummary(_ evidence: AgentLoopHostReleaseEvidence?) -> String {
+        guard let evidence, let readiness = displayToken(evidence.readiness) else {
+            return appPreferences.text("plugins.loop.none")
+        }
+        let riskCount = evidence.riskCount ?? evidence.risks?.count ?? 0
+        if riskCount > 0 {
+            return String(format: appPreferences.text("plugins.loop.releaseEvidenceWithRisks"), readiness, riskCount)
+        }
+        return readiness
+    }
+
+    @ViewBuilder
+    private func hostReleaseEvidenceDetailLines(_ evidence: AgentLoopHostReleaseEvidence?) -> some View {
+        if let check = evidence?.checks?.first(where: { $0.status != nil && $0.status != "passed" }) {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailReleaseCheck"),
+                hostReleaseCheckSummary(check)
+            )
+        }
+        if let risk = evidence?.risks?.first {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailReleaseRisk"),
+                hostReleaseRiskSummary(risk)
+            )
+        }
+        if let nextAction = evidence?.nextActions?.first, !nextAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            healthDetailLine(appPreferences.text("plugins.loop.detailReleaseNext"), nextAction)
+        }
+    }
+
+    private func hostReleaseCheckSummary(_ check: AgentLoopHostReleaseCheck) -> String {
+        var parts = [String]()
+        if let id = displayToken(check.id) {
+            parts.append(id)
+        }
+        if let status = displayToken(check.status) {
+            parts.append(status)
+        }
+        if let summary = check.summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(summary)
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func hostReleaseRiskSummary(_ risk: AgentLoopHostReleaseRisk) -> String {
+        var parts = [String]()
+        if let severity = displayToken(risk.severity) {
+            parts.append(severity)
+        }
+        if let summary = risk.summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(summary)
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
     }
 
     private func auditSummary(_ audit: AgentLoopEvidenceEventAudit?) -> String {

@@ -99,6 +99,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop evidence routing label should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.detailReleaseEvidence", localeIdentifier: "en") == "Release",
+        "Agent Loop host release evidence label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.detailReleaseRisk", localeIdentifier: "zh-Hans") == "风险",
+        "Agent Loop host release risk label should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.auditComplete", localeIdentifier: "en") == "%d events complete",
         "Agent Loop evidence audit summary should be localized in English"
     )
@@ -145,6 +153,14 @@ func testLocalizedStringsFallbackToEnglish() {
     assert(
         AppPreferences.localizedString("capabilities.registryCheck.nativeSkills", localeIdentifier: "en") == "Native skills",
         "Host capability registry native-skill check should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("tasks.capabilityPreflight.routingEvidence", localeIdentifier: "en") == "Routing evidence: %@",
+        "Capability preflight routing evidence should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("tasks.capabilityPreflight.routingEvidence", localeIdentifier: "zh-Hans") == "路由证据：%@",
+        "Capability preflight routing evidence should be localized in Simplified Chinese"
     )
     assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
