@@ -193,6 +193,155 @@ struct AgentCapabilitySkillSaveResponse: Decodable {
     let skill: AgentSkillDefinition
 }
 
+struct HostAgentCapabilityRegistry: Codable, Equatable {
+    let schemaVersion: String
+    let generatedAt: Double?
+    let security: HostAgentCapabilityRegistrySecurity
+    let agents: [HostAgentCapabilityDescriptor]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case generatedAt = "generated_at"
+        case security
+        case agents
+    }
+
+    init(
+        schemaVersion: String,
+        generatedAt: Double? = nil,
+        security: HostAgentCapabilityRegistrySecurity = HostAgentCapabilityRegistrySecurity(),
+        agents: [HostAgentCapabilityDescriptor]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.security = security
+        self.agents = agents
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? "1.0"
+        generatedAt = try container.decodeIfPresent(Double.self, forKey: .generatedAt)
+        security = try container.decodeIfPresent(HostAgentCapabilityRegistrySecurity.self, forKey: .security)
+            ?? HostAgentCapabilityRegistrySecurity()
+        agents = try container.decodeIfPresent([HostAgentCapabilityDescriptor].self, forKey: .agents) ?? []
+    }
+
+    var routeReadyAgentCount: Int {
+        agents.filter { !$0.capabilities.isEmpty }.count
+    }
+
+    var exportedCapabilityCount: Int {
+        Set(agents.flatMap(\.capabilities)).count
+    }
+
+    func descriptor(for agentId: String) -> HostAgentCapabilityDescriptor? {
+        let normalized = AgentIDs.normalized(agentId) ?? agentId
+        return agents.first { $0.agentId == normalized }
+    }
+}
+
+struct HostAgentCapabilityRegistrySecurity: Codable, Equatable {
+    let secretsIncluded: Bool
+    let customInstructionsIncluded: Bool
+    let installPathsIncluded: Bool
+    let credentialFieldsRedacted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case secretsIncluded = "secrets_included"
+        case customInstructionsIncluded = "custom_instructions_included"
+        case installPathsIncluded = "install_paths_included"
+        case credentialFieldsRedacted = "credential_fields_redacted"
+    }
+
+    init(
+        secretsIncluded: Bool = false,
+        customInstructionsIncluded: Bool = false,
+        installPathsIncluded: Bool = false,
+        credentialFieldsRedacted: Bool = true
+    ) {
+        self.secretsIncluded = secretsIncluded
+        self.customInstructionsIncluded = customInstructionsIncluded
+        self.installPathsIncluded = installPathsIncluded
+        self.credentialFieldsRedacted = credentialFieldsRedacted
+    }
+}
+
+struct HostAgentCapabilityDescriptor: Codable, Identifiable, Equatable {
+    var id: String { agentId }
+    let agentId: String
+    let displayName: String
+    let agentType: String
+    let aliases: [String]
+    let capabilities: [String]
+    let configuredSkillIds: [String]
+    let configuredSkillNames: [String]
+    let enabledPluginIds: [String]
+    let enabledToolNames: [String]
+    let nativeSkillIds: [String]
+    let strictToolScope: Bool
+    let warnings: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case displayName = "display_name"
+        case agentType = "agent_type"
+        case aliases
+        case capabilities
+        case configuredSkillIds = "configured_skill_ids"
+        case configuredSkillNames = "configured_skill_names"
+        case enabledPluginIds = "enabled_plugin_ids"
+        case enabledToolNames = "enabled_tool_names"
+        case nativeSkillIds = "native_skill_ids"
+        case strictToolScope = "strict_tool_scope"
+        case warnings
+    }
+
+    init(
+        agentId: String,
+        displayName: String,
+        agentType: String = "unknown",
+        aliases: [String] = [],
+        capabilities: [String] = [],
+        configuredSkillIds: [String] = [],
+        configuredSkillNames: [String] = [],
+        enabledPluginIds: [String] = [],
+        enabledToolNames: [String] = [],
+        nativeSkillIds: [String] = [],
+        strictToolScope: Bool = false,
+        warnings: [String] = []
+    ) {
+        self.agentId = agentId
+        self.displayName = displayName
+        self.agentType = agentType
+        self.aliases = aliases
+        self.capabilities = capabilities
+        self.configuredSkillIds = configuredSkillIds
+        self.configuredSkillNames = configuredSkillNames
+        self.enabledPluginIds = enabledPluginIds
+        self.enabledToolNames = enabledToolNames
+        self.nativeSkillIds = nativeSkillIds
+        self.strictToolScope = strictToolScope
+        self.warnings = warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agentId = try container.decode(String.self, forKey: .agentId)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? agentId
+        agentType = try container.decodeIfPresent(String.self, forKey: .agentType) ?? "unknown"
+        aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
+        capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        configuredSkillIds = try container.decodeIfPresent([String].self, forKey: .configuredSkillIds) ?? []
+        configuredSkillNames = try container.decodeIfPresent([String].self, forKey: .configuredSkillNames) ?? []
+        enabledPluginIds = try container.decodeIfPresent([String].self, forKey: .enabledPluginIds) ?? []
+        enabledToolNames = try container.decodeIfPresent([String].self, forKey: .enabledToolNames) ?? []
+        nativeSkillIds = try container.decodeIfPresent([String].self, forKey: .nativeSkillIds) ?? []
+        strictToolScope = try container.decodeIfPresent(Bool.self, forKey: .strictToolScope) ?? false
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+    }
+}
+
 struct AgentCapabilityPreflightRequest: Encodable {
     let description: String
     let ownerAgent: String

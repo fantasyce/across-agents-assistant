@@ -10,6 +10,9 @@
 - Plugin Center shared-memory review now lists Agent Loop memory candidates
   from the latest evidence summary and can focus the review list on the
   candidate lifecycle status.
+- Agent Capabilities now shows the non-secret Orchestrator host capability
+  registry, including exported agent descriptors, routing signals, and
+  redaction status.
 
 ## 0.8.18 - 2026-06-19
 
