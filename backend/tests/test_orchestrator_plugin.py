@@ -397,8 +397,10 @@ def test_external_http_get_wraps_http_errors(monkeypatch, tmp_path):
 
     try:
         manager._http_get("/loops/missing")
-    except orchestrator_plugin.OrchestratorPluginError as exc:
+    except orchestrator_plugin.OrchestratorPluginHTTPError as exc:
         assert "HTTP 404" in str(exc)
+        assert exc.status_code == 404
+        assert exc.detail == '{"error":"not_found"}'
     else:
         raise AssertionError("_http_get should wrap HTTPError as OrchestratorPluginError")
 

@@ -57,6 +57,15 @@ class OrchestratorPluginError(RuntimeError):
     """Base error for external Across Orchestrator integration."""
 
 
+class OrchestratorPluginHTTPError(OrchestratorPluginError):
+    """Raised when an external Orchestrator HTTP endpoint returns an error status."""
+
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = int(status_code)
+        self.detail = detail
+        super().__init__(f"HTTP {self.status_code}: Across Orchestrator request failed.")
+
+
 class OrchestratorPluginUnavailable(OrchestratorPluginError):
     """Raised when external Orchestrator is required but unavailable."""
 
@@ -1355,7 +1364,7 @@ class OrchestratorPluginManager:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             logger.warning("Across Orchestrator HTTP GET failed with %s: %s", exc.code, detail[:1000])
-            raise OrchestratorPluginError(f"HTTP {exc.code}: Across Orchestrator request failed.") from exc
+            raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:
         endpoint = self._resolved_endpoint()
@@ -1372,7 +1381,7 @@ class OrchestratorPluginManager:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             logger.warning("Across Orchestrator HTTP request failed with %s: %s", exc.code, detail[:1000])
-            raise OrchestratorPluginError(f"HTTP {exc.code}: Across Orchestrator request failed.") from exc
+            raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _cli_json(self, args: List[str]) -> Any:
         command = self._resolve_command()

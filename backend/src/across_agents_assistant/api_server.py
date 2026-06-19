@@ -35,6 +35,18 @@ def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=_safe_error_message(operation))
 
 
+def _external_orchestrator_http_error(operation: str, exc: "OrchestratorPluginHTTPError") -> HTTPException:
+    logger.warning("%s returned HTTP %s from Across Orchestrator", operation, exc.status_code)
+    if 400 <= exc.status_code < 500:
+        detail = (
+            "External Across Orchestrator resource not found."
+            if exc.status_code == 404
+            else f"External Across Orchestrator returned HTTP {exc.status_code}."
+        )
+        return HTTPException(status_code=exc.status_code, detail=detail)
+    return HTTPException(status_code=502, detail=_safe_error_message(operation))
+
+
 _ERROR_DETAIL_KEYS = {
     "error",
     "errors",
@@ -202,6 +214,7 @@ from .task_review.release_e2e import (
 from .paths import app_home, app_subdir, backend_socket_path, data_file, log_dir as app_log_dir, run_dir, tmp_dir
 from .orchestrator_plugin import (
     OrchestratorPluginConfig,
+    OrchestratorPluginHTTPError,
     OrchestratorPluginManager,
     OrchestratorPluginUnavailable,
     build_external_quality_benchmark,
@@ -1552,6 +1565,8 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop start", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop start failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop start"))
@@ -1565,6 +1580,8 @@ async def run_external_agent_loop(loop_id: str):
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop run", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop run failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop run"))
@@ -1582,6 +1599,8 @@ async def approve_external_agent_loop_action(loop_id: str, action_id: str):
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop approval", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop approval failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop approval"))
@@ -1600,6 +1619,8 @@ async def reject_external_agent_loop_action(loop_id: str, action_id: str, req: O
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop rejection", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop rejection failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop rejection"))
@@ -1617,6 +1638,8 @@ async def cancel_external_agent_loop(loop_id: str, req: Optional[AgentLoopReason
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop cancel", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop cancel failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop cancel"))
@@ -1634,6 +1657,8 @@ async def retry_external_agent_loop_step(loop_id: str, step_id: str):
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop retry", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop retry failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop retry"))
@@ -1647,6 +1672,8 @@ async def get_external_agent_loop(loop_id: str):
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop status", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop status failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop status"))
@@ -1660,6 +1687,8 @@ async def get_external_agent_loop_health(loop_id: str):
         return _sanitize_public_payload(health)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop health", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop health failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop health"))
@@ -1673,6 +1702,8 @@ async def get_external_agent_loop_events(loop_id: str):
         return _sanitize_public_payload(events)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop events", exc)
     except Exception as exc:
         logger.exception("External Across Orchestrator agent loop events failed")
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop events"))
