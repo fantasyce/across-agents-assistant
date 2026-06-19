@@ -7,6 +7,9 @@
 - Plugin Center loop health details now surface structured memory candidate
   evidence from Orchestrator evidence summaries, including provider, status,
   and turn hints when available.
+- Plugin Center shared-memory review now lists Agent Loop memory candidates
+  from the latest evidence summary and can focus the review list on the
+  candidate lifecycle status.
 
 ## 0.8.18 - 2026-06-19
 
