@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.15` | Streams Plugin Center Agent Loop timelines while probes are running and moves managed Orchestrator pins to `v0.6.14`. |
 | `0.8.14` | Adds Plugin Center Agent Loop health details, timeline sequence chips with audit identifiers, structured cancellation-category display, and moves managed Orchestrator pins to `v0.6.13`. |
 | `0.8.13` | Adds a non-secret host agent capability registry for Orchestrator capability-hint routing, shows Agent Loop event timelines in the Plugin Center, and moves managed pins to Orchestrator `v0.6.12` and Context `v0.7.7`. |
 | `0.8.12` | Adds read-only Agent Loop health inspection from Across Orchestrator `v0.6.11`, proxies health through the AAA backend, and surfaces current action, approval, and lease state in the Plugin Center loop probe. |
@@ -193,15 +194,18 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.14` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.15` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.8.14` release aligns AAA with Across Orchestrator `v0.6.13` and Across
-Context `v0.7.7`. AAA now shows Agent Loop health detail popovers, timeline
-sequence chips with hover audit identifiers, and structured cancellation
-categories while continuing to tolerate future category strings from
-Orchestrator. The read-only health and event probes remain best-effort, so
-successful Plugin Center probes are not marked failed if optional loop
-inspection data is temporarily unavailable.
+The `0.8.15` release aligns AAA with Across Orchestrator `v0.6.14` and Across
+Context `v0.7.7`. Plugin Center loop probes now stream sanitized Agent Loop
+timeline events while a probe is running, then merge the final durable event
+snapshot for compatibility with older sidecars. Health, timeline, and event
+inspection remain best-effort, so successful Plugin Center probes are not marked
+failed if optional loop inspection data is temporarily unavailable.
+
+The `0.8.14` release added Agent Loop health detail popovers, timeline sequence
+chips with hover audit identifiers, and structured cancellation categories while
+continuing to tolerate future category strings from Orchestrator.
 
 The `0.8.13` release added a non-secret host agent capability registry for
 Orchestrator capability-hint routing and Agent Loop event timelines after
@@ -484,7 +488,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.13
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.14
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.7
