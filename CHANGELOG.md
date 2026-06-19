@@ -7,6 +7,8 @@
 - Plugin Center loop health details now keep compact release readiness visible
   while folding lower-level Agent Loop evidence into an expandable details
   section.
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.17` for
+  centralized Agent Loop cancel category policy.
 
 ### Fixed
 
