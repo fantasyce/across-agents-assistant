@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.8.13 - 2026-06-19
+
+### Added
+
+- Added a non-secret host agent capability registry at
+  `/api/host/agent-capabilities` for Orchestrator capability-hint routing.
+- Added macOS Plugin Center Agent Loop event timeline rendering after
+  Orchestrator probes.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.12` and
+  managed Across Context defaults to `v0.7.7`.
+- Kept external Orchestrator HTTP error status mapping precise while reducing
+  duplicate warning noise on already-typed upstream HTTP errors.
+- Allowed external Orchestrator-owned pause, resume, and cancel task lifecycle
+  calls to report `409` when a sidecar rejects duplicate terminal actions.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed with 675 tests and 1 warning.
+- Swift package lock verification, Swift build, and Swift tests passed.
+- Across Orchestrator checks passed with 119 tests.
+- Across Context checks passed with 63 tests.
+- GitHub PR checks passed for the AAA, Orchestrator, and Context release inputs.
+
 ## 0.8.12 - 2026-06-19
 
 ### Added
