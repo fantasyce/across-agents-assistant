@@ -3,6 +3,7 @@ import SwiftUI
 struct PluginLifecycleView: View {
     @StateObject private var viewModel = PluginLifecycleViewModel()
     @State private var showingLoopHealthDetails = false
+    @State private var showingLoopEvidenceDetails = false
     @EnvironmentObject private var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
 
@@ -324,13 +325,22 @@ struct PluginLifecycleView: View {
             if let summary = viewModel.agentLoopEvidenceSummary {
                 Divider().opacity(0.25)
                 healthDetailLine(appPreferences.text("plugins.loop.detailReleaseEvidence"), hostReleaseEvidenceSummary(summary.hostReleaseEvidence))
-                hostReleaseEvidenceDetailLines(summary.hostReleaseEvidence)
-                healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
-                healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
-                healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
-                recoveryEvidenceDetailLines(summary.recovery)
-                healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
-                memoryCandidateDetailLines(summary.memoryCandidates)
+                DisclosureGroup(isExpanded: $showingLoopEvidenceDetails) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        hostReleaseEvidenceDetailLines(summary.hostReleaseEvidence)
+                        healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
+                        healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
+                        healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
+                        recoveryEvidenceDetailLines(summary.recovery)
+                        healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
+                        memoryCandidateDetailLines(summary.memoryCandidates)
+                    }
+                    .padding(.top, 4)
+                } label: {
+                    Text(appPreferences.text("plugins.loop.evidenceDetails"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(textColor)
+                }
             }
         }
         .padding(14)

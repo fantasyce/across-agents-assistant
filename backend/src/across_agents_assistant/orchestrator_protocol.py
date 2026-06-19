@@ -563,6 +563,7 @@ def _external_acceptance_records(
         for item in artifacts
         if item.get("artifact_id") or item.get("id") or item.get("name")
     ]
+    artifact_ids = list(dict.fromkeys(artifact_ids))
     return [
         {
             "acceptance_id": f"acc-external-{task_id}",
@@ -582,6 +583,18 @@ def _external_acceptance_records(
             "recommended_action": "approve" if passed else "fix",
             "preferred_agent": task.get("agent") or "app-grade",
             "owner_session_id": None,
-            "created_at": float(task.get("updated_at") or task.get("created_at") or time.time()),
+            "created_at": _external_acceptance_created_at(task),
         }
     ]
+
+
+def _external_acceptance_created_at(task: Dict[str, Any]) -> Optional[float]:
+    for key in ("updated_at", "created_at"):
+        value = task.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None

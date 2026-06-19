@@ -902,6 +902,22 @@ def test_external_app_task_artifacts_include_client_file_metadata(tmp_path):
     assert artifact["size"] == 6
 
 
+def test_external_acceptance_record_is_stable_without_task_timestamps(tmp_path):
+    task = _external_task("task-external-stable-acceptance", str(tmp_path / "project"), "completed")
+    task.pop("created_at")
+    task.pop("updated_at")
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["artifacts"].append(dict(evidence["artifacts"][0]))
+
+    app_task = external_task_to_app_info(task, evidence)
+    record = app_task["acceptance_records"][0]
+
+    assert record["created_at"] is None
+    assert record["root_cause_artifact_ids"]
+    assert len(record["root_cause_artifact_ids"]) == len(set(record["root_cause_artifact_ids"]))
+    assert record["decision"] == "approve"
+
+
 def test_external_expected_artifacts_compute_size_from_project_file(tmp_path):
     project_dir = tmp_path / "project"
     project_dir.mkdir()
