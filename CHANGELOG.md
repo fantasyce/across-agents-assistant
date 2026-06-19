@@ -2,12 +2,31 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.8.15 - 2026-06-19
+
 ### Added
 
 - Added true live Agent Loop timeline streaming for Plugin Center probes. The
   AAA backend now emits incremental sanitized SSE events, and the macOS
   timeline updates while the probe is running instead of labeling a completed
   SSE snapshot as live.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.14` while
+  keeping managed Across Context defaults at `v0.7.7`.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed.
+- Swift package lock verification, Swift build, Swift tests, standalone Plugin
+  Lifecycle/App Preferences behavior tests, and packaged app build checks
+  passed.
+- Across Orchestrator `v0.6.14` release checks passed before updating the AAA
+  managed pin.
 
 ## 0.8.14 - 2026-06-19
 
