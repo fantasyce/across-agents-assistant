@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- Documented that the Agent Loop SSE timeline endpoint defaults to a finite
+  snapshot stream and requires `follow=true` for live polling.
+
+### Fixed
+
+- Kept Plugin Center timeline source labels covered by localization tests and
+  narrowed the legacy live-events Boolean to a read-only compatibility mirror.
+- Marked the legacy socket-backed API E2E as live-runtime gated and added a
+  clearer skip/diagnostic path when no external Orchestrator runtime is
+  configured locally.
+
 ## 0.8.24 - 2026-06-19
 
 ### Changed

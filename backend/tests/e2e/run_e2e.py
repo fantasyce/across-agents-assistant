@@ -43,6 +43,21 @@ def check_keys() -> dict:
         return {"error": str(e)}
 
 
+def check_orchestrator_runtime() -> tuple[bool, str]:
+    """Return external Orchestrator availability and a human-readable note."""
+    try:
+        status = request("GET", "/api/orchestrator/plugin")
+    except Exception as e:
+        return False, f"Unable to inspect /api/orchestrator/plugin: {e}"
+    runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else status
+    available = bool(runtime.get("available"))
+    mode = runtime.get("mode") or "unknown"
+    implementation = runtime.get("implementation") or "unknown"
+    transport = runtime.get("transport") or "none"
+    note = runtime.get("connection_note") or runtime.get("error") or "No connection note reported."
+    return available, f"mode={mode}, implementation={implementation}, transport={transport}, note={note}"
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run E2E regression tests")
@@ -63,6 +78,14 @@ def main():
         print("⚠️  No API keys — only readiness check will pass.\n")
     else:
         print(f"   (keys: {', '.join(configured)})\n")
+
+    orchestrator_available, orchestrator_note = check_orchestrator_runtime()
+    print(f"🧭 External Orchestrator: {orchestrator_note}")
+    if not orchestrator_available:
+        print("❌ External Across Orchestrator runtime is required for live task E2E.")
+        print("   Install/configure the plugin or set ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT.")
+        sys.exit(2)
+    print()
 
     test_files = {
         "minimal": ["e2e/test_e2e_minimal_task.py"],

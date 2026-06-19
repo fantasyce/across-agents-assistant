@@ -26,6 +26,23 @@ func testLanguageResolution() {
 }
 
 func testLocalizedStringsFallbackToEnglish() {
+    let agentLoopTimelineSourceKeys = [
+        "plugins.loop.eventsLive",
+        "plugins.loop.eventsSnapshot",
+        "plugins.loop.eventsFallback",
+        "plugins.loop.eventsUnavailable",
+    ]
+    for key in agentLoopTimelineSourceKeys {
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "en") != key,
+            "\(key) should be localized in English"
+        )
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "zh-Hans") != key,
+            "\(key) should be localized in Simplified Chinese"
+        )
+    }
+
     assert(
         AppPreferences.localizedString("settings.title", localeIdentifier: "zh-Hans") == "设置",
         "Simplified Chinese labels should be available"

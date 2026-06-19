@@ -1806,7 +1806,12 @@ async def get_external_agent_loop_events(loop_id: str):
 
 @app.get("/api/orchestrator/loops/{loop_id}/events/stream")
 async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
-    """Stream external Across Orchestrator agent loop events as sanitized SSE."""
+    """Stream external Across Orchestrator agent loop events as sanitized SSE.
+
+    By default this endpoint returns a finite snapshot stream and closes after
+    the currently durable events. Pass ``follow=true`` to keep polling for live
+    timeline updates until the loop closes or the idle timeout is reached.
+    """
     manager = get_orchestrator_plugin_manager()
     try:
         initial_events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id)

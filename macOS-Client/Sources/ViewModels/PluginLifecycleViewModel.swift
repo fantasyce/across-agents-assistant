@@ -8,13 +8,17 @@ enum AgentLoopTimelineMode: String, CaseIterable, Identifiable {
     var followStream: Bool { self == .live }
 }
 
-enum AgentLoopTimelineSource: String, Equatable {
+enum AgentLoopTimelineSource: String, CaseIterable, Equatable {
     case live
     case snapshot
     case fallback
     case unavailable
 
     var isLive: Bool { self == .live }
+
+    static var localizationKeys: [String] {
+        allCases.map(\.localizationKey)
+    }
 
     var localizationKey: String {
         switch self {
@@ -44,7 +48,8 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopHealth: AgentLoopHealthResponse?
     @Published var agentLoopEvidenceSummary: AgentLoopEvidenceSummaryResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
-    @Published var agentLoopEventsLive = false
+    // Compatibility mirror for older tests/views; agentLoopTimelineSource is the source of truth.
+    @Published private(set) var agentLoopEventsLive = false
     @Published var agentLoopTimelineMode: AgentLoopTimelineMode = .live
     @Published var agentLoopTimelineSource: AgentLoopTimelineSource?
     @Published var highlightedMemoryId: String?
