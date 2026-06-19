@@ -6,6 +6,7 @@ import pytest
 
 LIVE_E2E_ENV = "ACROSS_AGENTS_RUN_LIVE_E2E"
 LIVE_E2E_FILES = {
+    Path("e2e/test_api_e2e.py"),
     Path("e2e/test_e2e_complex_multi_wave.py"),
     Path("e2e/test_e2e_minimal_task.py"),
     Path("e2e/test_e2e_rest_api.py"),

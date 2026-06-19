@@ -67,6 +67,22 @@ def make_client():
     return httpx.Client(transport=transport, timeout=10)
 
 
+def skip_if_orchestrator_unavailable(response):
+    """Skip live E2E when the local backend has no external Orchestrator runtime."""
+    if response.status_code != 503:
+        return
+    try:
+        detail = response.json().get("detail", "")
+    except Exception:
+        detail = response.text
+    if "External Across Orchestrator" in detail and (
+        "required" in detail
+        or "unavailable" in detail
+        or "no endpoint or executable" in detail
+    ):
+        pytest.skip(f"External Across Orchestrator runtime unavailable: {detail}")
+
+
 class TestBackendAPI:
     _task_id: str | None = None
 
@@ -106,6 +122,7 @@ class TestBackendAPI:
             "enable_wave_gate": True,
         }
         resp = client.post("http://localhost/api/tasks/auto", json=payload)
+        skip_if_orchestrator_unavailable(resp)
         assert resp.status_code in (200, 201, 202), f"创建任务失败: {resp.status_code} {resp.text}"
         data = resp.json()
         task_id = data.get("task_id") or data.get("taskId")

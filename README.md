@@ -208,7 +208,9 @@ This project is under active development. More local agents, more cloud LLMs, st
 The `0.8.24` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center Agent Loop timelines now expose a
 Live/Snapshot mode control and distinguish live, snapshot, fallback, and
-unavailable timeline sources.
+unavailable timeline sources. The backend Agent Loop SSE endpoint returns a
+finite snapshot stream by default; pass `follow=true` when a client needs live
+timeline polling.
 
 The `0.8.23` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center loop health details keep release

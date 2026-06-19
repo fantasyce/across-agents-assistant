@@ -884,12 +884,20 @@ def test_external_agent_loop_event_stream_snapshot_does_not_follow(monkeypatch):
     fake = FakeManager()
     monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: fake)
 
-    response = TestClient(app).get("/api/orchestrator/loops/loop-snapshot/events/stream", params={"follow": "false"})
+    client = TestClient(app)
+    response = client.get("/api/orchestrator/loops/loop-snapshot/events/stream")
+    explicit_response = client.get(
+        "/api/orchestrator/loops/loop-snapshot/events/stream",
+        params={"follow": "false"},
+    )
 
     assert response.status_code == 200
     assert "event: loop.step.started" in response.text
     assert '"event_id": "event-1"' in response.text
-    assert fake.event_calls == 1
+    assert explicit_response.status_code == 200
+    assert "event: loop.step.started" in explicit_response.text
+    assert '"event_id": "event-2"' in explicit_response.text
+    assert fake.event_calls == 2
 
 
 def test_external_agent_loop_health_forwards_orchestrator_404(monkeypatch):

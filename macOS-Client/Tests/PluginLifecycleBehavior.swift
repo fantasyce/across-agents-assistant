@@ -384,6 +384,15 @@ func testAgentLoopTimelineModeAndSourceContracts() throws {
     assert(AgentLoopTimelineSource.live.isLive == true, "Live timeline source should be marked live")
     assert(AgentLoopTimelineSource.fallback.isLive == false, "Fallback timeline source should not be marked live")
     assert(
+        AgentLoopTimelineSource.localizationKeys == [
+            "plugins.loop.eventsLive",
+            "plugins.loop.eventsSnapshot",
+            "plugins.loop.eventsFallback",
+            "plugins.loop.eventsUnavailable",
+        ],
+        "Timeline source localization keys should stay complete and ordered"
+    )
+    assert(
         AgentLoopTimelineSource.fallback.localizationKey == "plugins.loop.eventsFallback",
         "Fallback timeline source should expose a stable localization key"
     )
