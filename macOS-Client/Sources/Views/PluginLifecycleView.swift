@@ -328,6 +328,7 @@ struct PluginLifecycleView: View {
                 healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
                 recoveryEvidenceDetailLines(summary.recovery)
                 healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
+                memoryCandidateDetailLines(summary.memoryCandidates)
             }
         }
         .padding(14)
@@ -481,6 +482,33 @@ struct PluginLifecycleView: View {
     private func memoryCandidateSummary(_ candidates: AgentLoopEvidenceMemoryCandidates?) -> String {
         guard let candidates else { return appPreferences.text("plugins.loop.none") }
         return String(format: appPreferences.text("plugins.loop.memoryCandidateSummary"), candidates.candidateCount ?? 0)
+    }
+
+    @ViewBuilder
+    private func memoryCandidateDetailLines(_ candidates: AgentLoopEvidenceMemoryCandidates?) -> some View {
+        if let candidate = candidates?.candidates?.first {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailMemoryCandidate"),
+                memoryCandidateDetailSummary(candidate, total: candidates?.candidates?.count ?? 1)
+            )
+        }
+    }
+
+    private func memoryCandidateDetailSummary(_ candidate: AgentLoopEvidenceMemoryCandidate, total: Int) -> String {
+        var parts = [String]()
+        if let provider = displayToken(candidate.provider) {
+            parts.append(provider)
+        }
+        if let status = displayToken(candidate.memoryStatus ?? candidate.status) {
+            parts.append(status)
+        }
+        if let turn = candidate.turn {
+            parts.append(String(format: appPreferences.text("plugins.loop.memoryCandidateTurn"), turn))
+        }
+        if total > 1 {
+            parts.append(String(format: appPreferences.text("plugins.loop.evidenceMore"), total - 1))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
     }
 
     private func cancelCategorySummary(_ category: String?) -> String {

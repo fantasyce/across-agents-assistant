@@ -196,7 +196,17 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
         ]
       },
       "memory_candidates": {
-        "candidate_count": 1
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "step_id": "step-memory",
+            "turn": 3,
+            "status": "completed",
+            "provider": "across-context",
+            "memory_status": "pending",
+            "memory_id": "memory-ui"
+          }
+        ]
       }
     }
     """.data(using: .utf8)!
@@ -216,6 +226,9 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.recovery?.recoveredSteps?.first?.nextAction == "task_dispatch", "Recovered step next action should decode")
     assert(summary.recovery?.recoveredSteps?.first?.recoveredFromStepId == "step-failed", "Recovered step source should decode")
     assert(summary.memoryCandidates?.candidateCount == 1, "Memory candidate count should decode")
+    assert(summary.memoryCandidates?.candidates?.first?.provider == "across-context", "Memory candidate provider should decode")
+    assert(summary.memoryCandidates?.candidates?.first?.memoryStatus == "pending", "Memory candidate status should decode")
+    assert(summary.memoryCandidates?.candidates?.first?.memoryId == "memory-ui", "Memory candidate id should decode")
 }
 
 func testAgentLoopEventResponseDecodesNestedPayloads() throws {

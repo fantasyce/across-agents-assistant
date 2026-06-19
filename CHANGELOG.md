@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Plugin Center loop health details now surface structured memory candidate
+  evidence from Orchestrator evidence summaries, including provider, status,
+  and turn hints when available.
+
 ## 0.8.18 - 2026-06-19
 
 ### Added
