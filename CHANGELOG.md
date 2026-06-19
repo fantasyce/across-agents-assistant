@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.23 - 2026-06-19
+
 ### Changed
 
 - Plugin Center loop health details now keep compact release readiness visible
