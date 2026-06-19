@@ -127,6 +127,9 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
     assert(health.lease?.remainingSeconds == 240, "Lease remaining seconds should decode")
     assert(health.recentFailureTypes?["quality_failed"] == 1, "Failure type counts should decode")
     assert(health.executableActions == ["approve", "reject", "cancel"], "Executable actions should decode")
+    assert(health.recentFailureCount == 1, "Health should summarize recent failure counts")
+    assert(health.hasStaleLease == false, "Active non-expired lease should not be stale")
+    assert(health.needsAttention == true, "Recent failures should mark loop health as attention-worthy")
 }
 
 func testAgentLoopEventResponseDecodesNestedPayloads() throws {

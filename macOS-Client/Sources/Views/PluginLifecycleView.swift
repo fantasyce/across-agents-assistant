@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PluginLifecycleView: View {
     @StateObject private var viewModel = PluginLifecycleViewModel()
+    @State private var showingLoopHealthDetails = false
     @EnvironmentObject private var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
 
@@ -243,20 +244,34 @@ struct PluginLifecycleView: View {
         if let probe = viewModel.agentLoopProbe {
             if plugin.pluginId == "across-orchestrator" {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
-                        metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
-                        metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
-                        if let health = viewModel.agentLoopHealth {
-                            if let currentAction = health.currentActionType {
-                                metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
-                            }
-                            if health.pendingApproval != nil {
-                                metadataChip(appPreferences.text("plugins.loop.pendingApproval"))
-                            } else if health.lease?.active == true, let remaining = health.lease?.remainingSeconds {
-                                metadataChip(String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded())))
-                            } else {
-                                metadataChip(appPreferences.text("plugins.loop.leaseIdle"))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
+                            metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
+                            metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                            if let health = viewModel.agentLoopHealth {
+                                if let currentAction = health.currentActionType {
+                                    metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
+                                }
+                                if health.pendingApproval != nil {
+                                    metadataChip(appPreferences.text("plugins.loop.pendingApproval"))
+                                } else if health.lease?.active == true, let remaining = health.lease?.remainingSeconds {
+                                    metadataChip(String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded())))
+                                } else {
+                                    metadataChip(appPreferences.text("plugins.loop.leaseIdle"))
+                                }
+                                if health.hasStaleLease {
+                                    metadataChip(appPreferences.text("plugins.loop.leaseStale"))
+                                }
+                                if health.cancelAckPending == true {
+                                    metadataChip(appPreferences.text("plugins.loop.cancelAckPending"))
+                                } else if health.cancellationRequested == true {
+                                    metadataChip(appPreferences.text("plugins.loop.cancelRequested"))
+                                }
+                                if health.recentFailureCount > 0 {
+                                    metadataChip(String(format: appPreferences.text("plugins.loop.failureCount"), health.recentFailureCount))
+                                }
+                                agentLoopHealthButton(health)
                             }
                         }
                     }
@@ -270,6 +285,89 @@ struct PluginLifecycleView: View {
                 Color.clear.frame(height: viewModel.agentLoopEvents.isEmpty ? 22 : 50)
             }
         }
+    }
+
+    private func agentLoopHealthButton(_ health: AgentLoopHealthResponse) -> some View {
+        Button {
+            showingLoopHealthDetails.toggle()
+        } label: {
+            Image(systemName: health.needsAttention ? "exclamationmark.circle" : "info.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(health.needsAttention ? Color(hex: "ff9f0a") : .secondary)
+        .background(fieldColor)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .help(appPreferences.text("plugins.loop.healthDetails"))
+        .popover(isPresented: $showingLoopHealthDetails, arrowEdge: .bottom) {
+            agentLoopHealthPopover(health)
+        }
+    }
+
+    private func agentLoopHealthPopover(_ health: AgentLoopHealthResponse) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(appPreferences.text("plugins.loop.healthDetails"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(textColor)
+            Divider().opacity(0.35)
+            healthDetailLine(appPreferences.text("plugins.loop.detailStatus"), health.status)
+            healthDetailLine(appPreferences.text("plugins.loop.detailAction"), health.currentActionType ?? appPreferences.text("plugins.loop.none"))
+            healthDetailLine(appPreferences.text("plugins.loop.detailLease"), agentLoopLeaseSummary(health.lease))
+            healthDetailLine(appPreferences.text("plugins.loop.detailHeartbeat"), timestampSummary(health.lease?.heartbeatAt))
+            healthDetailLine(appPreferences.text("plugins.loop.detailFailures"), failureSummary(health))
+            healthDetailLine(appPreferences.text("plugins.loop.detailExecutableActions"), actionSummary(health.executableActions ?? []))
+        }
+        .padding(14)
+        .frame(width: 300, alignment: .leading)
+    }
+
+    private func healthDetailLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 96, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11))
+                .foregroundColor(textColor)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func agentLoopLeaseSummary(_ lease: AgentLoopLeaseHealth?) -> String {
+        guard let lease else { return appPreferences.text("plugins.loop.none") }
+        if lease.expired == true {
+            return appPreferences.text("plugins.loop.leaseStale")
+        }
+        if lease.active == true, let remaining = lease.remainingSeconds {
+            return String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded()))
+        }
+        if let renewals = lease.renewalCount, renewals > 0 {
+            return String(format: appPreferences.text("plugins.loop.renewalCount"), renewals)
+        }
+        return appPreferences.text("plugins.loop.leaseIdle")
+    }
+
+    private func timestampSummary(_ timestamp: Double?) -> String {
+        guard let timestamp else { return appPreferences.text("plugins.loop.none") }
+        let date = Date(timeIntervalSince1970: timestamp)
+        return date.formatted(date: .omitted, time: .standard)
+    }
+
+    private func failureSummary(_ health: AgentLoopHealthResponse) -> String {
+        guard let failures = health.recentFailureTypes, !failures.isEmpty else {
+            return appPreferences.text("plugins.loop.none")
+        }
+        return failures
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key.replacingOccurrences(of: "_", with: " ")): \($0.value)" }
+            .joined(separator: ", ")
+    }
+
+    private func actionSummary(_ actions: [String]) -> String {
+        actions.isEmpty ? appPreferences.text("plugins.loop.none") : actions.joined(separator: ", ")
     }
 
     private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {
