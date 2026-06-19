@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.19 - 2026-06-19
+
 ### Added
 
 - Plugin Center loop health details now surface structured memory candidate

@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.19` | Completes memory candidate UI consumption with loop candidate hints, shared-memory review focus, and shows the non-secret Orchestrator host capability registry in Agent Capabilities. |
 | `0.8.18` | Enriches external Agent Loop transition responses with compact health/evidence snapshots, refreshes terminal failed/cancelled task evidence, and shows recovery policy decisions plus recovered-step hints in Plugin Center health details. |
 | `0.8.17` | Fixes external task run responses so completed Release E2E tasks immediately show passed evidence-backed quality when the Orchestrator evidence bundle passes. |
 | `0.8.16` | Shows optional Agent Loop evidence summaries in Plugin Center health details and moves managed Orchestrator pins to `v0.6.15`. |
@@ -197,7 +198,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.18` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.19` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.19` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
+Across Context `v0.7.7`. Plugin Center can now show structured Agent Loop
+memory candidates, list them in Shared Memory Review, focus the Across Context
+review list on candidate status, and Agent Capabilities shows the non-secret
+Orchestrator host capability registry with exported descriptors and redaction
+state.
 
 The `0.8.18` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
 Across Context `v0.7.7`. External Agent Loop run, approve, reject, cancel, and
