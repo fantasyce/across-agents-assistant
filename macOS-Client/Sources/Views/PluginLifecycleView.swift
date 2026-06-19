@@ -186,6 +186,7 @@ struct PluginLifecycleView: View {
                     actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
                 }
                 if plugin.pluginId == "across-orchestrator" && plugin.available {
+                    agentLoopTimelineModePicker()
                     Button {
                         Task { await viewModel.runAgentLoopProbe() }
                     } label: {
@@ -282,7 +283,7 @@ struct PluginLifecycleView: View {
                     .frame(height: 22, alignment: .leading)
 
                     if !viewModel.agentLoopEvents.isEmpty {
-                        agentLoopTimelineRow(viewModel.agentLoopEvents, live: viewModel.agentLoopEventsLive)
+                        agentLoopTimelineRow(viewModel.agentLoopEvents, source: viewModel.agentLoopTimelineSource)
                     }
                 }
             } else {
@@ -307,6 +308,18 @@ struct PluginLifecycleView: View {
         .popover(isPresented: $showingLoopHealthDetails, arrowEdge: .bottom) {
             agentLoopHealthPopover(health)
         }
+    }
+
+    private func agentLoopTimelineModePicker() -> some View {
+        Picker("", selection: $viewModel.agentLoopTimelineMode) {
+            Text(appPreferences.text("plugins.loop.eventsLive")).tag(AgentLoopTimelineMode.live)
+            Text(appPreferences.text("plugins.loop.eventsSnapshot")).tag(AgentLoopTimelineMode.snapshot)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 128, height: 28)
+        .disabled(viewModel.isRunningAgentLoopProbe)
+        .help(appPreferences.text("plugins.loop.timelineMode"))
     }
 
     private func agentLoopHealthPopover(_ health: AgentLoopHealthResponse) -> some View {
@@ -588,12 +601,12 @@ struct PluginLifecycleView: View {
         return value.replacingOccurrences(of: "_", with: " ")
     }
 
-    private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {
+    private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], source: AgentLoopTimelineSource?) -> some View {
         let recentEvents = Array(events.suffix(4))
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 metadataChip(appPreferences.text("plugins.loop.events"))
-                metadataChip(appPreferences.text(live ? "plugins.loop.eventsLive" : "plugins.loop.eventsSnapshot"))
+                metadataChip(appPreferences.text((source ?? .snapshot).localizationKey))
                 ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
                     agentLoopEventChip(event)
                 }

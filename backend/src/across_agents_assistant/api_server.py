@@ -1805,7 +1805,7 @@ async def get_external_agent_loop_events(loop_id: str):
 
 
 @app.get("/api/orchestrator/loops/{loop_id}/events/stream")
-async def stream_external_agent_loop_events(loop_id: str):
+async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
     """Stream external Across Orchestrator agent loop events as sanitized SSE."""
     manager = get_orchestrator_plugin_manager()
     try:
@@ -1834,7 +1834,7 @@ async def stream_external_agent_loop_events(loop_id: str):
                 if _agent_loop_event_closes_stream(event):
                     closing_seen = True
 
-            if closing_seen:
+            if closing_seen or not follow:
                 return
             if time.monotonic() >= idle_deadline:
                 yield ": idle_timeout\n\n"

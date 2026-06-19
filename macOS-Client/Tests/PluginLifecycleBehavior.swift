@@ -378,6 +378,21 @@ func testAgentLoopEventMergingDeduplicatesStreamUpdates() throws {
     assert(merged[1].sequenceLabel == "#2", "Merged stream should append new events")
 }
 
+func testAgentLoopTimelineModeAndSourceContracts() throws {
+    assert(AgentLoopTimelineMode.live.followStream == true, "Live timeline mode should follow the SSE stream")
+    assert(AgentLoopTimelineMode.snapshot.followStream == false, "Snapshot timeline mode should request finite SSE only")
+    assert(AgentLoopTimelineSource.live.isLive == true, "Live timeline source should be marked live")
+    assert(AgentLoopTimelineSource.fallback.isLive == false, "Fallback timeline source should not be marked live")
+    assert(
+        AgentLoopTimelineSource.fallback.localizationKey == "plugins.loop.eventsFallback",
+        "Fallback timeline source should expose a stable localization key"
+    )
+    assert(
+        AgentLoopTimelineSource.unavailable.localizationKey == "plugins.loop.eventsUnavailable",
+        "Unavailable timeline source should expose a stable localization key"
+    )
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -388,6 +403,7 @@ struct PluginLifecycleBehavior {
         try testAgentLoopEventResponseDecodesNestedPayloads()
         try testAgentLoopEventResponseDecodesSSEStream()
         try testAgentLoopEventMergingDeduplicatesStreamUpdates()
+        try testAgentLoopTimelineModeAndSourceContracts()
         print("PluginLifecycleBehavior passed")
     }
 }

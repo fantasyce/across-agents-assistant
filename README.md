@@ -209,6 +209,9 @@ Across Context `v0.7.7`. Plugin Center loop health details keep release
 readiness visible while folding lower-level Agent Loop evidence into expandable
 details. External Orchestrator acceptance records also avoid nondeterministic
 fallback timestamps and de-duplicate root-cause artifact ids.
+For synthesized external acceptance records, `created_at` is `float | null`:
+AAA preserves upstream task timestamps when present and returns `null` instead
+of generating wall-clock time when upstream timestamps are absent.
 
 The `0.8.22` release keeps AAA aligned with Across Orchestrator `v0.6.16` and
 Across Context `v0.7.7`. External Orchestrator task details synthesize a
