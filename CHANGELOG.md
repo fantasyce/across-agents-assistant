@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- External Across Orchestrator Agent Loop transition responses now include
+  best-effort compact `health` and `evidence_summary` snapshots after run,
+  approve, reject, cancel, and retry actions. External task evidence refreshes
+  also apply to failed and cancelled terminal states, not only completed tasks.
 
 ## 0.8.17 - 2026-06-19
 

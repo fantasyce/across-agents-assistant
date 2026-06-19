@@ -369,6 +369,7 @@ class FakeHTTPOrchestrator:
 
     def _loop_health_payload(self, status: str) -> dict:
         awaiting_approval = status == "awaiting_approval"
+        cancelled = status == "cancelled"
         return {
             "schema_version": "0.1",
             "loop_id": self.loop_id,
@@ -386,7 +387,8 @@ class FakeHTTPOrchestrator:
             "detached_dispatch_count": 0,
             "recent_failure_types": {},
             "executable_actions": ["approve", "reject", "cancel", "retry"] if awaiting_approval else [],
-            "cancellation_requested": False,
+            "cancellation_requested": cancelled,
+            "cancellation_category": "user_requested" if cancelled else None,
             "cancel_ack_pending": False,
         }
 
@@ -417,7 +419,11 @@ class FakeHTTPOrchestrator:
             },
             "recovery": {"decision_count": 1, "applied_count": 1, "blocked_count": 0, "decisions": []},
             "memory_candidates": {"candidate_count": 1, "candidates": []},
-            "cancellation": {"requested": False, "category": None, "reason": None},
+            "cancellation": {
+                "requested": status == "cancelled",
+                "category": "user_requested" if status == "cancelled" else None,
+                "reason": "operator cancelled" if status == "cancelled" else None,
+            },
         }
 
 
@@ -538,7 +544,11 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream")
 
     assert loop_id == "loop-api-external"
-    assert run.json()["status"] == "completed"
+    run_body = run.json()
+    assert run_body["status"] == "completed"
+    assert run_body["health"]["status"] == "completed"
+    assert run_body["evidence_summary"]["schema_version"] == "0.1"
+    assert run_body["evidence_summary"]["event_audit"]["sequence_contiguous"] is True
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
@@ -557,8 +567,8 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert "Internal operation failed" in stream.text
     assert "Traceback" not in stream.text
     assert ("POST", "/loops") in server.requests
-    assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
-    assert ("GET", f"/loops/{server.loop_id}/evidence-summary") in server.requests
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/health")) >= 2
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/evidence-summary")) >= 2
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/events")) >= 2
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
@@ -588,9 +598,14 @@ def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
 
         approved = client.post(f"/api/orchestrator/loops/{loop_id}/actions/{action_id}/approve")
 
+    approved_body = approved.json()
     assert approved.status_code == 200
-    assert approved.json()["steps"][-1]["action"]["approval_status"] == "approved"
+    assert approved_body["steps"][-1]["action"]["approval_status"] == "approved"
+    assert approved_body["health"]["status"] == "running"
+    assert approved_body["evidence_summary"]["status"] == "running"
     assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/approve") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/evidence-summary") in server.requests
 
 
 def test_api_proxies_external_agent_loop_control_actions(monkeypatch, tmp_path):
@@ -633,15 +648,26 @@ def test_api_proxies_external_agent_loop_control_actions(monkeypatch, tmp_path):
         )
         retry = client.post(f"/api/orchestrator/loops/{loop_id}/steps/step-api-quality/retry")
 
+    rejected_body = rejected.json()
+    cancelled_body = cancelled.json()
+    retry_body = retry.json()
     assert rejected.status_code == 200
-    assert rejected.json()["steps"][-1]["action"]["approval_status"] == "rejected"
+    assert rejected_body["steps"][-1]["action"]["approval_status"] == "rejected"
+    assert rejected_body["health"]["status"] == "stopped"
+    assert rejected_body["evidence_summary"]["status"] == "stopped"
     assert cancelled.status_code == 200
-    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled_body["status"] == "cancelled"
+    assert cancelled_body["health"]["cancellation_category"] == "user_requested"
+    assert cancelled_body["evidence_summary"]["cancellation"]["category"] == "user_requested"
     assert retry.status_code == 200
-    assert retry.json()["status"] == "running"
+    assert retry_body["status"] == "running"
+    assert retry_body["health"]["status"] == "running"
+    assert retry_body["evidence_summary"]["status"] == "running"
     assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/reject") in server.requests
     assert ("POST", f"/loops/{server.loop_id}/cancel") in server.requests
     assert ("POST", f"/loops/{server.loop_id}/steps/step-api-quality/retry") in server.requests
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/health")) >= 4
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/evidence-summary")) >= 4
 
 
 def test_task_page_and_startup_diagnostics_include_orchestrator_plugin(monkeypatch, tmp_path):
