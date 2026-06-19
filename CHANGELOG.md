@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.26 - 2026-06-20
+
 ### Added
 
 - Added a reusable `scripts/run_live_e2e.sh` runner and a manual GitHub
