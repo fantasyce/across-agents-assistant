@@ -111,6 +111,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop recovery decision state should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.detailMemoryCandidate", localeIdentifier: "en") == "Candidate",
+        "Agent Loop memory candidate detail label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.memoryCandidateTurn", localeIdentifier: "zh-Hans") == "第 %d 轮",
+        "Agent Loop memory candidate turn should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )

@@ -396,9 +396,29 @@ struct AgentLoopEvidenceRecoveredStep: Decodable, Equatable {
 
 struct AgentLoopEvidenceMemoryCandidates: Decodable, Equatable {
     let candidateCount: Int?
+    let candidates: [AgentLoopEvidenceMemoryCandidate]?
 
     enum CodingKeys: String, CodingKey {
         case candidateCount = "candidate_count"
+        case candidates
+    }
+}
+
+struct AgentLoopEvidenceMemoryCandidate: Decodable, Equatable {
+    let stepId: String?
+    let turn: Int?
+    let status: String?
+    let provider: String?
+    let memoryStatus: String?
+    let memoryId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case stepId = "step_id"
+        case turn
+        case status
+        case provider
+        case memoryStatus = "memory_status"
+        case memoryId = "memory_id"
     }
 }
 
