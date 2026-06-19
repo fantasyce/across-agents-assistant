@@ -136,8 +136,13 @@ func testAgentLoopEventResponseDecodesNestedPayloads() throws {
     let json = """
     [
       {
+        "event_id": "loop-event-audit-1",
+        "sequence": 7,
         "type": "loop.next_action.selected",
         "loop_id": "loop-ui",
+        "correlation_id": "step:step-ui",
+        "step_id": "step-ui",
+        "action_id": "action-ui",
         "timestamp": 1700000000.25,
         "payload": {
           "action_type": "task_dispatch",
@@ -158,7 +163,13 @@ func testAgentLoopEventResponseDecodesNestedPayloads() throws {
     let events = try JSONDecoder().decode([AgentLoopEventResponse].self, from: json)
 
     assert(events.count == 2, "Loop events should decode as an array")
+    assert(events[0].eventId == "loop-event-audit-1", "Event id should decode from snake_case")
+    assert(events[0].sequence == 7, "Event sequence should decode")
+    assert(events[0].sequenceLabel == "#7", "Event sequence should have a compact label")
     assert(events[0].loopId == "loop-ui", "Event loop id should decode from snake_case")
+    assert(events[0].correlationId == "step:step-ui", "Event correlation id should decode from snake_case")
+    assert(events[0].stepId == "step-ui", "Event step id should decode from snake_case")
+    assert(events[0].actionId == "action-ui", "Event action id should decode from snake_case")
     assert(events[0].timestamp == 1700000000.25, "Event timestamp should decode")
     assert(events[0].payload?["turn"]?.stringValue == "2", "Numeric payload values should expose compact strings")
     assert(events[0].compactLabel == "next action selected: task dispatch", "Action payload should be summarized")
@@ -180,16 +191,19 @@ func testAgentLoopEventResponseDecodesNestedPayloads() throws {
 func testAgentLoopEventResponseDecodesSSEStream() throws {
     let stream = """
     event: loop.started
-    data: {"type":"loop.started","loop_id":"loop-ui","payload":{"status":"running"}}
+    data: {"event_id":"loop-event-sse-1","sequence":1,"type":"loop.started","loop_id":"loop-ui","correlation_id":"loop:loop-ui","payload":{"status":"running"}}
 
     event: loop.completed
-    data: {"type":"loop.completed","loop_id":"loop-ui","payload":{"status":"completed"}}
+    data: {"event_id":"loop-event-sse-2","sequence":2,"type":"loop.completed","loop_id":"loop-ui","correlation_id":"loop:loop-ui","payload":{"status":"completed"}}
 
     """
 
     let events = PluginLifecycleViewModel.decodeAgentLoopEventsFromSSE(stream)
 
     assert(events.count == 2, "SSE stream should decode two loop events")
+    assert(events[0].eventId == "loop-event-sse-1", "SSE stream should decode event id")
+    assert(events[1].sequenceLabel == "#2", "SSE stream should decode sequence labels")
+    assert(events[1].correlationId == "loop:loop-ui", "SSE stream should decode correlation id")
     assert(events[0].compactLabel == "started: running", "Started SSE event should summarize status")
     assert(events[1].compactLabel == "completed: completed", "Completed SSE event should summarize status")
 }

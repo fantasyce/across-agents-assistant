@@ -75,6 +75,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop snapshot timeline source should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.eventSequence", localeIdentifier: "en") == "Sequence",
+        "Agent Loop event sequence label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.correlationId", localeIdentifier: "zh-Hans") == "关联",
+        "Agent Loop event correlation label should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.leaseStale", localeIdentifier: "en") == "Lease stale",
         "Agent Loop stale lease marker should be localized in English"
     )

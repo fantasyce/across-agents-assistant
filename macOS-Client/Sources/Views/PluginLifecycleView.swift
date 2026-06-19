@@ -372,11 +372,13 @@ struct PluginLifecycleView: View {
 
     private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {
         let recentEvents = Array(events.suffix(4))
-        return HStack(spacing: 6) {
-            metadataChip(appPreferences.text("plugins.loop.events"))
-            metadataChip(appPreferences.text(live ? "plugins.loop.eventsLive" : "plugins.loop.eventsSnapshot"))
-            ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
-                agentLoopEventChip(event)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                metadataChip(appPreferences.text("plugins.loop.events"))
+                metadataChip(appPreferences.text(live ? "plugins.loop.eventsLive" : "plugins.loop.eventsSnapshot"))
+                ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
+                    agentLoopEventChip(event)
+                }
             }
         }
         .frame(height: 22, alignment: .leading)
@@ -386,6 +388,12 @@ struct PluginLifecycleView: View {
         let color = agentLoopEventColor(event)
         return HStack(spacing: 5) {
             Circle().fill(color).frame(width: 5, height: 5)
+            if let sequenceLabel = event.sequenceLabel {
+                Text(sequenceLabel)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(color.opacity(0.82))
+                    .lineLimit(1)
+            }
             Text(event.compactLabel)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(color)
@@ -397,6 +405,33 @@ struct PluginLifecycleView: View {
         .frame(height: 22)
         .background(color.opacity(0.11))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .help(agentLoopEventAuditHelp(event))
+    }
+
+    private func agentLoopEventAuditHelp(_ event: AgentLoopEventResponse) -> String {
+        var rows = [event.compactLabel]
+        if let sequence = event.sequence {
+            rows.append("\(appPreferences.text("plugins.loop.eventSequence")): #\(sequence)")
+        }
+        if let eventId = event.eventId {
+            rows.append("\(appPreferences.text("plugins.loop.eventId")): \(eventId)")
+        }
+        if let correlationId = event.correlationId {
+            rows.append("\(appPreferences.text("plugins.loop.correlationId")): \(correlationId)")
+        }
+        if let stepId = event.stepId {
+            rows.append("\(appPreferences.text("plugins.loop.stepId")): \(stepId)")
+        }
+        if let actionId = event.actionId {
+            rows.append("\(appPreferences.text("plugins.loop.actionId")): \(actionId)")
+        }
+        if let taskId = event.taskId {
+            rows.append("\(appPreferences.text("plugins.loop.taskId")): \(taskId)")
+        }
+        if let subtaskId = event.subtaskId {
+            rows.append("\(appPreferences.text("plugins.loop.subtaskId")): \(subtaskId)")
+        }
+        return rows.joined(separator: "\n")
     }
 
     private func agentLoopEventColor(_ event: AgentLoopEventResponse) -> Color {
