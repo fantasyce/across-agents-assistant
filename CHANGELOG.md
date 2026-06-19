@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Added true live Agent Loop timeline streaming for Plugin Center probes. The
+  AAA backend now emits incremental sanitized SSE events, and the macOS
+  timeline updates while the probe is running instead of labeling a completed
+  SSE snapshot as live.
+
 ## 0.8.14 - 2026-06-19
 
 ### Added

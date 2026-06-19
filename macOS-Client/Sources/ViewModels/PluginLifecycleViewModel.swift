@@ -187,12 +187,21 @@ final class PluginLifecycleViewModel: ObservableObject {
             let started = try JSONDecoder().decode(AgentLoopRunResponse.self, from: startData)
 
             let escaped = started.loopId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? started.loopId
+            let eventStreamTask = Task {
+                try await fetchAgentLoopEventStream(escapedLoopId: escaped, follow: true, liveUpdate: true)
+            }
             let runURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/run")!
             var runRequest = URLRequest(url: runURL)
             runRequest.httpMethod = "POST"
-            let (runData, runResponse) = try await URLSession.shared.data(for: runRequest)
-            try Self.validate(runResponse)
-            let completed = try JSONDecoder().decode(AgentLoopRunResponse.self, from: runData)
+            let completed: AgentLoopRunResponse
+            do {
+                let (runData, runResponse) = try await URLSession.shared.data(for: runRequest)
+                try Self.validate(runResponse)
+                completed = try JSONDecoder().decode(AgentLoopRunResponse.self, from: runData)
+            } catch {
+                eventStreamTask.cancel()
+                throw error
+            }
             agentLoopProbe = completed
             message = "Agent Loop Probe: \(completed.status)"
 
@@ -208,7 +217,7 @@ final class PluginLifecycleViewModel: ObservableObject {
                 message = "Agent Loop Probe: \(completed.status) (health unavailable)"
             }
 
-            let eventResult = await fetchAgentLoopEvents(escapedLoopId: escaped)
+            let eventResult = await fetchAgentLoopEvents(escapedLoopId: escaped, streamTask: eventStreamTask)
             agentLoopEvents = eventResult.events
             agentLoopEventsLive = eventResult.live
         } catch {
@@ -216,31 +225,58 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
     }
 
-    private func fetchAgentLoopEvents(escapedLoopId: String) async -> (events: [AgentLoopEventResponse], live: Bool) {
-        do {
-            let events = try await fetchAgentLoopEventStream(escapedLoopId: escapedLoopId)
-            if !events.isEmpty {
-                return (events, true)
+    private func fetchAgentLoopEvents(
+        escapedLoopId: String,
+        streamTask: Task<[AgentLoopEventResponse], Error>? = nil
+    ) async -> (events: [AgentLoopEventResponse], live: Bool) {
+        if let streamTask {
+            do {
+                let events = try await streamTask.value
+                let snapshot = (try? await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId)) ?? []
+                let merged = Self.mergedAgentLoopEvents(events, snapshot)
+                if !merged.isEmpty {
+                    return (merged, !events.isEmpty)
+                }
+            } catch {
+                // Snapshot fetch below is the compatibility path for older AAA backends.
             }
-        } catch {
-            // Snapshot fetch below is the compatibility path for older AAA backends.
+        } else {
+            do {
+                let events = try await fetchAgentLoopEventStream(escapedLoopId: escapedLoopId, follow: false, liveUpdate: false)
+                if !events.isEmpty {
+                    return (events, false)
+                }
+            } catch {
+                // Snapshot fetch below is the compatibility path for older AAA backends.
+            }
         }
 
         do {
-            let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events")!
-            var eventsRequest = URLRequest(url: eventsURL)
-            eventsRequest.httpMethod = "GET"
-            let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
-            try Self.validate(eventsResponse)
-            let events = try JSONDecoder().decode([AgentLoopEventResponse].self, from: eventsData)
-            return (events, false)
+            return (try await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId), false)
         } catch {
             return ([], false)
         }
     }
 
-    private func fetchAgentLoopEventStream(escapedLoopId: String) async throws -> [AgentLoopEventResponse] {
-        let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events/stream")!
+    private func fetchAgentLoopEventSnapshot(escapedLoopId: String) async throws -> [AgentLoopEventResponse] {
+        let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events")!
+        var eventsRequest = URLRequest(url: eventsURL)
+        eventsRequest.httpMethod = "GET"
+        let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
+        try Self.validate(eventsResponse)
+        return try JSONDecoder().decode([AgentLoopEventResponse].self, from: eventsData)
+    }
+
+    private func fetchAgentLoopEventStream(
+        escapedLoopId: String,
+        follow: Bool,
+        liveUpdate: Bool
+    ) async throws -> [AgentLoopEventResponse] {
+        var components = URLComponents(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events/stream")!
+        if follow {
+            components.queryItems = [URLQueryItem(name: "follow", value: "true")]
+        }
+        let eventsURL = components.url!
         var eventsRequest = URLRequest(url: eventsURL)
         eventsRequest.httpMethod = "GET"
         eventsRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -249,12 +285,31 @@ final class PluginLifecycleViewModel: ObservableObject {
         let (bytes, response) = try await URLSession.shared.bytes(for: eventsRequest)
         try Self.validate(response)
 
-        var streamData = Data()
-        for try await byte in bytes {
-            streamData.append(byte)
+        var events: [AgentLoopEventResponse] = []
+        var dataLines: [String] = []
+
+        func flush() {
+            let decoded = Self.decodeAgentLoopEventsFromSSEDataLines(dataLines)
+            dataLines.removeAll()
+            guard !decoded.isEmpty else { return }
+            events = Self.mergedAgentLoopEvents(events, decoded)
+            if liveUpdate {
+                agentLoopEvents = Self.mergedAgentLoopEvents(agentLoopEvents, decoded)
+                agentLoopEventsLive = true
+            }
         }
-        let streamText = String(data: streamData, encoding: .utf8) ?? ""
-        return Self.decodeAgentLoopEventsFromSSE(streamText)
+
+        for try await rawLine in bytes.lines {
+            try Task.checkCancellation()
+            let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            if line.isEmpty {
+                flush()
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        flush()
+        return events
     }
 
     nonisolated static func decodeAgentLoopEventsFromSSE(_ text: String) -> [AgentLoopEventResponse] {
@@ -283,6 +338,44 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
         flush()
         return events
+    }
+
+    nonisolated static func decodeAgentLoopEventsFromSSEDataLines(_ dataLines: [String]) -> [AgentLoopEventResponse] {
+        let payload = dataLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !payload.isEmpty, let data = payload.data(using: .utf8) else { return [] }
+        let decoder = JSONDecoder()
+        if let event = try? decoder.decode(AgentLoopEventResponse.self, from: data) {
+            return [event]
+        }
+        if let batch = try? decoder.decode([AgentLoopEventResponse].self, from: data) {
+            return batch
+        }
+        return []
+    }
+
+    nonisolated static func mergedAgentLoopEvents(
+        _ current: [AgentLoopEventResponse],
+        _ incoming: [AgentLoopEventResponse]
+    ) -> [AgentLoopEventResponse] {
+        var seen = Set(current.map(agentLoopEventIdentity))
+        var merged = current
+        for event in incoming {
+            let identity = agentLoopEventIdentity(event)
+            if seen.insert(identity).inserted {
+                merged.append(event)
+            }
+        }
+        return merged
+    }
+
+    private nonisolated static func agentLoopEventIdentity(_ event: AgentLoopEventResponse) -> String {
+        if let eventId = event.eventId {
+            return "event_id:\(eventId)"
+        }
+        if let sequence = event.sequence {
+            return "sequence:\(sequence)"
+        }
+        return "\(event.type):\(event.timestamp ?? 0):\(event.compactLabel)"
     }
 
     private static func validate(_ response: URLResponse) throws {
