@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.21 - 2026-06-19
+
 ### Added
 
 - Plugin Center loop health details now consume Orchestrator
@@ -9,6 +11,11 @@
   check, risk, and next action from compact Agent Loop evidence summaries.
 - Task capability preflight now displays backend routing evidence so native
   skill and platform-skill matches are visible before task submission.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.16` for
+  Agent Loop host release evidence support.
 
 ## 0.8.20 - 2026-06-19
 
