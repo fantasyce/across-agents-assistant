@@ -91,6 +91,10 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop health detail popover should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.detailCancellation", localeIdentifier: "en") == "Cancellation",
+        "Agent Loop cancellation detail label should be localized in English"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )

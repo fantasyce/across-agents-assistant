@@ -217,6 +217,7 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
     let recentFailureTypes: [String: Int]?
     let executableActions: [String]?
     let cancellationRequested: Bool?
+    let cancellationCategory: String?
     let cancelAckPending: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -230,6 +231,7 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
         case recentFailureTypes = "recent_failure_types"
         case executableActions = "executable_actions"
         case cancellationRequested = "cancellation_requested"
+        case cancellationCategory = "cancellation_category"
         case cancelAckPending = "cancel_ack_pending"
     }
 

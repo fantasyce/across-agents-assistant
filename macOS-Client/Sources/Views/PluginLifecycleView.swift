@@ -268,6 +268,9 @@ struct PluginLifecycleView: View {
                                 } else if health.cancellationRequested == true {
                                     metadataChip(appPreferences.text("plugins.loop.cancelRequested"))
                                 }
+                                if let cancellationCategory = health.cancellationCategory {
+                                    metadataChip(cancelCategorySummary(cancellationCategory))
+                                }
                                 if health.recentFailureCount > 0 {
                                     metadataChip(String(format: appPreferences.text("plugins.loop.failureCount"), health.recentFailureCount))
                                 }
@@ -315,6 +318,7 @@ struct PluginLifecycleView: View {
             healthDetailLine(appPreferences.text("plugins.loop.detailAction"), health.currentActionType ?? appPreferences.text("plugins.loop.none"))
             healthDetailLine(appPreferences.text("plugins.loop.detailLease"), agentLoopLeaseSummary(health.lease))
             healthDetailLine(appPreferences.text("plugins.loop.detailHeartbeat"), timestampSummary(health.lease?.heartbeatAt))
+            healthDetailLine(appPreferences.text("plugins.loop.detailCancellation"), cancelCategorySummary(health.cancellationCategory))
             healthDetailLine(appPreferences.text("plugins.loop.detailFailures"), failureSummary(health))
             healthDetailLine(appPreferences.text("plugins.loop.detailExecutableActions"), actionSummary(health.executableActions ?? []))
         }
@@ -368,6 +372,11 @@ struct PluginLifecycleView: View {
 
     private func actionSummary(_ actions: [String]) -> String {
         actions.isEmpty ? appPreferences.text("plugins.loop.none") : actions.joined(separator: ", ")
+    }
+
+    private func cancelCategorySummary(_ category: String?) -> String {
+        guard let category, !category.isEmpty else { return appPreferences.text("plugins.loop.none") }
+        return category.replacingOccurrences(of: "_", with: " ")
     }
 
     private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {
