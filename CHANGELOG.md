@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+## 0.8.20 - 2026-06-19
+
 ### Added
 
 - Agent Capabilities now diagnoses whether the non-secret Orchestrator host
   capability registry is synchronized with the local profile, plugins, tools,
   active native skills, and strict-scope state for the selected agent.
+
+### Changed
+
+- Updated backend dependency floors for `pytest-asyncio`, `numpy`, `uvicorn`,
+  `anthropic`, and `openai` after local regression coverage and PR CI passed.
 
 ## 0.8.19 - 2026-06-19
 
