@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.25` | Documents Agent Loop SSE snapshot/live semantics, keeps timeline source localization covered, and improves live E2E Orchestrator runtime diagnostics. |
 | `0.8.24` | Adds Plugin Center Agent Loop Live/Snapshot timeline mode controls and documents nullable synthesized external acceptance timestamps. |
 | `0.8.23` | Folds detailed Agent Loop evidence inside Plugin Center health details, stabilizes external acceptance records, and moves managed Orchestrator pins to `v0.6.17`. |
 | `0.8.22` | Adds external Orchestrator task acceptance records so REST API and complex E2E views expose accepted delivery evidence consistently. |
@@ -203,14 +204,20 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.24` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.25` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.8.24` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
+The `0.8.25` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center Agent Loop timelines now expose a
 Live/Snapshot mode control and distinguish live, snapshot, fallback, and
 unavailable timeline sources. The backend Agent Loop SSE endpoint returns a
 finite snapshot stream by default; pass `follow=true` when a client needs live
-timeline polling.
+timeline polling. Live E2E now reports missing external Orchestrator runtime
+configuration before task scenarios run.
+
+The `0.8.24` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
+Across Context `v0.7.7`. Plugin Center Agent Loop timelines expose a
+Live/Snapshot mode control and distinguish live, snapshot, fallback, and
+unavailable timeline sources.
 
 The `0.8.23` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center loop health details keep release

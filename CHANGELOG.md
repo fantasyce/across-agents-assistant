@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.25 - 2026-06-20
+
 ### Changed
 
 - Documented that the Agent Loop SSE timeline endpoint defaults to a finite
