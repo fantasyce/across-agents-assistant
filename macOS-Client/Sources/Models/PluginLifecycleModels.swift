@@ -318,11 +318,79 @@ struct AgentLoopEvidenceRecovery: Decodable, Equatable {
     let decisionCount: Int?
     let appliedCount: Int?
     let blockedCount: Int?
+    let decisions: [AgentLoopEvidenceRecoveryDecision]?
+    let recoveredSteps: [AgentLoopEvidenceRecoveredStep]?
 
     enum CodingKeys: String, CodingKey {
         case decisionCount = "decision_count"
         case appliedCount = "applied_count"
         case blockedCount = "blocked_count"
+        case decisions
+        case recoveredSteps = "recovered_steps"
+    }
+}
+
+struct AgentLoopEvidenceRecoveryDecision: Decodable, Equatable {
+    let eventId: String?
+    let sequence: Int?
+    let timestamp: Double?
+    let correlationId: String?
+    let stepId: String?
+    let actionType: String?
+    let failureType: String?
+    let reason: String?
+    let recoveryAction: String?
+    let attempt: Int?
+    let maxRetries: Int?
+    let applied: Bool?
+    let blockedReason: String?
+    let source: String?
+
+    enum CodingKeys: String, CodingKey {
+        case eventId = "event_id"
+        case sequence
+        case timestamp
+        case correlationId = "correlation_id"
+        case stepId = "step_id"
+        case actionType = "action_type"
+        case failureType = "failure_type"
+        case reason
+        case recoveryAction = "recovery_action"
+        case attempt
+        case maxRetries = "max_retries"
+        case applied
+        case blockedReason = "blocked_reason"
+        case source
+    }
+}
+
+struct AgentLoopEvidenceRecoveredStep: Decodable, Equatable {
+    let eventId: String?
+    let sequence: Int?
+    let timestamp: Double?
+    let correlationId: String?
+    let stepId: String?
+    let actionType: String?
+    let failureType: String?
+    let recoveryAction: String?
+    let attempt: Int?
+    let recoveredFromStepId: String?
+    let nextAction: String?
+    let nextTurn: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case eventId = "event_id"
+        case sequence
+        case timestamp
+        case correlationId = "correlation_id"
+        case stepId = "step_id"
+        case actionType = "action_type"
+        case failureType = "failure_type"
+        case recoveryAction = "recovery_action"
+        case attempt
+        case recoveredFromStepId = "recovered_from_step_id"
+        case nextAction = "next_action"
+        case nextTurn = "next_turn"
     }
 }
 

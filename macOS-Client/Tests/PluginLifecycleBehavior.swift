@@ -163,7 +163,37 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
       "recovery": {
         "decision_count": 1,
         "applied_count": 1,
-        "blocked_count": 0
+        "blocked_count": 0,
+        "decisions": [
+          {
+            "event_id": "loop-event-recovery-1",
+            "sequence": 8,
+            "correlation_id": "step:step-failed",
+            "step_id": "step-failed",
+            "action_type": "task_dispatch",
+            "failure_type": "adapter_error",
+            "recovery_action": "retry",
+            "attempt": 1,
+            "max_retries": 1,
+            "applied": true,
+            "source": "metadata.recoveryPolicy.byFailureType.adapter_error"
+          }
+        ],
+        "recovered_steps": [
+          {
+            "event_id": "loop-event-recovered-1",
+            "sequence": 9,
+            "correlation_id": "step:step-retry",
+            "step_id": "step-retry",
+            "action_type": "task_dispatch",
+            "failure_type": "adapter_error",
+            "recovery_action": "retry",
+            "attempt": 1,
+            "recovered_from_step_id": "step-failed",
+            "next_action": "task_dispatch",
+            "next_turn": 2
+          }
+        ]
       },
       "memory_candidates": {
         "candidate_count": 1
@@ -180,6 +210,11 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.routing?.capabilityHintRouteCount == 1, "Capability hint route count should decode")
     assert(summary.routing?.outcomes?.first?.selectedAgent == "builder", "Routing outcome agent should decode")
     assert(summary.recovery?.appliedCount == 1, "Recovery applied count should decode")
+    assert(summary.recovery?.decisions?.first?.recoveryAction == "retry", "Recovery decision action should decode")
+    assert(summary.recovery?.decisions?.first?.failureType == "adapter_error", "Recovery decision failure type should decode")
+    assert(summary.recovery?.decisions?.first?.applied == true, "Recovery decision applied flag should decode")
+    assert(summary.recovery?.recoveredSteps?.first?.nextAction == "task_dispatch", "Recovered step next action should decode")
+    assert(summary.recovery?.recoveredSteps?.first?.recoveredFromStepId == "step-failed", "Recovered step source should decode")
     assert(summary.memoryCandidates?.candidateCount == 1, "Memory candidate count should decode")
 }
 
