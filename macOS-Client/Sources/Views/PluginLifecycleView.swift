@@ -241,29 +241,80 @@ struct PluginLifecycleView: View {
     @ViewBuilder
     private func agentLoopProbeRow(_ plugin: AcrossPluginStatus) -> some View {
         if let probe = viewModel.agentLoopProbe {
-            HStack(spacing: 8) {
-                if plugin.pluginId == "across-orchestrator" {
-                    metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
-                    metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
-                    metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
-                    if let health = viewModel.agentLoopHealth {
-                        if let currentAction = health.currentActionType {
-                            metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
-                        }
-                        if health.pendingApproval != nil {
-                            metadataChip(appPreferences.text("plugins.loop.pendingApproval"))
-                        } else if health.lease?.active == true, let remaining = health.lease?.remainingSeconds {
-                            metadataChip(String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded())))
-                        } else {
-                            metadataChip(appPreferences.text("plugins.loop.leaseIdle"))
+            if plugin.pluginId == "across-orchestrator" {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
+                        metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
+                        metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                        if let health = viewModel.agentLoopHealth {
+                            if let currentAction = health.currentActionType {
+                                metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
+                            }
+                            if health.pendingApproval != nil {
+                                metadataChip(appPreferences.text("plugins.loop.pendingApproval"))
+                            } else if health.lease?.active == true, let remaining = health.lease?.remainingSeconds {
+                                metadataChip(String(format: appPreferences.text("plugins.loop.leaseRemaining"), Int(remaining.rounded())))
+                            } else {
+                                metadataChip(appPreferences.text("plugins.loop.leaseIdle"))
+                            }
                         }
                     }
-                } else {
-                    Color.clear.frame(height: 22)
+                    .frame(height: 22, alignment: .leading)
+
+                    if !viewModel.agentLoopEvents.isEmpty {
+                        agentLoopTimelineRow(viewModel.agentLoopEvents)
+                    }
                 }
+            } else {
+                Color.clear.frame(height: viewModel.agentLoopEvents.isEmpty ? 22 : 50)
             }
-            .frame(height: 22, alignment: .leading)
         }
+    }
+
+    private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse]) -> some View {
+        let recentEvents = Array(events.suffix(4))
+        return HStack(spacing: 6) {
+            metadataChip(appPreferences.text("plugins.loop.events"))
+            ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
+                agentLoopEventChip(event)
+            }
+        }
+        .frame(height: 22, alignment: .leading)
+    }
+
+    private func agentLoopEventChip(_ event: AgentLoopEventResponse) -> some View {
+        let color = agentLoopEventColor(event)
+        return HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(event.compactLabel)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 118, alignment: .leading)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(color.opacity(0.11))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func agentLoopEventColor(_ event: AgentLoopEventResponse) -> Color {
+        let type = event.type
+        if type.contains("failed") || type.contains("stopped") || type.contains("cancelled") || type.contains("rejected") {
+            return Color(hex: "ff453a")
+        }
+        if type.contains("approval") || type.contains("retry") {
+            return Color(hex: "ff9f0a")
+        }
+        if type.contains("completed") {
+            return Color(hex: "30d158")
+        }
+        if type.contains("heartbeat") || type.contains("started") {
+            return Color(hex: "0a84ff")
+        }
+        return .secondary
     }
 
     private func statusChip(_ plugin: AcrossPluginStatus) -> some View {

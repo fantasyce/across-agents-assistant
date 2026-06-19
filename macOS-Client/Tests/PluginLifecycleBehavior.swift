@@ -129,12 +129,58 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
     assert(health.executableActions == ["approve", "reject", "cancel"], "Executable actions should decode")
 }
 
+func testAgentLoopEventResponseDecodesNestedPayloads() throws {
+    let json = """
+    [
+      {
+        "type": "loop.next_action.selected",
+        "loop_id": "loop-ui",
+        "timestamp": 1700000000.25,
+        "payload": {
+          "action_type": "task_dispatch",
+          "turn": 2,
+          "metadata": {"detached": false},
+          "hints": ["approval", 3, null]
+        }
+      },
+      {
+        "type": "loop.failed",
+        "loop_id": "loop-ui",
+        "timestamp": 1700000001,
+        "payload": {"failure_type": "quality_failed"}
+      }
+    ]
+    """.data(using: .utf8)!
+
+    let events = try JSONDecoder().decode([AgentLoopEventResponse].self, from: json)
+
+    assert(events.count == 2, "Loop events should decode as an array")
+    assert(events[0].loopId == "loop-ui", "Event loop id should decode from snake_case")
+    assert(events[0].timestamp == 1700000000.25, "Event timestamp should decode")
+    assert(events[0].payload?["turn"]?.stringValue == "2", "Numeric payload values should expose compact strings")
+    assert(events[0].compactLabel == "next action selected: task dispatch", "Action payload should be summarized")
+    assert(events[1].compactLabel == "failed: quality failed", "Failure payload should be summarized")
+
+    if case .object(let metadata)? = events[0].payload?["metadata"] {
+        assert(metadata["detached"]?.stringValue == "false", "Nested object payload should decode")
+    } else {
+        fatalError("Nested object payload should be preserved")
+    }
+
+    if case .array(let hints)? = events[0].payload?["hints"] {
+        assert(hints.count == 3, "Array payload should decode")
+    } else {
+        fatalError("Array payload should be preserved")
+    }
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
         try testPluginStatusDecodesAgentLoopCapabilities()
         try testAgentLoopRunResponseDecodesProbeResult()
         try testAgentLoopHealthResponseDecodesProbeHealth()
+        try testAgentLoopEventResponseDecodesNestedPayloads()
         print("PluginLifecycleBehavior passed")
     }
 }

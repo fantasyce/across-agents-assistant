@@ -272,6 +272,81 @@ struct AgentLoopLeaseHealth: Decodable, Equatable {
     }
 }
 
+enum AgentLoopJSONValue: Decodable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: AgentLoopJSONValue])
+    case array([AgentLoopJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: AgentLoopJSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([AgentLoopJSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .null
+        }
+    }
+
+    var stringValue: String? {
+        switch self {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value.rounded() == value ? String(Int(value)) : String(value)
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .object, .array, .null:
+            return nil
+        }
+    }
+}
+
+struct AgentLoopEventResponse: Decodable, Equatable {
+    let type: String
+    let loopId: String?
+    let timestamp: Double?
+    let payload: [String: AgentLoopJSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case loopId = "loop_id"
+        case timestamp
+        case payload
+    }
+
+    var compactLabel: String {
+        let event = type
+            .replacingOccurrences(of: "loop.", with: "")
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        if let detail = payloadDetail {
+            return "\(event): \(detail)"
+        }
+        return event
+    }
+
+    private var payloadDetail: String? {
+        for key in ["failure_type", "action_type", "status", "reason"] {
+            if let value = payload?[key]?.stringValue, !value.isEmpty {
+                return value.replacingOccurrences(of: "_", with: " ")
+            }
+        }
+        return nil
+    }
+}
+
 struct AgentLoopStep: Decodable, Equatable {
     let status: String?
     let action: AgentLoopAction?

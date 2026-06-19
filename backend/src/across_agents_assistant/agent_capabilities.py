@@ -810,6 +810,65 @@ class AgentCapabilityStore:
             )
         return cards
 
+    def build_host_registry(
+        self,
+        tool_schemas: Optional[List[Dict[str, Any]]] = None,
+        native_skills_by_agent: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> Dict[str, Any]:
+        skills_by_id = {skill.id: skill for skill in self.skill_definitions()}
+        native_skills_by_agent = native_skills_by_agent or {}
+        agents: List[Dict[str, Any]] = []
+        for card in self.build_agent_cards(tool_schemas=tool_schemas, native_skills_by_agent=native_skills_by_agent):
+            agent_id = str(card.get("agent_id") or "").strip()
+            skill_ids = _dedupe_strings(card.get("configured_skill_ids"))
+            skill_names = _dedupe_strings(card.get("configured_skill_names"))
+            native_skills = [
+                skill
+                for skill in native_skills_by_agent.get(agent_id, [])
+                if isinstance(skill, dict) and is_native_skill_available(skill)
+            ]
+            native_skill_ids = _dedupe_strings(_native_skill_id(skill) for skill in native_skills)
+            tags: List[str] = []
+            for skill_id in skill_ids:
+                skill = skills_by_id.get(skill_id)
+                if skill:
+                    tags.extend(skill.tags)
+            capabilities = _dedupe_strings(
+                [
+                    *skill_ids,
+                    *skill_names,
+                    *tags,
+                    *native_skill_ids,
+                    *card.get("enabled_plugin_ids", []),
+                    *card.get("enabled_tool_names", []),
+                ]
+            )
+            agents.append({
+                "agent_id": agent_id,
+                "display_name": card.get("display_name") or agent_id,
+                "agent_type": card.get("agent_type") or "unknown",
+                "aliases": _dedupe_strings([agent_id, card.get("display_name")]),
+                "capabilities": capabilities,
+                "configured_skill_ids": skill_ids,
+                "configured_skill_names": skill_names,
+                "enabled_plugin_ids": _dedupe_strings(card.get("enabled_plugin_ids")),
+                "enabled_tool_names": _dedupe_strings(card.get("enabled_tool_names")),
+                "native_skill_ids": native_skill_ids,
+                "strict_tool_scope": bool(card.get("strict_tool_scope", False)),
+                "warnings": _dedupe_strings(card.get("warnings")),
+            })
+        return {
+            "schema_version": "1.0",
+            "generated_at": time.time(),
+            "security": {
+                "secrets_included": False,
+                "custom_instructions_included": False,
+                "install_paths_included": False,
+                "credential_fields_redacted": True,
+            },
+            "agents": agents,
+        }
+
     def build_task_preflight(
         self,
         description: str,

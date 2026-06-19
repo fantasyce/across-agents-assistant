@@ -69,6 +69,38 @@ def test_store_builds_prompt_context_for_selected_agents(tmp_path):
     assert "Strict scope" in payload["prompt"]
 
 
+def test_store_builds_non_secret_host_capability_registry(tmp_path):
+    store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
+    store.save_profile(
+        "hermes",
+        {
+            "enabled_skill_ids": ["frontend_design"],
+            "enabled_plugin_ids": ["across_context"],
+            "enabled_tool_names": ["browser.open"],
+            "custom_instructions": "Do not export this private routing note.",
+            "strict_tool_scope": True,
+        },
+    )
+
+    registry = store.build_host_registry(
+        tool_schemas=[{"name": "browser.open", "risk_level": "medium"}],
+        native_skills_by_agent={
+            "hermes": [
+                {"id": "browser-automation", "name": "Browser Automation", "availability": "available"}
+            ]
+        },
+    )
+
+    hermes = next(agent for agent in registry["agents"] if agent["agent_id"] == "hermes")
+    assert registry["security"]["secrets_included"] is False
+    assert registry["security"]["custom_instructions_included"] is False
+    assert "frontend_design" in hermes["capabilities"]
+    assert "browser-automation" in hermes["capabilities"]
+    assert "browser.open" in hermes["capabilities"]
+    assert hermes["strict_tool_scope"] is True
+    assert "private routing note" not in str(registry)
+
+
 def test_across_context_plugin_can_be_enabled_for_every_agent(tmp_path):
     store = AgentCapabilityStore(tmp_path / "agent-capabilities.json")
 
@@ -239,6 +271,17 @@ def test_agent_capabilities_api_round_trip(monkeypatch, tmp_path):
         "total": 2,
     }
     assert "Unavailable native skills need repair before routing." in body["agent_cards"][0]["warnings"]
+
+    response = client.get("/api/host/agent-capabilities?refresh=true")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["security"]["credential_fields_redacted"] is True
+    openclaw = next(agent for agent in body["agents"] if agent["agent_id"] == "openclaw")
+    assert "macos_automation" in openclaw["capabilities"]
+    assert "filesystem" in openclaw["capabilities"]
+    assert "read_file" in openclaw["capabilities"]
+    assert "filesystem-review" in openclaw["capabilities"]
+    assert "Use Finder context" not in str(body)
 
 
 def test_agent_capabilities_refresh_persists_native_skill_snapshot(monkeypatch, tmp_path):

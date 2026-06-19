@@ -36,7 +36,7 @@ def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
 
 
 def _external_orchestrator_http_error(operation: str, exc: "OrchestratorPluginHTTPError") -> HTTPException:
-    logger.warning("%s returned HTTP %s from Across Orchestrator", operation, exc.status_code)
+    logger.debug("%s returned HTTP %s from Across Orchestrator", operation, exc.status_code)
     if 400 <= exc.status_code < 500:
         detail = (
             "External Across Orchestrator resource not found."
@@ -2230,6 +2230,26 @@ async def export_agent_cards():
             for card in base_cards
         ],
     }
+
+
+@app.get("/api/host/agent-capabilities")
+async def export_host_agent_capabilities(refresh: bool = False):
+    """Export a non-secret host capability registry for external orchestrators."""
+    store = get_agent_capability_store()
+    available_tools = _runtime_tool_schemas()
+    native_skill_states = _native_skill_states_for_capability_ui(refresh=refresh)
+    native_skills_by_agent = {
+        agent_id: [
+            skill
+            for skill in (state.get("skills") if isinstance(state, dict) else []) or []
+            if isinstance(skill, dict)
+        ]
+        for agent_id, state in native_skill_states.items()
+    }
+    return store.build_host_registry(
+        tool_schemas=available_tools,
+        native_skills_by_agent=native_skills_by_agent,
+    )
 
 
 @app.post("/api/agent-capabilities/skills")
