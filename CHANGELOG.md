@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Added optional Agent Loop evidence summary consumption for Plugin Center
+  probes. The backend proxies Orchestrator evidence summaries, and the macOS
+  health popover can show event audit coverage, routing, recovery, and memory
+  candidate counts when the sidecar supports the new read-only protocol.
 
 ## 0.8.15 - 2026-06-19
 

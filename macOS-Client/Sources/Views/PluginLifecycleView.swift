@@ -321,9 +321,16 @@ struct PluginLifecycleView: View {
             healthDetailLine(appPreferences.text("plugins.loop.detailCancellation"), cancelCategorySummary(health.cancellationCategory))
             healthDetailLine(appPreferences.text("plugins.loop.detailFailures"), failureSummary(health))
             healthDetailLine(appPreferences.text("plugins.loop.detailExecutableActions"), actionSummary(health.executableActions ?? []))
+            if let summary = viewModel.agentLoopEvidenceSummary {
+                Divider().opacity(0.25)
+                healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
+                healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
+                healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
+                healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
+            }
         }
         .padding(14)
-        .frame(width: 300, alignment: .leading)
+        .frame(width: 330, alignment: .leading)
     }
 
     private func healthDetailLine(_ title: String, _ value: String) -> some View {
@@ -372,6 +379,41 @@ struct PluginLifecycleView: View {
 
     private func actionSummary(_ actions: [String]) -> String {
         actions.isEmpty ? appPreferences.text("plugins.loop.none") : actions.joined(separator: ", ")
+    }
+
+    private func auditSummary(_ audit: AgentLoopEvidenceEventAudit?) -> String {
+        guard let audit else { return appPreferences.text("plugins.loop.none") }
+        let eventCount = audit.eventCount ?? 0
+        if audit.sequenceContiguous == true,
+           audit.eventIdCoverage == true,
+           audit.correlationIdCoverage == true {
+            return String(format: appPreferences.text("plugins.loop.auditComplete"), eventCount)
+        }
+        return String(format: appPreferences.text("plugins.loop.auditPartial"), eventCount)
+    }
+
+    private func routingSummary(_ routing: AgentLoopEvidenceRouting?) -> String {
+        guard let routing else { return appPreferences.text("plugins.loop.none") }
+        return String(
+            format: appPreferences.text("plugins.loop.routingSummary"),
+            routing.routedActionCount ?? 0,
+            routing.capabilityHintRouteCount ?? 0
+        )
+    }
+
+    private func recoverySummary(_ recovery: AgentLoopEvidenceRecovery?) -> String {
+        guard let recovery else { return appPreferences.text("plugins.loop.none") }
+        return String(
+            format: appPreferences.text("plugins.loop.recoverySummary"),
+            recovery.decisionCount ?? 0,
+            recovery.appliedCount ?? 0,
+            recovery.blockedCount ?? 0
+        )
+    }
+
+    private func memoryCandidateSummary(_ candidates: AgentLoopEvidenceMemoryCandidates?) -> String {
+        guard let candidates else { return appPreferences.text("plugins.loop.none") }
+        return String(format: appPreferences.text("plugins.loop.memoryCandidateSummary"), candidates.candidateCount ?? 0)
     }
 
     private func cancelCategorySummary(_ category: String?) -> String {

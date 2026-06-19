@@ -1721,6 +1721,21 @@ async def get_external_agent_loop_health(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop health"))
 
 
+@app.get("/api/orchestrator/loops/{loop_id}/evidence-summary")
+async def get_external_agent_loop_evidence_summary(loop_id: str):
+    """Fetch external Across Orchestrator agent loop evidence summary."""
+    try:
+        summary = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_evidence_summary, loop_id)
+        return _sanitize_public_payload(summary)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop evidence summary", exc)
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop evidence summary failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop evidence summary"))
+
+
 @app.get("/api/orchestrator/loops/{loop_id}/events")
 async def get_external_agent_loop_events(loop_id: str):
     """Fetch external Across Orchestrator agent loop events."""

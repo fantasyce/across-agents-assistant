@@ -12,6 +12,7 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var isRunningAgentLoopProbe = false
     @Published var agentLoopProbe: AgentLoopRunResponse?
     @Published var agentLoopHealth: AgentLoopHealthResponse?
+    @Published var agentLoopEvidenceSummary: AgentLoopEvidenceSummaryResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
     @Published var agentLoopEventsLive = false
     @Published var message: String?
@@ -162,6 +163,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         message = nil
         errorMessage = nil
         agentLoopHealth = nil
+        agentLoopEvidenceSummary = nil
         agentLoopEvents = []
         agentLoopEventsLive = false
         defer {
@@ -215,6 +217,17 @@ final class PluginLifecycleViewModel: ObservableObject {
             } catch {
                 agentLoopHealth = nil
                 message = "Agent Loop Probe: \(completed.status) (health unavailable)"
+            }
+
+            let summaryURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/evidence-summary")!
+            var summaryRequest = URLRequest(url: summaryURL)
+            summaryRequest.httpMethod = "GET"
+            do {
+                let (summaryData, summaryResponse) = try await URLSession.shared.data(for: summaryRequest)
+                try Self.validate(summaryResponse)
+                agentLoopEvidenceSummary = try JSONDecoder().decode(AgentLoopEvidenceSummaryResponse.self, from: summaryData)
+            } catch {
+                agentLoopEvidenceSummary = nil
             }
 
             let eventResult = await fetchAgentLoopEvents(escapedLoopId: escaped, streamTask: eventStreamTask)
