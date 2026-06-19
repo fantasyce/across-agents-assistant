@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.24 - 2026-06-19
+
 ### Changed
 
 - Plugin Center Agent Loop timelines now expose a Live/Snapshot mode control
