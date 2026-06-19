@@ -114,6 +114,7 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
       "recent_failure_types": {"quality_failed": 1},
       "executable_actions": ["approve", "reject", "cancel"],
       "cancellation_requested": false,
+      "cancellation_category": "shutdown",
       "cancel_ack_pending": false
     }
     """.data(using: .utf8)!
@@ -127,6 +128,7 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
     assert(health.lease?.remainingSeconds == 240, "Lease remaining seconds should decode")
     assert(health.recentFailureTypes?["quality_failed"] == 1, "Failure type counts should decode")
     assert(health.executableActions == ["approve", "reject", "cancel"], "Executable actions should decode")
+    assert(health.cancellationCategory == "shutdown", "Cancellation category should decode")
     assert(health.recentFailureCount == 1, "Health should summarize recent failure counts")
     assert(health.hasStaleLease == false, "Active non-expired lease should not be stale")
     assert(health.needsAttention == true, "Recent failures should mark loop health as attention-worthy")
