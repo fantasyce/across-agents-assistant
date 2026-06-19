@@ -114,6 +114,110 @@ func testHostCapabilityRegistryDecodesNonSecretDescriptor() throws {
     assert(hermes?.nativeSkillIds == ["browser-automation"], "Host registry descriptor should decode native skill ids")
 }
 
+func testHostCapabilityRegistrySyncSummaryDetectsProfileDrift() {
+    var profile = AgentCapabilityProfile.defaultProfile(agentId: "hermes")
+    profile.enabledSkillIds = ["frontend_design", "test_authoring"]
+    profile.enabledPluginIds = ["across_context"]
+    profile.enabledToolNames = ["browser.open", "read_file"]
+    profile.strictToolScope = true
+    let nativeState = NativeSkillAgentState(
+        agentId: "hermes",
+        displayName: "Hermes",
+        mode: "directory",
+        supportsCreate: true,
+        supportsInstall: true,
+        supportsUninstall: true,
+        supportsUpdate: true,
+        supportsCheck: true,
+        skills: [
+            NativeSkillDefinition(id: "browser-automation", name: "Browser Automation", status: "installed", availability: "available"),
+            NativeSkillDefinition(id: "disabled-skill", name: "Disabled Skill", status: "unavailable", availability: "unavailable")
+        ],
+        error: nil
+    )
+    let registry = HostAgentCapabilityRegistry(
+        schemaVersion: "1.0",
+        agents: [
+            HostAgentCapabilityDescriptor(
+                agentId: "hermes",
+                displayName: "Hermes",
+                capabilities: ["frontend_design"],
+                configuredSkillIds: ["frontend_design"],
+                enabledPluginIds: [],
+                enabledToolNames: ["browser.open"],
+                nativeSkillIds: [],
+                strictToolScope: false
+            )
+        ]
+    )
+
+    let summary = registry.syncSummary(for: profile, nativeSkillState: nativeState)
+    let issueKeys = Set(summary.issues.map(\.titleKey))
+
+    assert(!summary.isSynced, "Registry sync should flag profile drift")
+    assert(!summary.isMissing, "Registry sync should distinguish drift from missing descriptors")
+    assert(issueKeys.contains("capabilities.registryCheck.skills"), "Registry sync should compare skills")
+    assert(issueKeys.contains("capabilities.registryCheck.plugins"), "Registry sync should compare plugins")
+    assert(issueKeys.contains("capabilities.registryCheck.tools"), "Registry sync should compare tools")
+    assert(issueKeys.contains("capabilities.registryCheck.nativeSkills"), "Registry sync should compare active native skills")
+    assert(issueKeys.contains("capabilities.registryCheck.strictScope"), "Registry sync should compare strict scope")
+    assert(
+        summary.issues.first { $0.titleKey == "capabilities.registryCheck.nativeSkills" }?.expected == ["browser-automation"],
+        "Registry sync should ignore unavailable native skills"
+    )
+}
+
+func testHostCapabilityRegistrySyncSummaryAcceptsMatchingDescriptor() {
+    var profile = AgentCapabilityProfile.defaultProfile(agentId: "hermes")
+    profile.enabledSkillIds = ["frontend_design", "test_authoring"]
+    profile.enabledPluginIds = ["across_context"]
+    profile.enabledToolNames = ["browser.open"]
+    profile.strictToolScope = true
+    let nativeState = NativeSkillAgentState(
+        agentId: "hermes",
+        displayName: "Hermes",
+        mode: "directory",
+        supportsCreate: true,
+        supportsInstall: true,
+        supportsUninstall: true,
+        supportsUpdate: true,
+        supportsCheck: true,
+        skills: [
+            NativeSkillDefinition(id: "browser-automation", name: "Browser Automation", status: "installed", availability: "available")
+        ],
+        error: nil
+    )
+    let registry = HostAgentCapabilityRegistry(
+        schemaVersion: "1.0",
+        agents: [
+            HostAgentCapabilityDescriptor(
+                agentId: "hermes",
+                displayName: "Hermes",
+                configuredSkillIds: ["test_authoring", "frontend_design"],
+                enabledPluginIds: ["across_context"],
+                enabledToolNames: ["browser.open"],
+                nativeSkillIds: ["browser-automation"],
+                strictToolScope: true
+            )
+        ]
+    )
+
+    let summary = registry.syncSummary(for: profile, nativeSkillState: nativeState)
+
+    assert(summary.isSynced, "Registry sync should accept descriptors that match local state regardless of ordering")
+    assert(summary.issues.isEmpty, "Matching registry descriptors should not report issues")
+}
+
+func testHostCapabilityRegistrySyncSummaryFlagsMissingDescriptor() {
+    let profile = AgentCapabilityProfile.defaultProfile(agentId: "hermes")
+    let registry = HostAgentCapabilityRegistry(schemaVersion: "1.0", agents: [])
+    let summary = registry.syncSummary(for: profile)
+
+    assert(summary.isMissing, "Registry sync should flag missing descriptors")
+    assert(!summary.isSynced, "Missing descriptors should not count as synced")
+    assert(summary.issues.first?.titleKey == "capabilities.registryCheck.descriptor", "Missing descriptors should expose a descriptor issue")
+}
+
 func testPreflightResponseFindsBestRecommendation() {
     let preflight = AgentCapabilityPreflightResponse(
         selectedAgentIds: ["hermes", "deepseek"],
@@ -337,6 +441,9 @@ struct AgentCapabilityBehavior {
         testConfiguredCapabilityCountIsStable()
         try! testSkillDefinitionMarksCustomSkills()
         try! testHostCapabilityRegistryDecodesNonSecretDescriptor()
+        testHostCapabilityRegistrySyncSummaryDetectsProfileDrift()
+        testHostCapabilityRegistrySyncSummaryAcceptsMatchingDescriptor()
+        testHostCapabilityRegistrySyncSummaryFlagsMissingDescriptor()
         testPreflightResponseFindsBestRecommendation()
         try! testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest()
         try! testReleaseEvaluationSummaryDecodesBackendPayload()
