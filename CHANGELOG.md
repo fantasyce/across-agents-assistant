@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.22 - 2026-06-19
+
 ### Fixed
 
 - External Orchestrator task details now synthesize a task-level acceptance
