@@ -48,6 +48,12 @@ def _write_context_command(across_home: Path) -> Path:
     return command
 
 
+def _write_python_shim(path: Path) -> Path:
+    path.write_text("#!/bin/sh\nprintf 'Python 3.11.9\\n'\n", encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
 def test_product_runtime_env_ignores_protected_ecosystem_overrides(tmp_path):
     home = tmp_path / "home"
     protected = home / "Documents" / "projects" / "runtime"
@@ -190,7 +196,7 @@ def test_product_runtime_env_ignores_protected_plugin_install_sources(tmp_path):
         "ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
         "ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
     }
-    assert _install_source(_known_plugin("across-context"), safe_env) == "git+https://github.com/fantasyce/across-context.git#v0.7.6"
+    assert _install_source(_known_plugin("across-context"), safe_env) == "git+https://github.com/fantasyce/across-context.git#v0.7.7"
 
 
 def test_developer_mode_preserves_protected_plugin_install_sources(tmp_path):
@@ -529,10 +535,12 @@ def test_plugin_lifecycle_runner_removes_polluted_context_command(monkeypatch, t
 
 def test_orchestrator_sidecar_env_replaces_polluted_context_command(monkeypatch, tmp_path):
     home = tmp_path / "home"
+    python = _write_python_shim(tmp_path / "python3.11")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ACROSS_AGENTS_PRODUCT_MODE", "1")
     monkeypatch.setenv("ACROSS_HOME", str(home / "Documents" / "projects" / "across"))
     monkeypatch.setenv("ACROSS_CONTEXT_COMMAND", f"node {home}/Documents/projects/across-context/src/cli.js")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_PYTHON", str(python))
 
     manager = OrchestratorPluginManager(
         OrchestratorPluginConfig(
@@ -552,6 +560,7 @@ def test_orchestrator_sidecar_env_replaces_polluted_context_command(monkeypatch,
 
 def test_orchestrator_development_command_escape_requires_developer_mode(monkeypatch, tmp_path):
     home = tmp_path / "home"
+    python = _write_python_shim(tmp_path / "python3.11")
     protected_command = home / "Documents" / "projects" / "across-orchestrator" / "bin" / "across-orchestrator"
     protected_command.parent.mkdir(parents=True, exist_ok=True)
     protected_command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -559,6 +568,7 @@ def test_orchestrator_development_command_escape_requires_developer_mode(monkeyp
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ACROSS_AGENTS_PRODUCT_MODE", "1")
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ALLOW_DEVELOPMENT_COMMAND", "1")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_PYTHON", str(python))
 
     manager = OrchestratorPluginManager(
         OrchestratorPluginConfig(
