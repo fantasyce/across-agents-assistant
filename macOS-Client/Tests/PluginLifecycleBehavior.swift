@@ -210,6 +210,27 @@ func testAgentLoopEventResponseDecodesSSEStream() throws {
     assert(events[1].compactLabel == "completed: completed", "Completed SSE event should summarize status")
 }
 
+func testAgentLoopEventMergingDeduplicatesStreamUpdates() throws {
+    let first = PluginLifecycleViewModel.decodeAgentLoopEventsFromSSEDataLines([
+        "{\"event_id\":\"loop-event-sse-1\",\"sequence\":1,\"type\":\"loop.started\",\"loop_id\":\"loop-ui\",\"payload\":{\"status\":\"running\"}}"
+    ])
+    let second = PluginLifecycleViewModel.decodeAgentLoopEventsFromSSEDataLines([
+        "{\"event_id\":\"loop-event-sse-1\",\"sequence\":1,\"type\":\"loop.started\",\"loop_id\":\"loop-ui\",\"payload\":{\"status\":\"running\"}}"
+    ])
+    let third = PluginLifecycleViewModel.decodeAgentLoopEventsFromSSEDataLines([
+        "{\"event_id\":\"loop-event-sse-2\",\"sequence\":2,\"type\":\"loop.completed\",\"loop_id\":\"loop-ui\",\"payload\":{\"status\":\"completed\"}}"
+    ])
+
+    let merged = PluginLifecycleViewModel.mergedAgentLoopEvents(
+        PluginLifecycleViewModel.mergedAgentLoopEvents(first, second),
+        third
+    )
+
+    assert(merged.count == 2, "Live stream updates should deduplicate repeated events")
+    assert(merged[0].sequenceLabel == "#1", "Merged stream should preserve first event")
+    assert(merged[1].sequenceLabel == "#2", "Merged stream should append new events")
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -218,6 +239,7 @@ struct PluginLifecycleBehavior {
         try testAgentLoopHealthResponseDecodesProbeHealth()
         try testAgentLoopEventResponseDecodesNestedPayloads()
         try testAgentLoopEventResponseDecodesSSEStream()
+        try testAgentLoopEventMergingDeduplicatesStreamUpdates()
         print("PluginLifecycleBehavior passed")
     }
 }

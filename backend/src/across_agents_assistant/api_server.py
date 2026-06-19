@@ -58,6 +58,15 @@ _ERROR_DETAIL_KEYS = {
     "output_tail",
 }
 _ERROR_DETAIL_KEY_PARTS = ("error", "exception", "traceback", "stack_trace", "stacktrace", "output_tail")
+_AGENT_LOOP_STREAM_CLOSING_EVENT_TYPES = {
+    "loop.approval_required",
+    "loop.completed",
+    "loop.failed",
+    "loop.stopped",
+    "loop.cancelled",
+}
+_AGENT_LOOP_STREAM_POLL_SECONDS = 0.25
+_AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS = 30.0
 _PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
 
 
@@ -83,6 +92,24 @@ def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_public_payload(item, key) for item in value]
     return value
+
+
+def _agent_loop_event_key(event: Any) -> str:
+    if isinstance(event, dict):
+        return str(event.get("event_id") or event.get("sequence") or json.dumps(event, sort_keys=True, default=str))
+    return json.dumps(event, sort_keys=True, default=str)
+
+
+def _agent_loop_sse_chunk(event: Any) -> str:
+    safe_event = _sanitize_public_payload(event)
+    event_type = "message"
+    if isinstance(safe_event, dict) and safe_event.get("type"):
+        event_type = str(safe_event["type"])
+    return f"event: {event_type}\ndata: {json.dumps(safe_event, sort_keys=True)}\n\n"
+
+
+def _agent_loop_event_closes_stream(event: Any) -> bool:
+    return isinstance(event, dict) and event.get("type") in _AGENT_LOOP_STREAM_CLOSING_EVENT_TYPES
 
 
 def _normalize_local_path(path: str) -> str:
@@ -1712,8 +1739,9 @@ async def get_external_agent_loop_events(loop_id: str):
 @app.get("/api/orchestrator/loops/{loop_id}/events/stream")
 async def stream_external_agent_loop_events(loop_id: str):
     """Stream external Across Orchestrator agent loop events as sanitized SSE."""
+    manager = get_orchestrator_plugin_manager()
     try:
-        events = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_events_stream, loop_id)
+        initial_events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except OrchestratorPluginHTTPError as exc:
@@ -1723,13 +1751,33 @@ async def stream_external_agent_loop_events(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop event stream"))
 
     async def event_generator():
-        for event in events:
-            safe_event = _sanitize_public_payload(event)
-            event_type = "message"
-            if isinstance(safe_event, dict) and safe_event.get("type"):
-                event_type = str(safe_event["type"])
-            yield f"event: {event_type}\n"
-            yield f"data: {json.dumps(safe_event, sort_keys=True)}\n\n"
+        seen_keys: set[str] = set()
+        idle_deadline = time.monotonic() + _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS
+        events = initial_events
+        while True:
+            new_events = [event for event in events if _agent_loop_event_key(event) not in seen_keys]
+            if new_events:
+                idle_deadline = time.monotonic() + _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS
+
+            closing_seen = False
+            for event in new_events:
+                seen_keys.add(_agent_loop_event_key(event))
+                yield _agent_loop_sse_chunk(event)
+                if _agent_loop_event_closes_stream(event):
+                    closing_seen = True
+
+            if closing_seen:
+                return
+            if time.monotonic() >= idle_deadline:
+                yield ": idle_timeout\n\n"
+                return
+
+            await asyncio.sleep(_AGENT_LOOP_STREAM_POLL_SECONDS)
+            try:
+                events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id)
+            except Exception:
+                logger.debug("External Across Orchestrator agent loop event stream polling stopped", exc_info=True)
+                return
 
     return StreamingResponse(
         event_generator(),

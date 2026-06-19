@@ -212,6 +212,10 @@ class FakeHTTPOrchestrator:
                             "type": "loop.completed",
                             "loop_id": owner.loop_id,
                             "correlation_id": f"loop:{owner.loop_id}",
+                            "payload": {
+                                "status": "completed",
+                                "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
+                            },
                         }
                     ])
                     return
@@ -514,7 +518,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert "Traceback" not in stream.text
     assert ("POST", "/loops") in server.requests
     assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
-    assert ("GET", f"/loops/{server.loop_id}/events/stream") in server.requests
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/events")) >= 2
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
 
