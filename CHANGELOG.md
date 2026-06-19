@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Agent Capabilities now diagnoses whether the non-secret Orchestrator host
+  capability registry is synchronized with the local profile, plugins, tools,
+  active native skills, and strict-scope state for the selected agent.
+
 ## 0.8.19 - 2026-06-19
 
 ### Added

@@ -80,6 +80,15 @@ final class AgentCapabilityViewModel: ObservableObject {
         return agentCards[normalized]
     }
 
+    func registrySyncSummary(for agentId: String) -> HostAgentCapabilityRegistrySyncSummary? {
+        guard let hostRegistry else { return nil }
+        let normalized = AgentIDs.normalized(agentId) ?? agentId
+        return hostRegistry.syncSummary(
+            for: profile(for: normalized),
+            nativeSkillState: nativeSkillState(for: normalized)
+        )
+    }
+
     func setSkill(_ skillId: String, enabled: Bool, for agentId: String) {
         mutateProfile(for: agentId) { profile in
             profile.setSkill(skillId, enabled: enabled)
