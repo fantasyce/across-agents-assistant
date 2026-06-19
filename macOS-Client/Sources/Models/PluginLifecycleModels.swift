@@ -256,6 +256,7 @@ struct AgentLoopEvidenceSummaryResponse: Decodable, Equatable {
     let routing: AgentLoopEvidenceRouting?
     let recovery: AgentLoopEvidenceRecovery?
     let memoryCandidates: AgentLoopEvidenceMemoryCandidates?
+    let hostReleaseEvidence: AgentLoopHostReleaseEvidence?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -265,6 +266,7 @@ struct AgentLoopEvidenceSummaryResponse: Decodable, Equatable {
         case routing
         case recovery
         case memoryCandidates = "memory_candidates"
+        case hostReleaseEvidence = "host_release_evidence"
     }
 }
 
@@ -420,6 +422,58 @@ struct AgentLoopEvidenceMemoryCandidate: Decodable, Equatable {
         case memoryStatus = "memory_status"
         case memoryId = "memory_id"
     }
+}
+
+struct AgentLoopHostReleaseEvidence: Decodable, Equatable {
+    let schemaVersion: String?
+    let readiness: String?
+    let loopStatus: String?
+    let checks: [AgentLoopHostReleaseCheck]?
+    let risks: [AgentLoopHostReleaseRisk]?
+    let riskCount: Int?
+    let nextActions: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case readiness
+        case loopStatus = "loop_status"
+        case checks
+        case risks
+        case riskCount = "risk_count"
+        case nextActions = "next_actions"
+    }
+}
+
+struct AgentLoopHostReleaseCheck: Decodable, Equatable {
+    let id: String?
+    let status: String?
+    let summary: String?
+    let routedActionCount: Int?
+    let nonDefaultRouteCount: Int?
+    let capabilityHintRouteCount: Int?
+    let appliedCount: Int?
+    let blockedCount: Int?
+    let candidateCount: Int?
+    let category: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case status
+        case summary
+        case routedActionCount = "routed_action_count"
+        case nonDefaultRouteCount = "non_default_route_count"
+        case capabilityHintRouteCount = "capability_hint_route_count"
+        case appliedCount = "applied_count"
+        case blockedCount = "blocked_count"
+        case candidateCount = "candidate_count"
+        case category
+    }
+}
+
+struct AgentLoopHostReleaseRisk: Decodable, Equatable {
+    let id: String?
+    let severity: String?
+    let summary: String?
 }
 
 struct AgentLoopPendingApproval: Decodable, Equatable {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Plugin Center loop health details now consume Orchestrator
+  `host_release_evidence`, showing release readiness, the first attention
+  check, risk, and next action from compact Agent Loop evidence summaries.
+- Task capability preflight now displays backend routing evidence so native
+  skill and platform-skill matches are visible before task submission.
+
 ## 0.8.20 - 2026-06-19
 
 ### Added

@@ -207,6 +207,35 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
             "memory_id": "memory-ui"
           }
         ]
+      },
+      "host_release_evidence": {
+        "schema_version": "0.1",
+        "readiness": "attention",
+        "loop_status": "completed",
+        "checks": [
+          {
+            "id": "event_audit",
+            "status": "passed",
+            "summary": "12 events have contiguous sequences and audit identifiers."
+          },
+          {
+            "id": "memory_candidates",
+            "status": "attention",
+            "summary": "1 structured memory candidates are pending host review.",
+            "candidate_count": 1
+          }
+        ],
+        "risks": [
+          {
+            "id": "memory_review_pending",
+            "severity": "low",
+            "summary": "Structured memory candidates should be reviewed before release."
+          }
+        ],
+        "risk_count": 1,
+        "next_actions": [
+          "Review pending structured memory candidates in Across Context."
+        ]
       }
     }
     """.data(using: .utf8)!
@@ -229,6 +258,10 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.memoryCandidates?.candidates?.first?.provider == "across-context", "Memory candidate provider should decode")
     assert(summary.memoryCandidates?.candidates?.first?.memoryStatus == "pending", "Memory candidate status should decode")
     assert(summary.memoryCandidates?.candidates?.first?.memoryId == "memory-ui", "Memory candidate id should decode")
+    assert(summary.hostReleaseEvidence?.readiness == "attention", "Host release readiness should decode")
+    assert(summary.hostReleaseEvidence?.checks?.last?.candidateCount == 1, "Host release check counts should decode")
+    assert(summary.hostReleaseEvidence?.risks?.first?.id == "memory_review_pending", "Host release risk should decode")
+    assert(summary.hostReleaseEvidence?.nextActions?.first?.contains("Across Context") == true, "Host release next action should decode")
     if let candidate = summary.memoryCandidates?.candidates?.first {
         assert(PluginLifecycleViewModel.memoryReviewStatusFilter(for: candidate) == "pending", "Memory candidate review filter should use memory status")
     } else {

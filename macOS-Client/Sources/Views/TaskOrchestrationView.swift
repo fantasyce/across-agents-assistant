@@ -2565,6 +2565,12 @@ struct TaskNewTaskForm: View {
                                 .foregroundColor(Color(hex: "#B58AE3"))
                                 .lineLimit(2)
                         }
+                        if !best.routingEvidence.isEmpty {
+                            Text(preflightRoutingEvidenceText(best))
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
                     }
                     Spacer()
                     Text("\(best.score)")
@@ -2684,6 +2690,31 @@ struct TaskNewTaskForm: View {
     private func preflightRepairText(_ summary: AgentCapabilityPreflightAgentSummary) -> String {
         let suggestions = summary.nativeSkillRepairSuggestions.prefix(2).joined(separator: " ")
         return String(format: appPreferences.text("tasks.capabilityPreflight.repair"), suggestions)
+    }
+
+    private func preflightRoutingEvidenceText(_ summary: AgentCapabilityPreflightAgentSummary) -> String {
+        let items = summary.routingEvidence.prefix(3).map(preflightRoutingEvidenceItemText)
+        return String(format: appPreferences.text("tasks.capabilityPreflight.routingEvidence"), items.joined(separator: ", "))
+    }
+
+    private func preflightRoutingEvidenceItemText(_ evidence: AgentCapabilityRoutingEvidence) -> String {
+        let trimmedSkillName = evidence.skillName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name: String
+        if let trimmedSkillName, !trimmedSkillName.isEmpty {
+            name = trimmedSkillName
+        } else {
+            name = preflightSkillName(evidence.skillId ?? evidence.source ?? "")
+        }
+        let status = evidence.status?
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        if let status, !status.isEmpty {
+            return "\(name) \(status)"
+        }
+        if let reason = evidence.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "\(name): \(reason.replacingOccurrences(of: "_", with: " "))"
+        }
+        return name
     }
 
     private func preflightSkillName(_ skillId: String) -> String {
