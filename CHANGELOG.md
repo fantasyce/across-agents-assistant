@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.8.14 - 2026-06-19
+
+### Added
+
+- Added Plugin Center Agent Loop health detail popovers for stale leases,
+  cancellation state, and recent failure counts.
+- Added Agent Loop timeline sequence chips with hover audit identifiers from
+  Across Orchestrator `v0.6.13`.
+- Added structured cancellation-category display while keeping unknown future
+  categories readable as plain strings.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.13` while
+  keeping managed Across Context defaults at `v0.7.7`.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed.
+- Swift package lock verification, Swift build, Swift tests, and standalone
+  Plugin Lifecycle/App Preferences behavior tests passed.
+- Across Orchestrator `v0.6.13` release checks passed before updating the AAA
+  managed pin.
+
 ## 0.8.13 - 2026-06-19
 
 ### Added
