@@ -68,6 +68,7 @@ _AGENT_LOOP_STREAM_CLOSING_EVENT_TYPES = {
 _AGENT_LOOP_STREAM_POLL_SECONDS = 0.25
 _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS = 30.0
 _PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
+_EXTERNAL_TASK_EVIDENCE_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def _sanitize_public_error_text(value: Any) -> Any:
@@ -92,6 +93,48 @@ def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_public_payload(item, key) for item in value]
     return value
+
+
+def _should_fetch_external_task_evidence(task_payload: Dict[str, Any]) -> bool:
+    return str((task_payload or {}).get("status") or "").strip().lower() in _EXTERNAL_TASK_EVIDENCE_STATUSES
+
+
+async def _external_task_evidence_async(plugin: Any, task_id: str, task_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not _should_fetch_external_task_evidence(task_payload):
+        return None
+    try:
+        return await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+    except Exception:
+        return None
+
+
+def _external_task_evidence_sync(plugin: Any, task_id: str, task_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not _should_fetch_external_task_evidence(task_payload):
+        return None
+    try:
+        return plugin.get_evidence_bundle(task_id)
+    except Exception:
+        return None
+
+
+async def _enrich_external_agent_loop_transition(manager: Any, loop: Any) -> Any:
+    if not isinstance(loop, dict):
+        return loop
+    loop_id = str(loop.get("loop_id") or "").strip()
+    if not loop_id:
+        return loop
+    enriched = dict(loop)
+    if not isinstance(enriched.get("health"), dict):
+        try:
+            enriched["health"] = await asyncio.to_thread(manager.get_agent_loop_health, loop_id)
+        except Exception:
+            pass
+    if not isinstance(enriched.get("evidence_summary"), dict):
+        try:
+            enriched["evidence_summary"] = await asyncio.to_thread(manager.get_agent_loop_evidence_summary, loop_id)
+        except Exception:
+            pass
+    return enriched
 
 
 def _agent_loop_event_key(event: Any) -> str:
@@ -1603,7 +1646,9 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
 async def run_external_agent_loop(loop_id: str):
     """Run or continue an external Across Orchestrator agent loop."""
     try:
-        loop = await asyncio.to_thread(get_orchestrator_plugin_manager().run_agent_loop, loop_id)
+        manager = get_orchestrator_plugin_manager()
+        loop = await asyncio.to_thread(manager.run_agent_loop, loop_id)
+        loop = await _enrich_external_agent_loop_transition(manager, loop)
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -1618,11 +1663,13 @@ async def run_external_agent_loop(loop_id: str):
 async def approve_external_agent_loop_action(loop_id: str, action_id: str):
     """Approve a pending external Across Orchestrator agent loop action."""
     try:
+        manager = get_orchestrator_plugin_manager()
         loop = await asyncio.to_thread(
-            get_orchestrator_plugin_manager().approve_agent_loop_action,
+            manager.approve_agent_loop_action,
             loop_id,
             action_id,
         )
+        loop = await _enrich_external_agent_loop_transition(manager, loop)
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -1637,12 +1684,14 @@ async def approve_external_agent_loop_action(loop_id: str, action_id: str):
 async def reject_external_agent_loop_action(loop_id: str, action_id: str, req: Optional[AgentLoopReasonRequest] = None):
     """Reject a pending external Across Orchestrator agent loop action."""
     try:
+        manager = get_orchestrator_plugin_manager()
         loop = await asyncio.to_thread(
-            get_orchestrator_plugin_manager().reject_agent_loop_action,
+            manager.reject_agent_loop_action,
             loop_id,
             action_id,
             req.reason if req else None,
         )
+        loop = await _enrich_external_agent_loop_transition(manager, loop)
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -1657,11 +1706,13 @@ async def reject_external_agent_loop_action(loop_id: str, action_id: str, req: O
 async def cancel_external_agent_loop(loop_id: str, req: Optional[AgentLoopReasonRequest] = None):
     """Cancel a pending or running external Across Orchestrator agent loop."""
     try:
+        manager = get_orchestrator_plugin_manager()
         loop = await asyncio.to_thread(
-            get_orchestrator_plugin_manager().cancel_agent_loop,
+            manager.cancel_agent_loop,
             loop_id,
             req.reason if req else None,
         )
+        loop = await _enrich_external_agent_loop_transition(manager, loop)
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -1676,11 +1727,13 @@ async def cancel_external_agent_loop(loop_id: str, req: Optional[AgentLoopReason
 async def retry_external_agent_loop_step(loop_id: str, step_id: str):
     """Retry an external Across Orchestrator agent loop from a selected step."""
     try:
+        manager = get_orchestrator_plugin_manager()
         loop = await asyncio.to_thread(
-            get_orchestrator_plugin_manager().retry_agent_loop_step,
+            manager.retry_agent_loop_step,
             loop_id,
             step_id,
         )
+        loop = await _enrich_external_agent_loop_transition(manager, loop)
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -3543,12 +3596,7 @@ def _load_task_info_read_only(task_id: str) -> "TaskInfo":
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
         task_payload = plugin.get_task(task_id)
-        evidence = None
-        if str(task_payload.get("status") or "") == "completed":
-            try:
-                evidence = plugin.get_evidence_bundle(task_id)
-            except Exception:
-                evidence = None
+        evidence = _external_task_evidence_sync(plugin, task_id, task_payload)
         return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
     task = _task_state.get_task(task_id)
     if task:
@@ -4863,12 +4911,7 @@ async def get_task(task_id: str):
         if _is_external_orchestrator_task(task_id):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
-            evidence = None
-            if str(task_payload.get("status") or "") == "completed":
-                try:
-                    evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
-                except Exception:
-                    evidence = None
+            evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
             return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
 
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
@@ -5154,12 +5197,7 @@ async def run_external_task(task_id: str):
     try:
         plugin = get_orchestrator_plugin_manager()
         task_payload = await asyncio.to_thread(plugin.run_task, task_id)
-        evidence = None
-        if str(task_payload.get("status") or "") == "completed":
-            try:
-                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
-            except Exception:
-                evidence = None
+        evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
         return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -5180,12 +5218,7 @@ async def get_task_status(task_id: str):
         if _is_external_orchestrator_task(task_id):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
-            evidence = None
-            if str(task_payload.get("status") or "") == "completed":
-                try:
-                    evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
-                except Exception:
-                    evidence = None
+            evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
             return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
 
         _repair_task_dispatch_if_possible(task_id, reason="api_status_poll")
