@@ -2,15 +2,28 @@
 
 ## Unreleased
 
+## 0.8.18 - 2026-06-19
+
+### Added
+
+- Plugin Center loop health details now surface recovery policy decision
+  evidence and recovered-step hints from Orchestrator evidence summaries, not
+  only recovery counts.
+
 ### Changed
 
 - External Across Orchestrator Agent Loop transition responses now include
   best-effort compact `health` and `evidence_summary` snapshots after run,
   approve, reject, cancel, and retry actions. External task evidence refreshes
   also apply to failed and cancelled terminal states, not only completed tasks.
-- Plugin Center loop health details now surface recovery policy decision
-  evidence and recovered-step hints from Orchestrator evidence summaries, not
-  only recovery counts.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed.
+- Swift package lock verification, Swift build, Swift tests, standalone Plugin
+  Lifecycle/App Preferences behavior tests, and CI-compatible Swift build
+  passed.
 
 ## 0.8.17 - 2026-06-19
 
