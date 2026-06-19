@@ -4,6 +4,24 @@
 
 No changes yet.
 
+## 0.8.17 - 2026-06-19
+
+### Fixed
+
+- External Across Orchestrator task run responses now enrich completed tasks
+  with the sidecar evidence bundle before mapping them into AAA task info. This
+  keeps Release E2E quality, produced-file inventory, and delivery report status
+  consistent immediately after `/api/tasks/{task_id}/run`, not only after a
+  later status/detail refresh.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed.
+- Cross-repo HTTP E2E passed against Across Orchestrator `v0.6.15`: Agent Loop
+  evidence summary, Release E2E run response quality, status refresh quality,
+  and evidence benchmark all passed.
+
 ## 0.8.16 - 2026-06-19
 
 ### Added
