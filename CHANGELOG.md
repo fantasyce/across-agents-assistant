@@ -2,12 +2,31 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.8.16 - 2026-06-19
+
 ### Added
 
 - Added optional Agent Loop evidence summary consumption for Plugin Center
   probes. The backend proxies Orchestrator evidence summaries, and the macOS
   health popover can show event audit coverage, routing, recovery, and memory
   candidate counts when the sidecar supports the new read-only protocol.
+
+### Changed
+
+- Updated managed Orchestrator defaults to Across Orchestrator `v0.6.15` while
+  keeping managed Across Context defaults at `v0.7.7`.
+
+### Validation
+
+- AAA open-source release check passed.
+- AAA backend regression passed.
+- Swift package lock verification, Swift build, Swift tests, standalone Plugin
+  Lifecycle/App Preferences behavior tests, and packaged app build checks
+  passed.
+- Across Orchestrator `v0.6.15` release checks passed before updating the AAA
+  managed pin.
 
 ## 0.8.15 - 2026-06-19
 
