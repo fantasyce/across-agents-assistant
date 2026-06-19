@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.23` | Folds detailed Agent Loop evidence inside Plugin Center health details, stabilizes external acceptance records, and moves managed Orchestrator pins to `v0.6.17`. |
 | `0.8.22` | Adds external Orchestrator task acceptance records so REST API and complex E2E views expose accepted delivery evidence consistently. |
 | `0.8.21` | Shows Orchestrator Agent Loop host release evidence in Plugin Center health details, displays routing evidence in task capability preflight, and moves managed Orchestrator pins to `v0.6.16`. |
 | `0.8.20` | Adds Orchestrator registry synchronization diagnostics in Agent Capabilities and refreshes backend dependency floors for pytest-asyncio, numpy, uvicorn, Anthropic, and OpenAI. |
@@ -201,10 +202,16 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.22` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.23` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.23` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
+Across Context `v0.7.7`. Plugin Center loop health details keep release
+readiness visible while folding lower-level Agent Loop evidence into expandable
+details. External Orchestrator acceptance records also avoid nondeterministic
+fallback timestamps and de-duplicate root-cause artifact ids.
 
 The `0.8.22` release keeps AAA aligned with Across Orchestrator `v0.6.16` and
-Across Context `v0.7.7`. External Orchestrator task details now synthesize a
+Across Context `v0.7.7`. External Orchestrator task details synthesize a
 task-level acceptance record from artifact and delivery-quality evidence so REST
 API and complex E2E task views expose accepted delivery evidence consistently.
 
