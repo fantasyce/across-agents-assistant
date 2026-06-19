@@ -70,6 +70,38 @@ class OrchestratorPluginUnavailable(OrchestratorPluginError):
     """Raised when external Orchestrator is required but unavailable."""
 
 
+def _parse_sse_json_events(text: str) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    data_lines: List[str] = []
+
+    def flush() -> None:
+        if not data_lines:
+            return
+        raw = "\n".join(data_lines).strip()
+        data_lines.clear()
+        if not raw:
+            return
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.debug("Skipping non-JSON Orchestrator SSE event data")
+            return
+        if isinstance(parsed, dict):
+            events.append(parsed)
+        elif isinstance(parsed, list):
+            events.extend(item for item in parsed if isinstance(item, dict))
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip("\r")
+        if not line:
+            flush()
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    flush()
+    return events
+
+
 def _normalize_mode(value: Optional[str]) -> str:
     mode = str(value or "external").strip().lower().replace("-", "_")
     if mode == "external":
@@ -1125,6 +1157,13 @@ class OrchestratorPluginManager:
             events = self._cli_json(["loop-events", loop_id, "--json"])
         return events if isinstance(events, list) else []
 
+    def get_agent_loop_events_stream(self, loop_id: str) -> List[Dict[str, Any]]:
+        self._ensure_external()
+        if self._transport == "http":
+            text = self._http_get_text(f"/loops/{loop_id}/events/stream", accept="text/event-stream")
+            return _parse_sse_json_events(text)
+        return self.get_agent_loop_events(loop_id)
+
     def list_task_summaries(self) -> List[Dict[str, Any]]:
         summaries: List[Dict[str, Any]] = []
         for record in self.index.list_records():
@@ -1364,6 +1403,21 @@ class OrchestratorPluginManager:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             logger.warning("Across Orchestrator HTTP GET failed with %s: %s", exc.code, detail[:1000])
+            raise OrchestratorPluginHTTPError(exc.code, detail) from exc
+
+    def _http_get_text(self, path: str, *, accept: str = "text/plain") -> str:
+        endpoint = self._resolved_endpoint()
+        request = urllib.request.Request(
+            endpoint + path,
+            headers={"Accept": accept},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.operation_timeout) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            logger.warning("Across Orchestrator HTTP text GET failed with %s: %s", exc.code, detail[:1000])
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:

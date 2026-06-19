@@ -156,6 +156,19 @@ class FakeHTTPOrchestrator:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _sse(self, events, status=200):
+                body = "".join(
+                    f"event: {event.get('type', 'message')}\n"
+                    f"data: {json.dumps(event, sort_keys=True)}\n\n"
+                    for event in events
+                ).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_GET(self):
                 owner.requests.append(("GET", self.path))
                 if self.path == "/health":
@@ -184,6 +197,20 @@ class FakeHTTPOrchestrator:
                     return
                 if self.path == f"/loops/{owner.loop_id}/events":
                     self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
+                    return
+                if self.path == f"/loops/{owner.loop_id}/events/stream":
+                    self._sse(
+                        [
+                            {
+                                "type": "loop.completed",
+                                "loop_id": owner.loop_id,
+                                "payload": {
+                                    "status": "completed",
+                                    "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
+                                },
+                            }
+                        ]
+                    )
                     return
                 self._json({"error": "not_found"}, 404)
 
@@ -447,6 +474,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         status = client.get(f"/api/orchestrator/loops/{loop_id}")
         health = client.get(f"/api/orchestrator/loops/{loop_id}/health")
         events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
+        stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream")
 
     assert loop_id == "loop-api-external"
     assert run.json()["status"] == "completed"
@@ -454,8 +482,14 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
     assert events.json()[0]["type"] == "loop.completed"
+    assert stream.status_code == 200
+    assert stream.headers["content-type"].startswith("text/event-stream")
+    assert "event: loop.completed" in stream.text
+    assert "Internal operation failed" in stream.text
+    assert "Traceback" not in stream.text
     assert ("POST", "/loops") in server.requests
     assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/events/stream") in server.requests
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
 
