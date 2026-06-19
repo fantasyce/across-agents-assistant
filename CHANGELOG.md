@@ -8,6 +8,9 @@
   best-effort compact `health` and `evidence_summary` snapshots after run,
   approve, reject, cancel, and retry actions. External task evidence refreshes
   also apply to failed and cancelled terminal states, not only completed tasks.
+- Plugin Center loop health details now surface recovery policy decision
+  evidence and recovered-step hints from Orchestrator evidence summaries, not
+  only recovery counts.
 
 ## 0.8.17 - 2026-06-19
 

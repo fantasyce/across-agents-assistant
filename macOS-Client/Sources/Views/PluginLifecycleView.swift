@@ -326,6 +326,7 @@ struct PluginLifecycleView: View {
                 healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
                 healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
                 healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
+                recoveryEvidenceDetailLines(summary.recovery)
                 healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
             }
         }
@@ -411,6 +412,72 @@ struct PluginLifecycleView: View {
         )
     }
 
+    @ViewBuilder
+    private func recoveryEvidenceDetailLines(_ recovery: AgentLoopEvidenceRecovery?) -> some View {
+        if let decision = recovery?.decisions?.first {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailRecoveryPolicy"),
+                recoveryDecisionSummary(decision, total: recovery?.decisions?.count ?? 1)
+            )
+        }
+        if let recoveredStep = recovery?.recoveredSteps?.first {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailRecoveredStep"),
+                recoveredStepSummary(recoveredStep, total: recovery?.recoveredSteps?.count ?? 1)
+            )
+        }
+    }
+
+    private func recoveryDecisionSummary(_ decision: AgentLoopEvidenceRecoveryDecision, total: Int) -> String {
+        var parts = [String]()
+        if let action = displayToken(decision.recoveryAction) {
+            parts.append(action)
+        }
+        if let failure = displayToken(decision.failureType) {
+            parts.append(failure)
+        }
+        if let applied = decision.applied {
+            parts.append(appPreferences.text(applied ? "plugins.loop.recoveryApplied" : "plugins.loop.recoveryBlocked"))
+        }
+        if let attempt = recoveryAttemptSummary(decision.attempt, maxRetries: decision.maxRetries) {
+            parts.append(attempt)
+        }
+        if total > 1 {
+            parts.append(String(format: appPreferences.text("plugins.loop.recoveryMore"), total - 1))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func recoveredStepSummary(_ step: AgentLoopEvidenceRecoveredStep, total: Int) -> String {
+        var parts = [String]()
+        let nextAction = displayToken(step.nextAction) ?? displayToken(step.actionType)
+        if let nextAction, let failure = displayToken(step.failureType) {
+            parts.append(String(format: appPreferences.text("plugins.loop.recoveredAfter"), nextAction, failure))
+        } else if let nextAction {
+            parts.append(nextAction)
+        } else if let failure = displayToken(step.failureType) {
+            parts.append(failure)
+        }
+        if let attempt = recoveryAttemptSummary(step.attempt, maxRetries: nil) {
+            parts.append(attempt)
+        }
+        if let nextTurn = step.nextTurn {
+            parts.append(String(format: appPreferences.text("plugins.loop.recoveryTurn"), nextTurn))
+        }
+        if total > 1 {
+            parts.append(String(format: appPreferences.text("plugins.loop.recoveryMore"), total - 1))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func recoveryAttemptSummary(_ attempt: Int?, maxRetries: Int?) -> String? {
+        guard let attempt else { return nil }
+        if let maxRetries {
+            return String(format: appPreferences.text("plugins.loop.recoveryAttempt"), attempt, maxRetries)
+        }
+        return String(format: appPreferences.text("plugins.loop.recoveryAttemptSingle"), attempt)
+    }
+
     private func memoryCandidateSummary(_ candidates: AgentLoopEvidenceMemoryCandidates?) -> String {
         guard let candidates else { return appPreferences.text("plugins.loop.none") }
         return String(format: appPreferences.text("plugins.loop.memoryCandidateSummary"), candidates.candidateCount ?? 0)
@@ -419,6 +486,11 @@ struct PluginLifecycleView: View {
     private func cancelCategorySummary(_ category: String?) -> String {
         guard let category, !category.isEmpty else { return appPreferences.text("plugins.loop.none") }
         return category.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func displayToken(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value.replacingOccurrences(of: "_", with: " ")
     }
 
     private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {

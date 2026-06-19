@@ -103,6 +103,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop evidence audit summary should be localized in English"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.detailRecoveryPolicy", localeIdentifier: "en") == "Policy",
+        "Agent Loop recovery policy detail label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.recoveryApplied", localeIdentifier: "zh-Hans") == "已应用",
+        "Agent Loop recovery decision state should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )
