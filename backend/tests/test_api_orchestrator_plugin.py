@@ -493,6 +493,9 @@ def test_release_e2e_uses_external_orchestrator_slot_for_full_task_lifecycle(mon
     assert run["status"] == "completed"
     assert run["quality_health"]["delivery_quality"] == "passed"
     assert run["delivery_report"]["status"] == "passed"
+    assert run["acceptance_records"][0]["level"] == "task"
+    assert run["acceptance_records"][0]["deterministic_passed"] is True
+    assert run["acceptance_records"][0]["root_cause_artifact_ids"]
     assert status["status"] == "completed"
     assert status["quality_health"]["delivery_quality"] == "passed"
     assert evidence["benchmark"]["status"] == "passed"

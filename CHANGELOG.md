@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- External Orchestrator task details now synthesize a task-level acceptance
+  record from external artifact and delivery-quality evidence so REST API and
+  complex E2E views expose accepted delivery evidence consistently.
+
 ## 0.8.21 - 2026-06-19
 
 ### Added
