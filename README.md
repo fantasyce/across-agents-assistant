@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.21` | Shows Orchestrator Agent Loop host release evidence in Plugin Center health details, displays routing evidence in task capability preflight, and moves managed Orchestrator pins to `v0.6.16`. |
 | `0.8.20` | Adds Orchestrator registry synchronization diagnostics in Agent Capabilities and refreshes backend dependency floors for pytest-asyncio, numpy, uvicorn, Anthropic, and OpenAI. |
 | `0.8.19` | Completes memory candidate UI consumption with loop candidate hints, shared-memory review focus, and shows the non-secret Orchestrator host capability registry in Agent Capabilities. |
 | `0.8.18` | Enriches external Agent Loop transition responses with compact health/evidence snapshots, refreshes terminal failed/cancelled task evidence, and shows recovery policy decisions plus recovered-step hints in Plugin Center health details. |
@@ -199,7 +200,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.20` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.21` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.21` release keeps AAA aligned with Across Orchestrator `v0.6.16` and
+Across Context `v0.7.7`. Plugin Center loop health details now show
+Orchestrator host release evidence readiness, the first attention check, risk,
+and next action. Task capability preflight also displays backend routing
+evidence so platform-skill and native-skill matches are visible before
+submission.
 
 The `0.8.20` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
 Across Context `v0.7.7`. Agent Capabilities now diagnoses whether the
@@ -525,7 +533,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.15
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.16
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.7
