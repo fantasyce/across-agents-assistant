@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.24` | Adds Plugin Center Agent Loop Live/Snapshot timeline mode controls and documents nullable synthesized external acceptance timestamps. |
 | `0.8.23` | Folds detailed Agent Loop evidence inside Plugin Center health details, stabilizes external acceptance records, and moves managed Orchestrator pins to `v0.6.17`. |
 | `0.8.22` | Adds external Orchestrator task acceptance records so REST API and complex E2E views expose accepted delivery evidence consistently. |
 | `0.8.21` | Shows Orchestrator Agent Loop host release evidence in Plugin Center health details, displays routing evidence in task capability preflight, and moves managed Orchestrator pins to `v0.6.16`. |
@@ -202,7 +203,12 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.23` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.24` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.24` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
+Across Context `v0.7.7`. Plugin Center Agent Loop timelines now expose a
+Live/Snapshot mode control and distinguish live, snapshot, fallback, and
+unavailable timeline sources.
 
 The `0.8.23` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
 Across Context `v0.7.7`. Plugin Center loop health details keep release
