@@ -26,12 +26,11 @@ func testLanguageResolution() {
 }
 
 func testLocalizedStringsFallbackToEnglish() {
-    let agentLoopTimelineSourceKeys = [
-        "plugins.loop.eventsLive",
-        "plugins.loop.eventsSnapshot",
-        "plugins.loop.eventsFallback",
-        "plugins.loop.eventsUnavailable",
-    ]
+    let agentLoopTimelineSourceKeys = AgentLoopTimelineSource.localizationKeys
+    assert(
+        agentLoopTimelineSourceKeys.count == AgentLoopTimelineSource.allCases.count,
+        "Agent Loop timeline source localization keys should cover every source case"
+    )
     for key in agentLoopTimelineSourceKeys {
         assert(
             AppPreferences.localizedString(key, localeIdentifier: "en") != key,

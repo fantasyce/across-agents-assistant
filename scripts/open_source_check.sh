@@ -103,6 +103,6 @@ if blocked:
 PY
 
 echo "== shell syntax =="
-bash -n build_app.sh
+bash -n build_app.sh scripts/*.sh
 
 echo "Open-source check passed."

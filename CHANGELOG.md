@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- Added a reusable `scripts/run_live_e2e.sh` runner and a manual GitHub
+  `Live E2E` workflow that install/use Across Orchestrator `v0.6.17`, start a
+  temporary AAA backend, and run both tiered live E2E and the legacy socket API
+  E2E with the live gate enabled.
+- Added `scripts/run_swift_behavior_checks.sh` and wired Quality CI to run
+  standalone Swift behavior checks after the Swift build.
+
+### Changed
+
+- Agent Loop timeline source localization tests now consume enum-derived keys
+  directly, keeping the App Preferences localization coverage tied to
+  `AgentLoopTimelineSource`.
+- Open-source checks now syntax-check every shell script under `scripts/`, not
+  only the app build script.
+
 ## 0.8.25 - 2026-06-20
 
 ### Changed

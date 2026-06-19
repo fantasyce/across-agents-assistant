@@ -40,3 +40,6 @@ jobs:
 
       - name: Swift build
         run: swift build --package-path macOS-Client --skip-update
+
+      - name: Swift behavior checks
+        run: bash scripts/run_swift_behavior_checks.sh

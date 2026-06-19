@@ -643,6 +643,22 @@ PYTHONPATH=backend/src pytest \
   -q
 ```
 
+Live E2E can be run against a temporary AAA backend and an external
+Across Orchestrator command without touching the packaged app socket:
+
+```bash
+ACROSS_AGENTS_ORCHESTRATOR_COMMAND=/path/to/across-orchestrator \
+  bash scripts/run_live_e2e.sh all
+```
+
+The script creates temporary `ACROSS_HOME` and `ACROSS_AGENTS_HOME` roots,
+starts the backend on a temporary Unix socket, runs
+`backend/tests/e2e/run_e2e.py`, and then runs the legacy socket-backed
+`backend/tests/e2e/test_api_e2e.py` with `ACROSS_AGENTS_RUN_LIVE_E2E=1`.
+The GitHub `Live E2E` workflow exposes the same runner as a manual
+`workflow_dispatch` job and installs Across Orchestrator `v0.6.17` before
+running it.
+
 RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across/data/across-agents-assistant/release-reports/`:
 
 ```bash
@@ -660,11 +676,12 @@ Run the public repository guard locally before publishing changes:
 bash scripts/open_source_check.sh
 ```
 
-The check verifies whitespace, forbidden tracked artifacts, common secret patterns, README image assets, and basic build-script syntax. GitHub Actions also runs the open-source check, backend regression tests, and a Swift build on pushes to `main` and pull requests.
+The check verifies whitespace, forbidden tracked artifacts, common secret patterns, README image assets, and shell syntax for `build_app.sh` plus every script under `scripts/`. GitHub Actions also runs the open-source check, backend regression tests, Swift build, and Swift behavior checks on pushes to `main` and pull requests.
 
 GitHub security automation is also enabled:
 
-- The Security workflow runs CodeQL for the Python backend on pull requests, pushes to `main`, scheduled weekly runs, and manual dispatches. The Quality workflow separately verifies the Swift macOS client build.
+- The Security workflow runs CodeQL for the Python backend on pull requests, pushes to `main`, scheduled weekly runs, and manual dispatches. The Quality workflow separately verifies the Swift macOS client build and standalone behavior checks.
+- The Live E2E workflow is manual because it starts an external Across Orchestrator runtime and runs task scenarios that should not be silently skipped in public PR CI.
 - Dependabot monitors GitHub Actions, Python requirements, and Swift Package Manager dependencies.
 - Repository secret scanning and push protection are enabled for the public repository.
 
@@ -673,6 +690,7 @@ GitHub security automation is also enabled:
 ```bash
 cd macOS-Client
 swift build -c release --force-resolved-versions --skip-update
+bash ../scripts/run_swift_behavior_checks.sh
 ```
 
 ## Configuration And Secrets
