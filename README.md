@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.17` | Fixes external task run responses so completed Release E2E tasks immediately show passed evidence-backed quality when the Orchestrator evidence bundle passes. |
 | `0.8.16` | Shows optional Agent Loop evidence summaries in Plugin Center health details and moves managed Orchestrator pins to `v0.6.15`. |
 | `0.8.15` | Streams Plugin Center Agent Loop timelines while probes are running and moves managed Orchestrator pins to `v0.6.14`. |
 | `0.8.14` | Adds Plugin Center Agent Loop health details, timeline sequence chips with audit identifiers, structured cancellation-category display, and moves managed Orchestrator pins to `v0.6.13`. |
@@ -195,9 +196,15 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.16` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.17` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.8.16` release aligns AAA with Across Orchestrator `v0.6.15` and Across
+The `0.8.17` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
+Across Context `v0.7.7`. Completed external task run responses now read the
+sidecar evidence bundle before building host-visible task info, so Release E2E
+quality, produced-file inventory, and delivery report status are consistent
+immediately after a run.
+
+The `0.8.16` release aligned AAA with Across Orchestrator `v0.6.15` and Across
 Context `v0.7.7`. Plugin Center loop probes can now display compact Agent Loop
 evidence summaries for event audit coverage, routing, recovery, and memory
 candidate counts when the sidecar supports the read-only summary protocol.

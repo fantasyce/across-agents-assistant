@@ -462,12 +462,15 @@ def test_release_e2e_uses_external_orchestrator_slot_for_full_task_lifecycle(mon
     assert task_id == "task-api-external"
     assert detail["observability"]["orchestrator_plugin"]["implementation"] == "external"
     assert run["status"] == "completed"
+    assert run["quality_health"]["delivery_quality"] == "passed"
+    assert run["delivery_report"]["status"] == "passed"
     assert status["status"] == "completed"
     assert status["quality_health"]["delivery_quality"] == "passed"
     assert evidence["benchmark"]["status"] == "passed"
     assert evidence["audit"]["expected_files"] == REQUIRED_FILES
     assert ("POST", "/release-e2e") in server.requests
     assert ("POST", "/tasks/task-api-external/run") in server.requests
+    assert ("GET", "/tasks/task-api-external/evidence-bundle") in server.requests
 
 
 def test_external_orchestrator_tasks_reject_legacy_lifecycle_controls(monkeypatch, tmp_path):

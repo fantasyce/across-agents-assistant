@@ -5152,8 +5152,15 @@ async def run_external_task(task_id: str):
     if not _is_external_orchestrator_task(task_id):
         raise HTTPException(status_code=409, detail="Only external Across Orchestrator tasks can be run through this endpoint.")
     try:
-        task_payload = await asyncio.to_thread(get_orchestrator_plugin_manager().run_task, task_id)
-        return _sanitize_public_payload(external_task_to_app_info(task_payload))
+        plugin = get_orchestrator_plugin_manager()
+        task_payload = await asyncio.to_thread(plugin.run_task, task_id)
+        evidence = None
+        if str(task_payload.get("status") or "") == "completed":
+            try:
+                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+            except Exception:
+                evidence = None
+        return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
