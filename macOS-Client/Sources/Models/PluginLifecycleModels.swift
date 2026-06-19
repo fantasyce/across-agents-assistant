@@ -232,6 +232,18 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
         case cancellationRequested = "cancellation_requested"
         case cancelAckPending = "cancel_ack_pending"
     }
+
+    var recentFailureCount: Int {
+        recentFailureTypes?.values.reduce(0, +) ?? 0
+    }
+
+    var hasStaleLease: Bool {
+        lease?.expired == true
+    }
+
+    var needsAttention: Bool {
+        hasStaleLease || cancellationRequested == true || cancelAckPending == true || recentFailureCount > 0
+    }
 }
 
 struct AgentLoopPendingApproval: Decodable, Equatable {
