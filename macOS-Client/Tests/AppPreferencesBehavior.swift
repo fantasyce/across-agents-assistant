@@ -127,6 +127,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop memory candidate focus action should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("capabilities.registry", localeIdentifier: "en") == "Orchestrator Registry",
+        "Host capability registry title should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("capabilities.registryRedacted", localeIdentifier: "zh-Hans") == "已脱敏",
+        "Host capability registry redaction marker should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )

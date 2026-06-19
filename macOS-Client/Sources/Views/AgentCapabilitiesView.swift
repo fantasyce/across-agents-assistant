@@ -310,6 +310,7 @@ struct AgentCapabilitiesView: View {
     private func profileEditor(agent: CapabilityAgentOption, profile: AgentCapabilityProfile) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             profileHeader(agent: agent, profile: profile)
+            registrySection(agent: agent)
             skillsSection(agentId: agent.id, profile: profile)
             if case .local = agent.kind {
                 nativeSkillsSection(agent: agent)
@@ -319,6 +320,109 @@ struct AgentCapabilitiesView: View {
             instructionsSection(agentId: agent.id, profile: profile)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func registrySection(agent: CapabilityAgentOption) -> some View {
+        capabilitySection(
+            title: appPreferences.text("capabilities.registry"),
+            iconName: "point.3.connected.trianglepath.dotted",
+            tint: toolColor
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    registryChip(String(format: appPreferences.text("capabilities.registryAgents"), viewModel.hostRegistry?.agents.count ?? 0))
+                    registryChip(String(format: appPreferences.text("capabilities.registryCapabilities"), viewModel.hostRegistry?.exportedCapabilityCount ?? 0))
+                    if viewModel.hostRegistry?.security.credentialFieldsRedacted == true,
+                       viewModel.hostRegistry?.security.secretsIncluded == false {
+                        registryChip(appPreferences.text("capabilities.registryRedacted"))
+                    }
+                    Spacer()
+                    Button {
+                        Task { await viewModel.loadHostRegistry(refresh: true) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 28, height: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(textColor)
+                    .background(softColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .help(appPreferences.text("capabilities.registryRefresh"))
+                }
+
+                if let descriptor = viewModel.hostRegistry?.descriptor(for: agent.id) {
+                    registryDescriptor(descriptor)
+                } else {
+                    Text(appPreferences.text("capabilities.registryEmpty"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func registryDescriptor(_ descriptor: HostAgentCapabilityDescriptor) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(descriptor.displayName)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+                registryChip(descriptor.agentType)
+                if descriptor.strictToolScope {
+                    registryChip(appPreferences.text("capabilities.strictScope"))
+                }
+                Spacer()
+            }
+
+            registryChipRow(appPreferences.text("capabilities.registryAliases"), descriptor.aliases)
+            registryChipRow(appPreferences.text("capabilities.registryDescriptor"), descriptor.capabilities)
+            registryChipRow(appPreferences.text("capabilities.registryPlugins"), descriptor.enabledPluginIds)
+            registryChipRow(appPreferences.text("capabilities.registryTools"), descriptor.enabledToolNames)
+
+            if !descriptor.warnings.isEmpty {
+                registryChipRow(appPreferences.text("capabilities.registryWarnings"), descriptor.warnings)
+            }
+        }
+        .padding(10)
+        .background(softColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func registryChipRow(_ title: String, _ values: [String]) -> some View {
+        if !values.isEmpty {
+            HStack(alignment: .center, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 86, alignment: .leading)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(values.prefix(12)), id: \.self) { value in
+                            registryChip(value)
+                        }
+                        if values.count > 12 {
+                            registryChip("+\(values.count - 12)")
+                        }
+                    }
+                }
+                .frame(height: 22, alignment: .leading)
+            }
+        }
+    }
+
+    private func registryChip(_ text: String) -> some View {
+        Text(text.replacingOccurrences(of: "_", with: " "))
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(softColor)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func profileHeader(agent: CapabilityAgentOption, profile: AgentCapabilityProfile) -> some View {

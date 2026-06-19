@@ -64,6 +64,56 @@ func testSkillDefinitionMarksCustomSkills() throws {
     assert(skill.isCustom, "Skills from the custom source should be marked custom")
 }
 
+func testHostCapabilityRegistryDecodesNonSecretDescriptor() throws {
+    let json = """
+    {
+      "schema_version": "1.0",
+      "generated_at": 1710000000,
+      "security": {
+        "secrets_included": false,
+        "custom_instructions_included": false,
+        "install_paths_included": false,
+        "credential_fields_redacted": true
+      },
+      "agents": [
+        {
+          "agent_id": "hermes",
+          "display_name": "Hermes",
+          "agent_type": "local",
+          "aliases": ["hermes", "Hermes"],
+          "capabilities": ["frontend_design", "frontend", "browser.open"],
+          "configured_skill_ids": ["frontend_design"],
+          "configured_skill_names": ["Frontend product design"],
+          "enabled_plugin_ids": ["across_context"],
+          "enabled_tool_names": ["browser.open"],
+          "native_skill_ids": ["browser-automation"],
+          "strict_tool_scope": true,
+          "warnings": []
+        },
+        {
+          "agent_id": "deepseek",
+          "display_name": "DeepSeek",
+          "agent_type": "cloud",
+          "capabilities": [],
+          "warnings": ["Configure a provider key before routing."]
+        }
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let registry = try JSONDecoder().decode(HostAgentCapabilityRegistry.self, from: json)
+    let hermes = registry.descriptor(for: "hermes")
+
+    assert(registry.schemaVersion == "1.0", "Host registry schema should decode")
+    assert(registry.security.secretsIncluded == false, "Host registry should expose non-secret export state")
+    assert(registry.security.customInstructionsIncluded == false, "Host registry should not include private instructions")
+    assert(registry.security.credentialFieldsRedacted == true, "Host registry should expose credential redaction")
+    assert(registry.routeReadyAgentCount == 1, "Host registry should count agents with exported capabilities")
+    assert(registry.exportedCapabilityCount == 3, "Host registry should count unique exported capabilities")
+    assert(hermes?.strictToolScope == true, "Host registry descriptor should decode strict tool scope")
+    assert(hermes?.nativeSkillIds == ["browser-automation"], "Host registry descriptor should decode native skill ids")
+}
+
 func testPreflightResponseFindsBestRecommendation() {
     let preflight = AgentCapabilityPreflightResponse(
         selectedAgentIds: ["hermes", "deepseek"],
@@ -286,6 +336,7 @@ struct AgentCapabilityBehavior {
         testProfileTogglesSkillsPluginsAndTools()
         testConfiguredCapabilityCountIsStable()
         try! testSkillDefinitionMarksCustomSkills()
+        try! testHostCapabilityRegistryDecodesNonSecretDescriptor()
         testPreflightResponseFindsBestRecommendation()
         try! testNativeSkillModelsDecodeAgentStateAndEncodeInstallRequest()
         try! testReleaseEvaluationSummaryDecodesBackendPayload()

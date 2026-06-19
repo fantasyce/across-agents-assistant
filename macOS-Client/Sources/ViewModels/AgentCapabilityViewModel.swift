@@ -12,6 +12,7 @@ final class AgentCapabilityViewModel: ObservableObject {
     @Published var profiles: [String: AgentCapabilityProfile] = [:]
     @Published var availableTools: [AgentCapabilityToolSchema] = []
     @Published var agentCards: [String: AgentCapabilityAgentCard] = [:]
+    @Published var hostRegistry: HostAgentCapabilityRegistry?
     @Published var nativeSkillAgents: [String: NativeSkillAgentState] = [:]
     @Published var isLoading = false
     @Published var isSaving = false
@@ -42,6 +43,23 @@ final class AgentCapabilityViewModel: ObservableObject {
             availableTools = decoded.availableTools.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             nativeSkillAgents = decoded.nativeSkillAgents
             agentCards = Dictionary(uniqueKeysWithValues: decoded.agentCards.map { ($0.agentId, $0) })
+            await loadHostRegistry(refresh: false)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadHostRegistry(refresh: Bool = false) async {
+        do {
+            guard let url = URL(string: "\(backendBase)/api/host/agent-capabilities\(refresh ? "?refresh=true" : "")") else {
+                return
+            }
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            hostRegistry = try JSONDecoder().decode(HostAgentCapabilityRegistry.self, from: data)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -122,6 +140,7 @@ final class AgentCapabilityViewModel: ObservableObject {
             let decoded = try JSONDecoder().decode(AgentCapabilitySaveResponse.self, from: data)
             profiles[decoded.profile.agentId] = decoded.profile
             lastSavedAgentId = decoded.profile.agentId
+            await loadHostRegistry(refresh: false)
         } catch {
             errorMessage = error.localizedDescription
         }
