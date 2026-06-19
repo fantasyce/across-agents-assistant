@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- RC verification reports now include structured pre-release gate evidence for
+  backend regression, open-source checks, Swift behavior/build gates, local Live
+  E2E, GitHub Live E2E, and Quality CI; the Diagnostics UI renders the gate
+  checklist and the Swift behavior runner now covers release-verification model
+  decoding.
+
 ## 0.8.26 - 2026-06-20
 
 ### Added

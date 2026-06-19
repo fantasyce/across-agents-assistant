@@ -196,6 +196,7 @@ struct StartupDiagnosticsView: View {
                     } else {
                         releaseVerificationEmptyEvidence(report)
                     }
+                    preReleaseGateSection(report)
                     releaseReportFiles(report)
                     if !report.remediations.isEmpty {
                         releaseRemediations(report.remediations)
@@ -285,6 +286,84 @@ struct StartupDiagnosticsView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private func preReleaseGateSection(_ report: ReleaseVerificationReport) -> some View {
+        let gates = report.preReleaseGates ?? []
+        if !gates.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(appPreferences.text("releaseVerification.preReleaseGates"))
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(textColor)
+                        Text(report.gateHeadline)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Text(String(format: appPreferences.text("releaseVerification.gateSummary"), report.gateSummary.configured, report.gateSummary.manualRequired, report.gateSummary.missing))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(gateSummaryColor(report.gateSummary))
+                        .lineLimit(1)
+                }
+
+                ForEach(gates) { gate in
+                    preReleaseGateRow(gate)
+                }
+            }
+            .padding(12)
+            .background(cardColor)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+            )
+        }
+    }
+
+    private func preReleaseGateRow(_ gate: ReleaseVerificationPreReleaseGate) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: gateIconName(gate.status))
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(gateStatusColor(gate.status))
+                .frame(width: 22, height: 22)
+                .background(gateStatusColor(gate.status).opacity(0.14))
+                .cornerRadius(7)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(gate.label)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(textColor)
+                    Text(localizedGateStatus(gate.status))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(gateStatusColor(gate.status))
+                    Spacer(minLength: 0)
+                    Text(gate.source.replacingOccurrences(of: "_", with: " "))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                if !gate.detail.isEmpty {
+                    Text(gate.detail)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !gate.command.isEmpty {
+                    Text(gate.command)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .padding(10)
+        .background(fieldColor)
+        .cornerRadius(8)
     }
 
     private func releaseVerificationEmptyEvidence(_ report: ReleaseVerificationReport) -> some View {
@@ -603,6 +682,51 @@ struct StartupDiagnosticsView: View {
             return statusColor(status)
         }
         return .secondary
+    }
+
+    private func gateStatusColor(_ value: String) -> Color {
+        switch value {
+        case "configured", "passed":
+            return Color(hex: "30d158")
+        case "manual_required", "attention", "warning":
+            return Color(hex: "ff9f0a")
+        case "missing", "failed", "blocked":
+            return Color(hex: "ff453a")
+        default:
+            return .secondary
+        }
+    }
+
+    private func gateSummaryColor(_ summary: ReleaseVerificationPreReleaseGateSummary) -> Color {
+        if summary.requiredMissing > 0 || summary.missing > 0 {
+            return Color(hex: "ff453a")
+        }
+        if summary.manualRequired > 0 {
+            return Color(hex: "ff9f0a")
+        }
+        return Color(hex: "30d158")
+    }
+
+    private func gateIconName(_ value: String) -> String {
+        switch value {
+        case "configured", "passed":
+            return "checkmark.circle.fill"
+        case "manual_required", "attention", "warning":
+            return "clock.badge.exclamationmark.fill"
+        case "missing", "failed", "blocked":
+            return "xmark.octagon.fill"
+        default:
+            return "info.circle.fill"
+        }
+    }
+
+    private func localizedGateStatus(_ value: String) -> String {
+        let key = "releaseVerification.gateStatus.\(value)"
+        let localized = appPreferences.text(key)
+        if localized != key {
+            return localized
+        }
+        return value.replacingOccurrences(of: "_", with: " ")
     }
 
     private func localizedHeadline(_ report: StartupDiagnosticsReport) -> String {

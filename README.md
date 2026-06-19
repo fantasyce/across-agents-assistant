@@ -664,6 +664,8 @@ starts the backend on a temporary Unix socket, runs
 The GitHub `Live E2E` workflow exposes the same runner as a manual
 `workflow_dispatch` job and installs Across Orchestrator `v0.6.17` before
 running it.
+Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
+and keep the workflow run URL with the release evidence.
 
 RC verification can be run from Settings -> Diagnostics or through the packaged app backend. It writes non-secret JSON and Markdown reports to `$HOME/.across/data/across-agents-assistant/release-reports/`:
 

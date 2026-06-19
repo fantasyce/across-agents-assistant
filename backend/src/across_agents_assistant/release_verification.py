@@ -27,6 +27,86 @@ RELEASE_VERIFICATION_REQUIRED_PROBES = [
     "cli_generic",
 ]
 
+PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
+    {
+        "id": "backend_regression",
+        "label": "Backend regression",
+        "source": "local",
+        "command": "PYTHONPATH=backend/src backend/.venv/bin/python -m pytest backend/tests -q",
+        "detail": "Full backend regression suite including release verification and Agent Loop API coverage.",
+        "paths": ["backend/tests"],
+        "status_when_configured": "configured",
+        "required": True,
+        "readiness_impact": "required",
+    },
+    {
+        "id": "open_source_check",
+        "label": "Open-source check",
+        "source": "local_script",
+        "command": "bash scripts/open_source_check.sh",
+        "detail": "Repository hygiene, sensitive-text scanning, README assets, icon attribution, and shell syntax checks.",
+        "paths": ["scripts/open_source_check.sh"],
+        "status_when_configured": "configured",
+        "required": True,
+        "readiness_impact": "required",
+    },
+    {
+        "id": "swift_behavior_checks",
+        "label": "Swift behavior checks",
+        "source": "local_script",
+        "command": "bash scripts/run_swift_behavior_checks.sh",
+        "detail": "Standalone Swift model and localization behavior checks used by Quality CI.",
+        "paths": ["scripts/run_swift_behavior_checks.sh"],
+        "status_when_configured": "configured",
+        "required": True,
+        "readiness_impact": "required",
+    },
+    {
+        "id": "swift_package_gate",
+        "label": "Swift package gate",
+        "source": "local_script",
+        "command": "bash scripts/verify_swift_package_lock.sh && swift build --package-path macOS-Client --skip-update",
+        "detail": "Swift package lock consistency and macOS client build gate.",
+        "paths": ["scripts/verify_swift_package_lock.sh", "macOS-Client/Package.swift"],
+        "status_when_configured": "configured",
+        "required": True,
+        "readiness_impact": "required",
+    },
+    {
+        "id": "quality_ci",
+        "label": "Quality CI",
+        "source": "github_actions",
+        "command": "gh pr checks <release-pr-number>",
+        "detail": "Pull request CI runs open-source checks, backend regression, Swift lock/build, and Swift behavior checks.",
+        "paths": [".github/workflows/quality.yml"],
+        "status_when_configured": "configured",
+        "required": True,
+        "readiness_impact": "required",
+    },
+    {
+        "id": "local_live_e2e",
+        "label": "Local Live E2E",
+        "source": "local_script",
+        "command": "bash scripts/run_live_e2e.sh all",
+        "detail": "Temporary AAA backend plus external Across Orchestrator sidecar, tiered E2E, and legacy socket API E2E.",
+        "paths": ["scripts/run_live_e2e.sh"],
+        "status_when_configured": "manual_required",
+        "required": True,
+        "readiness_impact": "manual",
+    },
+    {
+        "id": "github_live_e2e",
+        "label": "GitHub Live E2E",
+        "source": "github_actions",
+        "command": "gh workflow run \"Live E2E\" -f tier=all --ref main",
+        "detail": "Manual workflow_dispatch gate that installs Across Orchestrator and runs the same live E2E runner remotely.",
+        "paths": [".github/workflows/live-e2e.yml"],
+        "status_when_configured": "manual_required",
+        "required": True,
+        "readiness_impact": "manual",
+    },
+]
+
 
 SENSITIVE_EVIDENCE_KEY_RE = re.compile(
     r"(api[_-]?key|secret|token|password|credential|authorization|private[_-]?key|access[_-]?key)",
@@ -193,13 +273,73 @@ def _latest_release_e2e_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, An
     )[0]
 
 
+def _repository_root() -> Path:
+    # This module currently lives under backend/src/across_agents_assistant.
+    # Keep the parent index in sync if release_verification.py moves.
+    return Path(__file__).resolve().parents[3]
+
+
+def _build_pre_release_gates(repo_root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    root = repo_root or _repository_root()
+    gates: List[Dict[str, Any]] = []
+    for definition in PRE_RELEASE_GATE_DEFINITIONS:
+        paths = list(definition.get("paths") or [])
+        missing_paths = [path for path in paths if not (root / path).exists()]
+        status = "missing" if missing_paths else str(definition.get("status_when_configured") or "configured")
+        detail = str(definition.get("detail") or "")
+        if missing_paths:
+            detail = f"Missing release gate path(s): {', '.join(missing_paths)}"
+        gates.append(
+            {
+                "id": definition["id"],
+                "label": definition["label"],
+                "status": status,
+                "source": definition["source"],
+                "command": definition["command"],
+                "detail": detail,
+                "paths": paths,
+                "required": bool(definition.get("required", True)),
+                "readiness_impact": definition.get("readiness_impact") or "required",
+            }
+        )
+    return gates
+
+
+def _pre_release_gate_summary(gates: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    return {
+        "total": len(gates),
+        "configured": sum(1 for gate in gates if gate.get("status") == "configured"),
+        "manual_required": sum(1 for gate in gates if gate.get("status") == "manual_required"),
+        "missing": sum(1 for gate in gates if gate.get("status") == "missing"),
+        "required_missing": sum(
+            1
+            for gate in gates
+            if gate.get("required") is True and gate.get("status") == "missing"
+        ),
+    }
+
+
+def _missing_required_gate_paths(gates: Sequence[Dict[str, Any]]) -> List[str]:
+    missing_paths = {
+        str(path)
+        for gate in gates
+        if gate.get("required") is True and gate.get("status") == "missing"
+        for path in (gate.get("paths") or [])
+    }
+    return sorted(missing_paths)
+
+
 def _release_verification_status(
     startup_status: str,
     latest_release_e2e: Optional[Dict[str, Any]],
+    pre_release_gate_summary: Optional[Dict[str, int]] = None,
 ) -> tuple[str, List[str]]:
     remediations: List[str] = []
     if startup_status == "blocked":
         remediations.append("Resolve failed startup diagnostics before release approval.")
+
+    if (pre_release_gate_summary or {}).get("required_missing", 0) > 0:
+        remediations.append("Restore missing pre-release verification gates before release approval.")
 
     if latest_release_e2e is None:
         remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
@@ -210,6 +350,8 @@ def _release_verification_status(
 
     if startup_status == "blocked":
         return "blocked", remediations
+    if (pre_release_gate_summary or {}).get("required_missing", 0) > 0:
+        return "attention", remediations
     if latest_release_e2e is not None:
         benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
         if benchmark_status != "passed":
@@ -269,6 +411,8 @@ def _build_latest_release_e2e_verification(
 def _release_verification_markdown(report: Dict[str, Any]) -> str:
     startup_summary = report.get("startup", {}).get("summary", {})
     latest = report.get("latest_release_e2e")
+    pre_release_gates = report.get("pre_release_gates") or []
+    pre_release_summary = report.get("pre_release_gate_summary") or {}
     lines = [
         "# Across Agents Assistant RC Verification",
         "",
@@ -301,6 +445,28 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
             lines.extend([f"- {failure}" for failure in failures])
     else:
         lines.append("No Release E2E evidence was found.")
+
+    lines.extend([
+        "",
+        "## Pre-Release Gates",
+        (
+            f"{pre_release_summary.get('configured', 0)} configured · "
+            f"{pre_release_summary.get('manual_required', 0)} manual · "
+            f"{pre_release_summary.get('missing', 0)} missing"
+        ),
+        f"Required missing: {pre_release_summary.get('required_missing', 0)}",
+    ])
+    missing_paths = _missing_required_gate_paths(pre_release_gates)
+    if missing_paths:
+        lines.extend(["", "Missing required gate paths:"])
+        lines.extend([f"- {path}" for path in missing_paths])
+    for gate in pre_release_gates:
+        lines.append(
+            f"- {gate.get('label')}: {gate.get('status')} ({gate.get('source')})"
+        )
+        command = gate.get("command")
+        if command:
+            lines.append(f"  - Command: `{command}`")
 
     remediations = report.get("remediations") or []
     lines.extend(["", "## Remediation"])
@@ -359,6 +525,7 @@ def _build_release_verification_report(
     expected_files: Optional[Sequence[str]] = None,
     required_probes: Optional[Sequence[str]] = None,
     write_report_directory: Optional[Path] = None,
+    repo_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     from .task_review.release_evaluation import build_release_evaluation_summary
 
@@ -383,6 +550,8 @@ def _build_release_verification_report(
     )
     release_evaluation = build_release_evaluation_summary(rows)
     latest_row = _latest_release_e2e_row(rows)
+    pre_release_gates = _build_pre_release_gates(repo_root=repo_root)
+    pre_release_summary = _pre_release_gate_summary(pre_release_gates)
 
     latest_release_e2e = None
     if latest_row and load_task_payload:
@@ -399,6 +568,7 @@ def _build_release_verification_report(
     status, remediations = _release_verification_status(
         str(startup.get("status") or "attention"),
         latest_release_e2e,
+        pre_release_summary,
     )
 
     report: Dict[str, Any] = {
@@ -409,6 +579,8 @@ def _build_release_verification_report(
         "startup": startup,
         "release_evaluation": copy.deepcopy(release_evaluation),
         "latest_release_e2e": latest_release_e2e,
+        "pre_release_gates": pre_release_gates,
+        "pre_release_gate_summary": pre_release_summary,
         "remediations": remediations,
         "report_files": {},
         "audit": {

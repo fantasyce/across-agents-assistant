@@ -59,6 +59,11 @@ func testReleaseVerificationDecodeAndSummary() throws {
         },
         "summary": {"status": "passed", "quality_score": 91, "remediation_attempts": 1, "failed_scenarios": 0}
       },
+      "pre_release_gates": [
+        {"id": "backend_regression", "label": "Backend regression", "status": "configured", "source": "local", "command": "PYTHONPATH=backend/src backend/.venv/bin/python -m pytest backend/tests -q", "detail": "Backend regression", "paths": ["backend/tests"], "required": true, "readiness_impact": "required"},
+        {"id": "github_live_e2e", "label": "GitHub Live E2E", "status": "manual_required", "source": "github_actions", "command": "gh workflow run \\\"Live E2E\\\" -f tier=all --ref main", "detail": "Manual workflow", "paths": [".github/workflows/live-e2e.yml"], "required": true, "readiness_impact": "manual"}
+      ],
+      "pre_release_gate_summary": {"total": 2, "configured": 1, "manual_required": 1, "missing": 0, "required_missing": 0},
       "remediations": [],
       "report_files": {
         "directory": "/tmp/release-reports",
@@ -88,6 +93,9 @@ func testReleaseVerificationDecodeAndSummary() throws {
     assert(report.audit.readOnly, "Audit should decode read-only flag")
     assert(report.audit.secretsRedacted, "Audit should decode redaction flag")
     assert(report.readyHeadline == "Ready · Release E2E passed · score 91", "Headline should summarize RC readiness")
+    assert(report.preReleaseGates?.count == 2, "Pre-release gates should decode")
+    assert(report.gateSummary.manualRequired == 1, "Manual pre-release gate count should decode")
+    assert(report.gateHeadline == "1 configured · 1 manual · 0 missing", "Gate headline should summarize pre-release gates")
 }
 
 func testReleaseVerificationAttentionSummaryWithoutE2E() throws {
@@ -120,6 +128,8 @@ func testReleaseVerificationAttentionSummaryWithoutE2E() throws {
 
     assert(report.status == .attention, "Attention status should decode")
     assert(report.latestReleaseE2E == nil, "Missing latest Release E2E should decode as nil")
+    assert(report.preReleaseGates == nil, "Older reports without gate evidence should remain decodable")
+    assert(report.gateSummary.total == 0, "Missing gate summary should default to empty")
     assert(report.readyHeadline == "Attention · Release E2E missing", "Headline should call out missing E2E evidence")
     assert(report.primaryRemediation?.contains("Release E2E") == true, "Primary remediation should be available")
 }

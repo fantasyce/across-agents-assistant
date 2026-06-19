@@ -27,4 +27,13 @@ swiftc -parse-as-library \
   -o "$TMP_DIR/PluginLifecycleBehavior"
 "$TMP_DIR/PluginLifecycleBehavior"
 
+echo "== ReleaseVerificationBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/ReleaseVerificationBehavior.swift \
+  macOS-Client/Sources/Models/ReleaseVerificationModels.swift \
+  macOS-Client/Sources/Models/ReleaseEvaluationModels.swift \
+  macOS-Client/Sources/Models/StartupDiagnosticsModels.swift \
+  -o "$TMP_DIR/ReleaseVerificationBehavior"
+"$TMP_DIR/ReleaseVerificationBehavior"
+
 echo "Swift behavior checks passed."

@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from across_agents_assistant import api_server
+from across_agents_assistant import api_server, release_verification
 from across_agents_assistant.api_server import app
 
 
@@ -169,13 +169,26 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert body["startup"]["summary"]["status"] == "ready"
     assert body["latest_release_e2e"]["task_id"] == "task-rc"
     assert body["latest_release_e2e"]["benchmark"]["status"] == "passed"
+    assert body["pre_release_gate_summary"]["required_missing"] == 0
+    assert {gate["id"] for gate in body["pre_release_gates"]} >= {
+        "backend_regression",
+        "open_source_check",
+        "swift_behavior_checks",
+        "local_live_e2e",
+        "github_live_e2e",
+    }
+    assert any(gate["status"] == "manual_required" for gate in body["pre_release_gates"])
     assert body["audit"]["read_only"] is True
     assert body["audit"]["repair_or_resume_triggered"] is False
     assert body["audit"]["secrets_redacted"] is True
     assert body["report_files"]["json_path"].endswith(".json")
     assert body["report_files"]["markdown_path"].endswith(".md")
     assert (tmp_path / "release-reports").exists()
-    assert "task-rc" in (tmp_path / "release-reports").joinpath(body["report_files"]["markdown_name"]).read_text()
+    markdown = (tmp_path / "release-reports").joinpath(body["report_files"]["markdown_name"]).read_text()
+    assert "task-rc" in markdown
+    assert "Pre-Release Gates" in markdown
+    assert "Required missing: 0" in markdown
+    assert "bash scripts/run_live_e2e.sh all" in markdown
     encoded = json.dumps(body)
     assert "rc-secret-should-not-leak" not in encoded
     assert "api_key" not in encoded.lower()
@@ -204,3 +217,47 @@ def test_release_verification_reports_attention_when_release_e2e_is_missing(monk
     assert body["latest_release_e2e"] is None
     assert any("Release E2E" in item for item in body["remediations"])
     assert body["report_files"]["markdown_path"].endswith(".md")
+
+
+def test_release_verification_reports_attention_when_required_gate_is_missing(monkeypatch, tmp_path):
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=100, offset=0):
+            return (
+                [
+                    {
+                        "task_id": "task-rc",
+                        "description": "Release E2E scenario: web api cli release candidate",
+                        "status": "completed",
+                        "created_at": 10.0,
+                        "updated_at": 20.0,
+                    },
+                ],
+                1,
+            )
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
+    monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
+    monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: _release_e2e_task(task_id))
+    monkeypatch.setattr(release_verification, "_repository_root", lambda: repo_root)
+
+    response = TestClient(app).post("/api/release/verification")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "attention"
+    assert body["pre_release_gate_summary"]["required_missing"] > 0
+    assert any("pre-release verification gates" in item for item in body["remediations"])
+    markdown = (tmp_path / "release-reports").joinpath(body["report_files"]["markdown_name"]).read_text()
+    assert "Required missing: 7" in markdown
+    assert "Missing required gate paths:" in markdown
+    assert "scripts/run_live_e2e.sh" in markdown

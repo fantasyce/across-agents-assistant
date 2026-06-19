@@ -1,5 +1,75 @@
 import Foundation
 
+struct ReleaseVerificationPreReleaseGate: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let status: String
+    let source: String
+    let command: String
+    let detail: String
+    let paths: [String]
+    let required: Bool
+    let readinessImpact: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case status
+        case source
+        case command
+        case detail
+        case paths
+        case required
+        case readinessImpact = "readiness_impact"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? id
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "unknown"
+        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        detail = try container.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        paths = try container.decodeIfPresent([String].self, forKey: .paths) ?? []
+        required = try container.decodeIfPresent(Bool.self, forKey: .required) ?? false
+        readinessImpact = try container.decodeIfPresent(String.self, forKey: .readinessImpact) ?? "required"
+    }
+}
+
+struct ReleaseVerificationPreReleaseGateSummary: Decodable {
+    let total: Int
+    let configured: Int
+    let manualRequired: Int
+    let missing: Int
+    let requiredMissing: Int
+
+    enum CodingKeys: String, CodingKey {
+        case total
+        case configured
+        case manualRequired = "manual_required"
+        case missing
+        case requiredMissing = "required_missing"
+    }
+
+    init(total: Int = 0, configured: Int = 0, manualRequired: Int = 0, missing: Int = 0, requiredMissing: Int = 0) {
+        self.total = total
+        self.configured = configured
+        self.manualRequired = manualRequired
+        self.missing = missing
+        self.requiredMissing = requiredMissing
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
+        configured = try container.decodeIfPresent(Int.self, forKey: .configured) ?? 0
+        manualRequired = try container.decodeIfPresent(Int.self, forKey: .manualRequired) ?? 0
+        missing = try container.decodeIfPresent(Int.self, forKey: .missing) ?? 0
+        requiredMissing = try container.decodeIfPresent(Int.self, forKey: .requiredMissing) ?? 0
+    }
+}
+
 struct ReleaseVerificationLatestSummary: Decodable {
     let status: String
     let qualityScore: Int?
@@ -112,6 +182,8 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
     let startup: StartupDiagnosticsReport
     let releaseEvaluation: ReleaseEvaluationSummary
     let latestReleaseE2E: ReleaseVerificationLatestE2E?
+    let preReleaseGates: [ReleaseVerificationPreReleaseGate]?
+    let preReleaseGateSummary: ReleaseVerificationPreReleaseGateSummary?
     let remediations: [String]
     let reportFiles: ReleaseVerificationReportFiles
     let audit: ReleaseVerificationAudit
@@ -122,6 +194,28 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
 
     var primaryRemediation: String? {
         remediations.first
+    }
+
+    var gateSummary: ReleaseVerificationPreReleaseGateSummary {
+        if let preReleaseGateSummary {
+            return preReleaseGateSummary
+        }
+        let gates = preReleaseGates ?? []
+        return ReleaseVerificationPreReleaseGateSummary(
+            total: gates.count,
+            configured: gates.filter { $0.status == "configured" }.count,
+            manualRequired: gates.filter { $0.status == "manual_required" }.count,
+            missing: gates.filter { $0.status == "missing" }.count,
+            requiredMissing: gates.filter { $0.required && $0.status == "missing" }.count
+        )
+    }
+
+    var gateHeadline: String {
+        let summary = gateSummary
+        if summary.total == 0 {
+            return "No pre-release gates reported"
+        }
+        return "\(summary.configured) configured · \(summary.manualRequired) manual · \(summary.missing) missing"
     }
 
     var readyHeadline: String {
@@ -140,6 +234,8 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
         case startup
         case releaseEvaluation = "release_evaluation"
         case latestReleaseE2E = "latest_release_e2e"
+        case preReleaseGates = "pre_release_gates"
+        case preReleaseGateSummary = "pre_release_gate_summary"
         case remediations
         case reportFiles = "report_files"
         case audit

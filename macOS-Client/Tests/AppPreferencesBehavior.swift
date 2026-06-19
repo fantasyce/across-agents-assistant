@@ -67,6 +67,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "RC verification action should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("releaseVerification.preReleaseGates", localeIdentifier: "en") == "Pre-Release Gates",
+        "Pre-release gate section should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("releaseVerification.gateStatus.manual_required", localeIdentifier: "zh-Hans") == "手动",
+        "Manual pre-release gate state should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.runtime", localeIdentifier: "en") == "Agent Loop",
         "Agent Loop plugin capability label should be localized in English"
     )
