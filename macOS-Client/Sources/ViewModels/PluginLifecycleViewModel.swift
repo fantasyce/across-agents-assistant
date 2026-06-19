@@ -13,6 +13,7 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopProbe: AgentLoopRunResponse?
     @Published var agentLoopHealth: AgentLoopHealthResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
+    @Published var agentLoopEventsLive = false
     @Published var message: String?
     @Published var errorMessage: String?
 
@@ -162,6 +163,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         errorMessage = nil
         agentLoopHealth = nil
         agentLoopEvents = []
+        agentLoopEventsLive = false
         defer {
             isRunningAgentLoopProbe = false
             isWorking = false
@@ -206,19 +208,81 @@ final class PluginLifecycleViewModel: ObservableObject {
                 message = "Agent Loop Probe: \(completed.status) (health unavailable)"
             }
 
-            let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/events")!
-            var eventsRequest = URLRequest(url: eventsURL)
-            eventsRequest.httpMethod = "GET"
-            do {
-                let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
-                try Self.validate(eventsResponse)
-                agentLoopEvents = try JSONDecoder().decode([AgentLoopEventResponse].self, from: eventsData)
-            } catch {
-                agentLoopEvents = []
-            }
+            let eventResult = await fetchAgentLoopEvents(escapedLoopId: escaped)
+            agentLoopEvents = eventResult.events
+            agentLoopEventsLive = eventResult.live
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func fetchAgentLoopEvents(escapedLoopId: String) async -> (events: [AgentLoopEventResponse], live: Bool) {
+        do {
+            let events = try await fetchAgentLoopEventStream(escapedLoopId: escapedLoopId)
+            if !events.isEmpty {
+                return (events, true)
+            }
+        } catch {
+            // Snapshot fetch below is the compatibility path for older AAA backends.
+        }
+
+        do {
+            let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events")!
+            var eventsRequest = URLRequest(url: eventsURL)
+            eventsRequest.httpMethod = "GET"
+            let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
+            try Self.validate(eventsResponse)
+            let events = try JSONDecoder().decode([AgentLoopEventResponse].self, from: eventsData)
+            return (events, false)
+        } catch {
+            return ([], false)
+        }
+    }
+
+    private func fetchAgentLoopEventStream(escapedLoopId: String) async throws -> [AgentLoopEventResponse] {
+        let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events/stream")!
+        var eventsRequest = URLRequest(url: eventsURL)
+        eventsRequest.httpMethod = "GET"
+        eventsRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        eventsRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: eventsRequest)
+        try Self.validate(response)
+
+        var streamData = Data()
+        for try await byte in bytes {
+            streamData.append(byte)
+        }
+        let streamText = String(data: streamData, encoding: .utf8) ?? ""
+        return Self.decodeAgentLoopEventsFromSSE(streamText)
+    }
+
+    nonisolated static func decodeAgentLoopEventsFromSSE(_ text: String) -> [AgentLoopEventResponse] {
+        var events: [AgentLoopEventResponse] = []
+        var dataLines: [String] = []
+        let decoder = JSONDecoder()
+
+        func flush() {
+            let payload = dataLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            dataLines.removeAll()
+            guard !payload.isEmpty, let data = payload.data(using: .utf8) else { return }
+            if let event = try? decoder.decode(AgentLoopEventResponse.self, from: data) {
+                events.append(event)
+            } else if let batch = try? decoder.decode([AgentLoopEventResponse].self, from: data) {
+                events.append(contentsOf: batch)
+            }
+        }
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            if line.isEmpty {
+                flush()
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        flush()
+        return events
     }
 
     private static func validate(_ response: URLResponse) throws {

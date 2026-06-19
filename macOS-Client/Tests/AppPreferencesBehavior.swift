@@ -67,6 +67,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop events timeline label should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.eventsLive", localeIdentifier: "en") == "Live",
+        "Agent Loop live timeline source should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.eventsSnapshot", localeIdentifier: "zh-Hans") == "快照",
+        "Agent Loop snapshot timeline source should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("missing.key", localeIdentifier: "zh-Hans") == "missing.key",
         "Missing labels should fall back without becoming empty"
     )

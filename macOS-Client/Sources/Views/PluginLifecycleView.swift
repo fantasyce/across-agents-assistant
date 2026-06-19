@@ -263,7 +263,7 @@ struct PluginLifecycleView: View {
                     .frame(height: 22, alignment: .leading)
 
                     if !viewModel.agentLoopEvents.isEmpty {
-                        agentLoopTimelineRow(viewModel.agentLoopEvents)
+                        agentLoopTimelineRow(viewModel.agentLoopEvents, live: viewModel.agentLoopEventsLive)
                     }
                 }
             } else {
@@ -272,10 +272,11 @@ struct PluginLifecycleView: View {
         }
     }
 
-    private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse]) -> some View {
+    private func agentLoopTimelineRow(_ events: [AgentLoopEventResponse], live: Bool) -> some View {
         let recentEvents = Array(events.suffix(4))
         return HStack(spacing: 6) {
             metadataChip(appPreferences.text("plugins.loop.events"))
+            metadataChip(appPreferences.text(live ? "plugins.loop.eventsLive" : "plugins.loop.eventsSnapshot"))
             ForEach(Array(recentEvents.enumerated()), id: \.offset) { _, event in
                 agentLoopEventChip(event)
             }

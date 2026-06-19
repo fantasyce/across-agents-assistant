@@ -174,6 +174,23 @@ func testAgentLoopEventResponseDecodesNestedPayloads() throws {
     }
 }
 
+func testAgentLoopEventResponseDecodesSSEStream() throws {
+    let stream = """
+    event: loop.started
+    data: {"type":"loop.started","loop_id":"loop-ui","payload":{"status":"running"}}
+
+    event: loop.completed
+    data: {"type":"loop.completed","loop_id":"loop-ui","payload":{"status":"completed"}}
+
+    """
+
+    let events = PluginLifecycleViewModel.decodeAgentLoopEventsFromSSE(stream)
+
+    assert(events.count == 2, "SSE stream should decode two loop events")
+    assert(events[0].compactLabel == "started: running", "Started SSE event should summarize status")
+    assert(events[1].compactLabel == "completed: completed", "Completed SSE event should summarize status")
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -181,6 +198,7 @@ struct PluginLifecycleBehavior {
         try testAgentLoopRunResponseDecodesProbeResult()
         try testAgentLoopHealthResponseDecodesProbeHealth()
         try testAgentLoopEventResponseDecodesNestedPayloads()
+        try testAgentLoopEventResponseDecodesSSEStream()
         print("PluginLifecycleBehavior passed")
     }
 }

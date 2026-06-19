@@ -1709,6 +1709,35 @@ async def get_external_agent_loop_events(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop events"))
 
 
+@app.get("/api/orchestrator/loops/{loop_id}/events/stream")
+async def stream_external_agent_loop_events(loop_id: str):
+    """Stream external Across Orchestrator agent loop events as sanitized SSE."""
+    try:
+        events = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_events_stream, loop_id)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop event stream", exc)
+    except Exception:
+        logger.exception("External Across Orchestrator agent loop event stream failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop event stream"))
+
+    async def event_generator():
+        for event in events:
+            safe_event = _sanitize_public_payload(event)
+            event_type = "message"
+            if isinstance(safe_event, dict) and safe_event.get("type"):
+                event_type = str(safe_event["type"])
+            yield f"event: {event_type}\n"
+            yield f"data: {json.dumps(safe_event, sort_keys=True)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/api/health")
 async def get_health():
     """Small runtime probe for the macOS app and E2E harnesses."""
