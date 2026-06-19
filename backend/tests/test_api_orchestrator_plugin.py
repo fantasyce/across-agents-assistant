@@ -204,6 +204,9 @@ class FakeHTTPOrchestrator:
                 if self.path == f"/loops/{owner.loop_id}/health":
                     self._json(owner._loop_health_payload(owner.loop_status))
                     return
+                if self.path == f"/loops/{owner.loop_id}/evidence-summary":
+                    self._json(owner._loop_evidence_summary_payload(owner.loop_status))
+                    return
                 if self.path == f"/loops/{owner.loop_id}/events":
                     self._json([
                         {
@@ -387,6 +390,36 @@ class FakeHTTPOrchestrator:
             "cancel_ack_pending": False,
         }
 
+    def _loop_evidence_summary_payload(self, status: str) -> dict:
+        return {
+            "schema_version": "0.1",
+            "loop_id": self.loop_id,
+            "status": status,
+            "agent": "owner",
+            "event_audit": {
+                "event_count": 6,
+                "sequence_contiguous": True,
+                "event_id_coverage": True,
+                "correlation_id_coverage": True,
+            },
+            "routing": {
+                "routed_action_count": 1,
+                "non_default_route_count": 1,
+                "capability_hint_route_count": 1,
+                "outcomes": [
+                    {
+                        "action_type": "task_dispatch",
+                        "selected_agent": "builder",
+                        "source": "metadata.agentCapabilityHints.preferred.task_dispatch",
+                        "capability_hint": "implementation",
+                    }
+                ],
+            },
+            "recovery": {"decision_count": 1, "applied_count": 1, "blocked_count": 0, "decisions": []},
+            "memory_candidates": {"candidate_count": 1, "candidates": []},
+            "cancellation": {"requested": False, "category": None, "reason": None},
+        }
+
 
 def _reset_plugin_manager():
     api_server._orchestrator_plugin_manager = None
@@ -497,6 +530,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         run = client.post(f"/api/orchestrator/loops/{loop_id}/run")
         status = client.get(f"/api/orchestrator/loops/{loop_id}")
         health = client.get(f"/api/orchestrator/loops/{loop_id}/health")
+        summary = client.get(f"/api/orchestrator/loops/{loop_id}/evidence-summary")
         events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
         stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream")
 
@@ -505,6 +539,9 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
+    assert summary.json()["schema_version"] == "0.1"
+    assert summary.json()["routing"]["capability_hint_route_count"] == 1
+    assert summary.json()["event_audit"]["sequence_contiguous"] is True
     assert events.json()[0]["type"] == "loop.completed"
     assert events.json()[0]["event_id"] == "loop-event-api-1"
     assert events.json()[0]["sequence"] == 1
@@ -518,6 +555,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert "Traceback" not in stream.text
     assert ("POST", "/loops") in server.requests
     assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/evidence-summary") in server.requests
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/events")) >= 2
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}

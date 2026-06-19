@@ -134,6 +134,55 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
     assert(health.needsAttention == true, "Recent failures should mark loop health as attention-worthy")
 }
 
+func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
+    let json = """
+    {
+      "schema_version": "0.1",
+      "loop_id": "loop-ui",
+      "status": "completed",
+      "event_audit": {
+        "event_count": 12,
+        "sequence_contiguous": true,
+        "event_id_coverage": true,
+        "correlation_id_coverage": true
+      },
+      "routing": {
+        "routed_action_count": 2,
+        "non_default_route_count": 2,
+        "capability_hint_route_count": 1,
+        "outcomes": [
+          {
+            "action_type": "task_dispatch",
+            "status": "completed",
+            "selected_agent": "builder",
+            "source": "metadata.agentCapabilityHints.preferred.task_dispatch",
+            "capability_hint": "implementation"
+          }
+        ]
+      },
+      "recovery": {
+        "decision_count": 1,
+        "applied_count": 1,
+        "blocked_count": 0
+      },
+      "memory_candidates": {
+        "candidate_count": 1
+      }
+    }
+    """.data(using: .utf8)!
+
+    let summary = try JSONDecoder().decode(AgentLoopEvidenceSummaryResponse.self, from: json)
+
+    assert(summary.schemaVersion == "0.1", "Evidence summary schema should decode")
+    assert(summary.loopId == "loop-ui", "Evidence summary loop id should decode")
+    assert(summary.eventAudit?.eventCount == 12, "Evidence event count should decode")
+    assert(summary.eventAudit?.sequenceContiguous == true, "Evidence audit sequence coverage should decode")
+    assert(summary.routing?.capabilityHintRouteCount == 1, "Capability hint route count should decode")
+    assert(summary.routing?.outcomes?.first?.selectedAgent == "builder", "Routing outcome agent should decode")
+    assert(summary.recovery?.appliedCount == 1, "Recovery applied count should decode")
+    assert(summary.memoryCandidates?.candidateCount == 1, "Memory candidate count should decode")
+}
+
 func testAgentLoopEventResponseDecodesNestedPayloads() throws {
     let json = """
     [
@@ -237,6 +286,7 @@ struct PluginLifecycleBehavior {
         try testPluginStatusDecodesAgentLoopCapabilities()
         try testAgentLoopRunResponseDecodesProbeResult()
         try testAgentLoopHealthResponseDecodesProbeHealth()
+        try testAgentLoopEvidenceSummaryDecodesAuditAndRouting()
         try testAgentLoopEventResponseDecodesNestedPayloads()
         try testAgentLoopEventResponseDecodesSSEStream()
         try testAgentLoopEventMergingDeduplicatesStreamUpdates()

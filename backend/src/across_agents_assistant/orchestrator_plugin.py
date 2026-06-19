@@ -1149,6 +1149,12 @@ class OrchestratorPluginManager:
             return self._http_get(f"/loops/{loop_id}/health")
         return self._cli_json(["loop-health", loop_id, "--json"])
 
+    def get_agent_loop_evidence_summary(self, loop_id: str) -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            return self._http_get(f"/loops/{loop_id}/evidence-summary")
+        return self._cli_json(["loop-evidence-summary", loop_id, "--json"])
+
     def get_agent_loop_events(self, loop_id: str) -> List[Dict[str, Any]]:
         self._ensure_external()
         if self._transport == "http":

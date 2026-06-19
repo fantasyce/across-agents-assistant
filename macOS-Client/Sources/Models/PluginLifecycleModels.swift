@@ -248,6 +248,92 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
     }
 }
 
+struct AgentLoopEvidenceSummaryResponse: Decodable, Equatable {
+    let schemaVersion: String?
+    let loopId: String
+    let status: String
+    let eventAudit: AgentLoopEvidenceEventAudit?
+    let routing: AgentLoopEvidenceRouting?
+    let recovery: AgentLoopEvidenceRecovery?
+    let memoryCandidates: AgentLoopEvidenceMemoryCandidates?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case loopId = "loop_id"
+        case status
+        case eventAudit = "event_audit"
+        case routing
+        case recovery
+        case memoryCandidates = "memory_candidates"
+    }
+}
+
+struct AgentLoopEvidenceEventAudit: Decodable, Equatable {
+    let eventCount: Int?
+    let sequenceContiguous: Bool?
+    let eventIdCoverage: Bool?
+    let correlationIdCoverage: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case eventCount = "event_count"
+        case sequenceContiguous = "sequence_contiguous"
+        case eventIdCoverage = "event_id_coverage"
+        case correlationIdCoverage = "correlation_id_coverage"
+    }
+}
+
+struct AgentLoopEvidenceRouting: Decodable, Equatable {
+    let routedActionCount: Int?
+    let nonDefaultRouteCount: Int?
+    let capabilityHintRouteCount: Int?
+    let outcomes: [AgentLoopEvidenceRoutingOutcome]?
+
+    enum CodingKeys: String, CodingKey {
+        case routedActionCount = "routed_action_count"
+        case nonDefaultRouteCount = "non_default_route_count"
+        case capabilityHintRouteCount = "capability_hint_route_count"
+        case outcomes
+    }
+}
+
+struct AgentLoopEvidenceRoutingOutcome: Decodable, Equatable {
+    let actionType: String?
+    let status: String?
+    let selectedAgent: String?
+    let source: String?
+    let matchedGate: String?
+    let capabilityHint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case actionType = "action_type"
+        case status
+        case selectedAgent = "selected_agent"
+        case source
+        case matchedGate = "matched_gate"
+        case capabilityHint = "capability_hint"
+    }
+}
+
+struct AgentLoopEvidenceRecovery: Decodable, Equatable {
+    let decisionCount: Int?
+    let appliedCount: Int?
+    let blockedCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case decisionCount = "decision_count"
+        case appliedCount = "applied_count"
+        case blockedCount = "blocked_count"
+    }
+}
+
+struct AgentLoopEvidenceMemoryCandidates: Decodable, Equatable {
+    let candidateCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case candidateCount = "candidate_count"
+    }
+}
+
 struct AgentLoopPendingApproval: Decodable, Equatable {
     let stepId: String?
     let actionId: String?
