@@ -699,6 +699,32 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
     assert fake.install_called is True
 
 
+def test_external_agent_loop_health_forwards_orchestrator_404(monkeypatch):
+    class FakeManager:
+        def get_agent_loop_health(self, loop_id):
+            raise api_server.OrchestratorPluginHTTPError(404, '{"error":"not_found"}')
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeManager())
+
+    response = TestClient(app).get("/api/orchestrator/loops/missing-loop/health")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "External Across Orchestrator resource not found."
+
+
+def test_external_agent_loop_health_maps_orchestrator_500_to_bad_gateway(monkeypatch):
+    class FakeManager:
+        def get_agent_loop_health(self, loop_id):
+            raise api_server.OrchestratorPluginHTTPError(500, '{"error":"internal_error"}')
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeManager())
+
+    response = TestClient(app).get("/api/orchestrator/loops/broken-loop/health")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "External Across Orchestrator agent loop health failed. See local backend logs for details."
+
+
 def test_release_e2e_external_required_fails_when_runtime_unavailable(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
