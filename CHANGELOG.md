@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- Plugin Center loop health details now keep compact release readiness visible
+  while folding lower-level Agent Loop evidence into an expandable details
+  section.
+
+### Fixed
+
+- External Orchestrator task acceptance records now omit nondeterministic
+  fallback timestamps and de-duplicate root-cause artifact ids when upstream
+  task timestamps or artifact rows are incomplete.
+
 ## 0.8.22 - 2026-06-19
 
 ### Fixed

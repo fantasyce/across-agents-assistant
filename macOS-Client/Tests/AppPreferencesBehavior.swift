@@ -107,6 +107,10 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop host release risk label should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.evidenceDetails", localeIdentifier: "en") == "Evidence details",
+        "Agent Loop evidence detail disclosure should be localized in English"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.auditComplete", localeIdentifier: "en") == "%d events complete",
         "Agent Loop evidence audit summary should be localized in English"
     )
