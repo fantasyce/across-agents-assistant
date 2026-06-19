@@ -379,17 +379,27 @@ func testAgentLoopEventMergingDeduplicatesStreamUpdates() throws {
 }
 
 func testAgentLoopTimelineModeAndSourceContracts() throws {
+    let expectedLocalizationKeys = [
+        "plugins.loop.eventsLive",
+        "plugins.loop.eventsSnapshot",
+        "plugins.loop.eventsFallback",
+        "plugins.loop.eventsUnavailable",
+    ]
+
     assert(AgentLoopTimelineMode.live.followStream == true, "Live timeline mode should follow the SSE stream")
     assert(AgentLoopTimelineMode.snapshot.followStream == false, "Snapshot timeline mode should request finite SSE only")
     assert(AgentLoopTimelineSource.live.isLive == true, "Live timeline source should be marked live")
     assert(AgentLoopTimelineSource.fallback.isLive == false, "Fallback timeline source should not be marked live")
     assert(
-        AgentLoopTimelineSource.localizationKeys == [
-            "plugins.loop.eventsLive",
-            "plugins.loop.eventsSnapshot",
-            "plugins.loop.eventsFallback",
-            "plugins.loop.eventsUnavailable",
-        ],
+        AgentLoopTimelineSource.allCases.count == expectedLocalizationKeys.count,
+        "Timeline source expected key list should cover every case"
+    )
+    assert(
+        AgentLoopTimelineSource.localizationKeys == AgentLoopTimelineSource.allCases.map(\.localizationKey),
+        "Timeline source localization keys should be derived from all cases"
+    )
+    assert(
+        AgentLoopTimelineSource.localizationKeys == expectedLocalizationKeys,
         "Timeline source localization keys should stay complete and ordered"
     )
     assert(
