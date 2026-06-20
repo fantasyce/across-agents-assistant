@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.29` | Completes the Agent Loop host consumption surface with bounded telemetry, resume-aware timelines, budget indicators, routing alternatives, Across Context memory metrics, autonomous workflow guardrails, and managed pins for Orchestrator `v0.6.18` / Context `v0.7.8`. |
 | `0.8.28` | Finalizes the Agent Loop host-side iteration with release evidence parse-error visibility, release process documentation, architecture boundaries, and Agent Loop completeness guidance. |
 | `0.8.27` | Closes the release gate evidence loop with consumed Live E2E evidence, machine-readable missing gate paths, and stricter manual/failed gate readiness states. |
 | `0.8.26` | Hardens pre-release verification with a reusable live E2E runner, manual Live E2E workflow, Swift behavior checks in Quality CI, and broader shell syntax checks. |
@@ -207,13 +208,19 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.28` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.29` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.8.28` release finalizes the current Agent Loop host-side iteration. RC
-verification now reports malformed pre-release gate evidence as structured parse
-errors in JSON, Markdown, and Diagnostics UI, while the release process,
-architecture boundary, and Agent Loop completeness documents make the remaining
-telemetry, resume, cost-control, and multi-agent work explicit RFC items.
+The `0.8.29` release completes the Agent Loop host consumption surface across
+bounded telemetry, resume-aware event timelines, budget indicators, routing
+alternatives, Across Context memory-candidate metrics, and autonomous workflow
+guardrails. It pairs with Across Orchestrator `v0.6.18` and Across Context
+`v0.7.8` for the final Agent Loop closeout pass.
+
+The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
+verification reports malformed pre-release gate evidence as structured parse
+errors in JSON, Markdown, and Diagnostics UI, while the release process and
+architecture boundary documents keep long-horizon automation and product
+decisions outside the closed Agent Loop implementation scope.
 
 Operational references:
 
@@ -595,10 +602,10 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.17
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.6.18
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.7
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.7.8
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -692,7 +699,7 @@ It writes a non-secret gate evidence JSON file to
 `$HOME/.across/data/across-agents-assistant/release-reports/*-gate-evidence.json`
 to clear stale local gate evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.6.17` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.6.18` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON
