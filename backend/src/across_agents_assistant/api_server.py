@@ -58,6 +58,7 @@ _ERROR_DETAIL_KEYS = {
     "output_tail",
 }
 _ERROR_DETAIL_KEY_PARTS = ("error", "exception", "traceback", "stack_trace", "stacktrace", "output_tail")
+_STRUCTURED_PUBLIC_ERROR_KEYS = {"pre_release_gate_parse_errors"}
 _AGENT_LOOP_STREAM_CLOSING_EVENT_TYPES = {
     "loop.approval_required",
     "loop.completed",
@@ -82,6 +83,11 @@ def _sanitize_public_error_text(value: Any) -> Any:
 
 def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     lowered = key.lower()
+    if lowered in _STRUCTURED_PUBLIC_ERROR_KEYS:
+        if isinstance(value, dict):
+            return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_sanitize_public_payload(item, "") for item in value]
     if (
         lowered in _ERROR_DETAIL_KEYS
         or lowered in _PUBLIC_TEXT_DETAIL_KEYS

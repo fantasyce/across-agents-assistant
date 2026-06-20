@@ -214,6 +214,15 @@ missing required gate paths, keeps required manual gates in attention until
 evidence is attached, and blocks release approval when required gate evidence
 fails.
 
+Operational references:
+
+- [Release Process](RELEASE_PROCESS.md) records the merge, validation, Live E2E,
+  release PR, tag, and post-release verification checklist.
+- [Architecture Overview](ARCHITECTURE.md) records the AAA, Orchestrator,
+  Context, and plugin-manifest boundaries.
+- [Agent Loop Completeness](AGENT_LOOP_COMPLETENESS.md) records the completed
+  host scope and the RFC-only follow-up areas.
+
 The `0.8.26` release hardens the pre-release verification workflow. It adds a
 reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift
 behavior checks in Quality CI, and broader shell syntax coverage for

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- RC verification reports now surface malformed pre-release gate evidence files
+  as parse errors in JSON, Markdown, and Diagnostics UI.
+- Added release process, architecture overview, and Agent Loop completeness
+  documents to make the post-`v0.8.27` boundary explicit.
+
 ## 0.8.27 - 2026-06-20
 
 ### Added
