@@ -32,6 +32,8 @@ PRE_RELEASE_GATE_EVIDENCE_PATTERNS = [
     "live-e2e-evidence.json",
 ]
 PRE_RELEASE_GATE_EVIDENCE_ENV = "ACROSS_AGENTS_PRE_RELEASE_GATE_EVIDENCE_PATHS"
+PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX = 240
+PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX = " ...(truncated)"
 
 PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
     {
@@ -386,17 +388,45 @@ def _configured_pre_release_gate_evidence_paths() -> List[Path]:
     return paths
 
 
-def _load_pre_release_gate_evidence(report_directory: Path) -> Dict[str, Dict[str, Any]]:
+def _sanitize_pre_release_gate_parse_error_message(path: Path, error: Exception) -> str:
+    message = str(error)
+    path_texts = {str(path), str(path.expanduser())}
+    parent_texts = {str(path.parent), str(path.expanduser().parent)}
+    for path_text in sorted(path_texts, key=len, reverse=True):
+        if path_text:
+            message = message.replace(path_text, path.name)
+    for parent_text in sorted(parent_texts, key=len, reverse=True):
+        if parent_text and parent_text not in {".", "/"}:
+            message = message.replace(parent_text, "...")
+    message = re.sub(r"(?<![:/A-Za-z0-9_.-])/(?:[^/\s:'\"()]+/){2,}[^/\s:'\"()]+", "...", message)
+    message = re.sub(r"[\r\n\t]+", " ", message).strip()
+    if len(message) <= PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX:
+        return message
+    limit = PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX - len(PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX)
+    return message[:limit].rstrip() + PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX
+
+
+def _pre_release_gate_parse_error(path: Path, error: Exception) -> Dict[str, str]:
+    return {
+        "evidence_path": path.name,
+        "error_type": type(error).__name__,
+        "message": _sanitize_pre_release_gate_parse_error_message(path, error),
+    }
+
+
+def _load_pre_release_gate_evidence(report_directory: Path) -> tuple[Dict[str, Dict[str, Any]], List[Dict[str, str]]]:
     candidate_paths: List[Path] = []
     candidate_paths.extend(_configured_pre_release_gate_evidence_paths())
     for pattern in PRE_RELEASE_GATE_EVIDENCE_PATTERNS:
         candidate_paths.extend(sorted(report_directory.glob(pattern)))
 
     evidence_by_gate: Dict[str, Dict[str, Any]] = {}
+    parse_errors: List[Dict[str, str]] = []
     for path in candidate_paths:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            parse_errors.append(_pre_release_gate_parse_error(path, exc))
             continue
         for evidence in _normalize_pre_release_gate_evidence(raw, evidence_path=path):
             gate_id = str(evidence.get("gate_id") or "")
@@ -406,7 +436,7 @@ def _load_pre_release_gate_evidence(report_directory: Path) -> Dict[str, Dict[st
             if previous and _gate_evidence_timestamp(previous) > _gate_evidence_timestamp(evidence):
                 continue
             evidence_by_gate[gate_id] = evidence
-    return evidence_by_gate
+    return evidence_by_gate, parse_errors
 
 
 def _apply_pre_release_gate_evidence(
@@ -558,6 +588,7 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
     pre_release_gates = report.get("pre_release_gates") or []
     pre_release_summary = report.get("pre_release_gate_summary") or {}
     pre_release_missing_paths = report.get("pre_release_gate_missing_paths") or []
+    pre_release_parse_errors = report.get("pre_release_gate_parse_errors") or []
     lines = [
         "# Across Agents Assistant RC Verification",
         "",
@@ -608,6 +639,12 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
     if pre_release_missing_paths:
         lines.extend(["", "Missing required gate paths:"])
         lines.extend([f"- {path}" for path in pre_release_missing_paths])
+    if pre_release_parse_errors:
+        lines.extend(["", "Gate evidence parse errors:"])
+        for error in pre_release_parse_errors:
+            lines.append(
+                f"- {error.get('evidence_path')}: {error.get('error_type')} ({error.get('message')})"
+            )
     for gate in pre_release_gates:
         lines.append(
             f"- {gate.get('label')}: {gate.get('status')} ({gate.get('source')})"
@@ -708,7 +745,7 @@ def _build_release_verification_report(
     release_evaluation = build_release_evaluation_summary(rows)
     latest_row = _latest_release_e2e_row(rows)
     pre_release_gates = _build_pre_release_gates(repo_root=repo_root)
-    pre_release_gate_evidence = _load_pre_release_gate_evidence(report_directory)
+    pre_release_gate_evidence, pre_release_parse_errors = _load_pre_release_gate_evidence(report_directory)
     pre_release_gates = _apply_pre_release_gate_evidence(pre_release_gates, pre_release_gate_evidence)
     pre_release_summary = _pre_release_gate_summary(pre_release_gates)
     pre_release_missing_paths = _missing_required_gate_paths(pre_release_gates)
@@ -742,6 +779,7 @@ def _build_release_verification_report(
         "pre_release_gates": pre_release_gates,
         "pre_release_gate_summary": pre_release_summary,
         "pre_release_gate_missing_paths": pre_release_missing_paths,
+        "pre_release_gate_parse_errors": pre_release_parse_errors,
         "remediations": remediations,
         "report_files": {},
         "audit": {

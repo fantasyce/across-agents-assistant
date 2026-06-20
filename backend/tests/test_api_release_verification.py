@@ -195,6 +195,7 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
         "github_live_e2e",
         run_url="https://github.com/fantasyce/across-agents-assistant/actions/runs/123",
     )
+    (tmp_path / "release-reports" / "broken-gate-evidence.json").write_text("{not-json", encoding="utf-8")
 
     response = TestClient(app).post("/api/release/verification")
 
@@ -221,6 +222,9 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert gates_by_id["github_live_e2e"]["evidence"]["run_url"].endswith("/123")
     assert gates_by_id["github_live_e2e"]["evidence"]["evidence_path"] == "github_live_e2e-gate-evidence.json"
     assert str(tmp_path) not in json.dumps(gates_by_id["github_live_e2e"]["evidence"])
+    assert body["pre_release_gate_parse_errors"][0]["evidence_path"] == "broken-gate-evidence.json"
+    assert body["pre_release_gate_parse_errors"][0]["error_type"] == "JSONDecodeError"
+    assert str(tmp_path) not in json.dumps(body["pre_release_gate_parse_errors"])
     assert body["audit"]["read_only"] is True
     assert body["audit"]["repair_or_resume_triggered"] is False
     assert body["audit"]["secrets_redacted"] is True
@@ -234,9 +238,28 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert "Required manual: 0" in markdown
     assert "bash scripts/run_live_e2e.sh all" in markdown
     assert "Run URL: https://github.com/fantasyce/across-agents-assistant/actions/runs/123" in markdown
+    assert "Gate evidence parse errors:" in markdown
+    assert "broken-gate-evidence.json" in markdown
     encoded = json.dumps(body)
     assert "rc-secret-should-not-leak" not in encoded
     assert "api_key" not in encoded.lower()
+
+
+def test_pre_release_gate_parse_error_redacts_parent_paths(tmp_path):
+    evidence_path = tmp_path / "private" / "nested" / "broken-gate-evidence.json"
+    error = PermissionError(f"permission denied while scanning {evidence_path.parent}")
+
+    parse_error = release_verification._pre_release_gate_parse_error(evidence_path, error)
+
+    assert parse_error["evidence_path"] == "broken-gate-evidence.json"
+    assert parse_error["error_type"] == "PermissionError"
+    assert str(tmp_path) not in json.dumps(parse_error)
+    assert len(parse_error["message"]) <= release_verification.PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX
+
+    long_error = ValueError("x" * 400)
+    long_parse_error = release_verification._pre_release_gate_parse_error(evidence_path, long_error)
+    assert long_parse_error["message"].endswith("(truncated)")
+    assert len(long_parse_error["message"]) <= release_verification.PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX
 
 
 def test_release_verification_reports_attention_when_release_e2e_is_missing(monkeypatch, tmp_path):

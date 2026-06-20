@@ -320,6 +320,9 @@ struct StartupDiagnosticsView: View {
                 if !report.preReleaseGateMissingPaths.isEmpty {
                     missingGatePaths(report.preReleaseGateMissingPaths)
                 }
+                if !report.preReleaseGateParseErrors.isEmpty {
+                    gateParseErrors(report.preReleaseGateParseErrors)
+                }
 
                 ForEach(gates) { gate in
                     preReleaseGateRow(gate)
@@ -405,6 +408,35 @@ struct StartupDiagnosticsView: View {
             }
             if paths.count > 5 {
                 Text(String(format: appPreferences.text("releaseVerification.morePaths"), paths.count - 5))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(fieldColor)
+        .cornerRadius(8)
+    }
+
+    private func gateParseErrors(_ errors: [ReleaseVerificationPreReleaseGateParseError]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(appPreferences.text("releaseVerification.gateParseErrors"))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Color(hex: "ff9f0a"))
+            ForEach(errors.prefix(4)) { error in
+                Text("\(error.evidencePath): \(error.errorType)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !error.message.isEmpty {
+                    Text(error.message)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            if errors.count > 4 {
+                Text(String(format: appPreferences.text("releaseVerification.morePaths"), errors.count - 4))
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
             }

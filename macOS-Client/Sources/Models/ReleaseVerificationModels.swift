@@ -151,6 +151,29 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
     }
 }
 
+struct ReleaseVerificationPreReleaseGateParseError: Decodable, Identifiable {
+    let evidencePath: String
+    let errorType: String
+    let message: String
+
+    var id: String {
+        "\(evidencePath)-\(errorType)-\(message)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case evidencePath = "evidence_path"
+        case errorType = "error_type"
+        case message
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        evidencePath = try container.decodeIfPresent(String.self, forKey: .evidencePath) ?? ""
+        errorType = try container.decodeIfPresent(String.self, forKey: .errorType) ?? "Error"
+        message = try container.decodeIfPresent(String.self, forKey: .message) ?? ""
+    }
+}
+
 struct ReleaseVerificationLatestSummary: Decodable {
     let status: String
     let qualityScore: Int?
@@ -266,6 +289,7 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
     let preReleaseGates: [ReleaseVerificationPreReleaseGate]?
     let preReleaseGateSummary: ReleaseVerificationPreReleaseGateSummary?
     let preReleaseGateMissingPaths: [String]
+    let preReleaseGateParseErrors: [ReleaseVerificationPreReleaseGateParseError]
     let remediations: [String]
     let reportFiles: ReleaseVerificationReportFiles
     let audit: ReleaseVerificationAudit
@@ -323,6 +347,7 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
         case preReleaseGates = "pre_release_gates"
         case preReleaseGateSummary = "pre_release_gate_summary"
         case preReleaseGateMissingPaths = "pre_release_gate_missing_paths"
+        case preReleaseGateParseErrors = "pre_release_gate_parse_errors"
         case remediations
         case reportFiles = "report_files"
         case audit
@@ -340,6 +365,7 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
         preReleaseGates = try container.decodeIfPresent([ReleaseVerificationPreReleaseGate].self, forKey: .preReleaseGates)
         preReleaseGateSummary = try container.decodeIfPresent(ReleaseVerificationPreReleaseGateSummary.self, forKey: .preReleaseGateSummary)
         preReleaseGateMissingPaths = try container.decodeIfPresent([String].self, forKey: .preReleaseGateMissingPaths) ?? []
+        preReleaseGateParseErrors = try container.decodeIfPresent([ReleaseVerificationPreReleaseGateParseError].self, forKey: .preReleaseGateParseErrors) ?? []
         remediations = try container.decodeIfPresent([String].self, forKey: .remediations) ?? []
         reportFiles = try container.decode(ReleaseVerificationReportFiles.self, forKey: .reportFiles)
         audit = try container.decode(ReleaseVerificationAudit.self, forKey: .audit)

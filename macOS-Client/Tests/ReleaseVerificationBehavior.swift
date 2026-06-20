@@ -86,6 +86,9 @@ func testReleaseVerificationDecodeAndSummary() throws {
       ],
       "pre_release_gate_summary": {"total": 2, "passed": 1, "configured": 1, "manual_required": 0, "missing": 0, "failed": 0, "required_missing": 0, "required_manual": 0, "required_failed": 0},
       "pre_release_gate_missing_paths": [],
+      "pre_release_gate_parse_errors": [
+        {"evidence_path": "broken-gate-evidence.json", "error_type": "JSONDecodeError", "message": "Expecting property name"}
+      ],
       "remediations": [],
       "report_files": {
         "directory": "/tmp/release-reports",
@@ -120,6 +123,7 @@ func testReleaseVerificationDecodeAndSummary() throws {
     assert(report.gateSummary.passed == 1, "Passed pre-release gate count should decode")
     assert(report.gateSummary.manualRequired == 0, "Manual pre-release gate count should decode")
     assert(report.preReleaseGateMissingPaths.isEmpty, "Missing gate paths should decode")
+    assert(report.preReleaseGateParseErrors.first?.evidencePath == "broken-gate-evidence.json", "Gate parse errors should decode")
     assert(report.gateHeadline == "1 passed · 1 configured · 0 manual · 0 missing", "Gate headline should summarize pre-release gates")
 }
 
@@ -155,6 +159,7 @@ func testReleaseVerificationAttentionSummaryWithoutE2E() throws {
     assert(report.latestReleaseE2E == nil, "Missing latest Release E2E should decode as nil")
     assert(report.preReleaseGates == nil, "Older reports without gate evidence should remain decodable")
     assert(report.preReleaseGateMissingPaths.isEmpty, "Older reports without missing paths should default to empty")
+    assert(report.preReleaseGateParseErrors.isEmpty, "Older reports without parse errors should default to empty")
     assert(report.gateSummary.total == 0, "Missing gate summary should default to empty")
     assert(report.readyHeadline == "Attention · Release E2E missing", "Headline should call out missing E2E evidence")
     assert(report.primaryRemediation?.contains("Release E2E") == true, "Primary remediation should be available")
