@@ -68,6 +68,14 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
     var supportsRemediationDispatch: Bool {
         capabilities?["remediationDispatch"] == true
     }
+
+    var supportsAutopilotReview: Bool {
+        capabilities?["autonomousReview"] == true
+    }
+
+    var supportsStableCandidatePromotion: Bool {
+        capabilities?["stableCandidatePromotion"] == true
+    }
 }
 
 struct AcrossPluginPaths: Decodable, Equatable {
@@ -129,6 +137,107 @@ struct AcrossPluginCompatibility: Decodable, Equatable {
 
 struct PluginActionRequest: Encodable {
     let action: String
+}
+
+struct AutopilotReviewRequest: Encodable {
+    let fetch: Bool
+    let mode: String
+}
+
+struct AutopilotCandidatePlanRequest: Encodable {
+    let goal: String
+    let targetProduct: String
+
+    enum CodingKeys: String, CodingKey {
+        case goal
+        case targetProduct = "target_product"
+    }
+}
+
+struct AutopilotReviewResponse: Decodable, Equatable {
+    let schemaVersion: String?
+    let generatedAt: String?
+    let mode: String?
+    let sourceCount: Int?
+    let findings: [AutopilotFinding]?
+    let candidateBacklog: [AutopilotCandidateBacklogItem]?
+    let riskSummary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case generatedAt = "generated_at"
+        case mode
+        case sourceCount = "source_count"
+        case findings
+        case candidateBacklog = "candidate_backlog"
+        case riskSummary = "risk_summary"
+    }
+}
+
+struct AutopilotFinding: Decodable, Equatable {
+    let id: String?
+    let severity: String?
+    let summary: String?
+}
+
+struct AutopilotCandidateBacklogItem: Decodable, Equatable, Identifiable {
+    let id: String
+    let title: String?
+    let targetProduct: String?
+    let risk: String?
+    let autonomyLevel: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case targetProduct = "target_product"
+        case risk
+        case autonomyLevel = "autonomy_level"
+    }
+}
+
+struct AutopilotCandidatePlanResponse: Decodable, Equatable {
+    let schemaVersion: String?
+    let goal: String?
+    let targetProduct: String?
+    let risk: String?
+    let execution: AutopilotExecutionPolicy?
+    let memoryPolicy: AutopilotMemoryPolicy?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case goal
+        case targetProduct = "target_product"
+        case risk
+        case execution
+        case memoryPolicy = "memory_policy"
+    }
+}
+
+struct AutopilotExecutionPolicy: Decodable, Equatable {
+    let engine: String?
+    let mode: String?
+    let isolatedWorkspaceRequired: Bool?
+    let candidateCannotSelfApprove: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case engine
+        case mode
+        case isolatedWorkspaceRequired = "isolated_workspace_required"
+        case candidateCannotSelfApprove = "candidate_cannot_self_approve"
+    }
+}
+
+struct AutopilotMemoryPolicy: Decodable, Equatable {
+    let provider: String?
+    let writeCandidatesAsPending: Bool?
+    let rawTranscriptsAllowed: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case writeCandidatesAsPending = "write_candidates_as_pending"
+        case rawTranscriptsAllowed = "raw_transcripts_allowed"
+    }
 }
 
 struct AcrossMemoryListResponse: Decodable {

@@ -54,6 +54,9 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published private(set) var agentLoopEventsLive = false
     @Published var agentLoopTimelineMode: AgentLoopTimelineMode = .live
     @Published var agentLoopTimelineSource: AgentLoopTimelineSource?
+    @Published var autopilotReview: AutopilotReviewResponse?
+    @Published var autopilotCandidatePlan: AutopilotCandidatePlanResponse?
+    @Published var isRunningAutopilotReview = false
     @Published var highlightedMemoryId: String?
     @Published var message: String?
     @Published var errorMessage: String?
@@ -135,6 +138,45 @@ final class PluginLifecycleViewModel: ObservableObject {
             agentLoopMemoryMetrics = try JSONDecoder().decode(AgentLoopMemoryMetricsResponse.self, from: data)
         } catch {
             agentLoopMemoryMetrics = nil
+        }
+    }
+
+    func runAutopilotReview() async {
+        isRunningAutopilotReview = true
+        isWorking = true
+        message = nil
+        errorMessage = nil
+        defer {
+            isRunningAutopilotReview = false
+            isWorking = false
+        }
+
+        do {
+            let reviewURL = URL(string: "\(backendBase)/api/autopilot/review")!
+            var reviewRequest = URLRequest(url: reviewURL)
+            reviewRequest.httpMethod = "POST"
+            reviewRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            reviewRequest.httpBody = try JSONEncoder().encode(AutopilotReviewRequest(fetch: false, mode: "plugin-center"))
+            let (reviewData, reviewResponse) = try await URLSession.shared.data(for: reviewRequest)
+            try Self.validate(reviewResponse)
+            autopilotReview = try JSONDecoder().decode(AutopilotReviewResponse.self, from: reviewData)
+
+            let planURL = URL(string: "\(backendBase)/api/autopilot/candidate-plan")!
+            var planRequest = URLRequest(url: planURL)
+            planRequest.httpMethod = "POST"
+            planRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            planRequest.httpBody = try JSONEncoder().encode(
+                AutopilotCandidatePlanRequest(
+                    goal: "Review Across ecosystem and propose the next safe autonomous iteration",
+                    targetProduct: "across-autopilot"
+                )
+            )
+            let (planData, planResponse) = try await URLSession.shared.data(for: planRequest)
+            try Self.validate(planResponse)
+            autopilotCandidatePlan = try JSONDecoder().decode(AutopilotCandidatePlanResponse.self, from: planData)
+            message = "Across Autopilot review generated"
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

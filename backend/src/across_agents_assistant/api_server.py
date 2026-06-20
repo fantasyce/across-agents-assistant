@@ -311,8 +311,14 @@ from .plugin_runtime import (
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
+    run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
     update_context_memory_status,
+)
+from .autopilot_client import (
+    create_autopilot_candidate_plan,
+    generate_autopilot_review,
+    get_autopilot_status,
 )
 
 # Global task history state
@@ -1469,6 +1475,9 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
         if plugin_id == "across-context":
             result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
             return _sanitize_public_payload(result)
+        if plugin_id == "across-autopilot":
+            result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+            return _sanitize_public_payload(result)
         if plugin_id == "across-orchestrator":
             manager = get_orchestrator_plugin_manager()
             if action in {"probe", "refresh"}:
@@ -1487,6 +1496,57 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
         raise HTTPException(status_code=500, detail=_safe_error_message("Plugin lifecycle action"))
     except Exception as exc:
         raise _safe_http_500("Plugin lifecycle action", exc)
+
+
+class AutopilotReviewRequest(BaseModel):
+    fetch: bool = False
+    mode: str = "host"
+
+
+class AutopilotCandidatePlanRequest(BaseModel):
+    goal: str
+    target_product: str = "across-autopilot"
+
+
+@app.get("/api/autopilot/status")
+async def get_autopilot_status_endpoint():
+    """Return Across Autopilot stable/candidate slot status."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_status))
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="Across Autopilot plugin is not available")
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot status", exc)
+
+
+@app.post("/api/autopilot/review")
+async def generate_autopilot_review_endpoint(req: AutopilotReviewRequest):
+    """Generate a bounded Across Autopilot ecosystem review."""
+    try:
+        return _sanitize_public_payload(
+            await asyncio.to_thread(generate_autopilot_review, fetch=req.fetch, mode=req.mode)
+        )
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="Across Autopilot plugin is not available")
+    except Exception as exc:
+        raise _safe_http_500("Generate Across Autopilot review", exc)
+
+
+@app.post("/api/autopilot/candidate-plan")
+async def create_autopilot_candidate_plan_endpoint(req: AutopilotCandidatePlanRequest):
+    """Create a candidate plan through Across Autopilot without mutating code."""
+    try:
+        return _sanitize_public_payload(
+            await asyncio.to_thread(
+                create_autopilot_candidate_plan,
+                goal=req.goal,
+                target_product=req.target_product,
+            )
+        )
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="Across Autopilot plugin is not available")
+    except Exception as exc:
+        raise _safe_http_500("Create Across Autopilot candidate plan", exc)
 
 
 class MemoryRememberRequest(BaseModel):

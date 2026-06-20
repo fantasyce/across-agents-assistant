@@ -201,9 +201,25 @@ struct PluginLifecycleView: View {
                     .help(appPreferences.text("plugins.loop.probe"))
                     .disabled(viewModel.isWorking)
                 }
+                if plugin.pluginId == "across-autopilot" && plugin.available {
+                    Button {
+                        Task { await viewModel.runAutopilotReview() }
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(textColor)
+                    .background(fieldColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .help(appPreferences.text("plugins.autopilot.review"))
+                    .disabled(viewModel.isWorking)
+                }
             }
 
             agentLoopProbeRow(plugin)
+            autopilotReviewRow(plugin)
         }
         .padding(14)
         .frame(minHeight: 286, alignment: .topLeading)
@@ -224,6 +240,11 @@ struct PluginLifecycleView: View {
                 if plugin.supportsCheckpoints {
                     metadataChip(appPreferences.text("plugins.loop.checkpoints"))
                 }
+            } else if plugin.supportsAutopilotReview {
+                metadataChip(appPreferences.text("plugins.autopilot.reviewCapability"))
+                if plugin.supportsStableCandidatePromotion {
+                    metadataChip(appPreferences.text("plugins.autopilot.promotionCapability"))
+                }
             } else {
                 Color.clear.frame(height: 22)
             }
@@ -238,6 +259,38 @@ struct PluginLifecycleView: View {
                 .frame(height: 28, alignment: .topLeading)
         } else {
             Color.clear.frame(height: 28)
+        }
+    }
+
+    @ViewBuilder
+    private func autopilotReviewRow(_ plugin: AcrossPluginStatus) -> some View {
+        if plugin.pluginId == "across-autopilot" {
+            VStack(alignment: .leading, spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if let review = viewModel.autopilotReview {
+                            metadataChip(String(format: appPreferences.text("plugins.autopilot.sources"), review.sourceCount ?? 0))
+                            metadataChip(String(format: appPreferences.text("plugins.autopilot.findings"), review.findings?.count ?? 0))
+                            metadataChip(String(format: appPreferences.text("plugins.autopilot.candidates"), review.candidateBacklog?.count ?? 0))
+                        } else {
+                            metadataChip(appPreferences.text("plugins.autopilot.ready"))
+                        }
+                        if let plan = viewModel.autopilotCandidatePlan {
+                            metadataChip(displayToken(plan.targetProduct) ?? appPreferences.text("plugins.loop.none"))
+                            metadataChip(displayToken(plan.risk) ?? appPreferences.text("plugins.loop.none"))
+                            metadataChip(plan.execution?.engine ?? appPreferences.text("plugins.loop.none"))
+                            metadataChip(plan.memoryPolicy?.provider ?? appPreferences.text("plugins.loop.none"))
+                        }
+                    }
+                }
+                .frame(height: 22, alignment: .leading)
+                if let summary = viewModel.autopilotReview?.riskSummary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
         }
     }
 

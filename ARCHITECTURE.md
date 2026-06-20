@@ -12,6 +12,7 @@ across repositories.
 | `across-agents-assistant` | macOS app, local backend, release verification, Plugin Center, host diagnostics | Consumes plugin protocols and exposes host UI/API |
 | `across-orchestrator` | Task runtime, Agent Loop lifecycle, action routing, recovery policy, event stream, loop evidence | Produces task and loop protocol payloads |
 | `across-context` | Shared-memory policy, memory candidate review contract, context governance | Defines and serves memory/context protocol behavior |
+| `across-autopilot` | Autonomous ecosystem review, stable/candidate planning, promotion evidence policy | Produces review and candidate-plan payloads; delegates execution and memory |
 | Across plugin manifests | Installation metadata, compatibility, managed source pins | Declarative install and discovery data |
 
 Plugin manifests are a protocol surface, not AAA runtime code. They may be
@@ -45,6 +46,10 @@ macOS UI
       -> event stream and health snapshots
     -> Across Context MCP/CLI
       -> shared-memory review and context policy
+    -> Across Autopilot CLI/MCP
+      -> ecosystem review
+      -> candidate planning
+      -> promotion evidence policy
 ```
 
 The macOS client never writes Orchestrator or Context internals directly. It
@@ -75,6 +80,19 @@ Across Context owns:
 - candidate schema documentation and memory lifecycle semantics
 - context storage and retrieval behavior
 
+Across Autopilot owns:
+
+- scheduled or user-triggered ecosystem review
+- stable/candidate slot policy
+- candidate plan generation
+- promotion evidence reports
+- explicit refusal to auto-merge, auto-release, edit secrets, or change signing
+  without an approved policy
+
+Across Autopilot does not execute implementation work directly. It delegates
+candidate execution to Across Orchestrator and writes only compact pending
+review/promotion summaries through Across Context.
+
 ## Protocol Coupling
 
 The intentional coupling is protocol-level:
@@ -84,6 +102,7 @@ The intentional coupling is protocol-level:
 - Orchestrator task and Agent Loop endpoint names
 - Context memory candidate schema
 - host capability registry payloads
+- Autopilot review, candidate-plan, and promotion-report payloads
 
 The app should not import Orchestrator or Context internals. When protocol
 fields evolve, consumers should decode unknown fields leniently and display

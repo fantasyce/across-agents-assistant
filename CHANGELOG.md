@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Added Across Autopilot as the fourth Across product surface in the Plugin
+  Center and backend API, with safe review generation and candidate-plan
+  controls that delegate execution to Orchestrator and memory to Context.
+
 ## 0.8.29 - 2026-06-20
 
 ### Added

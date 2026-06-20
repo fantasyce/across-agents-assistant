@@ -14,6 +14,7 @@ from across_agents_assistant.plugin_runtime import (
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
+    run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
     update_context_memory_status,
 )
@@ -26,7 +27,11 @@ def _write_plugin_manifest(across_home: Path, plugin_id: str, kind: str) -> Path
         "schemaVersion": "1.0",
         "pluginApiVersion": "2026-06-10",
         "id": plugin_id,
-        "displayName": "Across Context" if plugin_id == "across-context" else "Across Orchestrator",
+        "displayName": {
+            "across-context": "Across Context",
+            "across-orchestrator": "Across Orchestrator",
+            "across-autopilot": "Across Autopilot",
+        }.get(plugin_id, plugin_id),
         "kind": kind,
         "version": "1.2.3",
         "compatibility": {"requiredHostVersion": ">=0.6.0"},
@@ -226,10 +231,12 @@ def test_plugins_api_returns_known_plugins(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     plugins = response.json()["plugins"]
-    assert {item["plugin_id"] for item in plugins} == {"across-context", "across-orchestrator"}
+    assert {item["plugin_id"] for item in plugins} == {"across-context", "across-orchestrator", "across-autopilot"}
     orchestrator = next(item for item in plugins if item["plugin_id"] == "across-orchestrator")
+    autopilot = next(item for item in plugins if item["plugin_id"] == "across-autopilot")
     assert orchestrator["installed"] is True
     assert orchestrator["kind"] == "task-runtime"
+    assert autopilot["kind"] == "autonomous-workflow"
 
 
 def test_plugin_api_rejects_unknown_plugin():
@@ -237,6 +244,21 @@ def test_plugin_api_rejects_unknown_plugin():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Unknown Across plugin"
+
+
+def test_autopilot_plugin_lifecycle_probe_and_uninstall(tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-autopilot", "autonomous-workflow")
+    _write_fake_command(across_home, "across-autopilot")
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    probed = run_autopilot_plugin_lifecycle_action("probe", env=env)
+    assert probed["plugin_id"] == "across-autopilot"
+    assert probed["available"] is True
+
+    uninstalled = run_autopilot_plugin_lifecycle_action("uninstall", env=env)
+    assert uninstalled["plugin_id"] == "across-autopilot"
+    assert not (across_home / "plugins" / "across-autopilot").exists()
 
 
 def test_context_plugin_lifecycle_probe_and_uninstall(tmp_path):

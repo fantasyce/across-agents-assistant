@@ -49,6 +49,15 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
         default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.18",
     ),
+    KnownAcrossPlugin(
+        plugin_id="across-autopilot",
+        display_name="Across Autopilot",
+        kind="autonomous-workflow",
+        command="across-autopilot",
+        install_command="across-autopilot install host-plugin",
+        install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#main",
+    ),
 )
 
 
@@ -171,6 +180,22 @@ def run_context_plugin_lifecycle_action(
     if normalized == "uninstall":
         return _uninstall_managed_plugin("across-context", "across-context", env=env)
     raise PluginLifecycleError("Unsupported Across Context lifecycle action")
+
+
+def run_autopilot_plugin_lifecycle_action(
+    action: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    runner: Any = subprocess.run,
+) -> dict[str, Any]:
+    normalized = str(action or "").strip().lower().replace("-", "_")
+    if normalized in {"probe", "refresh"}:
+        return inspect_across_plugin("across-autopilot", probe=True, env=env)
+    if normalized in {"install", "repair", "upgrade"}:
+        return _install_node_host_plugin("across-autopilot", "across-autopilot", env=env, runner=runner, force_reinstall=normalized != "install")
+    if normalized == "uninstall":
+        return _uninstall_managed_plugin("across-autopilot", "across-autopilot", env=env)
+    raise PluginLifecycleError("Unsupported Across Autopilot lifecycle action")
 
 
 def list_context_memories(
@@ -410,6 +435,60 @@ def _install_across_context(
         timeout=60,
     )
     return inspect_across_plugin("across-context", probe=True, env=source)
+
+
+def _install_node_host_plugin(
+    plugin_id: str,
+    command: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    runner: Any = subprocess.run,
+    force_reinstall: bool = False,
+) -> dict[str, Any]:
+    source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
+    across_home = ecosystem_home(source)
+    command_path = _resolve_command(command, source)
+    command_integrity_issues = (
+        _command_integrity_issues(command_path, ecosystem_plugin_root(source) / plugin_id, source)
+        if command_path.is_file() and os.access(command_path, os.X_OK)
+        else []
+    )
+    if (
+        not force_reinstall
+        and command_path.is_file()
+        and os.access(command_path, os.X_OK)
+        and not command_integrity_issues
+    ):
+        _run_checked(
+            [str(command_path), "install", "host-plugin", "--across-home", str(across_home)],
+            source,
+            runner=runner,
+        )
+        return inspect_across_plugin(plugin_id, probe=True, env=source)
+
+    npm = _which_runtime_command("npm", source)
+    if not npm:
+        raise PluginLifecycleError(f"npm is required to install {plugin_id} when no existing command is available")
+
+    plugin = _known_plugin(plugin_id)
+    install_source = _install_source(plugin, source) if plugin else None
+    if not install_source:
+        raise PluginLifecycleError(f"{plugin_id} install source is not configured")
+
+    cache_dir = component_cache_home(env=source) / "plugin-installers" / plugin_id
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _run_checked([npm, "install", "--prefix", str(cache_dir), install_source], source, runner=runner, timeout=180)
+    installed_command = cache_dir / "node_modules" / ".bin" / command
+    if not installed_command.is_file():
+        raise PluginLifecycleError(f"{plugin_id} installed but its CLI command was not found")
+    _run_checked(
+        [str(installed_command), "install", "host-plugin", "--across-home", str(across_home)],
+        source,
+        runner=runner,
+        timeout=60,
+    )
+    return inspect_across_plugin(plugin_id, probe=True, env=source)
 
 
 def _uninstall_managed_plugin(plugin_id: str, command: str, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:

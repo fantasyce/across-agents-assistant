@@ -1,12 +1,30 @@
 # Autonomous Workflow
 
 This document defines the Across ecosystem automation path after the Agent Loop
-host-side closeout in `v0.8.28`.
+host-side closeout and the introduction of Across Autopilot.
 
 The goal is not an unbounded bot that changes runtime behavior without review.
 The goal is a controlled loop that can discover ecosystem changes, write a
 reviewable brief, propose work, run validation, and escalate release-ready
 changes through the same evidence gates used by humans.
+
+Across Autopilot is the fourth Across product that owns this loop. AAA exposes
+the control surface, Orchestrator executes candidate work, and Context stores
+compact review/promotion memory.
+
+## Stable/Candidate Mechanism
+
+Autopilot uses two slots:
+
+- `stable`: the trusted controller that can generate review and candidate-plan
+  payloads.
+- `candidate`: an isolated branch/worktree/runtime proposal that must prove
+  itself through tests, E2E, CI, and release evidence.
+
+The candidate cannot approve itself. Stable evaluates candidate evidence and
+produces a promotion report. A promoted candidate becomes the next stable
+through ordinary PR/release mechanics; the previous stable remains the rollback
+target.
 
 ## Workflow Stages
 
@@ -54,6 +72,9 @@ changes through the same evidence gates used by humans.
 
 Current implementation covers levels 0 and 1. Levels 2 through 4 should be
 introduced only after review issues prove useful and low-noise.
+
+Across Autopilot v0.1 keeps auto-merge and auto-release disabled. It exposes
+safe review and candidate-plan controls only.
 
 ## Research Sources
 

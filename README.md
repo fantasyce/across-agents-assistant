@@ -38,7 +38,7 @@ The core idea is cross-agent collaboration: pick an owner agent, keep local agen
 
 ## Across Product Boundaries
 
-The Across ecosystem is intentionally split into three independently releasable
+The Across ecosystem is intentionally split into independently releasable
 products:
 
 - **Across Agents Assistant** is the macOS host and control panel. It owns the
@@ -55,6 +55,11 @@ products:
   remediation behavior, evidence bundles, and durable task state under
   `~/.across/data/across-orchestrator`. The host discovers it through
   `~/.across/bin/across-orchestrator`.
+- **Across Autopilot** is the autonomous workflow controller. It owns scheduled
+  ecosystem review, stable/candidate planning, and promotion evidence policy
+  under `~/.across/data/across-autopilot`. It delegates implementation work to
+  Across Orchestrator and memory summaries to Across Context; AAA discovers it
+  through `~/.across/bin/across-autopilot`.
 
 AAA product code must not import or execute plugin implementation files from a
 development checkout such as `~/Documents/projects/...`. Development checkouts
@@ -231,7 +236,15 @@ Operational references:
 - [Agent Loop Completeness](AGENT_LOOP_COMPLETENESS.md) records the completed
   host scope and the RFC-only follow-up areas.
 - [Autonomous Workflow](AUTONOMOUS_WORKFLOW.md) records the scheduled ecosystem
-  review workflow and automation guardrails.
+  review workflow, Across Autopilot stable/candidate mechanism, and automation
+  guardrails.
+
+Across Autopilot is the fourth Across product. It owns autonomous ecosystem
+reviews, candidate plans, and promotion evidence policy while delegating
+implementation execution to Across Orchestrator and durable memory to Across
+Context. AAA exposes Autopilot in the Plugin Center as a safe control surface:
+review and candidate-plan generation are allowed, while auto-merge and
+auto-release remain disabled.
 
 The `0.8.26` release hardens the pre-release verification workflow. It adds a
 reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift

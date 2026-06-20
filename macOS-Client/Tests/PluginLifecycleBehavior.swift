@@ -578,6 +578,91 @@ func testAgentLoopEventURLsCarryResumeCursor() throws {
     assert(streamURL.absoluteString == "http://backend/api/orchestrator/loops/loop-ui/events/stream?follow=true&after_sequence=7", "Stream event URL should carry follow and after_sequence")
 }
 
+func testPluginStatusDecodesAutopilotCapabilities() throws {
+    let json = """
+    {
+      "plugin_id": "across-autopilot",
+      "display_name": "Across Autopilot",
+      "kind": "autonomous-workflow",
+      "version": "0.1.0",
+      "status": "installed",
+      "installed": true,
+      "available": true,
+      "probe": true,
+      "manifest_exists": true,
+      "manifest_path": "/tmp/manifest.json",
+      "command": "/tmp/across-autopilot",
+      "command_exists": true,
+      "capabilities": {
+        "autonomousReview": true,
+        "stableCandidatePromotion": true
+      },
+      "paths": {
+        "home": "/tmp/across",
+        "plugin": "/tmp/across/plugins/across-autopilot",
+        "bin": "/tmp/across/bin",
+        "data": "/tmp/across/data/across-autopilot",
+        "config": "/tmp/across/config/across-autopilot",
+        "run": "/tmp/across/run/across-autopilot",
+        "logs": "/tmp/across/logs/across-autopilot",
+        "cache": "/tmp/across/cache/across-autopilot"
+      },
+      "install": {"installable": true, "command": "install", "install_dir": "/tmp/install"},
+      "lifecycle": {"actions": ["install"], "preservesDataOnUninstall": true},
+      "compatibility": {"requiredHostVersion": ">=0.8.29"}
+    }
+    """.data(using: .utf8)!
+
+    let plugin = try JSONDecoder().decode(AcrossPluginStatus.self, from: json)
+
+    assert(plugin.supportsAutopilotReview, "Autopilot should decode autonomous review capability")
+    assert(plugin.supportsStableCandidatePromotion, "Autopilot should decode stable/candidate promotion capability")
+}
+
+func testAutopilotReviewAndCandidatePlanDecode() throws {
+    let reviewJSON = """
+    {
+      "schema_version": "across-autopilot-review/1.0",
+      "generated_at": "2026-06-20T00:00:00Z",
+      "mode": "plugin-center",
+      "source_count": 6,
+      "findings": [{"id": "stable-candidate-control", "severity": "required", "summary": "Use slots."}],
+      "candidate_backlog": [{"id": "radar", "title": "Read-only radar", "target_product": "across-autopilot", "risk": "low", "autonomy_level": 1}],
+      "risk_summary": "No source availability risks recorded."
+    }
+    """.data(using: .utf8)!
+    let planJSON = """
+    {
+      "schema_version": "across-autopilot-candidate-plan/1.0",
+      "goal": "Review ecosystem",
+      "target_product": "across-autopilot",
+      "risk": "medium",
+      "execution": {
+        "engine": "across-orchestrator",
+        "mode": "agent-loop",
+        "isolated_workspace_required": true,
+        "candidate_cannot_self_approve": true
+      },
+      "memory_policy": {
+        "provider": "across-context",
+        "write_candidates_as_pending": true,
+        "raw_transcripts_allowed": false
+      }
+    }
+    """.data(using: .utf8)!
+
+    let review = try JSONDecoder().decode(AutopilotReviewResponse.self, from: reviewJSON)
+    let plan = try JSONDecoder().decode(AutopilotCandidatePlanResponse.self, from: planJSON)
+
+    assert(review.sourceCount == 6, "Autopilot review should decode source count")
+    assert(review.findings?.first?.id == "stable-candidate-control", "Autopilot finding id should decode")
+    assert(review.candidateBacklog?.first?.targetProduct == "across-autopilot", "Autopilot backlog target product should decode")
+    assert(plan.execution?.engine == "across-orchestrator", "Autopilot plan should delegate execution to Orchestrator")
+    assert(plan.execution?.candidateCannotSelfApprove == true, "Autopilot plan should preserve self-approval guard")
+    assert(plan.memoryPolicy?.provider == "across-context", "Autopilot plan should delegate memory to Context")
+    assert(plan.memoryPolicy?.rawTranscriptsAllowed == false, "Autopilot memory policy should reject raw transcripts")
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -592,6 +677,8 @@ struct PluginLifecycleBehavior {
         try testAgentLoopEventMergingDeduplicatesStreamUpdates()
         try testAgentLoopTimelineModeAndSourceContracts()
         try testAgentLoopEventURLsCarryResumeCursor()
+        try testPluginStatusDecodesAutopilotCapabilities()
+        try testAutopilotReviewAndCandidatePlanDecode()
         print("PluginLifecycleBehavior passed")
     }
 }
