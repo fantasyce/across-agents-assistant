@@ -32,6 +32,8 @@ PRE_RELEASE_GATE_EVIDENCE_PATTERNS = [
     "live-e2e-evidence.json",
 ]
 PRE_RELEASE_GATE_EVIDENCE_ENV = "ACROSS_AGENTS_PRE_RELEASE_GATE_EVIDENCE_PATHS"
+PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX = 240
+PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX = " ...(truncated)"
 
 PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
     {
@@ -386,11 +388,29 @@ def _configured_pre_release_gate_evidence_paths() -> List[Path]:
     return paths
 
 
+def _sanitize_pre_release_gate_parse_error_message(path: Path, error: Exception) -> str:
+    message = str(error)
+    path_texts = {str(path), str(path.expanduser())}
+    parent_texts = {str(path.parent), str(path.expanduser().parent)}
+    for path_text in sorted(path_texts, key=len, reverse=True):
+        if path_text:
+            message = message.replace(path_text, path.name)
+    for parent_text in sorted(parent_texts, key=len, reverse=True):
+        if parent_text and parent_text not in {".", "/"}:
+            message = message.replace(parent_text, "...")
+    message = re.sub(r"(?<![:/A-Za-z0-9_.-])/(?:[^/\s:'\"()]+/){2,}[^/\s:'\"()]+", "...", message)
+    message = re.sub(r"[\r\n\t]+", " ", message).strip()
+    if len(message) <= PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX:
+        return message
+    limit = PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX - len(PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX)
+    return message[:limit].rstrip() + PRE_RELEASE_GATE_PARSE_ERROR_TRUNCATED_SUFFIX
+
+
 def _pre_release_gate_parse_error(path: Path, error: Exception) -> Dict[str, str]:
     return {
         "evidence_path": path.name,
         "error_type": type(error).__name__,
-        "message": str(error).replace(str(path), path.name)[:240],
+        "message": _sanitize_pre_release_gate_parse_error_message(path, error),
     }
 
 

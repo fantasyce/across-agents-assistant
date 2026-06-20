@@ -3,6 +3,9 @@
 This document closes the current Agent Loop iteration for Across Agents
 Assistant and records what remains as product/spec work rather than immediate
 AAA implementation work.
+The release checklist produced by this iteration lives in
+[Release Process](RELEASE_PROCESS.md), and the repository boundary is described
+in [Architecture Overview](ARCHITECTURE.md).
 
 ## Current Completion Status
 
@@ -83,6 +86,9 @@ Possible later UX:
 These are polish/product items, not blocking Agent Loop completeness.
 
 ## Recommended RFC Order
+
+All RFCs below are outside immediate AAA scope. Start them in this order when
+the product decision is to invest further in Agent Loop runtime behavior.
 
 1. Agent Loop telemetry schema:
    - event fields

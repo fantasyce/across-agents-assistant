@@ -14,6 +14,10 @@ across repositories.
 | `across-context` | Shared-memory policy, memory candidate review contract, context governance | Defines and serves memory/context protocol behavior |
 | Across plugin manifests | Installation metadata, compatibility, managed source pins | Declarative install and discovery data |
 
+Plugin manifests are a protocol surface, not AAA runtime code. They may be
+served from managed registry metadata or release artifacts, but AAA consumes
+them declaratively and should not import plugin implementation files.
+
 ## Runtime Layout
 
 The ecosystem is rooted under `ACROSS_HOME`, defaulting to `$HOME/.across`.

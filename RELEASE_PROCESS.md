@@ -2,6 +2,8 @@
 
 This checklist is the source-first release path for Across Agents Assistant.
 It is intentionally explicit so release approval does not depend on memory.
+For the repository boundaries this process operates within, see
+[Architecture Overview](ARCHITECTURE.md).
 
 ## Preconditions
 
