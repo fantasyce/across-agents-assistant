@@ -223,6 +223,8 @@ Operational references:
   Context, and plugin-manifest boundaries.
 - [Agent Loop Completeness](AGENT_LOOP_COMPLETENESS.md) records the completed
   host scope and the RFC-only follow-up areas.
+- [Autonomous Workflow](AUTONOMOUS_WORKFLOW.md) records the scheduled ecosystem
+  review workflow and automation guardrails.
 
 The `0.8.26` release hardens the pre-release verification workflow. It adds a
 reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift

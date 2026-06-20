@@ -1,0 +1,64 @@
+name: Ecosystem Review
+
+on:
+  schedule:
+    # 09:15 Asia/Shanghai every Monday.
+    - cron: "15 1 * * 1"
+  workflow_dispatch:
+    inputs:
+      create_issue:
+        description: "Create a GitHub issue from the generated report"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  ecosystem-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Generate ecosystem review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ACROSS_ECOSYSTEM_REVIEW_MODEL: ${{ vars.ACROSS_ECOSYSTEM_REVIEW_MODEL || 'gpt-5.1-mini' }}
+        run: |
+          python scripts/generate_ecosystem_review.py \
+            --fetch \
+            --web-research \
+            --mode "${{ github.event_name }}" \
+            --output ecosystem-review.md
+
+      - name: Upload ecosystem review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecosystem-review
+          path: ecosystem-review.md
+
+      - name: Create review issue
+        if: github.event_name == 'schedule' || inputs.create_issue == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Across ecosystem review $(date -u +'%Y-%m-%d')"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file ecosystem-review.md
+          else
+            gh issue create --title "$title" --body-file ecosystem-review.md
+          fi

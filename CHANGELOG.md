@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Added a scheduled ecosystem review workflow and autonomous workflow
+  guardrails for future research, triage, and release automation.
+
 ## 0.8.28 - 2026-06-20
 
 ### Added
