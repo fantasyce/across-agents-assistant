@@ -132,6 +132,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.8.27` | Closes the release gate evidence loop with consumed Live E2E evidence, machine-readable missing gate paths, and stricter manual/failed gate readiness states. |
 | `0.8.26` | Hardens pre-release verification with a reusable live E2E runner, manual Live E2E workflow, Swift behavior checks in Quality CI, and broader shell syntax checks. |
 | `0.8.25` | Documents Agent Loop SSE snapshot/live semantics, keeps timeline source localization covered, and improves live E2E Orchestrator runtime diagnostics. |
 | `0.8.24` | Adds Plugin Center Agent Loop Live/Snapshot timeline mode controls and documents nullable synthesized external acceptance timestamps. |
@@ -205,7 +206,13 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.26` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.8.27` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+
+The `0.8.27` release closes the release gate evidence loop. RC verification now
+consumes local and GitHub Live E2E gate evidence, reports machine-readable
+missing required gate paths, keeps required manual gates in attention until
+evidence is attached, and blocks release approval when required gate evidence
+fails.
 
 The `0.8.26` release hardens the pre-release verification workflow. It adds a
 reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift
