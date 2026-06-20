@@ -421,20 +421,38 @@ struct PluginLifecycleView: View {
 
     @ViewBuilder
     private func hostReleaseEvidenceDetailLines(_ evidence: AgentLoopHostReleaseEvidence?) -> some View {
-        if let check = evidence?.checks?.first(where: { $0.status != nil && $0.status != "passed" }) {
-            healthDetailLine(
-                appPreferences.text("plugins.loop.detailReleaseCheck"),
-                hostReleaseCheckSummary(check)
-            )
+        let attentionChecks = evidence?.checks?.filter { $0.status != nil && $0.status != "passed" } ?? []
+        if !attentionChecks.isEmpty {
+            ForEach(Array(attentionChecks.prefix(3).enumerated()), id: \.offset) { index, check in
+                healthDetailLine(
+                    index == 0 ? appPreferences.text("plugins.loop.detailReleaseCheck") : "",
+                    hostReleaseCheckSummary(check)
+                )
+            }
+            if attentionChecks.count > 3 {
+                healthDetailLine("", String(format: appPreferences.text("plugins.loop.recoveryMore"), attentionChecks.count - 3))
+            }
         }
-        if let risk = evidence?.risks?.first {
-            healthDetailLine(
-                appPreferences.text("plugins.loop.detailReleaseRisk"),
-                hostReleaseRiskSummary(risk)
-            )
+        let risks = evidence?.risks ?? []
+        if !risks.isEmpty {
+            ForEach(Array(risks.prefix(3).enumerated()), id: \.offset) { index, risk in
+                healthDetailLine(
+                    index == 0 ? appPreferences.text("plugins.loop.detailReleaseRisk") : "",
+                    hostReleaseRiskSummary(risk)
+                )
+            }
+            if risks.count > 3 {
+                healthDetailLine("", String(format: appPreferences.text("plugins.loop.recoveryMore"), risks.count - 3))
+            }
         }
-        if let nextAction = evidence?.nextActions?.first, !nextAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            healthDetailLine(appPreferences.text("plugins.loop.detailReleaseNext"), nextAction)
+        let nextActions = (evidence?.nextActions ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !nextActions.isEmpty {
+            ForEach(Array(nextActions.prefix(3).enumerated()), id: \.offset) { index, nextAction in
+                healthDetailLine(index == 0 ? appPreferences.text("plugins.loop.detailReleaseNext") : "", nextAction)
+            }
+            if nextActions.count > 3 {
+                healthDetailLine("", String(format: appPreferences.text("plugins.loop.recoveryMore"), nextActions.count - 3))
+            }
         }
     }
 

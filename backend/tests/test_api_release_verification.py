@@ -121,6 +121,36 @@ def _release_e2e_task(task_id: str) -> api_server.TaskInfo:
     )
 
 
+def _write_gate_evidence(report_root, gate_id: str, *, status: str = "passed", run_url: str | None = None):
+    report_root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "1.0",
+        "gate_id": gate_id,
+        "status": status,
+        "source": "github_actions" if gate_id == "github_live_e2e" else "local_script",
+        "summary": f"{gate_id} {status}",
+        "tier": "all",
+        "started_at": "2026-06-20T01:00:00Z",
+        "completed_at": "2026-06-20T01:05:00Z",
+        "duration_seconds": 300,
+        "run_url": run_url,
+    }
+    path = report_root / f"{gate_id}-gate-evidence.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _materialize_gate_paths(repo_root):
+    for definition in release_verification.PRE_RELEASE_GATE_DEFINITIONS:
+        for relative_path in definition.get("paths") or []:
+            path = repo_root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if "." in path.name:
+                path.write_text("# gate fixture\n", encoding="utf-8")
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+
+
 def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(monkeypatch, tmp_path):
     class FakePersistence:
         def get_task_summaries(self, *, limit=100, offset=0):
@@ -159,6 +189,12 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
         "_repair_task_dispatch_if_possible",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not repair during RC verification")),
     )
+    _write_gate_evidence(tmp_path / "release-reports", "local_live_e2e")
+    _write_gate_evidence(
+        tmp_path / "release-reports",
+        "github_live_e2e",
+        run_url="https://github.com/fantasyce/across-agents-assistant/actions/runs/123",
+    )
 
     response = TestClient(app).post("/api/release/verification")
 
@@ -170,6 +206,9 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert body["latest_release_e2e"]["task_id"] == "task-rc"
     assert body["latest_release_e2e"]["benchmark"]["status"] == "passed"
     assert body["pre_release_gate_summary"]["required_missing"] == 0
+    assert body["pre_release_gate_summary"]["required_manual"] == 0
+    assert body["pre_release_gate_summary"]["passed"] == 2
+    assert body["pre_release_gate_missing_paths"] == []
     assert {gate["id"] for gate in body["pre_release_gates"]} >= {
         "backend_regression",
         "open_source_check",
@@ -177,7 +216,11 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
         "local_live_e2e",
         "github_live_e2e",
     }
-    assert any(gate["status"] == "manual_required" for gate in body["pre_release_gates"])
+    gates_by_id = {gate["id"]: gate for gate in body["pre_release_gates"]}
+    assert gates_by_id["local_live_e2e"]["status"] == "passed"
+    assert gates_by_id["github_live_e2e"]["evidence"]["run_url"].endswith("/123")
+    assert gates_by_id["github_live_e2e"]["evidence"]["evidence_path"] == "github_live_e2e-gate-evidence.json"
+    assert str(tmp_path) not in json.dumps(gates_by_id["github_live_e2e"]["evidence"])
     assert body["audit"]["read_only"] is True
     assert body["audit"]["repair_or_resume_triggered"] is False
     assert body["audit"]["secrets_redacted"] is True
@@ -188,7 +231,9 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert "task-rc" in markdown
     assert "Pre-Release Gates" in markdown
     assert "Required missing: 0" in markdown
+    assert "Required manual: 0" in markdown
     assert "bash scripts/run_live_e2e.sh all" in markdown
+    assert "Run URL: https://github.com/fantasyce/across-agents-assistant/actions/runs/123" in markdown
     encoded = json.dumps(body)
     assert "rc-secret-should-not-leak" not in encoded
     assert "api_key" not in encoded.lower()
@@ -217,6 +262,48 @@ def test_release_verification_reports_attention_when_release_e2e_is_missing(monk
     assert body["latest_release_e2e"] is None
     assert any("Release E2E" in item for item in body["remediations"])
     assert body["report_files"]["markdown_path"].endswith(".md")
+
+
+def test_release_verification_reports_attention_when_manual_gate_evidence_is_missing(monkeypatch, tmp_path):
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=100, offset=0):
+            return (
+                [
+                    {
+                        "task_id": "task-rc",
+                        "description": "Release E2E scenario: web api cli release candidate",
+                        "status": "completed",
+                        "created_at": 10.0,
+                        "updated_at": 20.0,
+                    },
+                ],
+                1,
+            )
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _materialize_gate_paths(repo_root)
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
+    monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
+    monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: _release_e2e_task(task_id))
+    monkeypatch.setattr(release_verification, "_repository_root", lambda: repo_root)
+
+    response = TestClient(app).post("/api/release/verification")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "attention"
+    assert body["pre_release_gate_summary"]["required_missing"] == 0
+    assert body["pre_release_gate_summary"]["required_manual"] == 2
+    assert any("manual pre-release gates" in item for item in body["remediations"])
 
 
 def test_release_verification_reports_attention_when_required_gate_is_missing(monkeypatch, tmp_path):
@@ -256,6 +343,7 @@ def test_release_verification_reports_attention_when_required_gate_is_missing(mo
     body = response.json()
     assert body["status"] == "attention"
     assert body["pre_release_gate_summary"]["required_missing"] > 0
+    assert "scripts/run_live_e2e.sh" in body["pre_release_gate_missing_paths"]
     assert any("pre-release verification gates" in item for item in body["remediations"])
     markdown = (tmp_path / "release-reports").joinpath(body["report_files"]["markdown_name"]).read_text()
     assert "Required missing: 7" in markdown

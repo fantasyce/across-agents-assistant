@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 import copy
@@ -26,6 +27,11 @@ RELEASE_VERIFICATION_REQUIRED_PROBES = [
     "api_service",
     "cli_generic",
 ]
+PRE_RELEASE_GATE_EVIDENCE_PATTERNS = [
+    "*-gate-evidence.json",
+    "live-e2e-evidence.json",
+]
+PRE_RELEASE_GATE_EVIDENCE_ENV = "ACROSS_AGENTS_PRE_RELEASE_GATE_EVIDENCE_PATHS"
 
 PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
     {
@@ -305,16 +311,146 @@ def _build_pre_release_gates(repo_root: Optional[Path] = None) -> List[Dict[str,
     return gates
 
 
+def _coerce_gate_evidence_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in {"passed", "pass", "success", "succeeded", "ok", "true"}:
+        return "passed"
+    if status in {"failed", "failure", "error", "errored", "false"}:
+        return "failed"
+    if status in {"blocked", "cancelled", "canceled", "timed_out", "timeout"}:
+        return "blocked"
+    if status in {"manual_required", "attention", "warning"}:
+        return status
+    return "unknown"
+
+
+def _gate_evidence_timestamp(evidence: Dict[str, Any]) -> str:
+    for key in ("completed_at", "generated_at", "started_at"):
+        value = evidence.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _normalize_pre_release_gate_evidence(raw: Any, *, evidence_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return []
+    candidates: List[Any]
+    if isinstance(raw.get("gates"), list):
+        candidates = raw.get("gates") or []
+    elif isinstance(raw.get("gate_results"), list):
+        candidates = raw.get("gate_results") or []
+    else:
+        candidates = [raw]
+
+    normalized: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        gate_id = candidate.get("gate_id") or candidate.get("id")
+        if not gate_id:
+            continue
+        status = _coerce_gate_evidence_status(candidate.get("status") or candidate.get("gate_status"))
+        evidence = {
+            "schema_version": str(candidate.get("schema_version") or raw.get("schema_version") or "1.0"),
+            "gate_id": str(gate_id),
+            "status": status,
+            "source": str(candidate.get("source") or raw.get("source") or ""),
+            "summary": str(candidate.get("summary") or candidate.get("detail") or ""),
+            "generated_at": candidate.get("generated_at") or raw.get("generated_at"),
+            "started_at": candidate.get("started_at") or raw.get("started_at"),
+            "completed_at": candidate.get("completed_at") or raw.get("completed_at"),
+            "duration_seconds": candidate.get("duration_seconds") or raw.get("duration_seconds"),
+            "tier": candidate.get("tier") or raw.get("tier"),
+            "run_url": candidate.get("run_url") or raw.get("run_url"),
+            "workflow_run_url": candidate.get("workflow_run_url") or raw.get("workflow_run_url"),
+            "commit_sha": candidate.get("commit_sha") or raw.get("commit_sha"),
+        }
+        if evidence_path is not None:
+            evidence["evidence_path"] = evidence_path.name
+        normalized.append(
+            _redact_sensitive_evidence(
+                {key: value for key, value in evidence.items() if value is not None and value != ""}
+            )
+        )
+    return normalized
+
+
+def _configured_pre_release_gate_evidence_paths() -> List[Path]:
+    raw_paths = os.environ.get(PRE_RELEASE_GATE_EVIDENCE_ENV, "")
+    paths: List[Path] = []
+    for item in raw_paths.split(os.pathsep):
+        item = item.strip()
+        if item:
+            paths.append(Path(item).expanduser())
+    return paths
+
+
+def _load_pre_release_gate_evidence(report_directory: Path) -> Dict[str, Dict[str, Any]]:
+    candidate_paths: List[Path] = []
+    candidate_paths.extend(_configured_pre_release_gate_evidence_paths())
+    for pattern in PRE_RELEASE_GATE_EVIDENCE_PATTERNS:
+        candidate_paths.extend(sorted(report_directory.glob(pattern)))
+
+    evidence_by_gate: Dict[str, Dict[str, Any]] = {}
+    for path in candidate_paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for evidence in _normalize_pre_release_gate_evidence(raw, evidence_path=path):
+            gate_id = str(evidence.get("gate_id") or "")
+            if not gate_id:
+                continue
+            previous = evidence_by_gate.get(gate_id)
+            if previous and _gate_evidence_timestamp(previous) > _gate_evidence_timestamp(evidence):
+                continue
+            evidence_by_gate[gate_id] = evidence
+    return evidence_by_gate
+
+
+def _apply_pre_release_gate_evidence(
+    gates: Sequence[Dict[str, Any]],
+    evidence_by_gate: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    updated: List[Dict[str, Any]] = []
+    for gate in gates:
+        enriched = dict(gate)
+        evidence = evidence_by_gate.get(str(gate.get("id") or ""))
+        if evidence:
+            status = _coerce_gate_evidence_status(evidence.get("status"))
+            enriched["evidence"] = evidence
+            if status in {"passed", "failed", "blocked", "attention", "warning", "manual_required"}:
+                enriched["status"] = status
+            if status in {"failed", "blocked"}:
+                summary = evidence.get("summary") or "Gate evidence did not pass."
+                enriched["detail"] = str(summary)
+        updated.append(enriched)
+    return updated
+
+
 def _pre_release_gate_summary(gates: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return {
         "total": len(gates),
+        "passed": sum(1 for gate in gates if gate.get("status") == "passed"),
         "configured": sum(1 for gate in gates if gate.get("status") == "configured"),
         "manual_required": sum(1 for gate in gates if gate.get("status") == "manual_required"),
         "missing": sum(1 for gate in gates if gate.get("status") == "missing"),
+        "failed": sum(1 for gate in gates if gate.get("status") in {"failed", "blocked"}),
         "required_missing": sum(
             1
             for gate in gates
             if gate.get("required") is True and gate.get("status") == "missing"
+        ),
+        "required_manual": sum(
+            1
+            for gate in gates
+            if gate.get("required") is True and gate.get("status") == "manual_required"
+        ),
+        "required_failed": sum(
+            1
+            for gate in gates
+            if gate.get("required") is True and gate.get("status") in {"failed", "blocked"}
         ),
     }
 
@@ -340,6 +476,10 @@ def _release_verification_status(
 
     if (pre_release_gate_summary or {}).get("required_missing", 0) > 0:
         remediations.append("Restore missing pre-release verification gates before release approval.")
+    if (pre_release_gate_summary or {}).get("required_failed", 0) > 0:
+        remediations.append("Review failed pre-release verification gate evidence before release approval.")
+    if (pre_release_gate_summary or {}).get("required_manual", 0) > 0:
+        remediations.append("Run required manual pre-release gates and attach their evidence before release approval.")
 
     if latest_release_e2e is None:
         remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
@@ -350,7 +490,11 @@ def _release_verification_status(
 
     if startup_status == "blocked":
         return "blocked", remediations
+    if (pre_release_gate_summary or {}).get("required_failed", 0) > 0:
+        return "blocked", remediations
     if (pre_release_gate_summary or {}).get("required_missing", 0) > 0:
+        return "attention", remediations
+    if (pre_release_gate_summary or {}).get("required_manual", 0) > 0:
         return "attention", remediations
     if latest_release_e2e is not None:
         benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
@@ -413,6 +557,7 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
     latest = report.get("latest_release_e2e")
     pre_release_gates = report.get("pre_release_gates") or []
     pre_release_summary = report.get("pre_release_gate_summary") or {}
+    pre_release_missing_paths = report.get("pre_release_gate_missing_paths") or []
     lines = [
         "# Across Agents Assistant RC Verification",
         "",
@@ -450,16 +595,19 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
         "",
         "## Pre-Release Gates",
         (
+            f"{pre_release_summary.get('passed', 0)} passed · "
             f"{pre_release_summary.get('configured', 0)} configured · "
             f"{pre_release_summary.get('manual_required', 0)} manual · "
-            f"{pre_release_summary.get('missing', 0)} missing"
+            f"{pre_release_summary.get('missing', 0)} missing · "
+            f"{pre_release_summary.get('failed', 0)} failed"
         ),
         f"Required missing: {pre_release_summary.get('required_missing', 0)}",
+        f"Required manual: {pre_release_summary.get('required_manual', 0)}",
+        f"Required failed: {pre_release_summary.get('required_failed', 0)}",
     ])
-    missing_paths = _missing_required_gate_paths(pre_release_gates)
-    if missing_paths:
+    if pre_release_missing_paths:
         lines.extend(["", "Missing required gate paths:"])
-        lines.extend([f"- {path}" for path in missing_paths])
+        lines.extend([f"- {path}" for path in pre_release_missing_paths])
     for gate in pre_release_gates:
         lines.append(
             f"- {gate.get('label')}: {gate.get('status')} ({gate.get('source')})"
@@ -467,6 +615,14 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
         command = gate.get("command")
         if command:
             lines.append(f"  - Command: `{command}`")
+        evidence = gate.get("evidence") or {}
+        if evidence:
+            lines.append(f"  - Evidence: {evidence.get('status')}")
+            if evidence.get("completed_at"):
+                lines.append(f"  - Completed at: {evidence.get('completed_at')}")
+            run_url = evidence.get("run_url") or evidence.get("workflow_run_url")
+            if run_url:
+                lines.append(f"  - Run URL: {run_url}")
 
     remediations = report.get("remediations") or []
     lines.extend(["", "## Remediation"])
@@ -542,6 +698,7 @@ def _build_release_verification_report(
         },
     }
 
+    report_directory = write_report_directory or app_subdir("release-reports")
     rows = _collect_release_task_rows(
         100,
         task_state=task_state,
@@ -551,7 +708,10 @@ def _build_release_verification_report(
     release_evaluation = build_release_evaluation_summary(rows)
     latest_row = _latest_release_e2e_row(rows)
     pre_release_gates = _build_pre_release_gates(repo_root=repo_root)
+    pre_release_gate_evidence = _load_pre_release_gate_evidence(report_directory)
+    pre_release_gates = _apply_pre_release_gate_evidence(pre_release_gates, pre_release_gate_evidence)
     pre_release_summary = _pre_release_gate_summary(pre_release_gates)
+    pre_release_missing_paths = _missing_required_gate_paths(pre_release_gates)
 
     latest_release_e2e = None
     if latest_row and load_task_payload:
@@ -581,6 +741,7 @@ def _build_release_verification_report(
         "latest_release_e2e": latest_release_e2e,
         "pre_release_gates": pre_release_gates,
         "pre_release_gate_summary": pre_release_summary,
+        "pre_release_gate_missing_paths": pre_release_missing_paths,
         "remediations": remediations,
         "report_files": {},
         "audit": {
@@ -593,5 +754,5 @@ def _build_release_verification_report(
     }
 
     if write_report:
-        _write_release_verification_report(report, report_directory=write_report_directory)
+        _write_release_verification_report(report, report_directory=report_directory)
     return report
