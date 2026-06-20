@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.29 - 2026-06-20
+
 ### Added
 
 - Completed the Agent Loop host consumption surface with bounded loop telemetry,
@@ -12,6 +14,8 @@
   telemetry alongside health and compact evidence summaries.
 - Added a scheduled ecosystem review workflow and autonomous workflow
   guardrails for future research, triage, and release automation.
+- Updated managed plugin pins to Across Orchestrator `v0.6.18` and Across
+  Context `v0.7.8`.
 
 ## 0.8.28 - 2026-06-20
 
