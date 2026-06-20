@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.28 - 2026-06-20
+
 ### Added
 
 - RC verification reports now surface malformed pre-release gate evidence files
