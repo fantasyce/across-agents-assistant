@@ -1,130 +1,92 @@
-# Agent Loop Completeness
+# Agent Loop Completion
 
-This document closes the current Agent Loop iteration for Across Agents
-Assistant and records what remains as product/spec work rather than immediate
-AAA implementation work.
-The release checklist produced by this iteration lives in
-[Release Process](RELEASE_PROCESS.md), and the repository boundary is described
-in [Architecture Overview](ARCHITECTURE.md).
+This document records the current Agent Loop completion boundary across Across
+Agents Assistant, Across Orchestrator, and Across Context.
 
-## Current Completion Status
+It is not a substitute for implementation. It exists to make clear which Agent
+Loop capabilities are now implemented, validated, and ready for final review,
+and which ideas require a new product direction before more code is written.
 
-As of `v0.8.27`, AAA has completed its host-side Agent Loop obligations:
+## Product Decision
 
-- Plugin Center can start a probe loop and fetch health, timeline events, and
-  compact evidence summaries.
+Accepted: 2026-06-20.
+
+Decision owner: product owner request in the Agent Loop closeout cycle.
+
+Decision: complete the current Agent Loop engineering scope now instead of
+leaving telemetry, event resume, budget/concurrency policy, routing evidence,
+and memory-candidate metrics as deferred RFC-only work.
+
+This supersedes the earlier `v0.8.28` closeout posture that treated those items
+as future RFC-stage work. The implementation remains bounded to release-quality
+Agent Loop integration; autonomous workflow, long-horizon analytics dashboards,
+cryptographic evidence trust chains, and full multi-agent product UX remain
+outside this closeout.
+
+## Completed Engineering Scope
+
+The current Agent Loop scope is complete when the three modules provide these
+contracts together:
+
+- Orchestrator owns loop runtime state, event production, routing decisions,
+  recovery policy, budget enforcement, cancellation categories, telemetry, and
+  event resume cursors.
+- Context owns memory policy, structured memory candidate storage, pending
+  review state, and aggregate memory-candidate metrics without raw memory text.
+- AAA owns host UI, local plugin lifecycle, Orchestrator API proxying, Context
+  memory review, and display of compact runtime evidence without owning runtime
+  decisions.
+
+Current implementation status:
+
+- Plugin Center can start a probe loop and fetch health, timeline events,
+  bounded telemetry, and compact evidence summaries.
 - Timeline mode distinguishes live, snapshot, fallback, and unavailable sources.
-- Event audit metadata is decoded and rendered.
-- Cancellation categories are consumed as tolerant strings.
+- Event snapshots and streams support `after_sequence` resume cursors through
+  Orchestrator and AAA.
+- Event audit metadata is decoded and rendered with sequence, event id, and
+  correlation id.
+- Cancellation categories are consumed as tolerant strings, including budget
+  exhaustion.
+- Orchestrator enforces turn/runtime/concurrency budgets and exposes the budget
+  policy in health, telemetry, and release evidence.
 - Recovery policy and recovered-step evidence are visible in health details.
+- Routing evidence includes selected agent, reason, source, and alternatives;
+  AAA renders the first outcome and selected alternative without hard-coded enum
+  coupling.
 - Structured memory candidates are surfaced and can focus shared-memory review.
-- Host release evidence shows release readiness, checks, risks, and next actions.
+- Across Context exposes aggregate Agent Loop memory-candidate metrics through
+  CLI, MCP, and AAA API/UI without raw memory text.
+- Host release evidence shows release readiness, checks, risks, and next
+  actions.
 - Host capability registry diagnostics expose local profiles, plugins, tools,
   skills, scope, and Orchestrator registry sync state.
-- Release verification now consumes Live E2E gate evidence and reports missing
-  paths plus parse errors.
+- Release verification consumes Live E2E gate evidence and reports missing paths
+  plus parse errors.
 
-The remaining work should not be treated as more AAA feature drift. Runtime
-items are assigned to Across Orchestrator's Agent Loop Runtime RFCs, and memory
-items are assigned to Across Context's Agent Loop Memory RFC.
+## Validation Required For Final Acceptance
 
-## Not In Immediate AAA Scope
+Before merging and releasing the final Agent Loop closeout, run:
 
-### Telemetry Runtime
+- Orchestrator Agent Loop runtime, HTTP, CLI, and MCP tests.
+- Context CLI, MCP, and vault-management tests.
+- AAA plugin runtime, Orchestrator proxy, API, Swift behavior, and SwiftPM
+  checks.
+- A cross-repo live Agent Loop smoke that uses the local Orchestrator and Context
+  checkouts through AAA and verifies health, telemetry, event resume, budget,
+  routing, and memory metrics.
 
-Desired product metrics:
+## Known Non-Blocking Future Product Scope
 
-- loop duration P50/P95
-- cancel category distribution
-- stream reconnect/fallback rate
-- capability mismatch rate
-- recovery applied/blocked rate
-- memory candidate acceptance/rejection rate
+The following items are not considered unfinished Agent Loop engineering in the
+current scope. They require new product decisions before implementation:
 
-Owner: Orchestrator for event production and aggregation contract; AAA for host
-display only after the protocol is defined.
-RFC owner: Across Orchestrator.
+- Full multi-agent product UX beyond routing evidence display, such as explicit
+  handoff controls or visual task decomposition.
+- Long-horizon analytics dashboards over many historical loops.
+- Cryptographic trust chains for release or loop evidence artifacts.
+- Fully autonomous ecosystem workflow that researches, designs, develops,
+  validates, and releases changes on a schedule.
 
-### Stream Resume Semantics
-
-Open questions:
-
-- Should `events/stream?follow=true` support resume tokens?
-- Is the resume cursor `sequence`, `event_id`, or both?
-- What should happen after host sleep or app relaunch?
-- Should clients always fetch snapshot first, then follow from last sequence?
-
-Owner: Orchestrator protocol. AAA should keep the current fallback-to-snapshot
-behavior until this is specified.
-RFC owner: Across Orchestrator.
-
-### Cost Control
-
-Open questions:
-
-- maximum concurrent loops per host
-- maximum turns per loop by task class
-- timeout and cancellation policy by failure type
-- user-visible budget indicators
-
-Owner: product and Orchestrator policy. AAA should not invent limits locally
-unless the Orchestrator contract exposes them.
-RFC owner: Across Orchestrator.
-
-### Multi-Agent Coordination
-
-Current AAA scope is host orchestration and evidence consumption. Multi-agent
-handoff, decomposition, and routing policy belong to Orchestrator. AAA should
-only display routing evidence and capability hints unless the product scope
-explicitly requires new host controls.
-RFC owner: Across Orchestrator, with Context owning only memory-policy effects.
-
-### Client UX Beyond Current Health/Timeline
-
-Possible later UX:
-
-- per-loop history
-- user notifications on loop completion or failure
-- full "show all" release evidence expansion
-- live reconnect status and retry controls
-
-These are polish/product items, not blocking Agent Loop completeness.
-
-## Recommended RFC Order
-
-All RFCs below are outside immediate AAA scope. Start them in this order when
-the product decision is to invest further in Agent Loop runtime behavior.
-The autonomous ecosystem review described in
-[Autonomous Workflow](AUTONOMOUS_WORKFLOW.md) may create candidate issues for
-these RFCs, but it must not convert them into runtime changes without an
-accepted owner and validation plan.
-
-1. Agent Loop telemetry schema:
-   - event fields
-   - aggregation windows
-   - host display contract
-   - privacy/redaction rules
-2. Stream resume protocol:
-   - cursor shape
-   - snapshot/follow ordering
-   - disconnect and app relaunch behavior
-3. Cost control policy:
-   - loop budgets
-   - concurrency limits
-   - timeout and cancellation categories
-4. Multi-agent UX/product spec:
-   - which controls are host-owned
-   - which decisions remain Orchestrator-owned
-
-## Exit Criteria For This Iteration
-
-This Agent Loop cycle is considered complete when:
-
-- release process is documented
-- four-repository architecture boundary is documented
-- release gate evidence parse errors are visible in JSON, Markdown, and UI
-- tests cover parse-error compatibility
-- no new Agent Loop runtime behavior is added without an RFC
-
-After this, new Agent Loop code should start from one of the RFC items above,
-not from ad hoc UI or protocol additions.
+Those items should start from a new RFC or product spec. They should not be
+mixed into this Agent Loop closeout branch.

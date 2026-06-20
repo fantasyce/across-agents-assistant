@@ -143,6 +143,18 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop evidence routing label should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.detailBudget", localeIdentifier: "en") == "Budget",
+        "Agent Loop budget detail label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.detailTelemetry", localeIdentifier: "zh-Hans") == "指标",
+        "Agent Loop telemetry detail label should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.routingAlternativeMatched", localeIdentifier: "en") == "matched",
+        "Agent Loop routing alternative marker should be localized in English"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.detailReleaseEvidence", localeIdentifier: "en") == "Release",
         "Agent Loop host release evidence label should be localized in English"
     )
@@ -175,8 +187,20 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop memory candidate turn should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("plugins.loop.budgetTurns", localeIdentifier: "en") == "%@ turns",
+        "Agent Loop budget turn summary should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.loop.telemetrySummary", localeIdentifier: "zh-Hans") == "%d 个事件，%d 轮",
+        "Agent Loop telemetry summary should be localized in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("plugins.memory.loopCandidates", localeIdentifier: "en") == "Loop memory candidates",
         "Agent Loop memory candidate list label should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("plugins.memory.loopMetrics", localeIdentifier: "zh-Hans") == "%d 个 Loop 候选，%d 个待审",
+        "Agent Loop memory metrics summary should be localized in Simplified Chinese"
     )
     assert(
         AppPreferences.localizedString("plugins.memory.focusCandidate", localeIdentifier: "zh-Hans") == "定位记忆审核",

@@ -38,6 +38,7 @@ enum AgentLoopTimelineSource: String, CaseIterable, Equatable {
 final class PluginLifecycleViewModel: ObservableObject {
     @Published var plugins: [AcrossPluginStatus] = []
     @Published var memories: [AcrossMemoryEntry] = []
+    @Published var agentLoopMemoryMetrics: AgentLoopMemoryMetricsResponse?
     @Published var memoryStatusFilter = "pending"
     @Published var newMemoryText = ""
     @Published var isLoadingPlugins = false
@@ -47,6 +48,7 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopProbe: AgentLoopRunResponse?
     @Published var agentLoopHealth: AgentLoopHealthResponse?
     @Published var agentLoopEvidenceSummary: AgentLoopEvidenceSummaryResponse?
+    @Published var agentLoopTelemetry: AgentLoopTelemetryResponse?
     @Published var agentLoopEvents: [AgentLoopEventResponse] = []
     // Compatibility mirror for older tests/views; agentLoopTimelineSource is the source of truth.
     @Published private(set) var agentLoopEventsLive = false
@@ -118,8 +120,21 @@ final class PluginLifecycleViewModel: ObservableObject {
             try Self.validate(response)
             let decoded = try JSONDecoder().decode(AcrossMemoryListResponse.self, from: data)
             memories = Array(decoded.memories.reversed())
+            await loadAgentLoopMemoryMetrics()
         } catch {
             errorMessage = error.localizedDescription
+            agentLoopMemoryMetrics = nil
+        }
+    }
+
+    func loadAgentLoopMemoryMetrics() async {
+        do {
+            let url = URL(string: "\(backendBase)/api/memory/agent-loop-metrics")!
+            let (data, response) = try await URLSession.shared.data(from: url)
+            try Self.validate(response)
+            agentLoopMemoryMetrics = try JSONDecoder().decode(AgentLoopMemoryMetricsResponse.self, from: data)
+        } catch {
+            agentLoopMemoryMetrics = nil
         }
     }
 
@@ -220,6 +235,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         errorMessage = nil
         agentLoopHealth = nil
         agentLoopEvidenceSummary = nil
+        agentLoopTelemetry = nil
         agentLoopEvents = []
         agentLoopEventsLive = false
         agentLoopTimelineSource = nil
@@ -288,6 +304,17 @@ final class PluginLifecycleViewModel: ObservableObject {
                 agentLoopEvidenceSummary = nil
             }
 
+            let telemetryURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escaped)/telemetry")!
+            var telemetryRequest = URLRequest(url: telemetryURL)
+            telemetryRequest.httpMethod = "GET"
+            do {
+                let (telemetryData, telemetryResponse) = try await URLSession.shared.data(for: telemetryRequest)
+                try Self.validate(telemetryResponse)
+                agentLoopTelemetry = try JSONDecoder().decode(AgentLoopTelemetryResponse.self, from: telemetryData)
+            } catch {
+                agentLoopTelemetry = nil
+            }
+
             let eventResult = await fetchAgentLoopEvents(
                 escapedLoopId: escaped,
                 mode: timelineMode,
@@ -309,7 +336,11 @@ final class PluginLifecycleViewModel: ObservableObject {
         if let streamTask {
             do {
                 let events = try await streamTask.value
-                let snapshot = (try? await fetchAgentLoopEventSnapshot(escapedLoopId: escapedLoopId)) ?? []
+                let latestSequence = events.compactMap(\.sequence).max()
+                let snapshot = (try? await fetchAgentLoopEventSnapshot(
+                    escapedLoopId: escapedLoopId,
+                    afterSequence: latestSequence
+                )) ?? []
                 let merged = Self.mergedAgentLoopEvents(events, snapshot)
                 if !merged.isEmpty {
                     return (merged, events.isEmpty ? .snapshot : .live)
@@ -339,8 +370,15 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
     }
 
-    private func fetchAgentLoopEventSnapshot(escapedLoopId: String) async throws -> [AgentLoopEventResponse] {
-        let eventsURL = URL(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events")!
+    private func fetchAgentLoopEventSnapshot(
+        escapedLoopId: String,
+        afterSequence: Int? = nil
+    ) async throws -> [AgentLoopEventResponse] {
+        let eventsURL = Self.agentLoopEventsURL(
+            backendBase: backendBase,
+            escapedLoopId: escapedLoopId,
+            afterSequence: afterSequence
+        )
         var eventsRequest = URLRequest(url: eventsURL)
         eventsRequest.httpMethod = "GET"
         let (eventsData, eventsResponse) = try await URLSession.shared.data(for: eventsRequest)
@@ -351,13 +389,15 @@ final class PluginLifecycleViewModel: ObservableObject {
     private func fetchAgentLoopEventStream(
         escapedLoopId: String,
         follow: Bool,
-        liveUpdate: Bool
+        liveUpdate: Bool,
+        afterSequence: Int? = nil
     ) async throws -> [AgentLoopEventResponse] {
-        var components = URLComponents(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events/stream")!
-        if follow {
-            components.queryItems = [URLQueryItem(name: "follow", value: "true")]
-        }
-        let eventsURL = components.url!
+        let eventsURL = Self.agentLoopEventStreamURL(
+            backendBase: backendBase,
+            escapedLoopId: escapedLoopId,
+            follow: follow,
+            afterSequence: afterSequence
+        )
         var eventsRequest = URLRequest(url: eventsURL)
         eventsRequest.httpMethod = "GET"
         eventsRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -392,6 +432,38 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
         flush()
         return events
+    }
+
+    nonisolated static func agentLoopEventsURL(
+        backendBase: String,
+        escapedLoopId: String,
+        afterSequence: Int? = nil
+    ) -> URL {
+        var components = URLComponents(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events")!
+        if let afterSequence {
+            components.queryItems = [URLQueryItem(name: "after_sequence", value: String(afterSequence))]
+        }
+        return components.url!
+    }
+
+    nonisolated static func agentLoopEventStreamURL(
+        backendBase: String,
+        escapedLoopId: String,
+        follow: Bool,
+        afterSequence: Int? = nil
+    ) -> URL {
+        var components = URLComponents(string: "\(backendBase)/api/orchestrator/loops/\(escapedLoopId)/events/stream")!
+        var queryItems: [URLQueryItem] = []
+        if follow {
+            queryItems.append(URLQueryItem(name: "follow", value: "true"))
+        }
+        if let afterSequence {
+            queryItems.append(URLQueryItem(name: "after_sequence", value: String(afterSequence)))
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
+        return components.url!
     }
 
     nonisolated static func decodeAgentLoopEventsFromSSE(_ text: String) -> [AgentLoopEventResponse] {

@@ -1155,20 +1155,44 @@ class OrchestratorPluginManager:
             return self._http_get(f"/loops/{loop_id}/evidence-summary")
         return self._cli_json(["loop-evidence-summary", loop_id, "--json"])
 
-    def get_agent_loop_events(self, loop_id: str) -> List[Dict[str, Any]]:
+    def get_agent_loop_telemetry(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
-            events = self._http_get(f"/loops/{loop_id}/events")
+            return self._http_get(f"/loops/{loop_id}/telemetry")
+        return self._cli_json(["loop-telemetry", loop_id, "--json"])
+
+    def get_agent_loop_events(self, loop_id: str, after_sequence: Optional[int] = None) -> List[Dict[str, Any]]:
+        self._ensure_external()
+        path = f"/loops/{loop_id}/events"
+        args = ["loop-events", loop_id]
+        if after_sequence is not None:
+            path = f"{path}?{urllib.parse.urlencode({'after_sequence': int(after_sequence)})}"
+            args.extend(["--after-sequence", str(int(after_sequence))])
+        if self._transport == "http":
+            events = self._http_get(path)
         else:
-            events = self._cli_json(["loop-events", loop_id, "--json"])
+            args.append("--json")
+            events = self._cli_json(args)
         return events if isinstance(events, list) else []
 
-    def get_agent_loop_events_stream(self, loop_id: str) -> List[Dict[str, Any]]:
+    def get_agent_loop_events_stream(
+        self,
+        loop_id: str,
+        *,
+        follow: bool = False,
+        after_sequence: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         self._ensure_external()
         if self._transport == "http":
-            text = self._http_get_text(f"/loops/{loop_id}/events/stream", accept="text/event-stream")
+            query: Dict[str, str] = {}
+            if follow:
+                query["follow"] = "true"
+            if after_sequence is not None:
+                query["after_sequence"] = str(int(after_sequence))
+            suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+            text = self._http_get_text(f"/loops/{loop_id}/events/stream{suffix}", accept="text/event-stream")
             return _parse_sse_json_events(text)
-        return self.get_agent_loop_events(loop_id)
+        return self.get_agent_loop_events(loop_id, after_sequence=after_sequence)
 
     def list_task_summaries(self) -> List[Dict[str, Any]]:
         summaries: List[Dict[str, Any]] = []

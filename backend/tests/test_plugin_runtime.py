@@ -10,6 +10,7 @@ from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import (
     discover_across_plugins,
     forget_context_memory,
+    get_agent_loop_memory_metrics,
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
@@ -62,6 +63,7 @@ def _write_fake_context_memory_command(across_home: Path) -> Path:
         "#!/bin/sh\n"
         "case \"$1\" in\n"
         "  list) printf '[{\"id\":\"mem_cli_1\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"CLI memory\",\"status\":\"pending\"}]\\n' ;;\n"
+        "  loop-memory-metrics) printf '{\"schema_version\":\"agent-loop-memory-metrics/1.0\",\"candidate_schema\":\"agent-loop-memory-candidate/1.0\",\"totals\":{\"candidate_count\":1,\"pending_count\":1},\"metrics\":[{\"id\":\"agent_loop_memory.candidate_count\",\"value\":1}]}\\n' ;;\n"
         "  remember) printf '{\"memory\":{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"pending\"}}\\n' ;;\n"
         "  update-status) printf '{\"updated\":[{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"active\"}],\"missing\":[]}\\n' ;;\n"
         "  forget) printf '{\"forgotten\":1}\\n' ;;\n"
@@ -316,6 +318,10 @@ def test_context_memory_client_uses_plugin_cli(tmp_path):
     forgotten = forget_context_memory("mem_cli_2", env=env)
     assert forgotten == {"forgotten": True, "id": "mem_cli_2"}
 
+    metrics = get_agent_loop_memory_metrics(env=env)
+    assert metrics["schema_version"] == "agent-loop-memory-metrics/1.0"
+    assert metrics["totals"]["pending_count"] == 1
+
 
 def test_context_memory_pending_review_includes_all_projects(tmp_path):
     across_home = tmp_path / "across"
@@ -336,6 +342,29 @@ def test_context_memory_pending_review_includes_all_projects(tmp_path):
 
     assert memories[0]["id"] == "mem_project_1"
     assert "--all-projects" in log_path.read_text(encoding="utf-8")
+
+
+def test_context_agent_loop_memory_metrics_includes_all_projects(tmp_path):
+    across_home = tmp_path / "across"
+    bin_dir = across_home / "bin"
+    bin_dir.mkdir(parents=True)
+    log_path = tmp_path / "argv.txt"
+    command_path = bin_dir / "across-context"
+    command_path.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" > {log_path}\n"
+        "printf '{\"schema_version\":\"agent-loop-memory-metrics/1.0\",\"totals\":{\"candidate_count\":2,\"pending_count\":1}}\\n'\n",
+        encoding="utf-8",
+    )
+    command_path.chmod(0o755)
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+
+    metrics = get_agent_loop_memory_metrics(env=env)
+
+    assert metrics["totals"]["candidate_count"] == 2
+    argv = log_path.read_text(encoding="utf-8")
+    assert "loop-memory-metrics" in argv
+    assert "--all-projects" in argv
 
 
 def test_plugins_action_api_rejects_unsupported_action(monkeypatch, tmp_path):
@@ -370,6 +399,16 @@ def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, t
     )
     monkeypatch.setattr(
         api_server,
+        "get_agent_loop_memory_metrics",
+        lambda **_: {
+            "schema_version": "agent-loop-memory-metrics/1.0",
+            "candidate_schema": "agent-loop-memory-candidate/1.0",
+            "totals": {"candidate_count": 1, "pending_count": 1},
+            "metrics": [{"id": "agent_loop_memory.candidate_count", "value": 1}],
+        },
+    )
+    monkeypatch.setattr(
+        api_server,
         "update_context_memory_status",
         lambda memory_id, status: {
             "id": memory_id,
@@ -401,6 +440,10 @@ def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, t
     pending = client.get("/api/memory/memories", params={"status": "pending"})
     assert pending.status_code == 200
     assert [item["id"] for item in pending.json()["memories"]] == [memory_id]
+
+    metrics = client.get("/api/memory/agent-loop-metrics")
+    assert metrics.status_code == 200
+    assert metrics.json()["totals"]["pending_count"] == 1
 
     approved = client.post(f"/api/memory/memories/{memory_id}/status", json={"status": "active"})
     assert approved.status_code == 200

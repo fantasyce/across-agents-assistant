@@ -4,6 +4,12 @@
 
 ### Added
 
+- Completed the Agent Loop host consumption surface with bounded loop telemetry,
+  resume-aware event snapshots/streams, budget indicators, routing
+  alternatives, and Across Context memory-candidate metrics in the Plugin
+  Center.
+- External Orchestrator loop transitions now best-effort enrich responses with
+  telemetry alongside health and compact evidence summaries.
 - Added a scheduled ecosystem review workflow and autonomous workflow
   guardrails for future research, triage, and release automation.
 

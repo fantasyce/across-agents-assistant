@@ -111,12 +111,22 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
         "renewal_count": 1
       },
       "detached_dispatch_count": 0,
-      "recent_failure_types": {"quality_failed": 1},
-      "executable_actions": ["approve", "reject", "cancel"],
-      "cancellation_requested": false,
-      "cancellation_category": "shutdown",
-      "cancel_ack_pending": false
-    }
+          "recent_failure_types": {"quality_failed": 1},
+          "executable_actions": ["approve", "reject", "cancel"],
+          "cancellation_requested": false,
+          "cancellation_category": "shutdown",
+          "cancel_ack_pending": false,
+          "budget": {
+            "schema_version": "agent-loop-budget/1.0",
+            "max_turns_per_loop": 8,
+            "turns_used": 3,
+            "turns_remaining": 5,
+            "max_runtime_seconds": 120,
+            "runtime_seconds": 12.5,
+            "runtime_remaining_ms": 107500,
+            "action_lease_seconds": 300
+          }
+        }
     """.data(using: .utf8)!
 
     let health = try JSONDecoder().decode(AgentLoopHealthResponse.self, from: json)
@@ -129,6 +139,9 @@ func testAgentLoopHealthResponseDecodesProbeHealth() throws {
     assert(health.recentFailureTypes?["quality_failed"] == 1, "Failure type counts should decode")
     assert(health.executableActions == ["approve", "reject", "cancel"], "Executable actions should decode")
     assert(health.cancellationCategory == "shutdown", "Cancellation category should decode")
+    assert(health.budget?.maxTurnsPerLoop == 8, "Budget max turns should decode")
+    assert(health.budget?.turnsLabel == "3/8", "Budget turn label should summarize used and max turns")
+    assert(health.budget?.runtimeRemainingMs == 107500, "Budget runtime remaining should decode")
     assert(health.recentFailureCount == 1, "Health should summarize recent failure counts")
     assert(health.hasStaleLease == false, "Active non-expired lease should not be stale")
     assert(health.needsAttention == true, "Recent failures should mark loop health as attention-worthy")
@@ -145,21 +158,38 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
         "sequence_contiguous": true,
         "event_id_coverage": true,
         "correlation_id_coverage": true
-      },
-      "routing": {
-        "routed_action_count": 2,
-        "non_default_route_count": 2,
-        "capability_hint_route_count": 1,
+          },
+          "routing": {
+            "schema_version": "agent-loop-routing/1.0",
+            "routed_action_count": 2,
+            "non_default_route_count": 2,
+            "capability_hint_route_count": 1,
         "outcomes": [
           {
             "action_type": "task_dispatch",
-            "status": "completed",
-            "selected_agent": "builder",
-            "source": "metadata.agentCapabilityHints.preferred.task_dispatch",
-            "capability_hint": "implementation"
-          }
-        ]
-      },
+                "status": "completed",
+                "selected_agent": "builder",
+                "source": "metadata.agentCapabilityHints.preferred.task_dispatch",
+                "capability_hint": "implementation",
+                "reason": "Selected builder because it matched capability hint implementation.",
+                "alternatives": [
+                  {
+                    "agent_id": "owner",
+                    "selected": false,
+                    "matched": false,
+                    "capability_count": 1
+                  },
+                  {
+                    "agent_id": "builder",
+                    "selected": true,
+                    "matched": true,
+                    "matched_capability": "implementation",
+                    "capability_count": 3
+                  }
+                ]
+              }
+            ]
+          },
       "recovery": {
         "decision_count": 1,
         "applied_count": 1,
@@ -233,11 +263,17 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
           }
         ],
         "risk_count": 1,
-        "next_actions": [
-          "Review pending structured memory candidates in Across Context."
-        ]
-      }
-    }
+            "next_actions": [
+              "Review pending structured memory candidates in Across Context."
+            ]
+          },
+          "budget": {
+            "schema_version": "agent-loop-budget/1.0",
+            "max_turns_per_loop": 8,
+            "turns_used": 5,
+            "turns_remaining": 3
+          }
+        }
     """.data(using: .utf8)!
 
     let summary = try JSONDecoder().decode(AgentLoopEvidenceSummaryResponse.self, from: json)
@@ -246,8 +282,13 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.loopId == "loop-ui", "Evidence summary loop id should decode")
     assert(summary.eventAudit?.eventCount == 12, "Evidence event count should decode")
     assert(summary.eventAudit?.sequenceContiguous == true, "Evidence audit sequence coverage should decode")
+    assert(summary.routing?.schemaVersion == "agent-loop-routing/1.0", "Routing schema should decode")
     assert(summary.routing?.capabilityHintRouteCount == 1, "Capability hint route count should decode")
     assert(summary.routing?.outcomes?.first?.selectedAgent == "builder", "Routing outcome agent should decode")
+    assert(summary.routing?.outcomes?.first?.reason?.contains("matched capability hint") == true, "Routing reason should decode")
+    assert(summary.routing?.outcomes?.first?.alternatives?.count == 2, "Routing alternatives should decode")
+    assert(summary.routing?.outcomes?.first?.alternatives?.last?.agentId == "builder", "Routing alternative agent id should decode")
+    assert(summary.routing?.outcomes?.first?.alternatives?.last?.matchedCapability == "implementation", "Routing matched capability should decode")
     assert(summary.recovery?.appliedCount == 1, "Recovery applied count should decode")
     assert(summary.recovery?.decisions?.first?.recoveryAction == "retry", "Recovery decision action should decode")
     assert(summary.recovery?.decisions?.first?.failureType == "adapter_error", "Recovery decision failure type should decode")
@@ -262,6 +303,7 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
     assert(summary.hostReleaseEvidence?.checks?.last?.candidateCount == 1, "Host release check counts should decode")
     assert(summary.hostReleaseEvidence?.risks?.first?.id == "memory_review_pending", "Host release risk should decode")
     assert(summary.hostReleaseEvidence?.nextActions?.first?.contains("Across Context") == true, "Host release next action should decode")
+    assert(summary.budget?.turnsRemaining == 3, "Evidence summary budget should decode")
     if let candidate = summary.memoryCandidates?.candidates?.first {
         assert(PluginLifecycleViewModel.memoryReviewStatusFilter(for: candidate) == "pending", "Memory candidate review filter should use memory status")
     } else {
@@ -279,6 +321,113 @@ func testAgentLoopEvidenceSummaryDecodesAuditAndRouting() throws {
         PluginLifecycleViewModel.memoryReviewStatusFilter(for: missingStatusCandidate) == "pending",
         "Memory candidate review filter should fall back to pending"
     )
+}
+
+func testAgentLoopTelemetryResponseDecodesBoundedMetrics() throws {
+    let json = """
+    {
+      "schema_version": "agent-loop-telemetry/1.0",
+      "loop_id": "loop-ui",
+      "status": "completed",
+      "latest_sequence": 12,
+      "budget": {
+        "schema_version": "agent-loop-budget/1.0",
+        "max_concurrent_loops": 1,
+        "max_turns_per_loop": 8,
+        "turns_used": 5,
+        "turns_remaining": 3,
+        "runtime_seconds": 42.2
+      },
+      "summary": {
+        "duration_ms": 1200,
+        "turn_count": 5,
+        "event_count": 12,
+        "routing_outcome_count": 2,
+        "memory_candidate_count": 1,
+        "recovery_decision_count": 1,
+        "cancel_category": "budget_exceeded"
+      },
+      "metrics": [
+        {
+          "schema_version": "agent-loop-telemetry-metric/1.0",
+          "metric": "loop.duration_ms",
+          "value": 1200,
+          "unit": "ms",
+          "dimensions": {
+            "status": "completed",
+            "terminal": true,
+            "cancel_category": null
+          }
+        },
+        {
+          "metric": "loop.memory_candidate.produced_count",
+          "value": 1,
+          "unit": "count"
+        }
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let telemetry = try JSONDecoder().decode(AgentLoopTelemetryResponse.self, from: json)
+
+    assert(telemetry.schemaVersion == "agent-loop-telemetry/1.0", "Telemetry schema should decode")
+    assert(telemetry.loopId == "loop-ui", "Telemetry loop id should decode")
+    assert(telemetry.latestSequence == 12, "Telemetry latest sequence should decode")
+    assert(telemetry.summary?.eventCount == 12, "Telemetry event count should decode")
+    assert(telemetry.summary?.memoryCandidateCount == 1, "Telemetry memory candidate count should decode")
+    assert(telemetry.summary?.cancelCategory == "budget_exceeded", "Telemetry cancel category should decode")
+    assert(telemetry.metrics?.first?.metric == "loop.duration_ms", "Telemetry metric should decode")
+    assert(telemetry.metrics?.first?.id == "loop.duration_ms", "Telemetry legacy metric id alias should decode")
+    assert(telemetry.metrics?.first?.value == 1200, "Telemetry metric value should decode")
+    assert(telemetry.metrics?.first?.dimensions?["terminal"]?.stringValue == "true", "Telemetry metric dimensions should decode")
+    assert(telemetry.budget?.turnsLabel == "5/8", "Telemetry budget should decode")
+}
+
+func testAgentLoopMemoryMetricsResponseDecodesWithoutRawMemoryText() throws {
+    let json = """
+    {
+      "schema_version": "agent-loop-memory-metrics/1.0",
+      "candidate_schema": "agent-loop-memory-candidate/1.0",
+      "totals": {
+        "candidate_count": 3,
+        "pending_count": 1,
+        "approved_count": 1,
+        "archived_count": 1,
+        "duplicate_reused_count": 2,
+        "sensitive_denied_count": 0
+      },
+      "byStatus": {
+        "pending": 1,
+        "active": 1,
+        "archived": 1
+      },
+      "byScope": {
+        "project": 2,
+        "global": 1
+      },
+      "metrics": [
+        {
+          "schema_version": "agent-loop-memory-metric/1.0",
+          "metric": "memory_candidate.pending_count",
+          "value": 1,
+          "unit": "count",
+          "dimensions": {"status": "pending"}
+        }
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let metrics = try JSONDecoder().decode(AgentLoopMemoryMetricsResponse.self, from: json)
+
+    assert(metrics.schemaVersion == "agent-loop-memory-metrics/1.0", "Memory metrics schema should decode")
+    assert(metrics.candidateSchema == "agent-loop-memory-candidate/1.0", "Memory candidate schema should decode")
+    assert(metrics.totals?.candidateCount == 3, "Memory candidate total should decode")
+    assert(metrics.totals?.pendingCount == 1, "Pending memory candidate count should decode")
+    assert(metrics.byStatus?["pending"] == 1, "Memory metrics status buckets should decode")
+    assert(metrics.byScope?["project"] == 2, "Memory metrics scope buckets should decode")
+    assert(metrics.metrics?.first?.metric == "memory_candidate.pending_count", "Memory metric should decode")
+    assert(metrics.metrics?.first?.id == "memory_candidate.pending_count", "Memory metric legacy id alias should decode")
+    assert(metrics.metrics?.first?.dimensions?["status"]?.stringValue == "pending", "Memory metric dimensions should decode")
 }
 
 func testAgentLoopEventResponseDecodesNestedPayloads() throws {
@@ -412,6 +561,23 @@ func testAgentLoopTimelineModeAndSourceContracts() throws {
     )
 }
 
+func testAgentLoopEventURLsCarryResumeCursor() throws {
+    let snapshotURL = PluginLifecycleViewModel.agentLoopEventsURL(
+        backendBase: "http://backend",
+        escapedLoopId: "loop-ui",
+        afterSequence: 7
+    )
+    let streamURL = PluginLifecycleViewModel.agentLoopEventStreamURL(
+        backendBase: "http://backend",
+        escapedLoopId: "loop-ui",
+        follow: true,
+        afterSequence: 7
+    )
+
+    assert(snapshotURL.absoluteString == "http://backend/api/orchestrator/loops/loop-ui/events?after_sequence=7", "Snapshot event URL should carry after_sequence")
+    assert(streamURL.absoluteString == "http://backend/api/orchestrator/loops/loop-ui/events/stream?follow=true&after_sequence=7", "Stream event URL should carry follow and after_sequence")
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -419,10 +585,13 @@ struct PluginLifecycleBehavior {
         try testAgentLoopRunResponseDecodesProbeResult()
         try testAgentLoopHealthResponseDecodesProbeHealth()
         try testAgentLoopEvidenceSummaryDecodesAuditAndRouting()
+        try testAgentLoopTelemetryResponseDecodesBoundedMetrics()
+        try testAgentLoopMemoryMetricsResponseDecodesWithoutRawMemoryText()
         try testAgentLoopEventResponseDecodesNestedPayloads()
         try testAgentLoopEventResponseDecodesSSEStream()
         try testAgentLoopEventMergingDeduplicatesStreamUpdates()
         try testAgentLoopTimelineModeAndSourceContracts()
+        try testAgentLoopEventURLsCarryResumeCursor()
         print("PluginLifecycleBehavior passed")
     }
 }

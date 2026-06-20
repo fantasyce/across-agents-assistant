@@ -157,6 +157,77 @@ struct AcrossMemoryEntry: Decodable, Identifiable, Equatable {
     let updatedAt: String?
 }
 
+struct AgentLoopMemoryMetricsResponse: Decodable, Equatable {
+    let schemaVersion: String?
+    let candidateSchema: String?
+    let totals: AgentLoopMemoryMetricsTotals?
+    let byStatus: [String: Int]?
+    let byScope: [String: Int]?
+    let metrics: [AgentLoopMemoryMetric]?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case candidateSchema = "candidate_schema"
+        case totals
+        case byStatus
+        case byScope
+        case metrics
+    }
+}
+
+struct AgentLoopMemoryMetricsTotals: Decodable, Equatable {
+    let candidateCount: Int?
+    let pendingCount: Int?
+    let approvedCount: Int?
+    let archivedCount: Int?
+    let expiredCount: Int?
+    let forgottenCount: Int?
+    let duplicateReusedCount: Int?
+    let deniedCount: Int?
+    let sensitiveDeniedCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case candidateCount = "candidate_count"
+        case pendingCount = "pending_count"
+        case approvedCount = "approved_count"
+        case archivedCount = "archived_count"
+        case expiredCount = "expired_count"
+        case forgottenCount = "forgotten_count"
+        case duplicateReusedCount = "duplicate_reused_count"
+        case deniedCount = "denied_count"
+        case sensitiveDeniedCount = "sensitive_denied_count"
+    }
+}
+
+struct AgentLoopMemoryMetric: Decodable, Equatable {
+    let schemaVersion: String?
+    let metric: String?
+    let value: Double?
+    let unit: String?
+    let dimensions: [String: AgentLoopJSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case metric
+        case legacyId = "id"
+        case value
+        case unit
+        case dimensions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion)
+        metric = try container.decodeIfPresent(String.self, forKey: .metric)
+            ?? (try container.decodeIfPresent(String.self, forKey: .legacyId))
+        value = try container.decodeIfPresent(Double.self, forKey: .value)
+        unit = try container.decodeIfPresent(String.self, forKey: .unit)
+        dimensions = try container.decodeIfPresent([String: AgentLoopJSONValue].self, forKey: .dimensions)
+    }
+
+    var id: String? { metric }
+}
+
 struct AcrossMemoryRememberRequest: Encodable {
     let text: String
     let projectRoot: String?
@@ -219,6 +290,7 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
     let cancellationRequested: Bool?
     let cancellationCategory: String?
     let cancelAckPending: Bool?
+    let budget: AgentLoopBudgetSummary?
 
     enum CodingKeys: String, CodingKey {
         case loopId = "loop_id"
@@ -233,6 +305,7 @@ struct AgentLoopHealthResponse: Decodable, Equatable {
         case cancellationRequested = "cancellation_requested"
         case cancellationCategory = "cancellation_category"
         case cancelAckPending = "cancel_ack_pending"
+        case budget
     }
 
     var recentFailureCount: Int {
@@ -257,6 +330,7 @@ struct AgentLoopEvidenceSummaryResponse: Decodable, Equatable {
     let recovery: AgentLoopEvidenceRecovery?
     let memoryCandidates: AgentLoopEvidenceMemoryCandidates?
     let hostReleaseEvidence: AgentLoopHostReleaseEvidence?
+    let budget: AgentLoopBudgetSummary?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -267,6 +341,7 @@ struct AgentLoopEvidenceSummaryResponse: Decodable, Equatable {
         case recovery
         case memoryCandidates = "memory_candidates"
         case hostReleaseEvidence = "host_release_evidence"
+        case budget
     }
 }
 
@@ -285,12 +360,14 @@ struct AgentLoopEvidenceEventAudit: Decodable, Equatable {
 }
 
 struct AgentLoopEvidenceRouting: Decodable, Equatable {
+    let schemaVersion: String?
     let routedActionCount: Int?
     let nonDefaultRouteCount: Int?
     let capabilityHintRouteCount: Int?
     let outcomes: [AgentLoopEvidenceRoutingOutcome]?
 
     enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
         case routedActionCount = "routed_action_count"
         case nonDefaultRouteCount = "non_default_route_count"
         case capabilityHintRouteCount = "capability_hint_route_count"
@@ -305,6 +382,8 @@ struct AgentLoopEvidenceRoutingOutcome: Decodable, Equatable {
     let source: String?
     let matchedGate: String?
     let capabilityHint: String?
+    let reason: String?
+    let alternatives: [AgentLoopRoutingAlternative]?
 
     enum CodingKeys: String, CodingKey {
         case actionType = "action_type"
@@ -313,6 +392,63 @@ struct AgentLoopEvidenceRoutingOutcome: Decodable, Equatable {
         case source
         case matchedGate = "matched_gate"
         case capabilityHint = "capability_hint"
+        case reason
+        case alternatives
+    }
+}
+
+struct AgentLoopRoutingAlternative: Decodable, Equatable {
+    let agentId: String?
+    let selected: Bool?
+    let matched: Bool?
+    let forbidden: Bool?
+    let capabilityCount: Int?
+    let matchedCapability: String?
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case selected
+        case matched
+        case forbidden
+        case capabilityCount = "capability_count"
+        case matchedCapability = "matched_capability"
+        case reason
+    }
+
+    init(
+        agentId: String?,
+        selected: Bool?,
+        matched: Bool? = nil,
+        forbidden: Bool? = nil,
+        capabilityCount: Int? = nil,
+        matchedCapability: String? = nil,
+        reason: String? = nil
+    ) {
+        self.agentId = agentId
+        self.selected = selected
+        self.matched = matched
+        self.forbidden = forbidden
+        self.capabilityCount = capabilityCount
+        self.matchedCapability = matchedCapability
+        self.reason = reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try? decoder.container(keyedBy: LegacyCodingKeys.self)
+        agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+            ?? (try legacy?.decodeIfPresent(String.self, forKey: .agent))
+        selected = try container.decodeIfPresent(Bool.self, forKey: .selected)
+        matched = try container.decodeIfPresent(Bool.self, forKey: .matched)
+        forbidden = try container.decodeIfPresent(Bool.self, forKey: .forbidden)
+        capabilityCount = try container.decodeIfPresent(Int.self, forKey: .capabilityCount)
+        matchedCapability = try container.decodeIfPresent(String.self, forKey: .matchedCapability)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case agent
     }
 }
 
@@ -512,6 +648,133 @@ struct AgentLoopLeaseHealth: Decodable, Equatable {
         case expired
         case renewalCount = "renewal_count"
     }
+}
+
+struct AgentLoopBudgetSummary: Decodable, Equatable {
+    let schemaVersion: String?
+    let maxConcurrentLoops: Int?
+    let maxTurnsPerLoop: Int?
+    let turnsUsed: Int?
+    let turnsRemaining: Int?
+    let maxRuntimeSeconds: Double?
+    let runtimeSeconds: Double?
+    let runtimeRemainingMs: Int?
+    let actionLeaseSeconds: Double?
+    let timeoutCancelCategory: String?
+    let budgetExceededCategory: String?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case maxConcurrentLoops = "max_concurrent_loops"
+        case maxTurnsPerLoop = "max_turns_per_loop"
+        case turnsUsed = "turns_used"
+        case turnsRemaining = "turns_remaining"
+        case maxRuntimeSeconds = "max_runtime_seconds"
+        case runtimeSeconds = "runtime_seconds"
+        case runtimeRemainingMs = "runtime_remaining_ms"
+        case actionLeaseSeconds = "action_lease_seconds"
+        case timeoutCancelCategory = "timeout_cancel_category"
+        case budgetExceededCategory = "budget_exceeded_category"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try? decoder.container(keyedBy: LegacyCodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion)
+        maxConcurrentLoops = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentLoops)
+        maxTurnsPerLoop = try container.decodeIfPresent(Int.self, forKey: .maxTurnsPerLoop)
+            ?? (try legacy?.decodeIfPresent(Int.self, forKey: .maxTurns))
+        turnsUsed = try container.decodeIfPresent(Int.self, forKey: .turnsUsed)
+            ?? (try legacy?.decodeIfPresent(Int.self, forKey: .turnCount))
+        turnsRemaining = try container.decodeIfPresent(Int.self, forKey: .turnsRemaining)
+            ?? (try legacy?.decodeIfPresent(Int.self, forKey: .remainingTurns))
+        maxRuntimeSeconds = try container.decodeIfPresent(Double.self, forKey: .maxRuntimeSeconds)
+        runtimeSeconds = try container.decodeIfPresent(Double.self, forKey: .runtimeSeconds)
+        runtimeRemainingMs = try container.decodeIfPresent(Int.self, forKey: .runtimeRemainingMs)
+        actionLeaseSeconds = try container.decodeIfPresent(Double.self, forKey: .actionLeaseSeconds)
+        timeoutCancelCategory = try container.decodeIfPresent(String.self, forKey: .timeoutCancelCategory)
+        budgetExceededCategory = try container.decodeIfPresent(String.self, forKey: .budgetExceededCategory)
+    }
+
+    var turnsLabel: String? {
+        guard let used = turnsUsed, let max = maxTurnsPerLoop else { return nil }
+        return "\(used)/\(max)"
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case maxTurns = "max_turns"
+        case turnCount = "turn_count"
+        case remainingTurns = "remaining_turns"
+    }
+}
+
+struct AgentLoopTelemetryResponse: Decodable, Equatable {
+    let schemaVersion: String?
+    let loopId: String
+    let status: String
+    let latestSequence: Int?
+    let budget: AgentLoopBudgetSummary?
+    let summary: AgentLoopTelemetrySummary?
+    let metrics: [AgentLoopTelemetryMetric]?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case loopId = "loop_id"
+        case status
+        case latestSequence = "latest_sequence"
+        case budget
+        case summary
+        case metrics
+    }
+}
+
+struct AgentLoopTelemetrySummary: Decodable, Equatable {
+    let durationMs: Int?
+    let turnCount: Int?
+    let eventCount: Int?
+    let routingOutcomeCount: Int?
+    let memoryCandidateCount: Int?
+    let recoveryDecisionCount: Int?
+    let cancelCategory: String?
+
+    enum CodingKeys: String, CodingKey {
+        case durationMs = "duration_ms"
+        case turnCount = "turn_count"
+        case eventCount = "event_count"
+        case routingOutcomeCount = "routing_outcome_count"
+        case memoryCandidateCount = "memory_candidate_count"
+        case recoveryDecisionCount = "recovery_decision_count"
+        case cancelCategory = "cancel_category"
+    }
+}
+
+struct AgentLoopTelemetryMetric: Decodable, Equatable {
+    let schemaVersion: String?
+    let metric: String?
+    let value: Double?
+    let unit: String?
+    let dimensions: [String: AgentLoopJSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case metric
+        case legacyId = "id"
+        case value
+        case unit
+        case dimensions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(String.self, forKey: .schemaVersion)
+        metric = try container.decodeIfPresent(String.self, forKey: .metric)
+            ?? (try container.decodeIfPresent(String.self, forKey: .legacyId))
+        value = try container.decodeIfPresent(Double.self, forKey: .value)
+        unit = try container.decodeIfPresent(String.self, forKey: .unit)
+        dimensions = try container.decodeIfPresent([String: AgentLoopJSONValue].self, forKey: .dimensions)
+    }
+
+    var id: String? { metric }
 }
 
 enum AgentLoopJSONValue: Decodable, Equatable {

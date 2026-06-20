@@ -140,6 +140,12 @@ async def _enrich_external_agent_loop_transition(manager: Any, loop: Any) -> Any
             enriched["evidence_summary"] = await asyncio.to_thread(manager.get_agent_loop_evidence_summary, loop_id)
         except Exception:
             pass
+    telemetry_getter = getattr(manager, "get_agent_loop_telemetry", None)
+    if callable(telemetry_getter) and not isinstance(enriched.get("telemetry"), dict):
+        try:
+            enriched["telemetry"] = await asyncio.to_thread(telemetry_getter, loop_id)
+        except Exception:
+            pass
     return enriched
 
 
@@ -301,6 +307,7 @@ from .plugin_runtime import (
     PluginLifecycleError,
     discover_across_plugins,
     forget_context_memory,
+    get_agent_loop_memory_metrics,
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
@@ -1518,6 +1525,25 @@ async def list_across_context_memories(
         raise _safe_http_500("List Across Context memories", exc)
 
 
+@app.get("/api/memory/agent-loop-metrics")
+async def get_across_context_agent_loop_memory_metrics(
+    projectRoot: Optional[str] = None,
+    allProjects: bool = True,
+):
+    """Fetch bounded Across Context Agent Loop memory candidate metrics."""
+    try:
+        metrics = await asyncio.to_thread(
+            get_agent_loop_memory_metrics,
+            project_root=projectRoot,
+            all_projects=allProjects,
+        )
+        return _sanitize_public_payload(metrics)
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+    except Exception as exc:
+        raise _safe_http_500("Get Across Context Agent Loop memory metrics", exc)
+
+
 @app.post("/api/memory/remember")
 async def remember_across_context_memory(req: MemoryRememberRequest):
     """Create a conservative pending Across Context memory."""
@@ -1795,11 +1821,30 @@ async def get_external_agent_loop_evidence_summary(loop_id: str):
         raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop evidence summary"))
 
 
+@app.get("/api/orchestrator/loops/{loop_id}/telemetry")
+async def get_external_agent_loop_telemetry(loop_id: str):
+    """Fetch bounded external Across Orchestrator agent loop telemetry."""
+    try:
+        telemetry = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_telemetry, loop_id)
+        return _sanitize_public_payload(telemetry)
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error("External Across Orchestrator agent loop telemetry", exc)
+    except Exception as exc:
+        logger.exception("External Across Orchestrator agent loop telemetry failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator agent loop telemetry"))
+
+
 @app.get("/api/orchestrator/loops/{loop_id}/events")
-async def get_external_agent_loop_events(loop_id: str):
+async def get_external_agent_loop_events(loop_id: str, after_sequence: Optional[int] = None):
     """Fetch external Across Orchestrator agent loop events."""
     try:
-        events = await asyncio.to_thread(get_orchestrator_plugin_manager().get_agent_loop_events, loop_id)
+        events = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().get_agent_loop_events,
+            loop_id,
+            after_sequence=after_sequence,
+        )
         return _sanitize_public_payload(events)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -1811,16 +1856,17 @@ async def get_external_agent_loop_events(loop_id: str):
 
 
 @app.get("/api/orchestrator/loops/{loop_id}/events/stream")
-async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
+async def stream_external_agent_loop_events(loop_id: str, follow: bool = False, after_sequence: Optional[int] = None):
     """Stream external Across Orchestrator agent loop events as sanitized SSE.
 
     By default this endpoint returns a finite snapshot stream and closes after
     the currently durable events. Pass ``follow=true`` to keep polling for live
     timeline updates until the loop closes or the idle timeout is reached.
+    Pass ``after_sequence`` to resume after the last event already held by the host.
     """
     manager = get_orchestrator_plugin_manager()
     try:
-        initial_events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id)
+        initial_events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id, after_sequence=after_sequence)
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except OrchestratorPluginHTTPError as exc:
@@ -1833,6 +1879,7 @@ async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
         seen_keys: set[str] = set()
         idle_deadline = time.monotonic() + _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS
         events = initial_events
+        cursor = after_sequence
         while True:
             new_events = [event for event in events if _agent_loop_event_key(event) not in seen_keys]
             if new_events:
@@ -1841,6 +1888,8 @@ async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
             closing_seen = False
             for event in new_events:
                 seen_keys.add(_agent_loop_event_key(event))
+                if isinstance(event, dict) and isinstance(event.get("sequence"), int):
+                    cursor = max(cursor or 0, event["sequence"])
                 yield _agent_loop_sse_chunk(event)
                 if _agent_loop_event_closes_stream(event):
                     closing_seen = True
@@ -1853,7 +1902,7 @@ async def stream_external_agent_loop_events(loop_id: str, follow: bool = False):
 
             await asyncio.sleep(_AGENT_LOOP_STREAM_POLL_SECONDS)
             try:
-                events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id)
+                events = await asyncio.to_thread(manager.get_agent_loop_events, loop_id, after_sequence=cursor)
             except Exception:
                 logger.debug("External Across Orchestrator agent loop event stream polling stopped", exc_info=True)
                 return
