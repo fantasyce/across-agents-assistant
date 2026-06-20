@@ -12,6 +12,9 @@
 - Live E2E now writes non-secret gate evidence JSON, the manual GitHub workflow
   uploads that evidence as an artifact, and RC verification consumes gate
   evidence plus machine-readable missing required gate paths.
+- Required manual pre-release gates now keep RC verification in attention until
+  their evidence is attached, while failed required gate evidence blocks release
+  approval.
 
 ## 0.8.26 - 2026-06-20
 
