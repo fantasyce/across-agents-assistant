@@ -24,8 +24,9 @@ As of `v0.8.27`, AAA has completed its host-side Agent Loop obligations:
 - Release verification now consumes Live E2E gate evidence and reports missing
   paths plus parse errors.
 
-The remaining work should not be treated as more AAA feature drift unless an RFC
-or product decision says so.
+The remaining work should not be treated as more AAA feature drift. Runtime
+items are assigned to Across Orchestrator's Agent Loop Runtime RFCs, and memory
+items are assigned to Across Context's Agent Loop Memory RFC.
 
 ## Not In Immediate AAA Scope
 
@@ -42,6 +43,7 @@ Desired product metrics:
 
 Owner: Orchestrator for event production and aggregation contract; AAA for host
 display only after the protocol is defined.
+RFC owner: Across Orchestrator.
 
 ### Stream Resume Semantics
 
@@ -54,6 +56,7 @@ Open questions:
 
 Owner: Orchestrator protocol. AAA should keep the current fallback-to-snapshot
 behavior until this is specified.
+RFC owner: Across Orchestrator.
 
 ### Cost Control
 
@@ -66,6 +69,7 @@ Open questions:
 
 Owner: product and Orchestrator policy. AAA should not invent limits locally
 unless the Orchestrator contract exposes them.
+RFC owner: Across Orchestrator.
 
 ### Multi-Agent Coordination
 
@@ -73,6 +77,7 @@ Current AAA scope is host orchestration and evidence consumption. Multi-agent
 handoff, decomposition, and routing policy belong to Orchestrator. AAA should
 only display routing evidence and capability hints unless the product scope
 explicitly requires new host controls.
+RFC owner: Across Orchestrator, with Context owning only memory-policy effects.
 
 ### Client UX Beyond Current Health/Timeline
 
@@ -89,6 +94,10 @@ These are polish/product items, not blocking Agent Loop completeness.
 
 All RFCs below are outside immediate AAA scope. Start them in this order when
 the product decision is to invest further in Agent Loop runtime behavior.
+The autonomous ecosystem review described in
+[Autonomous Workflow](AUTONOMOUS_WORKFLOW.md) may create candidate issues for
+these RFCs, but it must not convert them into runtime changes without an
+accepted owner and validation plan.
 
 1. Agent Loop telemetry schema:
    - event fields

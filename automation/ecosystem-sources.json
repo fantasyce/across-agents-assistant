@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "id": "openai_web_search",
+      "name": "OpenAI web search tool",
+      "url": "https://developers.openai.com/api/docs/guides/tools-web-search",
+      "area": "agent_research"
+    },
+    {
+      "id": "openai_agent_evals",
+      "name": "OpenAI agent evaluation guidance",
+      "url": "https://developers.openai.com/api/docs/guides/agent-evals",
+      "area": "agent_quality"
+    },
+    {
+      "id": "openai_agents",
+      "name": "OpenAI Agents SDK",
+      "url": "https://developers.openai.com/api/docs/guides/agents",
+      "area": "agent_runtime"
+    },
+    {
+      "id": "github_actions_schedule",
+      "name": "GitHub Actions scheduled workflows",
+      "url": "https://docs.github.com/actions/using-workflows/events-that-trigger-workflows",
+      "area": "automation"
+    },
+    {
+      "id": "github_cli_workflows",
+      "name": "GitHub CLI in workflows",
+      "url": "https://docs.github.com/actions/using-workflows/using-github-cli-in-workflows",
+      "area": "automation"
+    },
+    {
+      "id": "swift",
+      "name": "Swift releases",
+      "url": "https://www.swift.org/blog/",
+      "area": "macos_client"
+    },
+    {
+      "id": "python",
+      "name": "Python release notes",
+      "url": "https://docs.python.org/3/whatsnew/",
+      "area": "backend"
+    },
+    {
+      "id": "node",
+      "name": "Node.js releases",
+      "url": "https://nodejs.org/en/blog/release",
+      "area": "context_plugin"
+    }
+  ]
+}
