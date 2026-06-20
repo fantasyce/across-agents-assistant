@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from fastapi.testclient import TestClient
@@ -171,6 +172,8 @@ class FakeHTTPOrchestrator:
 
             def do_GET(self):
                 owner.requests.append(("GET", self.path))
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
                 if self.path == "/health":
                     self._json({"status": "ok"})
                     return
@@ -207,41 +210,22 @@ class FakeHTTPOrchestrator:
                 if self.path == f"/loops/{owner.loop_id}/evidence-summary":
                     self._json(owner._loop_evidence_summary_payload(owner.loop_status))
                     return
-                if self.path == f"/loops/{owner.loop_id}/events":
+                if self.path == f"/loops/{owner.loop_id}/telemetry":
+                    self._json(owner._loop_telemetry_payload(owner.loop_status))
+                    return
+                if parsed.path == f"/loops/{owner.loop_id}/events":
+                    after_sequence = int((query.get("after_sequence") or ["0"])[0] or "0")
                     self._json([
-                        {
-                            "event_id": "loop-event-api-1",
-                            "sequence": 1,
-                            "type": "loop.completed",
-                            "loop_id": owner.loop_id,
-                            "correlation_id": f"loop:{owner.loop_id}",
-                            "payload": {
-                                "status": "completed",
-                                "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
-                            },
-                        }
+                        event for event in owner._loop_events()
+                        if int(event.get("sequence") or 0) > after_sequence
                     ])
                     return
-                if self.path in {
-                    f"/loops/{owner.loop_id}/events/stream",
-                    f"/loops/{owner.loop_id}/events/stream?follow=true",
-                    f"/loops/{owner.loop_id}/events/stream?follow=false",
-                }:
-                    self._sse(
-                        [
-                            {
-                                "event_id": "loop-event-api-1",
-                                "sequence": 1,
-                                "type": "loop.completed",
-                                "loop_id": owner.loop_id,
-                                "correlation_id": f"loop:{owner.loop_id}",
-                                "payload": {
-                                    "status": "completed",
-                                    "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
-                                },
-                            }
-                        ]
-                    )
+                if parsed.path == f"/loops/{owner.loop_id}/events/stream":
+                    after_sequence = int((query.get("after_sequence") or ["0"])[0] or "0")
+                    self._sse([
+                        event for event in owner._loop_events()
+                        if int(event.get("sequence") or 0) > after_sequence
+                    ])
                     return
                 self._json({"error": "not_found"}, 404)
 
@@ -394,6 +378,11 @@ class FakeHTTPOrchestrator:
             "cancellation_requested": cancelled,
             "cancellation_category": "user_requested" if cancelled else None,
             "cancel_ack_pending": False,
+            "budget": {
+                "max_turns_per_loop": 8,
+                "turns_used": 5 if status == "completed" else 0,
+                "turns_remaining": 3 if status == "completed" else 8,
+            },
         }
 
     def _loop_evidence_summary_payload(self, status: str) -> dict:
@@ -409,6 +398,7 @@ class FakeHTTPOrchestrator:
                 "correlation_id_coverage": True,
             },
             "routing": {
+                "schema_version": "agent-loop-routing/1.0",
                 "routed_action_count": 1,
                 "non_default_route_count": 1,
                 "capability_hint_route_count": 1,
@@ -418,6 +408,11 @@ class FakeHTTPOrchestrator:
                         "selected_agent": "builder",
                         "source": "metadata.agentCapabilityHints.preferred.task_dispatch",
                         "capability_hint": "implementation",
+                        "reason": "preferred capability hint matched task_dispatch",
+                        "alternatives": [
+                            {"agent_id": "owner", "selected": False, "reason": "fallback owner"},
+                            {"agent_id": "builder", "selected": True, "reason": "implementation hint"},
+                        ],
                     }
                 ],
             },
@@ -450,6 +445,56 @@ class FakeHTTPOrchestrator:
                 ],
                 "risk_count": 1,
                 "next_actions": ["Review pending structured memory candidates in Across Context."],
+            },
+            "budget": {
+                "max_turns_per_loop": 8,
+                "turns_used": 5 if status == "completed" else 0,
+                "turns_remaining": 3 if status == "completed" else 8,
+            },
+        }
+
+    def _loop_events(self) -> list[dict]:
+        return [
+            {
+                "event_id": "loop-event-api-1",
+                "sequence": 1,
+                "type": "loop.started",
+                "loop_id": self.loop_id,
+                "correlation_id": f"loop:{self.loop_id}",
+                "payload": {"status": "running"},
+            },
+            {
+                "event_id": "loop-event-api-2",
+                "sequence": 2,
+                "type": "loop.completed",
+                "loop_id": self.loop_id,
+                "correlation_id": f"loop:{self.loop_id}",
+                "payload": {
+                    "status": "completed",
+                    "traceback": "Traceback (most recent call last):\n  File '/private/path.py'",
+                },
+            },
+        ]
+
+    def _loop_telemetry_payload(self, status: str) -> dict:
+        return {
+            "schema_version": "agent-loop-telemetry/1.0",
+            "loop_id": self.loop_id,
+            "status": status,
+            "summary": {
+                "event_count": 2,
+                "turn_count": 5 if status == "completed" else 0,
+                "memory_candidate_count": 1,
+            },
+            "metrics": [
+                {"id": "events.total", "value": 2},
+                {"id": "turns.completed", "value": 5 if status == "completed" else 0},
+            ],
+            "latest_sequence": 2,
+            "budget": {
+                "max_turns_per_loop": 8,
+                "turns_used": 5 if status == "completed" else 0,
+                "turns_remaining": 3 if status == "completed" else 8,
             },
         }
 
@@ -570,8 +615,14 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         status = client.get(f"/api/orchestrator/loops/{loop_id}")
         health = client.get(f"/api/orchestrator/loops/{loop_id}/health")
         summary = client.get(f"/api/orchestrator/loops/{loop_id}/evidence-summary")
+        telemetry = client.get(f"/api/orchestrator/loops/{loop_id}/telemetry")
         events = client.get(f"/api/orchestrator/loops/{loop_id}/events")
+        resumed_events = client.get(f"/api/orchestrator/loops/{loop_id}/events", params={"after_sequence": "1"})
         stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream", params={"follow": "true"})
+        resumed_stream = client.get(
+            f"/api/orchestrator/loops/{loop_id}/events/stream",
+            params={"follow": "true", "after_sequence": "1"},
+        )
         snapshot_stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream", params={"follow": "false"})
 
     assert loop_id == "loop-api-external"
@@ -581,30 +632,43 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert run_body["evidence_summary"]["schema_version"] == "0.1"
     assert run_body["evidence_summary"]["event_audit"]["sequence_contiguous"] is True
     assert run_body["evidence_summary"]["host_release_evidence"]["readiness"] == "attention"
+    assert run_body["telemetry"]["schema_version"] == "agent-loop-telemetry/1.0"
+    assert run_body["telemetry"]["latest_sequence"] == 2
     assert status.json()["final_output"] == "Agent loop completed for: API loop smoke"
     assert health.json()["status"] == "completed"
     assert health.json()["loop_id"] == "loop-api-external"
+    assert health.json()["budget"]["turns_remaining"] == 3
     assert summary.json()["schema_version"] == "0.1"
     assert summary.json()["routing"]["capability_hint_route_count"] == 1
+    assert summary.json()["routing"]["outcomes"][0]["alternatives"][1]["selected"] is True
     assert summary.json()["event_audit"]["sequence_contiguous"] is True
     assert summary.json()["host_release_evidence"]["risk_count"] == 1
-    assert events.json()[0]["type"] == "loop.completed"
-    assert events.json()[0]["event_id"] == "loop-event-api-1"
-    assert events.json()[0]["sequence"] == 1
-    assert events.json()[0]["correlation_id"] == "loop:loop-api-external"
+    assert telemetry.json()["schema_version"] == "agent-loop-telemetry/1.0"
+    assert telemetry.json()["summary"]["memory_candidate_count"] == 1
+    assert events.json()[0]["type"] == "loop.started"
+    assert events.json()[1]["type"] == "loop.completed"
+    assert events.json()[1]["event_id"] == "loop-event-api-2"
+    assert events.json()[1]["sequence"] == 2
+    assert events.json()[1]["correlation_id"] == "loop:loop-api-external"
+    assert [event["sequence"] for event in resumed_events.json()] == [2]
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert "event: loop.completed" in stream.text
-    assert '"event_id": "loop-event-api-1"' in stream.text
+    assert '"event_id": "loop-event-api-2"' in stream.text
     assert '"correlation_id": "loop:loop-api-external"' in stream.text
     assert "Internal operation failed" in stream.text
     assert "Traceback" not in stream.text
+    assert resumed_stream.status_code == 200
+    assert "event: loop.started" not in resumed_stream.text
+    assert "event: loop.completed" in resumed_stream.text
     assert snapshot_stream.status_code == 200
     assert "event: loop.completed" in snapshot_stream.text
     assert ("POST", "/loops") in server.requests
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/health")) >= 2
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/evidence-summary")) >= 2
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/telemetry")) >= 2
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/events")) >= 2
+    assert ("GET", f"/loops/{server.loop_id}/events?after_sequence=1") in server.requests
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
 
@@ -638,9 +702,11 @@ def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
     assert approved_body["steps"][-1]["action"]["approval_status"] == "approved"
     assert approved_body["health"]["status"] == "running"
     assert approved_body["evidence_summary"]["status"] == "running"
+    assert approved_body["telemetry"]["status"] == "running"
     assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/approve") in server.requests
     assert ("GET", f"/loops/{server.loop_id}/health") in server.requests
     assert ("GET", f"/loops/{server.loop_id}/evidence-summary") in server.requests
+    assert ("GET", f"/loops/{server.loop_id}/telemetry") in server.requests
 
 
 def test_api_proxies_external_agent_loop_control_actions(monkeypatch, tmp_path):
@@ -690,19 +756,23 @@ def test_api_proxies_external_agent_loop_control_actions(monkeypatch, tmp_path):
     assert rejected_body["steps"][-1]["action"]["approval_status"] == "rejected"
     assert rejected_body["health"]["status"] == "stopped"
     assert rejected_body["evidence_summary"]["status"] == "stopped"
+    assert rejected_body["telemetry"]["status"] == "stopped"
     assert cancelled.status_code == 200
     assert cancelled_body["status"] == "cancelled"
     assert cancelled_body["health"]["cancellation_category"] == "user_requested"
     assert cancelled_body["evidence_summary"]["cancellation"]["category"] == "user_requested"
+    assert cancelled_body["telemetry"]["status"] == "cancelled"
     assert retry.status_code == 200
     assert retry_body["status"] == "running"
     assert retry_body["health"]["status"] == "running"
     assert retry_body["evidence_summary"]["status"] == "running"
+    assert retry_body["telemetry"]["status"] == "running"
     assert ("POST", f"/loops/{server.loop_id}/actions/{server.loop_action_id}/reject") in server.requests
     assert ("POST", f"/loops/{server.loop_id}/cancel") in server.requests
     assert ("POST", f"/loops/{server.loop_id}/steps/step-api-quality/retry") in server.requests
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/health")) >= 4
     assert server.requests.count(("GET", f"/loops/{server.loop_id}/evidence-summary")) >= 4
+    assert server.requests.count(("GET", f"/loops/{server.loop_id}/telemetry")) >= 4
 
 
 def test_task_page_and_startup_diagnostics_include_orchestrator_plugin(monkeypatch, tmp_path):
@@ -869,12 +939,13 @@ def test_external_agent_loop_event_stream_snapshot_does_not_follow(monkeypatch):
         def __init__(self):
             self.event_calls = 0
 
-        def get_agent_loop_events(self, loop_id):
+        def get_agent_loop_events(self, loop_id, after_sequence=None):
             self.event_calls += 1
+            sequence = int(after_sequence or 0) + 1
             return [
                 {
                     "event_id": f"event-{self.event_calls}",
-                    "sequence": self.event_calls,
+                    "sequence": sequence,
                     "type": "loop.step.started",
                     "loop_id": loop_id,
                     "payload": {"status": "running"},
@@ -898,6 +969,36 @@ def test_external_agent_loop_event_stream_snapshot_does_not_follow(monkeypatch):
     assert "event: loop.step.started" in explicit_response.text
     assert '"event_id": "event-2"' in explicit_response.text
     assert fake.event_calls == 2
+
+
+def test_external_agent_loop_event_stream_forwards_resume_cursor(monkeypatch):
+    class FakeManager:
+        def __init__(self):
+            self.calls = []
+
+        def get_agent_loop_events(self, loop_id, after_sequence=None):
+            self.calls.append((loop_id, after_sequence))
+            return [
+                {
+                    "event_id": "event-resumed",
+                    "sequence": int(after_sequence or 0) + 1,
+                    "type": "loop.completed",
+                    "loop_id": loop_id,
+                    "payload": {"status": "completed"},
+                }
+            ]
+
+    fake = FakeManager()
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: fake)
+
+    response = TestClient(app).get(
+        "/api/orchestrator/loops/loop-resume/events/stream",
+        params={"follow": "true", "after_sequence": "5"},
+    )
+
+    assert response.status_code == 200
+    assert '"sequence": 6' in response.text
+    assert fake.calls == [("loop-resume", 5)]
 
 
 def test_external_agent_loop_health_forwards_orchestrator_404(monkeypatch):

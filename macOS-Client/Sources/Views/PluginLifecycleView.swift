@@ -251,7 +251,13 @@ struct PluginLifecycleView: View {
                             metadataChip(String(format: appPreferences.text("plugins.loop.status"), probe.status))
                             metadataChip(String(format: appPreferences.text("plugins.loop.steps"), probe.steps.count))
                             metadataChip(String(format: appPreferences.text("plugins.loop.checkpointCount"), probe.checkpointCount ?? 0))
+                            if let telemetry = viewModel.agentLoopTelemetry {
+                                metadataChip(agentLoopTelemetryChipSummary(telemetry))
+                            }
                             if let health = viewModel.agentLoopHealth {
+                                if let budget = health.budget ?? viewModel.agentLoopTelemetry?.budget ?? viewModel.agentLoopEvidenceSummary?.budget {
+                                    metadataChip(agentLoopBudgetChipSummary(budget))
+                                }
                                 if let currentAction = health.currentActionType {
                                     metadataChip(String(format: appPreferences.text("plugins.loop.currentAction"), currentAction))
                                 }
@@ -333,8 +339,13 @@ struct PluginLifecycleView: View {
             healthDetailLine(appPreferences.text("plugins.loop.detailLease"), agentLoopLeaseSummary(health.lease))
             healthDetailLine(appPreferences.text("plugins.loop.detailHeartbeat"), timestampSummary(health.lease?.heartbeatAt))
             healthDetailLine(appPreferences.text("plugins.loop.detailCancellation"), cancelCategorySummary(health.cancellationCategory))
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailBudget"),
+                agentLoopBudgetDetailSummary(health.budget ?? viewModel.agentLoopTelemetry?.budget ?? viewModel.agentLoopEvidenceSummary?.budget)
+            )
             healthDetailLine(appPreferences.text("plugins.loop.detailFailures"), failureSummary(health))
             healthDetailLine(appPreferences.text("plugins.loop.detailExecutableActions"), actionSummary(health.executableActions ?? []))
+            healthDetailLine(appPreferences.text("plugins.loop.detailTelemetry"), agentLoopTelemetryDetailSummary(viewModel.agentLoopTelemetry))
             if let summary = viewModel.agentLoopEvidenceSummary {
                 Divider().opacity(0.25)
                 healthDetailLine(appPreferences.text("plugins.loop.detailReleaseEvidence"), hostReleaseEvidenceSummary(summary.hostReleaseEvidence))
@@ -343,6 +354,7 @@ struct PluginLifecycleView: View {
                         hostReleaseEvidenceDetailLines(summary.hostReleaseEvidence)
                         healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
                         healthDetailLine(appPreferences.text("plugins.loop.detailRouting"), routingSummary(summary.routing))
+                        routingEvidenceDetailLines(summary.routing)
                         healthDetailLine(appPreferences.text("plugins.loop.detailRecovery"), recoverySummary(summary.recovery))
                         recoveryEvidenceDetailLines(summary.recovery)
                         healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
@@ -501,6 +513,77 @@ struct PluginLifecycleView: View {
         )
     }
 
+    @ViewBuilder
+    private func routingEvidenceDetailLines(_ routing: AgentLoopEvidenceRouting?) -> some View {
+        if let outcome = routing?.outcomes?.first {
+            healthDetailLine(
+                appPreferences.text("plugins.loop.detailRoutingOutcome"),
+                routingOutcomeSummary(outcome, total: routing?.outcomes?.count ?? 1)
+            )
+            if let alternative = routingSelectedAlternative(outcome) {
+                healthDetailLine(
+                    appPreferences.text("plugins.loop.detailRoutingAlternative"),
+                    routingAlternativeSummary(alternative, total: outcome.alternatives?.count ?? 1)
+                )
+            }
+        }
+    }
+
+    private func routingOutcomeSummary(_ outcome: AgentLoopEvidenceRoutingOutcome, total: Int) -> String {
+        var parts = [String]()
+        if let selected = displayToken(outcome.selectedAgent) {
+            parts.append(String(format: appPreferences.text("plugins.loop.routingSelected"), selected))
+        }
+        if let reason = outcome.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(reason)
+        } else if let source = displayToken(outcome.source) {
+            parts.append(source)
+        }
+        if let alternatives = outcome.alternatives, !alternatives.isEmpty {
+            parts.append(String(format: appPreferences.text("plugins.loop.routingAlternatives"), alternatives.count))
+        }
+        if total > 1 {
+            parts.append(String(format: appPreferences.text("plugins.loop.evidenceMore"), total - 1))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func routingSelectedAlternative(_ outcome: AgentLoopEvidenceRoutingOutcome) -> AgentLoopRoutingAlternative? {
+        if let selected = outcome.alternatives?.first(where: { $0.selected == true }) {
+            return selected
+        }
+        return outcome.alternatives?.first
+    }
+
+    private func routingAlternativeSummary(_ alternative: AgentLoopRoutingAlternative, total: Int) -> String {
+        var parts = [String]()
+        if let agentId = displayToken(alternative.agentId) {
+            parts.append(agentId)
+        }
+        if alternative.selected == true {
+            parts.append(appPreferences.text("plugins.loop.routingAlternativeSelected"))
+        }
+        if alternative.matched == true {
+            parts.append(appPreferences.text("plugins.loop.routingAlternativeMatched"))
+        }
+        if let matchedCapability = displayToken(alternative.matchedCapability) {
+            parts.append(matchedCapability)
+        }
+        if alternative.forbidden == true {
+            parts.append(appPreferences.text("plugins.loop.routingAlternativeForbidden"))
+        }
+        if let count = alternative.capabilityCount {
+            parts.append(String(format: appPreferences.text("plugins.loop.routingCapabilityCount"), count))
+        }
+        if let reason = alternative.reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(reason)
+        }
+        if total > 1 {
+            parts.append(String(format: appPreferences.text("plugins.loop.evidenceMore"), total - 1))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
     private func recoverySummary(_ recovery: AgentLoopEvidenceRecovery?) -> String {
         guard let recovery else { return appPreferences.text("plugins.loop.none") }
         return String(
@@ -607,6 +690,61 @@ struct PluginLifecycleView: View {
             parts.append(String(format: appPreferences.text("plugins.loop.evidenceMore"), total - 1))
         }
         return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func agentLoopBudgetChipSummary(_ budget: AgentLoopBudgetSummary) -> String {
+        if let turnsLabel = budget.turnsLabel {
+            return String(format: appPreferences.text("plugins.loop.budgetTurns"), turnsLabel)
+        }
+        if let remaining = budget.turnsRemaining {
+            return String(format: appPreferences.text("plugins.loop.budgetRemaining"), remaining)
+        }
+        return appPreferences.text("plugins.loop.budget")
+    }
+
+    private func agentLoopBudgetDetailSummary(_ budget: AgentLoopBudgetSummary?) -> String {
+        guard let budget else { return appPreferences.text("plugins.loop.none") }
+        var parts = [String]()
+        if let turnsLabel = budget.turnsLabel {
+            parts.append(String(format: appPreferences.text("plugins.loop.budgetTurns"), turnsLabel))
+        }
+        if let remaining = budget.turnsRemaining {
+            parts.append(String(format: appPreferences.text("plugins.loop.budgetRemaining"), remaining))
+        }
+        if let runtime = budget.runtimeSeconds {
+            parts.append(String(format: appPreferences.text("plugins.loop.budgetRuntime"), Int(runtime.rounded())))
+        }
+        if let maxRuntime = budget.maxRuntimeSeconds {
+            parts.append(String(format: appPreferences.text("plugins.loop.budgetRuntimeMax"), Int(maxRuntime.rounded())))
+        }
+        return parts.isEmpty ? appPreferences.text("plugins.loop.none") : parts.joined(separator: ", ")
+    }
+
+    private func agentLoopTelemetryChipSummary(_ telemetry: AgentLoopTelemetryResponse) -> String {
+        let eventCount = telemetry.summary?.eventCount ?? 0
+        let turnCount = telemetry.summary?.turnCount ?? 0
+        return String(format: appPreferences.text("plugins.loop.telemetrySummary"), eventCount, turnCount)
+    }
+
+    private func agentLoopTelemetryDetailSummary(_ telemetry: AgentLoopTelemetryResponse?) -> String {
+        guard let telemetry else { return appPreferences.text("plugins.loop.none") }
+        var parts = [agentLoopTelemetryChipSummary(telemetry)]
+        if let duration = telemetry.summary?.durationMs {
+            parts.append(String(format: appPreferences.text("plugins.loop.telemetryDuration"), duration))
+        }
+        if let memoryCandidates = telemetry.summary?.memoryCandidateCount {
+            parts.append(String(format: appPreferences.text("plugins.loop.telemetryMemoryCandidates"), memoryCandidates))
+        }
+        if let recoveryDecisions = telemetry.summary?.recoveryDecisionCount {
+            parts.append(String(format: appPreferences.text("plugins.loop.telemetryRecoveryDecisions"), recoveryDecisions))
+        }
+        if let cancelCategory = telemetry.summary?.cancelCategory {
+            parts.append(cancelCategorySummary(cancelCategory))
+        }
+        if let latestSequence = telemetry.latestSequence {
+            parts.append(String(format: appPreferences.text("plugins.loop.telemetryLatestSequence"), latestSequence))
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func cancelCategorySummary(_ category: String?) -> String {
@@ -768,6 +906,9 @@ struct PluginLifecycleView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
+                if let metrics = viewModel.agentLoopMemoryMetrics {
+                    metadataChip(agentLoopMemoryMetricsSummary(metrics))
+                }
                 Picker("", selection: $viewModel.memoryStatusFilter) {
                     Text(appPreferences.text("plugins.memory.pending")).tag("pending")
                     Text(appPreferences.text("plugins.memory.active")).tag("active")
@@ -850,6 +991,12 @@ struct PluginLifecycleView: View {
                 loopMemoryCandidateRow(candidate)
             }
         }
+    }
+
+    private func agentLoopMemoryMetricsSummary(_ metrics: AgentLoopMemoryMetricsResponse) -> String {
+        let total = metrics.totals?.candidateCount ?? 0
+        let pending = metrics.totals?.pendingCount ?? 0
+        return String(format: appPreferences.text("plugins.memory.loopMetrics"), total, pending)
     }
 
     private func loopMemoryCandidateRow(_ candidate: AgentLoopEvidenceMemoryCandidate) -> some View {

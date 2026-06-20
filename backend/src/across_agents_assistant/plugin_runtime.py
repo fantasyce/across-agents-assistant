@@ -200,6 +200,21 @@ def list_context_memories(
     return entries
 
 
+def get_agent_loop_memory_metrics(
+    *,
+    project_root: str | None = None,
+    all_projects: bool = True,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    args = ["loop-memory-metrics", "--json"]
+    if project_root:
+        args.extend(["--project", project_root])
+    elif all_projects:
+        args.append("--all-projects")
+    payload = _run_context_cli_json(args, env=env, timeout=15)
+    return payload if isinstance(payload, dict) else {}
+
+
 def remember_context_memory(
     *,
     text: str,

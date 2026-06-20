@@ -4,6 +4,7 @@ import os
 import socket
 import stat
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -202,8 +203,22 @@ class _FakeOrchestratorHTTPServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _sse(self, events, status=200):
+                body = "".join(
+                    f"event: {event.get('type', 'message')}\n"
+                    f"data: {json.dumps(event, sort_keys=True)}\n\n"
+                    for event in events
+                ).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_GET(self):
                 owner.requests.append(("GET", self.path))
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
                 if self.path == "/health":
                     self._json({"status": "ok"})
                     return
@@ -228,8 +243,22 @@ class _FakeOrchestratorHTTPServer:
                 if self.path == f"/loops/{owner.loop_id}/health":
                     self._json(owner._loop_health_payload("completed"))
                     return
-                if self.path == f"/loops/{owner.loop_id}/events":
-                    self._json([{"type": "loop.completed", "loop_id": owner.loop_id}])
+                if self.path == f"/loops/{owner.loop_id}/telemetry":
+                    self._json(owner._loop_telemetry_payload("completed"))
+                    return
+                if parsed.path == f"/loops/{owner.loop_id}/events":
+                    after_sequence = int((query.get("after_sequence") or ["0"])[0] or "0")
+                    self._json([
+                        event for event in owner._loop_events()
+                        if int(event.get("sequence") or 0) > after_sequence
+                    ])
+                    return
+                if parsed.path == f"/loops/{owner.loop_id}/events/stream":
+                    after_sequence = int((query.get("after_sequence") or ["0"])[0] or "0")
+                    self._sse([
+                        event for event in owner._loop_events()
+                        if int(event.get("sequence") or 0) > after_sequence
+                    ])
                     return
                 self._json({"error": "not_found"}, 404)
 
@@ -315,6 +344,24 @@ class _FakeOrchestratorHTTPServer:
             "executable_actions": [],
             "cancellation_requested": False,
             "cancel_ack_pending": False,
+            "budget": {"max_turns": 8, "turn_count": 5 if status == "completed" else 0, "remaining_turns": 3},
+        }
+
+    def _loop_events(self) -> list[dict]:
+        return [
+            {"event_id": "loop-event-http-1", "sequence": 1, "type": "loop.started", "loop_id": self.loop_id},
+            {"event_id": "loop-event-http-2", "sequence": 2, "type": "loop.completed", "loop_id": self.loop_id},
+        ]
+
+    def _loop_telemetry_payload(self, status: str) -> dict:
+        return {
+            "schema_version": "agent-loop-telemetry/1.0",
+            "loop_id": self.loop_id,
+            "status": status,
+            "summary": {"event_count": 2, "turn_count": 5, "memory_candidate_count": 0},
+            "metrics": [{"id": "events.total", "value": 2}],
+            "latest_sequence": 2,
+            "budget": {"max_turns": 8, "turn_count": 5, "remaining_turns": 3},
         }
 
 
@@ -358,16 +405,27 @@ def test_external_http_runtime_proxies_agent_loop_lifecycle(tmp_path):
         status = manager.get_agent_loop(loop["loop_id"])
         health = manager.get_agent_loop_health(loop["loop_id"])
         events = manager.get_agent_loop_events(loop["loop_id"])
+        resumed_events = manager.get_agent_loop_events(loop["loop_id"], after_sequence=1)
+        stream_events = manager.get_agent_loop_events_stream(loop["loop_id"], follow=True, after_sequence=1)
+        telemetry = manager.get_agent_loop_telemetry(loop["loop_id"])
 
     assert loop["loop_id"] == "loop-external-http"
     assert completed["status"] == "completed"
     assert status["final_output"] == "Agent loop completed for: External loop smoke"
     assert health["status"] == "completed"
     assert health["loop_id"] == "loop-external-http"
-    assert events[0]["type"] == "loop.completed"
+    assert health["budget"]["remaining_turns"] == 3
+    assert events[0]["type"] == "loop.started"
+    assert resumed_events == [events[1]]
+    assert stream_events == [events[1]]
+    assert telemetry["schema_version"] == "agent-loop-telemetry/1.0"
+    assert telemetry["latest_sequence"] == 2
     assert ("POST", "/loops") in server.requests
     assert ("POST", "/loops/loop-external-http/run") in server.requests
     assert ("GET", "/loops/loop-external-http/health") in server.requests
+    assert ("GET", "/loops/loop-external-http/events?after_sequence=1") in server.requests
+    assert ("GET", "/loops/loop-external-http/events/stream?follow=true&after_sequence=1") in server.requests
+    assert ("GET", "/loops/loop-external-http/telemetry") in server.requests
 
 
 def test_external_http_get_wraps_http_errors(monkeypatch, tmp_path):
@@ -472,11 +530,15 @@ def test_external_cli_agent_loop_control_actions(monkeypatch, tmp_path):
     manager.reject_agent_loop_action("loop-cli", "action-cli", reason="operator rejected")
     manager.retry_agent_loop_step("loop-cli", "step-cli")
     manager.get_agent_loop_health("loop-cli")
+    manager.get_agent_loop_events("loop-cli", after_sequence=7)
+    manager.get_agent_loop_telemetry("loop-cli")
 
     assert captured[0] == ["loop-cancel", "loop-cli", "--reason", "operator cancelled", "--json"]
     assert captured[1] == ["loop-reject", "loop-cli", "action-cli", "--reason", "operator rejected", "--json"]
     assert captured[2] == ["loop-retry", "loop-cli", "step-cli", "--json"]
     assert captured[3] == ["loop-health", "loop-cli", "--json"]
+    assert captured[4] == ["loop-events", "loop-cli", "--after-sequence", "7", "--json"]
+    assert captured[5] == ["loop-telemetry", "loop-cli", "--json"]
 
 
 def test_builtin_mode_is_normalized_to_external_plugin_boundary(tmp_path):
