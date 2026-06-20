@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.27 - 2026-06-20
+
 ### Added
 
 - RC verification reports now include structured pre-release gate evidence for
