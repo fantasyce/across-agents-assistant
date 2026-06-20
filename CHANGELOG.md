@@ -8,6 +8,11 @@
   Center and backend API, with safe review generation and candidate-plan
   controls that delegate execution to Orchestrator and memory to Context.
 
+### Changed
+
+- Autopilot E2E validation now canonicalizes the source checkout path before
+  installing the local plugin runtime.
+
 ## 0.8.29 - 2026-06-20
 
 ### Added

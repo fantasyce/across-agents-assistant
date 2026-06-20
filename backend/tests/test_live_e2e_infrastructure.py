@@ -37,6 +37,14 @@ def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
     assert "live-e2e-gate-evidence" in workflow
 
 
+def test_autopilot_e2e_runner_canonicalizes_source_checkout():
+    script = _read("scripts/run_autopilot_e2e.sh")
+
+    assert "RAW_AUTOPILOT_SOURCE" in script
+    assert 'AUTOPILOT_SOURCE="$(cd "$RAW_AUTOPILOT_SOURCE" && pwd)"' in script
+    assert 'export ACROSS_AUTOPILOT_SOURCE="$AUTOPILOT_SOURCE"' in script
+
+
 def test_quality_workflow_runs_swift_behavior_checks():
     workflow = _read(".github/workflows/quality.yml")
 

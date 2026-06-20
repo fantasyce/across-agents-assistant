@@ -58,6 +58,8 @@ target.
      evidence and a GitHub Live E2E run URL.
    - Cross-repo protocol releases happen producer-first: Orchestrator, Context
      when needed, then AAA.
+   - The first Across Autopilot release must update AAA's managed Autopilot
+     install source from the pre-release `main` branch to the released tag.
 
 ## Automation Levels
 
