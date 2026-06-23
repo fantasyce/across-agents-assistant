@@ -161,6 +161,7 @@ class LLMGateway:
             top_p=kwargs.get("top_p", 1.0),
             stop=kwargs.get("stop"),
             functions=functions,
+            extra_body=dict(kwargs.get("extra_body") or {}),
         )
 
         # Try current provider, fallback to others
@@ -189,6 +190,7 @@ class LLMGateway:
                             top_p=request.top_p,
                             stop=request.stop,
                             functions=request.functions,
+                            extra_body=dict(request.extra_body or {}),
                         )
                         return await fallback_adapter.chat(fallback_request)
                     except (KeychainDeniedError, KeychainTimeoutError, KeychainNotFoundError):

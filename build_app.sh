@@ -166,6 +166,11 @@ if [ -f "$PROJECT_ROOT/backend/assets/app_icon.icns" ]; then
     cp "$PROJECT_ROOT/backend/assets/app_icon.icns" "$APP_DIR/Contents/Resources/app_icon.icns"
 fi
 
+# Copy host-side validation helpers used by packaged Loop Engineering runs.
+mkdir -p "$APP_DIR/Contents/Resources/scripts"
+cp "$PROJECT_ROOT/scripts/candidate_app_lifecycle.sh" "$APP_DIR/Contents/Resources/scripts/candidate_app_lifecycle.sh"
+chmod +x "$APP_DIR/Contents/Resources/scripts/candidate_app_lifecycle.sh"
+
 echo "=== 6. Generating Info.plist ==="
 cat <<PLIST > "$APP_DIR/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -186,6 +191,8 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>$APP_VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSQuitAlwaysKeepsWindows</key>

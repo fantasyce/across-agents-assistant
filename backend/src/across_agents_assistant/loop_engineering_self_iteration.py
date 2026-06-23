@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import time
+from collections.abc import Mapping
+from typing import Any
+
+from .autopilot_trigger_manager import AutopilotTriggerRegistry, build_trigger_registry_summary
+
+
+SELF_ITERATION_PLAN_SCHEMA_VERSION = "across-aaa-self-iteration-plan/1.0"
+DEFAULT_SELF_ITERATION_SPEC = "aaa-autonomous-self-iteration"
+DEFAULT_SELF_ITERATION_TRIGGER_ID = "aaa-continuous-self-iteration-daily"
+DEFAULT_SELF_ITERATION_INTERVAL_SECONDS = 86_400
+
+
+def build_self_iteration_plan(
+    *,
+    trigger_registry: Mapping[str, Any] | None = None,
+    capability_pack: Mapping[str, Any] | None = None,
+    spec: str = DEFAULT_SELF_ITERATION_SPEC,
+    trigger_id: str = DEFAULT_SELF_ITERATION_TRIGGER_ID,
+) -> dict[str, Any]:
+    """Build the host-visible plan for continuous AAA self-iteration."""
+
+    trigger_registry = dict(trigger_registry or {})
+    capability_pack = dict(capability_pack or {})
+    trigger = _find_trigger(trigger_registry, trigger_id)
+    active = bool(trigger and trigger.get("enabled") is not False and trigger.get("paused") is not True)
+    readiness = [
+        _check("trigger_registered", trigger is not None, "Default self-iteration trigger is registered."),
+        _check("trigger_active", active, "Default self-iteration trigger is enabled and not paused."),
+        _check(
+            "capability_pack_ready",
+            int(capability_pack.get("ready_count") or 0) >= 40,
+            "Loop Engineering capability pack exposes the continuous-iteration capabilities.",
+            {"ready_count": capability_pack.get("ready_count")},
+        ),
+    ]
+    return {
+        "schema_version": SELF_ITERATION_PLAN_SCHEMA_VERSION,
+        "plan_id": "aaa-continuous-self-iteration",
+        "status": "active" if active else "not_registered" if trigger is None else "paused",
+        "continuous_iteration": True,
+        "spec": spec,
+        "default_trigger_id": trigger_id,
+        "default_interval_seconds": DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
+        "default_trigger": _default_trigger_config(spec=spec, trigger_id=trigger_id),
+        "trigger": trigger,
+        "trigger_summary": build_trigger_registry_summary(trigger_registry),
+        "promotion_review": {
+            "human_approval_required": True,
+            "endpoint_template": "/api/autopilot/runs/{run_id}/promotion-review",
+            "merge_release_signing_blocked": True,
+        },
+        "runtime_controls": {
+            "ensure_endpoint": "/api/autopilot/self-iteration-plan/ensure",
+            "tick_endpoint": "/api/autopilot/trigger-configs/tick",
+            "scheduler_status_endpoint": "/api/autopilot/trigger-scheduler",
+            "scheduler_start_endpoint": "/api/autopilot/trigger-scheduler/start",
+            "scheduler_stop_endpoint": "/api/autopilot/trigger-scheduler/stop",
+            "run_queued_trigger_endpoint": "/api/autopilot/triggers/run",
+            "ops_dashboard_endpoint": "/api/autopilot/ops-dashboard",
+        },
+        "readiness": readiness,
+        "ready": all(item["status"] == "passed" for item in readiness),
+        "today_start_policy": "ensure the default trigger, tick due schedules, run queued triggers, then use promotion review for human approval",
+        "updated_at": _now(),
+    }
+
+
+def ensure_self_iteration_plan(
+    registry: AutopilotTriggerRegistry,
+    *,
+    spec: str = DEFAULT_SELF_ITERATION_SPEC,
+    interval_seconds: int = DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
+    enabled: bool = True,
+    actor: str = "aaa-self-iteration",
+    source: str = "aaa-self-iteration-plan",
+    trigger_id: str = DEFAULT_SELF_ITERATION_TRIGGER_ID,
+    payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Ensure the default continuous self-iteration trigger exists."""
+
+    interval = max(60, int(interval_seconds or DEFAULT_SELF_ITERATION_INTERVAL_SECONDS))
+    return registry.ensure(
+        spec=spec or DEFAULT_SELF_ITERATION_SPEC,
+        trigger_type="cron",
+        payload={
+            "scenario": "aaa_continuous_self_iteration",
+            "topic": "research current LLM and agent architecture signals, compare them to AAA, and produce one bounded product improvement",
+            **dict(payload or {}),
+        },
+        schedule={"interval_seconds": interval},
+        enabled=enabled,
+        actor=actor or "aaa-self-iteration",
+        source=source or "aaa-self-iteration-plan",
+        trigger_id=trigger_id or DEFAULT_SELF_ITERATION_TRIGGER_ID,
+    )
+
+
+def _default_trigger_config(*, spec: str, trigger_id: str) -> dict[str, Any]:
+    return {
+        "trigger_id": trigger_id,
+        "spec": spec,
+        "type": "cron",
+        "enabled": True,
+        "schedule": {"interval_seconds": DEFAULT_SELF_ITERATION_INTERVAL_SECONDS},
+        "actor": "aaa-self-iteration",
+        "source": "aaa-self-iteration-plan",
+    }
+
+
+def _find_trigger(trigger_registry: Mapping[str, Any], trigger_id: str) -> dict[str, Any] | None:
+    for item in trigger_registry.get("triggers", []) or []:
+        if isinstance(item, Mapping) and item.get("trigger_id") == trigger_id:
+            return dict(item)
+    return None
+
+
+def _check(id_: str, passed: bool, label: str, details: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": id_,
+        "label": label,
+        "status": "passed" if passed else "failed",
+    }
+    if details:
+        item["details"] = dict(details)
+    return item
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

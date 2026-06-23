@@ -38,16 +38,25 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.7.8",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.8.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.6.18",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.7.0",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.6.18",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.7.0",
+    ),
+    KnownAcrossPlugin(
+        plugin_id="across-autopilot",
+        display_name="Across Autopilot",
+        kind="autonomous-workflow",
+        command="across-autopilot",
+        install_command="across-autopilot install host-plugin",
+        install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.2.0",
     ),
 )
 
@@ -171,6 +180,31 @@ def run_context_plugin_lifecycle_action(
     if normalized == "uninstall":
         return _uninstall_managed_plugin("across-context", "across-context", env=env)
     raise PluginLifecycleError("Unsupported Across Context lifecycle action")
+
+
+def run_autopilot_plugin_lifecycle_action(
+    action: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    runner: Any = subprocess.run,
+) -> dict[str, Any]:
+    normalized = _normalize_action(action)
+    if normalized == "probe":
+        return inspect_across_plugin("across-autopilot", probe=True, env=env)
+    if normalized in {"install", "repair", "upgrade"}:
+        return _install_node_host_plugin(
+            "across-autopilot",
+            env=env,
+            runner=runner,
+            force_reinstall=normalized in {"repair", "upgrade"},
+        )
+    if normalized == "uninstall":
+        return _uninstall_managed_plugin("across-autopilot", "across-autopilot", env=env)
+    raise PluginLifecycleError("Unsupported Across Autopilot lifecycle action")
+
+
+def run_autopilot_cli_json(args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 60) -> Any:
+    return _run_cli_json("across-autopilot", args, env=env, timeout=timeout)
 
 
 def list_context_memories(
@@ -412,6 +446,63 @@ def _install_across_context(
     return inspect_across_plugin("across-context", probe=True, env=source)
 
 
+def _install_node_host_plugin(
+    plugin_id: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    runner: Any = subprocess.run,
+    force_reinstall: bool = False,
+) -> dict[str, Any]:
+    plugin = _known_plugin(plugin_id)
+    if plugin is None:
+        raise PluginLifecycleError("Unknown Across plugin")
+
+    source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
+    across_home = ecosystem_home(source)
+    command_path = _resolve_command(plugin.command, source)
+    command_integrity_issues = (
+        _command_integrity_issues(command_path, ecosystem_plugin_root(source) / plugin.plugin_id, source)
+        if command_path.is_file() and os.access(command_path, os.X_OK)
+        else []
+    )
+    if (
+        not force_reinstall
+        and command_path.is_file()
+        and os.access(command_path, os.X_OK)
+        and not command_integrity_issues
+    ):
+        _run_checked(
+            [str(command_path), "install", "host-plugin", "--across-home", str(across_home)],
+            source,
+            runner=runner,
+            timeout=60,
+        )
+        return inspect_across_plugin(plugin.plugin_id, probe=True, env=source)
+
+    npm = _which_runtime_command("npm", source)
+    if not npm:
+        raise PluginLifecycleError(f"npm is required to install {plugin.display_name} when no existing command is available")
+
+    install_source = _install_source(plugin, source)
+    if not install_source:
+        raise PluginLifecycleError(f"{plugin.display_name} install source is not configured")
+
+    cache_dir = component_cache_home(env=source) / "plugin-installers" / plugin.plugin_id
+    shutil.rmtree(cache_dir, ignore_errors=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _run_checked([npm, "install", "--prefix", str(cache_dir), install_source], source, runner=runner, timeout=180)
+    installed_command = cache_dir / "node_modules" / ".bin" / plugin.command
+    if not installed_command.is_file():
+        raise PluginLifecycleError(f"{plugin.display_name} installed but its CLI command was not found")
+    _run_checked(
+        [str(installed_command), "install", "host-plugin", "--across-home", str(across_home)],
+        source,
+        runner=runner,
+        timeout=60,
+    )
+    return inspect_across_plugin(plugin.plugin_id, probe=True, env=source)
+
+
 def _uninstall_managed_plugin(plugin_id: str, command: str, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     plugin_dir = ecosystem_plugin_root(source) / plugin_id
@@ -474,13 +565,18 @@ def _child_env_with_product_boundary(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def _run_context_cli_json(args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 15) -> Any:
+    return _run_cli_json("across-context", args, env=env, timeout=timeout)
+
+
+def _run_cli_json(command: str, args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 15) -> Any:
     source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
-    command_path = _resolve_command("across-context", source)
+    command_path = _resolve_command(command, source)
     if not command_path.is_file() or not os.access(command_path, os.X_OK):
-        raise PluginLifecycleError("Across Context plugin is not installed")
-    integrity_issues = _command_integrity_issues(command_path, ecosystem_plugin_root(source) / "across-context", source)
+        raise PluginLifecycleError(f"{command} plugin is not installed")
+    plugin_id = command if command.startswith("across-") else command
+    integrity_issues = _command_integrity_issues(command_path, ecosystem_plugin_root(source) / plugin_id, source)
     if integrity_issues:
-        raise PluginLifecycleError("Across Context plugin must be repaired because its runtime is not self-contained")
+        raise PluginLifecycleError(f"{command} plugin must be repaired because its runtime is not self-contained")
     completed = subprocess.run(
         [str(command_path), *args],
         text=True,
@@ -491,11 +587,11 @@ def _run_context_cli_json(args: list[str], *, env: Mapping[str, str] | None = No
         check=False,
     )
     if completed.returncode != 0:
-        raise PluginLifecycleError("Across Context command failed")
+        raise PluginLifecycleError(f"{command} command failed")
     try:
         return json.loads(completed.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise PluginLifecycleError("Across Context returned invalid JSON") from exc
+        raise PluginLifecycleError(f"{command} returned invalid JSON") from exc
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:

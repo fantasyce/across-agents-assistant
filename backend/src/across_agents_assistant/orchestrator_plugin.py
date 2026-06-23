@@ -45,7 +45,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.6.18"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.7.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -788,7 +788,8 @@ class OrchestratorPluginManager:
     def implementation_status(self, *, probe: bool = True) -> Dict[str, Any]:
         mode = self.config.normalized_mode()
         install_status = self.install_status()
-        command_path = self._resolve_command() if install_status.get("integrity_ok", True) else None
+        managed_runtime_blocked = self._managed_runtime_integrity_blocks_external(install_status)
+        command_path = None if managed_runtime_blocked else self._resolve_command()
         base: Dict[str, Any] = {
             "mode": mode,
             "implementation": "external",
@@ -801,16 +802,6 @@ class OrchestratorPluginManager:
             "install": install_status,
             "connection_note": "External Across Orchestrator is required but no endpoint or executable was found.",
         }
-
-        if install_status.get("integrity_ok") is False:
-            return {
-                **base,
-                "implementation": "external",
-                "available": False,
-                "command_available": False,
-                "connection_note": "Across Orchestrator plugin must be repaired because its runtime is not self-contained.",
-                "error": "across-orchestrator plugin needs repair",
-            }
 
         if self.config.endpoint:
             try:
@@ -840,6 +831,16 @@ class OrchestratorPluginManager:
                     "connection_note": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
                     "error": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
                 }
+
+        if managed_runtime_blocked:
+            return {
+                **base,
+                "implementation": "external",
+                "available": False,
+                "command_available": False,
+                "connection_note": "Across Orchestrator plugin must be repaired because its runtime is not self-contained.",
+                "error": "across-orchestrator plugin needs repair",
+            }
 
         if command_path:
             try:
@@ -898,6 +899,18 @@ class OrchestratorPluginManager:
 
     def install_status(self) -> Dict[str, Any]:
         return self.installer.status()
+
+    def _managed_runtime_integrity_blocks_external(self, install_status: Dict[str, Any]) -> bool:
+        if install_status.get("integrity_ok") is not False:
+            return False
+        if self.config.endpoint:
+            return False
+        command = str(self.config.command or "").strip()
+        if not command:
+            return True
+        if os.path.isabs(command) or os.sep in command:
+            return False
+        return command == "across-orchestrator"
 
     def install_plugin(self) -> Dict[str, Any]:
         status = self.installer.install()

@@ -42,6 +42,9 @@ class MiniMaxAdapter(BaseLLMAdapter):
         if request.stop:
             payload["stop"] = request.stop
 
+        if request.extra_body:
+            payload.update(request.extra_body)
+
         if request.functions and self.supports_function_calling(request.model):
             payload["tools"] = [
                 {
@@ -59,7 +62,7 @@ class MiniMaxAdapter(BaseLLMAdapter):
         logger.info(f"MiniMax request: url={url}, model={request.model}, "
                      f"messages_count={len(messages)}, max_tokens={request.max_tokens}")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds(default=180.0)) as client:
             response = await client.post(url, headers=headers, json=payload)
 
             if response.status_code != 200:

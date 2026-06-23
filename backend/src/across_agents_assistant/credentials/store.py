@@ -25,6 +25,7 @@ logger = logging.getLogger("across_agents_assistant.credentials")
 
 
 DEFAULT_CREDENTIALS_PATH = data_file("credentials.json")
+_CREDENTIALS_FILE_ENV = "ACROSS_AGENTS_CREDENTIALS_FILE"
 
 KNOWN_PROVIDER_IDS = set(get_default_provider_ids())
 
@@ -47,7 +48,7 @@ class CredentialStore:
     """
 
     def __init__(self, path: Optional[Path] = None):
-        self.path = path or DEFAULT_CREDENTIALS_PATH
+        self.path = path or _default_credentials_path()
 
     # -- Public API -----------------------------------------------------------
 
@@ -181,3 +182,10 @@ class CredentialStore:
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _default_credentials_path() -> Path:
+    override = os.environ.get(_CREDENTIALS_FILE_ENV)
+    if override and override.strip():
+        return Path(override).expanduser().resolve()
+    return DEFAULT_CREDENTIALS_PATH
