@@ -14,12 +14,14 @@ PRODUCT_MODE_ENVS = (
     PRODUCT_MODE_ENV,
     "ACROSS_CONTEXT_PRODUCT_MODE",
     "ACROSS_ORCHESTRATOR_PRODUCT_MODE",
+    "ACROSS_AUTOPILOT_PRODUCT_MODE",
 )
 DEVELOPER_MODE_ENVS = (
     DEVELOPER_MODE_ENV,
     DEVELOPMENT_RUNTIME_PATHS_ENV,
     "ACROSS_CONTEXT_DEVELOPER_MODE",
     "ACROSS_ORCHESTRATOR_DEVELOPER_MODE",
+    "ACROSS_AUTOPILOT_DEVELOPER_MODE",
 )
 
 _TRUTHY_VALUES = {"1", "true", "yes", "on", "y"}
@@ -29,6 +31,8 @@ _PRODUCT_RUNTIME_OVERRIDE_NAMES = (
     "ACROSS_BIN_HOME",
     "ACROSS_CONTEXT_COMMAND",
     "ACROSS_CONTEXT_HOME",
+    "ACROSS_AUTOPILOT_COMMAND",
+    "ACROSS_AUTOPILOT_HOME",
     "ACROSS_AGENTS_HOME",
     "ACROSS_AGENTS_DB_PATH",
     "ACROSS_AGENTS_BACKEND_DIR",
@@ -37,6 +41,7 @@ _PRODUCT_RUNTIME_OVERRIDE_NAMES = (
     "ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME",
     "ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
     "ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
+    "ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
 )
 
 
@@ -139,10 +144,12 @@ def sanitized_product_runtime_env(env: Mapping[str, str] | None = None) -> tuple
         source.setdefault(PRODUCT_MODE_ENV, "1")
         source.setdefault("ACROSS_CONTEXT_PRODUCT_MODE", "1")
         source.setdefault("ACROSS_ORCHESTRATOR_PRODUCT_MODE", "1")
+        source.setdefault("ACROSS_AUTOPILOT_PRODUCT_MODE", "1")
     if developer_mode:
         source.setdefault(DEVELOPER_MODE_ENV, "1")
         source.setdefault("ACROSS_CONTEXT_DEVELOPER_MODE", "1")
         source.setdefault("ACROSS_ORCHESTRATOR_DEVELOPER_MODE", "1")
+        source.setdefault("ACROSS_AUTOPILOT_DEVELOPER_MODE", "1")
     issues = product_runtime_boundary_issues(source)
     issue_names = {issue["name"] for issue in issues}
     for name in issue_names:

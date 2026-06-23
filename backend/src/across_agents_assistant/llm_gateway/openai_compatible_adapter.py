@@ -67,6 +67,8 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         }
         if request.stop:
             payload["stop"] = request.stop
+        if request.extra_body:
+            payload.update(request.extra_body)
         if request.functions and self.supports_function_calling(request.model):
             payload["tools"] = [
                 {
@@ -82,7 +84,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             payload["tool_choice"] = "auto"
 
         provider_id = self.provider_id
-        if provider_id == "minimax":
+        if provider_id == "minimax" and "reasoning_split" not in payload:
             payload["reasoning_split"] = True
 
         logger.info(
@@ -92,7 +94,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             request.model,
             len(messages),
         )
-        async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds(default=180.0), trust_env=False) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

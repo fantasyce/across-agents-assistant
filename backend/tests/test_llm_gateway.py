@@ -1,8 +1,9 @@
 import pytest
 
 from across_agents_assistant.llm_gateway.base_adapter import LLMResponse
-from across_agents_assistant.llm_gateway.config import LLMConfig, ModelInfo
+from across_agents_assistant.llm_gateway.config import LLMConfig, LLMProviderConfig, ModelInfo
 from across_agents_assistant.llm_gateway.gateway import LLMGateway
+from across_agents_assistant.llm_gateway.minimax_adapter import MiniMaxAdapter
 
 
 class FailingAdapter:
@@ -36,6 +37,23 @@ class PassingAdapter:
             provider="fallback",
             finish_reason="stop",
         )
+
+
+def test_adapter_timeout_seconds_can_be_configured(monkeypatch):
+    adapter = MiniMaxAdapter(LLMProviderConfig(
+        provider_id="minimax",
+        name="MiniMax",
+        api_key_env="MINIMAX_API_KEY",
+        endpoint="https://example.invalid",
+    ))
+
+    assert adapter.timeout_seconds(default=180.0) == 180.0
+
+    monkeypatch.setenv("ACROSS_LLM_CHAT_TIMEOUT_SECONDS", "210")
+    assert adapter.timeout_seconds(default=180.0) == 210.0
+
+    monkeypatch.setenv("ACROSS_LLM_MINIMAX_CHAT_TIMEOUT_SECONDS", "240")
+    assert adapter.timeout_seconds(default=180.0) == 240.0
 
 
 @pytest.mark.asyncio

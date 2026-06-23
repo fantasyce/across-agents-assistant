@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-06-23
+
+### Added
+
+- Added Across Autopilot as a managed Across ecosystem plugin and exposed the
+  Loop Engineering control plane under `/api/autopilot/*`.
+- Added the Plugin Center Loop Engineering Workbench for validating, previewing,
+  running, and inspecting general LoopSpec workflows through Autopilot,
+  Orchestrator, and Context.
+- Added `scripts/run_loop_engineering_e2e.sh`, a user-level four-product E2E
+  that starts the AAA backend and verifies a complete Autopilot -> Orchestrator
+  -> Context workflow with evidence, events, telemetry, outputs, and pending
+  memory.
+- Strengthened the Loop Engineering platform contract with a durable Autopilot
+  trigger queue, Tool Pack input/output schemas, evidence section hashes,
+  audit-chain integrity metadata, and explicit planner/builder/validator/
+  reviewer role evidence.
+- Hardened installed-app Loop Engineering validation with a canonical AppKit
+  fallback main window, `NSPrincipalClass` in the generated app bundle, and
+  documented Computer Use attach evidence for packaged-app E2E.
+- Hardened autonomous B repair by rejecting generated pytest-dependent candidate
+  tests, requiring stdlib/runpy-compatible tests, and allowing bounded
+  validation-repair fallbacks only for explicit safe helper targets.
+- Added a non-secret Candidate Model Capability Lease for B runtimes, including
+  candidate `/api/llm/status` lifecycle gates that require
+  `candidate_model_lease` availability without copying or symlinking raw model
+  credentials.
+- Hardened dynamic `autopilot_*` B targets with package-import enforcement and a
+  generic validation-repair fallback for model-selected module/test pairs.
+- Updated managed plugin pins to Across Orchestrator `v0.7.0`, Across Context
+  `v0.8.0`, and Across Autopilot `v0.2.0`.
+
 ## 0.8.29 - 2026-06-20
 
 ### Added

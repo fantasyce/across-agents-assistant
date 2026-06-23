@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -68,6 +69,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     adapter_parser.add_argument("--agent", required=True)
     adapter_parser.add_argument("--timeout", type=float, default=300.0)
+    model_decision_parser = sub.add_parser(
+        "autopilot-model-decision",
+        help="Return a structured host-model decision for Across Autopilot.",
+    )
+    model_decision_parser.add_argument("--request-json", help="Inline decision request JSON. Defaults to stdin.")
+    research_decision_parser = sub.add_parser(
+        "autopilot-research-decision",
+        help="Return a structured host research-to-iteration decision for Across Autopilot.",
+    )
+    research_decision_parser.add_argument("--request-json", help="Inline research decision request JSON. Defaults to stdin.")
+    code_iteration_parser = sub.add_parser(
+        "autopilot-code-iteration",
+        help="Return a structured host code patch for Across Autopilot.",
+    )
+    code_iteration_parser.add_argument("--request-json", help="Inline code iteration request JSON. Defaults to stdin.")
+    review_decision_parser = sub.add_parser(
+        "autopilot-review-decision",
+        help="Return a distinct host-model review decision for Across Autopilot.",
+    )
+    review_decision_parser.add_argument("--request-json", help="Inline review request JSON. Defaults to stdin.")
+    sub.add_parser(
+        "loop-engineering-capabilities",
+        help="Print the AAA-hosted Loop Engineering capability pack registry.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -87,6 +112,44 @@ def main(argv: list[str] | None = None) -> int:
         from .orchestrator_agent_adapter import main as adapter_main
 
         return adapter_main(["--agent", args.agent, "--timeout", str(args.timeout)])
+
+    if args.command == "autopilot-model-decision":
+        from .autopilot_model_decision_cli import main as model_decision_main
+
+        cli_args: list[str] = []
+        if args.request_json is not None:
+            cli_args.extend(["--request-json", args.request_json])
+        return model_decision_main(cli_args)
+
+    if args.command == "autopilot-research-decision":
+        from .autopilot_research_decision_cli import main as research_decision_main
+
+        cli_args = []
+        if args.request_json is not None:
+            cli_args.extend(["--request-json", args.request_json])
+        return research_decision_main(cli_args)
+
+    if args.command == "autopilot-code-iteration":
+        from .autopilot_code_iteration_cli import main as code_iteration_main
+
+        cli_args = []
+        if args.request_json is not None:
+            cli_args.extend(["--request-json", args.request_json])
+        return code_iteration_main(cli_args)
+
+    if args.command == "autopilot-review-decision":
+        from .autopilot_review_decision_cli import main as review_decision_main
+
+        cli_args = []
+        if args.request_json is not None:
+            cli_args.extend(["--request-json", args.request_json])
+        return review_decision_main(cli_args)
+
+    if args.command == "loop-engineering-capabilities":
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        print(json.dumps(loop_engineering_capability_pack(), ensure_ascii=False, sort_keys=True))
+        return 0
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

@@ -1,8 +1,8 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Set
 import asyncio
 import logging
 import os
@@ -10,13 +10,21 @@ from pathlib import Path
 import subprocess
 import shutil
 import json
+import base64
+import hashlib
 import time
 import threading
 import signal
 import sys
 import re
 import uuid
+import http.client
+import socket
+import urllib.parse
+import urllib.request
+import urllib.error
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 from .credentials.validation import is_usable_secret, normalize_secret
 
@@ -30,7 +38,7 @@ def _safe_error_message(operation: str) -> str:
     return f"{operation} failed. See local backend logs for details."
 
 
-def _safe_http_500(operation: str, exc: Exception) -> HTTPException:
+def _safe_http_500(operation: str) -> HTTPException:
     logger.exception("%s failed", operation)
     return HTTPException(status_code=500, detail=_safe_error_message(operation))
 
@@ -242,6 +250,7 @@ from .harness import (
 from .llm_gateway.gateway import get_gateway, LLMGateway
 from .llm_gateway.config import load_llm_config
 from .llm_gateway.provider_registry import get_default_provider_ids
+from .llm_gateway.base_adapter import LLMResponse
 from .attachments import (
     append_image_attachment_context,
     build_image_attachment_context,
@@ -303,6 +312,7 @@ from .orchestrator_plugin import (
     external_evidence_to_app_bundle,
     external_task_to_app_info,
 )
+from .autopilot_client import AutopilotClient
 from .plugin_runtime import (
     PluginLifecycleError,
     discover_across_plugins,
@@ -311,14 +321,52 @@ from .plugin_runtime import (
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
+    run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
     update_context_memory_status,
+)
+from .autopilot_promotion_review import build_promotion_review_packet
+from .autopilot_trigger_manager import AutopilotTriggerRegistry, AutopilotTriggerScheduler
+from .loop_engineering_ops import build_loop_engineering_ops_dashboard
+from .loop_engineering_self_iteration import (
+    DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
+    DEFAULT_SELF_ITERATION_SPEC,
+    DEFAULT_SELF_ITERATION_TRIGGER_ID,
+    build_self_iteration_plan,
+    ensure_self_iteration_plan,
+)
+from .unified_capability_registry import (
+    build_unified_capability_registry,
+    evaluate_unified_capability_registry_health,
 )
 
 # Global task history state
 _task_state = TaskState()
 _task_persistence_initialized = False
 _server_started_at = time.time()
+_autopilot_trigger_scheduler: AutopilotTriggerScheduler | None = None
+
+
+def get_autopilot_client() -> AutopilotClient:
+    return AutopilotClient()
+
+
+def get_autopilot_trigger_registry() -> AutopilotTriggerRegistry:
+    return AutopilotTriggerRegistry()
+
+
+def get_autopilot_trigger_scheduler() -> AutopilotTriggerScheduler:
+    global _autopilot_trigger_scheduler
+    registry = get_autopilot_trigger_registry()
+    if _autopilot_trigger_scheduler is not None and _autopilot_trigger_scheduler.registry.path != registry.path:
+        _autopilot_trigger_scheduler.stop()
+        _autopilot_trigger_scheduler = None
+    if _autopilot_trigger_scheduler is None:
+        _autopilot_trigger_scheduler = AutopilotTriggerScheduler(
+            registry,
+            get_autopilot_client,
+        )
+    return _autopilot_trigger_scheduler
 
 # Initialize persistence only. Task history is loaded lazily by task APIs.
 def _init_task_persistence():
@@ -718,7 +766,7 @@ async def connect_mcp_server(req: MCPConnectRequest):
                 detail=_sanitize_public_error_text(error_msg or f"Failed to connect to MCP server: {req.server_id}"),
             )
     except Exception as e:
-        raise _safe_http_500("Connect MCP server", e)
+        raise _safe_http_500("Connect MCP server")
 
 class MCPDisconnectRequest(BaseModel):
     server_id: str
@@ -730,7 +778,7 @@ async def disconnect_mcp_server(req: MCPDisconnectRequest):
         await mcp_manager.disconnect_server(req.server_id)
         return {"status": "success"}
     except Exception as e:
-        raise _safe_http_500("Disconnect MCP server", e)
+        raise _safe_http_500("Disconnect MCP server")
 
 class MCPContext(BaseModel):
     server_id: str
@@ -1157,11 +1205,266 @@ def _build_key_readiness() -> Dict[str, Any]:
             "configured" if _provider_has_backend_key(provider_id) else "not_configured"
         )
     has_any_key = any(value == "configured" for value in providers.values())
+    lease_status = _candidate_model_lease_status()
+    has_model_capability = has_any_key or lease_status["available"]
     return {
         "has_any_key": has_any_key,
+        "has_model_capability": has_model_capability,
+        "candidate_model_lease": lease_status["public"],
         "providers": providers,
-        "readiness_blockers": [] if has_any_key else ["api_keys"],
+        "readiness_blockers": [] if has_model_capability else ["api_keys"],
     }
+
+
+class _UnixSocketHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, *, timeout: float = 180.0):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self.socket_path)
+        self.sock = sock
+
+
+def _candidate_model_lease_path() -> Path | None:
+    configured = str(os.environ.get("ACROSS_AAA_CANDIDATE_MODEL_LEASE") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    candidates = []
+    for root_name in ("ACROSS_HOME", "ACROSS_AGENTS_HOME"):
+        root = str(os.environ.get(root_name) or "").strip()
+        if root:
+            candidates.append(Path(root).expanduser() / "candidate-model-lease.json")
+    for path in candidates:
+        try:
+            if str(path) and path.exists():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def _load_candidate_model_lease() -> Dict[str, Any] | None:
+    path = _candidate_model_lease_path()
+    if not path:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read candidate model lease %s: %s", path, exc)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload["_lease_path"] = str(path)
+    return payload
+
+
+def _candidate_model_lease_status(required_scope: str | None = None) -> Dict[str, Any]:
+    lease = _load_candidate_model_lease()
+    if not lease:
+        return {"available": False, "reason": "missing", "lease": None, "public": {"available": False, "reason": "missing"}}
+    public = _public_candidate_model_lease(lease)
+    reason = None
+    available = True
+    if lease.get("schema_version") != "across-candidate-model-lease/1.0":
+        available = False
+        reason = "unsupported_schema"
+    policy = lease.get("policy") if isinstance(lease.get("policy"), dict) else {}
+    if policy.get("secrets_included") is not False or policy.get("raw_credentials_allowed") is not False:
+        available = False
+        reason = "unsafe_policy"
+    scopes = {str(scope) for scope in (lease.get("scopes") or [])}
+    if required_scope and required_scope not in scopes:
+        available = False
+        reason = "scope_not_allowed"
+    expires_at_unix = lease.get("expires_at_unix")
+    try:
+        if expires_at_unix is not None and float(expires_at_unix) <= time.time():
+            available = False
+            reason = "expired"
+    except (TypeError, ValueError):
+        available = False
+        reason = "invalid_expiry"
+    socket_path = str(lease.get("host_socket") or "")
+    host_http_url = str(lease.get("host_http_url") or "").strip()
+    socket_available = bool(socket_path) and Path(socket_path).exists()
+    http_available = _is_local_host_http_url(host_http_url)
+    if not socket_path and not host_http_url:
+        available = False
+        reason = "missing_host_transport"
+    elif socket_path and not socket_available and not http_available:
+        available = False
+        reason = "host_socket_missing"
+    elif host_http_url and not http_available and not socket_available:
+        available = False
+        reason = "invalid_host_http_url"
+    public.update({"available": available, "reason": reason or "ok"})
+    return {"available": available, "reason": reason or "ok", "lease": lease, "public": public}
+
+
+def _public_candidate_model_lease(lease: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "available": False,
+        "schema_version": lease.get("schema_version"),
+        "lease_id": lease.get("lease_id"),
+        "candidate_id": lease.get("candidate_id"),
+        "transport": lease.get("transport"),
+        "scopes": [str(scope) for scope in (lease.get("scopes") or [])],
+        "host_socket_configured": bool(lease.get("host_socket")),
+        "host_http_configured": bool(lease.get("host_http_url")),
+        "issued_at_unix": lease.get("issued_at_unix"),
+        "expires_at_unix": lease.get("expires_at_unix"),
+        "secrets_included": bool((lease.get("policy") or {}).get("secrets_included")),
+        "raw_credentials_allowed": bool((lease.get("policy") or {}).get("raw_credentials_allowed")),
+        "path": lease.get("_lease_path"),
+    }
+
+
+def _public_request_model_lease(value: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not isinstance(value, dict) or not value:
+        return None
+    return {
+        "schema_version": value.get("schema_version"),
+        "lease_id": value.get("lease_id"),
+        "candidate_id": value.get("candidate_id"),
+        "transport": value.get("transport"),
+        "scopes": [str(scope) for scope in (value.get("scopes") or [])],
+        "host_socket_configured": bool(value.get("host_socket_configured") or value.get("host_socket")),
+        "host_http_configured": bool(value.get("host_http_configured") or value.get("host_http_url")),
+        "expires_at_unix": value.get("expires_at_unix"),
+        "secrets_included": bool(value.get("secrets_included") or (value.get("policy") or {}).get("secrets_included")),
+        "raw_credentials_allowed": bool(value.get("raw_credentials_allowed") or (value.get("policy") or {}).get("raw_credentials_allowed")),
+    }
+
+
+def _is_local_host_http_url(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(value)
+    except Exception:
+        return False
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+
+
+def _post_json_to_unix_socket(socket_path: str, path: str, payload: Dict[str, Any], *, timeout: float = 180.0) -> Dict[str, Any]:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    conn = _UnixSocketHTTPConnection(socket_path, timeout=timeout)
+    try:
+        conn.request(
+            "POST",
+            path,
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+        )
+        resp = conn.getresponse()
+        text = resp.read().decode("utf-8", errors="replace")
+        parsed = json.loads(text) if text else {}
+        if resp.status >= 400:
+            detail = parsed.get("detail") if isinstance(parsed, dict) else text
+            raise RuntimeError(f"host model lease proxy returned HTTP {resp.status}: {detail}")
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    finally:
+        conn.close()
+
+
+def _post_json_to_http_url(base_url: str, path: str, payload: Dict[str, Any], *, timeout: float = 180.0) -> Dict[str, Any]:
+    if not _is_local_host_http_url(base_url):
+        raise RuntimeError("candidate model lease host_http_url must be local HTTP")
+    url = urllib.parse.urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(text) if text else {}
+            return parsed if isinstance(parsed, dict) else {"value": parsed}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"host model lease proxy returned HTTP {exc.code}: {detail}") from exc
+
+
+async def _chat_with_model_capability(
+    *,
+    message: str,
+    system_prompt: str | None = None,
+    context: Dict[str, Any] | None = None,
+    model: str | None = None,
+    provider_id: str | None = None,
+    scope: str = "model.chat",
+    **kwargs: Any,
+) -> LLMResponse:
+    lease_status = _candidate_model_lease_status(scope)
+    if lease_status.get("lease") is not None:
+        if not lease_status["available"]:
+            raise RuntimeError(f"candidate model lease is not available: {lease_status.get('reason')}")
+        lease = lease_status["lease"] or {}
+        payload = {
+            "message": message,
+            "system_prompt": system_prompt,
+            "context": context,
+            "model": model,
+            "provider_id": provider_id or (lease.get("provider") if isinstance(lease, dict) else None),
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 2048),
+        }
+        if lease.get("host_socket") and Path(str(lease.get("host_socket"))).exists():
+            result = _post_json_to_unix_socket(str(lease.get("host_socket")), "/api/llm/chat", payload, timeout=float(kwargs.get("timeout", 180.0)))
+        else:
+            result = _post_json_to_http_url(str(lease.get("host_http_url") or ""), "/api/llm/chat", payload, timeout=float(kwargs.get("timeout", 180.0)))
+        return LLMResponse(
+            text=str(result.get("text") or ""),
+            raw=result,
+            model=str(result.get("model") or model or "host-model-lease"),
+            provider=str(result.get("provider") or provider_id or "host-model-lease"),
+            finish_reason=str(result.get("finish_reason") or "stop"),
+            usage=result.get("usage") if isinstance(result.get("usage"), dict) else None,
+        )
+    gw = get_gateway()
+    adapter = None
+    if provider_id and hasattr(gw, "_adapters"):
+        adapter = gw._adapters.get(provider_id)
+    elif hasattr(gw, "get_current_adapter"):
+        adapter = gw.get_current_adapter()
+    if adapter is None:
+        return await gw.chat(
+            message=message,
+            system_prompt=system_prompt,
+            context=context,
+            model=model,
+            provider_id=provider_id,
+            **kwargs,
+        )
+    if adapter.is_available():
+        return await gw.chat(
+            message=message,
+            system_prompt=system_prompt,
+            context=context,
+            model=model,
+            provider_id=provider_id,
+            **kwargs,
+        )
+    return await gw.chat(
+        message=message,
+        system_prompt=system_prompt,
+        context=context,
+        model=model,
+        provider_id=provider_id,
+        **kwargs,
+    )
 
 
 def _path_check(check_id: str, title: str, path: Path, *, expect_file: bool = False) -> Dict[str, Any]:
@@ -1457,6 +1760,3013 @@ class PluginLifecycleActionRequest(BaseModel):
     action: str
 
 
+class AutopilotSpecRequest(BaseModel):
+    spec: str
+    trigger: Optional[str] = "aaa-user"
+    model_policy_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutopilotCancelRequest(BaseModel):
+    reason: Optional[str] = "cancelled by host"
+
+
+class AutopilotOutputRequest(BaseModel):
+    outputId: str
+
+
+class AutopilotTriggerRequest(BaseModel):
+    spec: str
+    type: Optional[str] = "manual"
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: Optional[str] = None
+    not_before: Optional[str] = None
+    source: Optional[str] = "aaa"
+    actor: Optional[str] = "user"
+
+
+class AutopilotRunTriggerRequest(BaseModel):
+    trigger_id: Optional[str] = None
+
+
+class AutopilotTriggerConfigRequest(BaseModel):
+    spec: str
+    type: str = "cron"
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    schedule: Dict[str, Any] = Field(default_factory=dict)
+    webhook: Dict[str, Any] = Field(default_factory=dict)
+    daemon: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    actor: Optional[str] = "user"
+    source: Optional[str] = "aaa"
+    trigger_id: Optional[str] = None
+
+
+class AutopilotTriggerPauseRequest(BaseModel):
+    paused: bool = True
+
+
+class AutopilotSelfIterationPlanRequest(BaseModel):
+    spec: str = DEFAULT_SELF_ITERATION_SPEC
+    interval_seconds: int = DEFAULT_SELF_ITERATION_INTERVAL_SECONDS
+    enabled: bool = True
+    actor: str = "aaa-self-iteration"
+    source: str = "aaa-self-iteration-plan"
+    trigger_id: str = DEFAULT_SELF_ITERATION_TRIGGER_ID
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutopilotTriggerSchedulerRequest(BaseModel):
+    interval_seconds: float = 60.0
+
+
+class AutopilotModelDecisionRequest(BaseModel):
+    schema_version: Optional[str] = "across-host-model-decision-request/1.0"
+    role: Optional[str] = "loop_engineer"
+    goal: str
+    run_id: Optional[str] = None
+    loop_id: Optional[str] = None
+    candidate_workspace: str
+    source_repository: Optional[str] = None
+    focus: List[str] = Field(default_factory=list)
+    allowed_patch_paths: List[str] = Field(default_factory=list)
+    context_files: List[str] = Field(default_factory=list)
+    validation_feedback: List[Dict[str, Any]] = Field(default_factory=list)
+    candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
+    model_policy: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutopilotResearchDecisionRequest(BaseModel):
+    schema_version: Optional[str] = "across-host-research-decision-request/1.0"
+    role: Optional[str] = "loop_researcher"
+    goal: str
+    run_id: Optional[str] = None
+    candidate_id: Optional[str] = None
+    candidate_workspace: str
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    recalled_memory: List[Dict[str, Any]] = Field(default_factory=list)
+    product_context: Dict[str, Any] = Field(default_factory=dict)
+    target_catalog: List[Dict[str, Any]] = Field(default_factory=list)
+    target_generation: Dict[str, Any] = Field(default_factory=dict)
+    tool_pack_evidence: Dict[str, Any] = Field(default_factory=dict)
+    candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
+    model_policy: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutopilotCodeIterationRequest(BaseModel):
+    schema_version: Optional[str] = "across-host-code-iteration-request/1.0"
+    goal: str
+    run_id: Optional[str] = None
+    candidate_id: Optional[str] = None
+    candidate_workspace: str
+    target_repo: str = "across-agents-assistant"
+    source_repository: Optional[str] = None
+    allowed_patch_paths: List[str] = Field(default_factory=list)
+    context_files: List[str] = Field(default_factory=list)
+    validation_commands: List[Dict[str, Any]] = Field(default_factory=list)
+    validation_feedback: List[Dict[str, Any]] = Field(default_factory=list)
+    candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
+    model_policy: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutopilotReviewDecisionRequest(BaseModel):
+    schema_version: Optional[str] = "across-host-review-decision-request/1.0"
+    goal: str
+    run_id: Optional[str] = None
+    spec_id: Optional[str] = None
+    selected_target_id: Optional[str] = None
+    selected_iteration: Dict[str, Any] = Field(default_factory=dict)
+    changed_files: List[str] = Field(default_factory=list)
+    validation: Dict[str, Any] = Field(default_factory=dict)
+    diff_summary: Dict[str, Any] = Field(default_factory=dict)
+    deterministic_review: Dict[str, Any] = Field(default_factory=dict)
+    builder_model: Dict[str, Any] = Field(default_factory=dict)
+    candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
+    model_policy: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _safe_autopilot_rel_path(value: Any) -> str:
+    rel = str(value or "").replace("\\", "/").strip()
+    if (
+        not rel
+        or rel.startswith("/")
+        or rel.startswith("~")
+        or "\x00" in rel
+        or any(part in {".", ".."} for part in rel.split("/"))
+    ):
+        raise ValueError(f"Unsafe relative path: {value}")
+    if rel.endswith("/") or any(part == "" for part in rel.split("/")):
+        raise ValueError(f"Patch paths must name concrete files, not directories: {value}")
+    lowered = rel.lower()
+    blocked_names = {
+        ".env",
+        ".env.local",
+        "credentials.json",
+        "secrets.json",
+        "id_rsa",
+        "id_ed25519",
+    }
+    if any(part.lower() in blocked_names for part in rel.split("/")):
+        raise ValueError(f"Sensitive context path is not allowed: {value}")
+    if any(token in lowered for token in ("secret", "credential", "apikey", "api_key", "token")):
+        raise ValueError(f"Sensitive context path is not allowed: {value}")
+    return rel
+
+
+def _safe_autopilot_context_path(value: Any, *, autonomous_root: Optional[str] = None) -> str:
+    del autonomous_root
+    return _safe_autopilot_rel_path(value)
+
+
+def _read_autopilot_context_files(req: AutopilotModelDecisionRequest) -> List[Dict[str, Any]]:
+    del req
+    return []
+
+
+def _compact_autopilot_context_files(
+    files: List[Dict[str, Any]],
+    *,
+    max_total_bytes: int = 12_000,
+    max_file_bytes: int = 4_000,
+) -> List[Dict[str, Any]]:
+    compacted: List[Dict[str, Any]] = []
+    total = 0
+    for item in files:
+        remaining = max_total_bytes - total
+        if remaining <= 0:
+            break
+        limit = min(max_file_bytes, remaining)
+        content = str(item.get("content") or "")
+        encoded = content.encode("utf-8", errors="replace")
+        snippet = encoded[:limit].decode("utf-8", errors="replace")
+        total += len(snippet.encode("utf-8", errors="replace"))
+        compacted.append({
+            **item,
+            "content": snippet,
+            "truncated": bool(item.get("truncated")) or len(encoded) > len(snippet.encode("utf-8", errors="replace")),
+        })
+    return compacted
+
+
+def _autopilot_model_policy_value(policy: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in policy and policy[key] not in (None, ""):
+            return policy[key]
+    return default
+
+
+def _autopilot_decision_system_prompt() -> str:
+    return (
+        "You are the model brain for an Across Autopilot Loop Engineering run. "
+        "Return JSON only, under 1200 characters. Do not wrap it in markdown. "
+        "Do not write the full candidate document and do not quote the context. "
+        "You must decide candidate workspace changes, never source repository changes. "
+        "Prefer this concise JSON shape: "
+        "{\"summary\": string, \"rationale\": string, \"risk\": \"low|medium|high\", "
+        "\"decision_card\": {\"path\": string, \"title\": string, "
+        "\"key_changes\": [string], \"validation\": [string]}}, "
+        "\"validation_commands\": [{\"command\": string, \"args\": [string]}]}. "
+        "The host will format decision_card into the candidate file. "
+        "Use at most 5 key_changes and keep each item under 160 characters. "
+        "Legacy patch_plan is allowed only if it is equally concise. "
+        "The host will format patch_plan into the candidate file. If you must return patches "
+        "directly, every patch content field must be a valid JSON string with newlines escaped as \\n. "
+        "Use only allowed_patch_paths."
+    )
+
+
+def _autopilot_decision_user_prompt(req: AutopilotModelDecisionRequest, context_files: List[Dict[str, Any]]) -> str:
+    payload = {
+        "goal": req.goal,
+        "role": req.role,
+        "run_id": req.run_id,
+        "loop_id": req.loop_id,
+        "candidate_workspace": req.candidate_workspace,
+        "source_repository": req.source_repository,
+        "focus": req.focus[:20],
+        "allowed_patch_paths": req.allowed_patch_paths[:20],
+        "validation_feedback": req.validation_feedback[:10],
+        "context_files": context_files,
+    }
+    return (
+        "Design the next candidate-only AAA self-iteration patch. "
+        "The source repository is read-only and must not be edited. "
+        "Use the context below and return the required JSON object.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _autopilot_decision_repair_prompt(req: AutopilotModelDecisionRequest, raw_text: str, error: Exception) -> str:
+    payload = {
+        "goal": req.goal,
+        "allowed_patch_paths": req.allowed_patch_paths[:20],
+        "parse_error": str(error),
+        "raw_model_output": str(raw_text or "")[:20_000],
+    }
+    return (
+        "Repair the prior model output into the concise required JSON object only. "
+        "Do not add markdown or commentary. Do not return the full document. "
+        "Prefer decision_card with at most 5 short key_changes. "
+        "Keep patches candidate-only and use only allowed_patch_paths.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(raw[start:end + 1])
+    if not isinstance(value, dict):
+        raise ValueError("Model decision must be a JSON object")
+    return value
+
+
+def _should_repair_autopilot_decision_error(exc: Exception) -> bool:
+    text = str(exc)
+    policy_error_prefixes = (
+        "Unsafe relative path:",
+        "Sensitive context path is not allowed:",
+        "Model patch path is outside allowed_patch_paths:",
+        "Model patch content is too large",
+    )
+    return not any(text.startswith(prefix) for prefix in policy_error_prefixes)
+
+
+def _model_patch_content(raw_patch: Dict[str, Any]) -> str:
+    if "content_lines" in raw_patch:
+        lines = raw_patch.get("content_lines")
+        if not isinstance(lines, list):
+            raise ValueError("Model patch content_lines must be a list")
+        content = "\n".join(str(line) for line in lines)
+        return content if content.endswith("\n") else content + "\n"
+
+    if "content_base64" in raw_patch:
+        encoded = str(raw_patch.get("content_base64") or "")
+        try:
+            return base64.b64decode(encoded, validate=True).decode("utf-8")
+        except Exception as exc:
+            raise ValueError("Model patch content_base64 is invalid") from exc
+
+    content = raw_patch.get("content")
+    if isinstance(content, list):
+        return "\n".join(str(line) for line in content)
+    return str(content or "")
+
+
+def _normalize_model_decision_patches(
+    decision: Dict[str, Any],
+    *,
+    allowed_patch_paths: List[str],
+) -> List[Dict[str, Any]]:
+    allowed = {_safe_autopilot_rel_path(path) for path in allowed_patch_paths if str(path or "").strip()}
+    patches: List[Dict[str, Any]] = []
+    for raw_patch in (decision.get("patches") or [])[:8]:
+        if not isinstance(raw_patch, dict):
+            continue
+        rel = _safe_autopilot_rel_path(raw_patch.get("path"))
+        if allowed and rel not in allowed:
+            raise ValueError(f"Model patch path is outside allowed_patch_paths: {rel}")
+        mode = str(raw_patch.get("mode") or "overwrite").strip()
+        if mode not in {"overwrite", "append", "upsert_between_markers"}:
+            raise ValueError(f"Unsupported model patch mode: {mode}")
+        content = _model_patch_content(raw_patch)
+        if not content.strip():
+            raise ValueError(f"Model patch content is empty for {rel}")
+        if len(content.encode("utf-8", errors="replace")) > 120_000:
+            raise ValueError(f"Model patch content is too large for {rel}")
+        patch = {
+            "path": rel,
+            "mode": mode,
+            "content": content,
+        }
+        marker_start = raw_patch.get("marker_start")
+        marker_end = raw_patch.get("marker_end")
+        if marker_start:
+            patch["marker_start"] = str(marker_start)
+        if marker_end:
+            patch["marker_end"] = str(marker_end)
+        patches.append(patch)
+    if not patches:
+        raise ValueError("Model decision did not include any valid patches")
+    return patches
+
+
+def _validate_autopilot_generated_patch_policy(patches: List[Dict[str, Any]]) -> None:
+    for patch in patches:
+        rel = str(patch.get("path") or "")
+        content = str(patch.get("content") or "")
+        if rel.startswith("backend/tests/") and re.search(
+            r"(?m)^\s*(import\s+pytest|from\s+pytest\s+import)\b|\bpytest\.",
+            content,
+        ):
+            raise ValueError(
+                "Generated candidate tests must be standard-library only; pytest imports/usages are not allowed "
+                "because B validation executes tests directly with python3 and runpy."
+            )
+        if rel.startswith("backend/tests/") and re.search(
+            r"(?m)^\s*(?:from\s+autopilot_[A-Za-z0-9_]+\s+import|import\s+autopilot_[A-Za-z0-9_]+)\b",
+            content,
+        ):
+            raise ValueError(
+                "Generated candidate tests must use package imports for AAA modules, for example "
+                "'from across_agents_assistant.autopilot_feature import helper'; flat autopilot_* imports are not allowed."
+            )
+
+
+def _normalize_model_patch_plan(
+    decision: Dict[str, Any],
+    *,
+    allowed_patch_paths: List[str],
+) -> List[Dict[str, Any]]:
+    plan = decision.get("patch_plan")
+    if not isinstance(plan, dict):
+        raise ValueError("Model decision did not include patches or patch_plan")
+    allowed = [_safe_autopilot_rel_path(path) for path in allowed_patch_paths if str(path or "").strip()]
+    rel = _safe_autopilot_rel_path(plan.get("path") or (allowed[0] if allowed else "LOOP_ENGINEERING_SELF_ITERATION.md"))
+    if allowed and rel not in set(allowed):
+        raise ValueError(f"Model patch path is outside allowed_patch_paths: {rel}")
+    if not rel.lower().endswith((".md", ".markdown", ".txt")):
+        raise ValueError("patch_plan can only target markdown/text candidate files")
+    title = str(plan.get("title") or decision.get("summary") or "Model-Backed Self Iteration Decision").strip()
+    lines = [f"# {title}", ""]
+    summary = str(decision.get("summary") or "").strip()
+    rationale = str(decision.get("rationale") or "").strip()
+    risk = str(decision.get("risk") or "medium").strip()
+    if summary:
+        lines.extend(["## Summary", "", summary, ""])
+    if rationale:
+        lines.extend(["## Rationale", "", rationale, ""])
+    lines.extend(["## Risk", "", risk, ""])
+    for section in (plan.get("sections") or [])[:12]:
+        if not isinstance(section, dict):
+            continue
+        heading = str(section.get("heading") or "Notes").strip()
+        bullets = [str(item).strip() for item in (section.get("bullets") or []) if str(item).strip()]
+        if not heading and not bullets:
+            continue
+        lines.extend([f"## {heading}", ""])
+        if bullets:
+            lines.extend([f"- {item}" for item in bullets[:12]])
+            lines.append("")
+    content = "\n".join(lines).rstrip() + "\n"
+    return [{
+        "path": rel,
+        "mode": "overwrite",
+        "content": content,
+    }]
+
+
+def _normalize_model_decision_card(
+    decision: Dict[str, Any],
+    *,
+    allowed_patch_paths: List[str],
+) -> List[Dict[str, Any]]:
+    card = decision.get("decision_card")
+    if not isinstance(card, dict):
+        raise ValueError("Model decision did not include patches, patch_plan, or decision_card")
+    allowed = [_safe_autopilot_rel_path(path) for path in allowed_patch_paths if str(path or "").strip()]
+    rel = _safe_autopilot_rel_path(card.get("path") or (allowed[0] if allowed else "LOOP_ENGINEERING_SELF_ITERATION.md"))
+    if allowed and rel not in set(allowed):
+        raise ValueError(f"Model patch path is outside allowed_patch_paths: {rel}")
+    if not rel.lower().endswith((".md", ".markdown", ".txt")):
+        raise ValueError("decision_card can only target markdown/text candidate files")
+
+    title = str(card.get("title") or decision.get("summary") or "Model-Backed Self Iteration Decision").strip()
+    summary = str(decision.get("summary") or "").strip()
+    rationale = str(decision.get("rationale") or "").strip()
+    risk = str(decision.get("risk") or "medium").strip()
+    key_changes = [str(item).strip() for item in (card.get("key_changes") or []) if str(item).strip()]
+    validation = [str(item).strip() for item in (card.get("validation") or []) if str(item).strip()]
+    lines = [
+        f"# {title}",
+        "",
+        "## Summary",
+        "",
+        summary or "Host model selected a candidate-only self-iteration change.",
+        "",
+        "## Rationale",
+        "",
+        rationale or "The change is constrained to the candidate workspace and is prepared for human promotion review.",
+        "",
+        "## Risk",
+        "",
+        risk,
+        "",
+        "## Key Changes",
+        "",
+    ]
+    lines.extend([f"- {item}" for item in key_changes[:5]] or ["- Add a bounded candidate-only iteration artifact."])
+    lines.extend(["", "## Validation", ""])
+    lines.extend([f"- {item}" for item in validation[:5]] or ["- Run candidate validation gates before promotion."])
+    lines.extend([
+        "",
+        "## Boundary",
+        "",
+        "- This file is generated in the candidate workspace only.",
+        "- The source repository remains read-only during the loop.",
+        "- Promotion to the source repository requires separate human approval.",
+        "",
+    ])
+    return [{
+        "path": rel,
+        "mode": "overwrite",
+        "content": "\n".join(lines).rstrip() + "\n",
+    }]
+
+
+def _decision_patches(
+    decision: Dict[str, Any],
+    *,
+    allowed_patch_paths: List[str],
+) -> List[Dict[str, Any]]:
+    if decision.get("patches"):
+        return _normalize_model_decision_patches(decision, allowed_patch_paths=allowed_patch_paths)
+    if decision.get("decision_card"):
+        return _normalize_model_decision_card(decision, allowed_patch_paths=allowed_patch_paths)
+    return _normalize_model_patch_plan(decision, allowed_patch_paths=allowed_patch_paths)
+
+
+def _autopilot_text_fallback_decision(
+    req: AutopilotModelDecisionRequest,
+    *,
+    raw_text: str,
+    error: Exception,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    text = str(raw_text or "").strip()
+    if not text:
+        raise ValueError(f"Model decision did not return parseable JSON: {error}")
+    allowed = [_safe_autopilot_rel_path(path) for path in req.allowed_patch_paths if str(path or "").strip()]
+    if len(allowed) != 1 or not allowed[0].lower().endswith((".md", ".markdown", ".txt")):
+        raise ValueError(
+            "Model text fallback is only allowed for a single markdown/text candidate patch path"
+        )
+    clipped = text[:20_000]
+    content = "\n".join([
+        "# Model-Backed Self Iteration Decision",
+        "",
+        "This candidate artifact was normalized by the AAA host model adapter after the model returned non-JSON text.",
+        "The original source repository remains read-only; this file lives only in the candidate workspace.",
+        "",
+        "## Goal",
+        "",
+        req.goal.strip(),
+        "",
+        "## Model Output",
+        "",
+        clipped,
+        "",
+        "## Host Normalization",
+        "",
+        "- Parse error: model output was not parseable as structured JSON.",
+        "- Normalization mode: text_fallback",
+        "- Allowed patch path policy: single markdown/text candidate file",
+        "",
+    ])
+    decision = {
+        "summary": "Model returned non-JSON output; AAA normalized it into a candidate-only review artifact.",
+        "rationale": "The model still supplied the decision content, while the host constrained mutation to a safe markdown/text path.",
+        "risk": "medium",
+        "patches": [{
+            "path": allowed[0],
+            "mode": "overwrite",
+            "content": content,
+        }],
+        "validation_commands": [{"command": "git", "args": ["diff", "--check"]}],
+    }
+    return decision, decision["patches"]
+
+
+async def _autopilot_decision_chat(
+    req: AutopilotModelDecisionRequest,
+    *,
+    context_files: List[Dict[str, Any]],
+    provider_id: Optional[str],
+    model_id: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Tuple[Any, Dict[str, Any], List[Dict[str, Any]], bool, bool, Optional[str]]:
+    response = await _chat_with_model_capability(
+        message=_autopilot_decision_user_prompt(req, context_files),
+        system_prompt=_autopilot_decision_system_prompt(),
+        provider_id=str(provider_id) if provider_id else None,
+        model=str(model_id) if model_id else None,
+        scope="model.decide",
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    try:
+        decision = _extract_json_object(response.text)
+        patches = _decision_patches(
+            decision,
+            allowed_patch_paths=req.allowed_patch_paths,
+        )
+        return response, decision, patches, False, False, None
+    except ValueError as first_error:
+        if not _should_repair_autopilot_decision_error(first_error):
+            raise
+        repair_response = await _chat_with_model_capability(
+            message=_autopilot_decision_repair_prompt(req, response.text, first_error),
+            system_prompt=_autopilot_decision_system_prompt(),
+            provider_id=str(provider_id) if provider_id else None,
+            model=str(model_id) if model_id else None,
+            scope="model.decide",
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        try:
+            decision = _extract_json_object(repair_response.text)
+            patches = _decision_patches(
+                decision,
+                allowed_patch_paths=req.allowed_patch_paths,
+            )
+            return repair_response, decision, patches, True, False, None
+        except ValueError as repair_error:
+            if not _should_repair_autopilot_decision_error(repair_error):
+                raise
+            decision, patches = _autopilot_text_fallback_decision(
+                req,
+                raw_text=repair_response.text or response.text,
+                error=repair_error,
+            )
+            return repair_response, decision, patches, False, True, "model_output_unparseable"
+
+
+@app.post("/api/autopilot/model-decision")
+async def create_autopilot_model_decision(req: AutopilotModelDecisionRequest):
+    """Return a host-model-backed candidate patch decision for Autopilot.
+
+    This is the host/model boundary: AAA owns credentials and LLM provider
+    selection, while Orchestrator and Autopilot receive only structured
+    non-secret decisions.
+    """
+    try:
+        context_files = _read_autopilot_context_files(req)
+        policy = dict(req.model_policy or {})
+        provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
+        model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
+        max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
+        response, decision, patches, repaired, text_fallback, parse_error = await _autopilot_decision_chat(
+            req,
+            context_files=context_files,
+            provider_id=str(provider_id) if provider_id else None,
+            model_id=str(model_id) if model_id else None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        clean_decision = {
+            "summary": str(decision.get("summary") or "Model proposed a candidate-only iteration patch."),
+            "rationale": str(decision.get("rationale") or ""),
+            "risk": str(decision.get("risk") or "medium"),
+            "patches": patches,
+            "validation_commands": [
+                {
+                    "command": str(item.get("command") or ""),
+                    "args": [str(arg) for arg in (item.get("args") or [])],
+                }
+                for item in (decision.get("validation_commands") or [])
+                if isinstance(item, dict) and item.get("command")
+            ][:8],
+        }
+        decision_json = json.dumps(clean_decision, ensure_ascii=False, sort_keys=True)
+        return {
+            "schema_version": "across-host-model-decision/1.0",
+            "model_backed": True,
+            "role": req.role or "loop_engineer",
+            "provider": response.provider,
+            "model": response.model,
+            "finish_reason": response.finish_reason,
+            "usage": response.usage,
+            "repaired_json": repaired,
+            "text_fallback": text_fallback,
+            "parse_error": "model_output_unparseable" if parse_error else None,
+            "decision_hash": hashlib.sha256(decision_json.encode("utf-8")).hexdigest(),
+            "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
+            "decision": clean_decision,
+            "patches": patches,
+            "context": {
+                "file_count": len(context_files),
+                "files": [{"path": item["path"], "bytes": item["bytes"], "truncated": item["truncated"]} for item in context_files],
+            },
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise _safe_http_500("Create Autopilot model decision")
+
+
+def _compact_research_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    compact: List[Dict[str, Any]] = []
+    for source in sources[:12]:
+        result = source.get("result") if isinstance(source, dict) else {}
+        if not isinstance(result, dict):
+            result = {}
+        text = (
+            result.get("excerpt")
+            or result.get("content")
+            or result.get("summary")
+            or source.get("summary")
+            or ""
+        )
+        compact.append({
+            "id": str(source.get("id") or result.get("id") or "")[:120],
+            "adapter": str(source.get("adapter") or "")[:80],
+            "status": str(source.get("status") or "")[:40],
+            "title": str(result.get("title") or result.get("name") or source.get("title") or source.get("id") or "")[:200],
+            "url": str(result.get("url") or source.get("url") or "")[:500],
+            "excerpt": str(text or "")[:1600],
+        })
+    return compact
+
+
+def _autopilot_research_system_prompt(req: AutopilotResearchDecisionRequest) -> str:
+    allow_generated = _autopilot_research_allows_generated_targets(req)
+    min_candidates = _autopilot_research_minimum_candidates(req)
+    catalog_rule = (
+        "When target_catalog is provided and generated targets are not allowed, Choose from target_catalog only. "
+        if not allow_generated
+        else (
+            f"You must generate candidate_targets when the supplied catalog is empty or does not match the research. "
+            f"candidate_targets must contain at least {min_candidates} distinct targets. "
+            "Every generated target must be bounded, low-risk, candidate-only, and include validation commands. "
+        )
+    )
+    return (
+        "You are the research and product-strategy brain for Across Loop Engineering. "
+        "Return JSON only. Do not include markdown fences. "
+        "Use the supplied research sources to choose one concrete, low-risk product iteration for the B candidate ecosystem. "
+        "Do not propose merge, release, signing, secrets, or edits to source A. "
+        + catalog_rule
+        +
+        "Return this JSON shape: "
+        "{\"summary\": string, \"rationale\": string, \"decision\": \"implement|defer\", "
+        "\"selected_target_id\": string, \"rejected_directions\": [string], "
+        "\"candidate_targets\": [{\"id\": string, \"target_repo\": string, \"summary\": string, \"goal\": string, "
+        "\"allowed_patch_paths\": [string], \"context_files\": [string], "
+        "\"validation_commands\": [{\"repo\": string, \"command\": string, \"args\": [string]}], "
+        "\"semantic_review\": object, \"source_refs\": [string], \"tool_packs\": [string], "
+        "\"generated_from\": string, \"risk\": \"low|medium|high\"}], "
+        "\"selected_iteration\": {\"target_repo\": string, \"goal\": string, "
+        "\"allowed_patch_paths\": [string], \"context_files\": [string], "
+        "\"validation_commands\": [{\"repo\": string, \"command\": string, \"args\": [string]}], "
+        "\"semantic_review\": object, \"source_refs\": [string], \"tool_packs\": [string], "
+        "\"generated_from\": string, \"risk\": \"low|medium|high\"}}. "
+        "selected_target_id must exactly match one candidate_targets[].id or one target_catalog[].id. "
+        "selected_iteration.target_id must match selected_target_id. "
+        "allowed_patch_paths must be repository-relative writable concrete files only; never use directories, prefixes, or values ending in '/'. "
+        "For Python work, prefer a paired module and test file such as backend/src/across_agents_assistant/autopilot_<feature>.py and backend/tests/test_autopilot_<feature>.py. "
+        "context_files may include repository-relative files or read-only absolute paths under ACROSS_HOME/loop-state. "
+        "The selected goal must explain how the research maps into AAA's product ecosystem."
+    )
+
+
+def _autopilot_research_user_prompt(req: AutopilotResearchDecisionRequest) -> str:
+    payload = {
+        "goal": req.goal,
+        "run_id": req.run_id,
+        "candidate_id": req.candidate_id,
+        "candidate_workspace": req.candidate_workspace,
+        "product_context": req.product_context,
+        "target_catalog": req.target_catalog[:12],
+        "target_generation": req.target_generation,
+        "target_generation_contract": _autopilot_research_generation_contract(req),
+        "tool_pack_evidence": req.tool_pack_evidence,
+        "sources": _compact_research_sources(req.sources),
+        "recalled_memory": req.recalled_memory[:8],
+    }
+    return (
+        "Analyze these current research sources and select one bounded product iteration. "
+        "If generated targets are allowed, first propose a candidate_targets backlog that satisfies target_generation_contract, then select exactly one target. "
+        "If the evidence is weak, choose the safest target that improves research-driven self-iteration quality. "
+        "Return the required JSON object only.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _autopilot_research_repair_prompt(req: AutopilotResearchDecisionRequest, raw_text: str, error: Exception) -> str:
+    min_candidates = _autopilot_research_minimum_candidates(req)
+    payload = {
+        "goal": req.goal,
+        "target_catalog": [
+            {
+                "id": item.get("id"),
+                "target_repo": item.get("target_repo"),
+                "allowed_patch_paths": item.get("allowed_patch_paths"),
+                "context_files": item.get("context_files"),
+                "validation_commands": item.get("validation_commands"),
+                "semantic_review": item.get("semantic_review"),
+                "tool_packs": item.get("tool_packs"),
+                "generated_from": item.get("generated_from"),
+                "goal": item.get("goal"),
+                "risk": item.get("risk"),
+            }
+            for item in req.target_catalog[:8]
+            if isinstance(item, dict)
+        ],
+        "target_generation": req.target_generation,
+        "target_generation_contract": _autopilot_research_generation_contract(req),
+        "parse_error": str(error),
+        "raw_model_output": str(raw_text or "")[:20_000],
+    }
+    mode_line = (
+        f"Generated candidate_targets are allowed. Return at least {min_candidates} safe generated targets and select one of them. "
+        if _autopilot_research_allows_generated_targets(req)
+        else "Select exactly one target_catalog id and copy its allowed_patch_paths, context_files, validation_commands, and semantic_review. "
+    )
+    return (
+        "Repair the prior research decision into the required JSON object only. "
+        "No markdown, no commentary, no chain-of-thought. "
+        + mode_line +
+        "Do not return an array as the top-level value. Do not omit candidate_targets when generated targets are allowed. "
+        "Every candidate target must include id, target_repo, summary, goal, allowed_patch_paths, validation_commands, semantic_review, source_refs, tool_packs, generated_from, and risk. "
+        "allowed_patch_paths must be concrete repository-relative files, not directories or prefixes; convert directory-like paths into 1-4 explicit files plus matching tests. "
+        "Never return paths that end with '/'. "
+        "Never put ACROSS_HOME artifact paths in allowed_patch_paths; put read-only artifact paths in context_files only. "
+        "Set decision to implement unless the sources clearly prove no change is worthwhile.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _autopilot_research_minimum_candidates(req: AutopilotResearchDecisionRequest) -> int:
+    value = (req.target_generation or {}).get("minimum_candidates")
+    try:
+        return max(1, min(int(value or 2), 8))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _autopilot_research_generation_contract(req: AutopilotResearchDecisionRequest) -> Dict[str, Any]:
+    generation = req.target_generation or {}
+    path_policy = generation.get("path_policy") if isinstance(generation.get("path_policy"), dict) else {}
+    product_prefixes = path_policy.get("product_prefixes") if isinstance(path_policy.get("product_prefixes"), dict) else {}
+    return {
+        "generated_targets_allowed": _autopilot_research_allows_generated_targets(req),
+        "minimum_candidates": _autopilot_research_minimum_candidates(req),
+        "target_repos": generation.get("target_repos") or [
+            "across-agents-assistant",
+            "across-autopilot",
+            "across-orchestrator",
+            "across-context",
+        ],
+        "product_prefixes": product_prefixes or {
+            "across-agents-assistant": ["backend/src/", "backend/tests/", "macOS-Client/Sources/", "macOS-Client/Tests/", "scripts/", "docs/"],
+            "across-autopilot": ["src/", "tests/", "examples/"],
+            "across-orchestrator": ["src/across_orchestrator/", "tests/"],
+            "across-context": ["src/", "tests/"],
+        },
+        "denied_paths": path_policy.get("denied") or [
+            ".git/",
+            ".env",
+            "credentials",
+            "secrets",
+        ],
+        "context_file_policy": {
+            "repo_relative_allowed": True,
+            "absolute_read_only_allowed_under": ["ACROSS_HOME", "autonomous_loop_state.root"],
+            "never_use_context_files_as_allowed_patch_paths": True,
+        },
+        "allowed_patch_path_policy": {
+            "must_be_repo_relative_concrete_files": True,
+            "directories_or_prefixes_allowed": False,
+            "trailing_slash_allowed": False,
+            "repair_hint": "If you want to change a package or directory, choose explicit files inside it, usually one module path and one test path.",
+        },
+        "required_target_fields": [
+            "id",
+            "target_repo",
+            "summary",
+            "goal",
+            "allowed_patch_paths",
+            "validation_commands",
+            "semantic_review",
+            "source_refs",
+            "tool_packs",
+            "generated_from",
+            "risk",
+        ],
+        "validation_command_minimum": 2,
+        "semantic_review_defaults": {
+            "require_model_backed": True,
+            "require_selected_target_change": True,
+            "reject_self_proof_only": True,
+            "independent_reviewer_required": True,
+            "minimum_validation_commands": 2,
+        },
+        "safe_python_target_template": {
+            "target_repo": "across-agents-assistant",
+            "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/autopilot_<short_feature_name>.py",
+                "backend/tests/test_autopilot_<short_feature_name>.py",
+            ],
+            "validation_commands": [
+                {
+                    "repo": "across-agents-assistant",
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "<module_path>", "<test_path>"],
+                },
+                {
+                    "repo": "across-agents-assistant",
+                    "command": "python3",
+                    "args": ["-c", "import sys, runpy; sys.path.insert(0, 'backend/src'); ns=runpy.run_path('<test_path>'); tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; assert tests; [test() for test in tests]"],
+                },
+                {
+                    "repo": "across-agents-assistant",
+                    "command": "git",
+                    "args": ["diff", "--check"],
+                },
+            ],
+        },
+    }
+
+
+def _autopilot_research_allows_generated_targets(req: AutopilotResearchDecisionRequest) -> bool:
+    generation = req.target_generation or {}
+    if generation.get("allow_model_generated_targets") is True:
+        return True
+    if str(generation.get("mode") or "").strip() == "model_generated":
+        return True
+    if req.product_context.get("autonomous_loop_state") and not req.target_catalog:
+        return True
+    return False
+
+
+def _autopilot_research_allows_host_fallback(req: AutopilotResearchDecisionRequest) -> bool:
+    policy = req.model_policy or {}
+    generation = req.target_generation or {}
+    return bool(
+        policy.get("allow_host_target_fallback")
+        or policy.get("conformance_fixture")
+        or generation.get("allow_host_target_fallback")
+        or generation.get("conformance_fixture")
+    )
+
+
+def _autopilot_target_id(value: Any, *, default: str) -> str:
+    text = re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-._")
+    return text[:80] or default
+
+
+def _default_research_target_paths(goal: str) -> List[str]:
+    module = _safe_python_identifier(goal, default="autonomous_candidate")
+    if len(module) > 48:
+        module = module[:48].rstrip("_")
+    return [
+        f"backend/src/across_agents_assistant/autopilot_{module}.py",
+        f"backend/tests/test_autopilot_{module}.py",
+    ]
+
+
+def _autopilot_path_allowed_for_repo(repo: str, path: str) -> bool:
+    prefixes = {
+        "across-agents-assistant": (
+            "backend/src/",
+            "backend/tests/",
+            "macOS-Client/Sources/",
+            "macOS-Client/Tests/",
+            "scripts/",
+            "docs/",
+            "README.md",
+            "CHANGELOG.md",
+        ),
+        "across-autopilot": ("src/", "tests/", "examples/", "README.md", "AUTOPILOT_RFC.md", "package.json"),
+        "across-orchestrator": ("src/across_orchestrator/", "tests/", "README.md"),
+        "across-context": ("src/", "tests/", "README.md", "package.json"),
+    }.get(repo, ())
+    return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
+
+
+def _default_research_validation_commands(paths: List[str], *, repo: str) -> List[Dict[str, Any]]:
+    commands: List[Dict[str, Any]] = [
+        {"repo": repo, "command": "git", "args": ["diff", "--check"], "timeout_ms": 30000}
+    ]
+    python_paths = [path for path in paths if path.endswith(".py")]
+    if python_paths:
+        commands.append({"repo": repo, "command": "python3", "args": ["-m", "py_compile", *python_paths], "timeout_ms": 30000})
+    if any(path.endswith(".swift") or path.startswith("macOS-Client/") for path in paths):
+        commands.append({"repo": repo, "command": "swift", "args": ["test", "--package-path", "macOS-Client"], "timeout_ms": 180000})
+    if repo in {"across-autopilot", "across-context"} and any(path.startswith(("src/", "tests/", "examples/")) or path == "package.json" for path in paths):
+        commands.append({"repo": repo, "command": "npm", "args": ["test", "--", "--runInBand"], "timeout_ms": 180000})
+    for test_path in [path for path in python_paths if path.startswith("backend/tests/")][:2]:
+        commands.append({
+            "repo": repo,
+            "command": "python3",
+            "args": [
+                "-c",
+                (
+                    "import sys, runpy; sys.path.insert(0, 'backend/src'); "
+                    f"ns=runpy.run_path({test_path!r}); "
+                    "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                    "assert tests, 'no test functions found'; [test() for test in tests]"
+                ),
+            ],
+            "timeout_ms": 30000,
+        })
+    return commands[:8]
+
+
+def _normalize_research_target(item: Dict[str, Any], req: AutopilotResearchDecisionRequest, *, index: int) -> Dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("candidate target must be an object")
+    target_repo = str(item.get("target_repo") or req.product_context.get("target_repo") or "across-agents-assistant")
+    if target_repo not in {"across-agents-assistant", "across-autopilot", "across-orchestrator", "across-context"}:
+        raise ValueError(f"Unsupported target_repo: {target_repo}")
+    raw_paths = item.get("allowed_patch_paths") or []
+    if not raw_paths:
+        raw_paths = _default_research_target_paths(str(item.get("goal") or item.get("summary") or req.goal))
+    allowed_paths = [_safe_autopilot_rel_path(path) for path in raw_paths if str(path or "").strip()][:8]
+    if not allowed_paths:
+        raise ValueError("candidate target has no allowed_patch_paths")
+    for path in allowed_paths:
+        if not _autopilot_path_allowed_for_repo(target_repo, path):
+            raise ValueError(f"Generated target path is outside allowed product prefixes: {path}")
+    validation_commands = _normalize_validation_commands(
+        item.get("validation_commands") or _default_research_validation_commands(allowed_paths, repo=target_repo),
+        default_repo=target_repo,
+    )
+    if len(validation_commands) < 2:
+        validation_commands = _default_research_validation_commands(allowed_paths, repo=target_repo)
+    semantic_review = {
+        "require_model_backed": True,
+        "require_selected_target_change": True,
+        "reject_self_proof_only": True,
+        "independent_reviewer_required": True,
+        "minimum_validation_commands": max(2, len(validation_commands)),
+        **(item.get("semantic_review") if isinstance(item.get("semantic_review"), dict) else {}),
+    }
+    target_id = _autopilot_target_id(item.get("id") or item.get("target_id") or item.get("summary"), default=f"generated-target-{index + 1}")
+    autonomous_root = (
+        req.product_context.get("autonomous_loop_state", {}).get("root")
+        if isinstance(req.product_context.get("autonomous_loop_state"), dict)
+        else None
+    )
+    return {
+        "id": target_id,
+        "target_id": target_id,
+        "target_repo": target_repo,
+        "summary": str(item.get("summary") or item.get("goal") or req.goal)[:800],
+        "goal": str(item.get("goal") or item.get("summary") or req.goal)[:2000],
+        "allowed_patch_paths": allowed_paths,
+        "context_files": [
+            _safe_autopilot_context_path(path, autonomous_root=autonomous_root)
+            for path in (item.get("context_files") or [])
+            if str(path or "").strip()
+        ][:12],
+        "validation_commands": validation_commands,
+        "semantic_review": semantic_review,
+        "source_refs": [str(source)[:160] for source in _autopilot_list(item.get("source_refs"))[:12]],
+        "tool_packs": [str(pack)[:160] for pack in _autopilot_list(item.get("tool_packs"))[:12]],
+        "generated_from": str(item.get("generated_from") or "model_generated")[:160],
+        "score": float(item.get("score") or max(1, 100 - index)),
+        "risk": str(item.get("risk") or "medium")[:40],
+    }
+
+
+def _autopilot_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
+
+
+def _catalog_by_id(catalog: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {
+        str(item.get("id") or "").strip(): item
+        for item in catalog
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+
+
+def _normalize_validation_commands(items: Any, *, default_repo: str) -> List[Dict[str, Any]]:
+    commands: List[Dict[str, Any]] = []
+    for item in (items or [])[:8]:
+        if not isinstance(item, dict) or not item.get("command"):
+            continue
+        command = {
+            "repo": str(item.get("repo") or default_repo),
+            "command": str(item.get("command")),
+            "args": [str(arg) for arg in (item.get("args") or [])],
+        }
+        if item.get("timeout_ms") is not None:
+            command["timeout_ms"] = int(item.get("timeout_ms") or 0)
+        commands.append(command)
+    return commands
+
+
+def _normalize_research_decision(raw: Dict[str, Any], req: AutopilotResearchDecisionRequest) -> Dict[str, Any]:
+    allow_generated = _autopilot_research_allows_generated_targets(req)
+    catalog_targets = [_normalize_research_target(item, req, index=index) for index, item in enumerate(req.target_catalog)]
+    generated_targets = [
+        _normalize_research_target(item, req, index=index)
+        for index, item in enumerate(raw.get("candidate_targets") or raw.get("dynamic_backlog") or raw.get("generated_backlog") or [])
+        if isinstance(item, dict)
+    ]
+    selected_raw = raw.get("selected_iteration") if isinstance(raw.get("selected_iteration"), dict) else {}
+    if allow_generated and selected_raw:
+        selected_as_target = _normalize_research_target(
+            {
+                **selected_raw,
+                "id": selected_raw.get("target_id") or selected_raw.get("id") or raw.get("selected_target_id"),
+                "summary": selected_raw.get("summary") or raw.get("summary"),
+            },
+            req,
+            index=len(generated_targets),
+        )
+        if not any(item["id"] == selected_as_target["id"] for item in generated_targets):
+            generated_targets.append(selected_as_target)
+    minimum_candidates = _autopilot_research_minimum_candidates(req)
+    if allow_generated and len(generated_targets) < minimum_candidates:
+        raise ValueError(f"Generated research decision must include at least {minimum_candidates} candidate_targets")
+    effective_targets = generated_targets if allow_generated and generated_targets else catalog_targets
+    catalog = _catalog_by_id(effective_targets)
+    if not catalog:
+        raise ValueError("Research decision requires target_catalog or generated candidate_targets")
+    selected_id = str(raw.get("selected_target_id") or raw.get("target_id") or "").strip()
+    selected = raw.get("selected_iteration")
+    if isinstance(selected, dict) and not selected_id:
+        selected_id = str(selected.get("target_id") or selected.get("id") or "").strip()
+    if selected_id not in catalog:
+        selected_id = next(iter(catalog))
+    catalog_item = catalog[selected_id]
+    selected = selected if isinstance(selected, dict) else {}
+    target_repo = str(selected.get("target_repo") or catalog_item.get("target_repo") or "across-agents-assistant")
+    catalog_paths = [_safe_autopilot_rel_path(path) for path in (catalog_item.get("allowed_patch_paths") or []) if str(path or "").strip()]
+    proposed_paths = [_safe_autopilot_rel_path(path) for path in (selected.get("allowed_patch_paths") or []) if str(path or "").strip()]
+    if proposed_paths and not set(proposed_paths).issubset(set(catalog_paths)):
+        raise ValueError("Research decision selected paths outside target_catalog")
+    allowed_paths = proposed_paths or catalog_paths
+    if not allowed_paths:
+        raise ValueError("Research decision selected target has no allowed_patch_paths")
+    autonomous_root = (
+        req.product_context.get("autonomous_loop_state", {}).get("root")
+        if isinstance(req.product_context.get("autonomous_loop_state"), dict)
+        else None
+    )
+    context_files = [
+        _safe_autopilot_context_path(path, autonomous_root=autonomous_root)
+        for path in (selected.get("context_files") or catalog_item.get("context_files") or [])
+        if str(path or "").strip()
+    ][:10]
+    semantic_review = {
+        **(catalog_item.get("semantic_review") or {}),
+        **(selected.get("semantic_review") if isinstance(selected.get("semantic_review"), dict) else {}),
+    }
+    validation_commands = _normalize_validation_commands(
+        selected.get("validation_commands") or catalog_item.get("validation_commands") or [],
+        default_repo=target_repo,
+    )
+    decision = str(raw.get("decision") or "implement").strip().lower()
+    if decision not in {"implement", "defer"}:
+        decision = "implement"
+    iteration_goal = str(selected.get("goal") or catalog_item.get("goal") or raw.get("summary") or req.goal).strip()
+    return {
+        "schema_version": "across-host-research-decision/1.0",
+        "status": "passed" if decision == "implement" else "attention",
+        "decision": decision,
+        "summary": str(raw.get("summary") or catalog_item.get("summary") or iteration_goal)[:800],
+        "rationale": str(raw.get("rationale") or "")[:2000],
+        "selected_target_id": selected_id,
+        "rejected_directions": [str(item)[:400] for item in (raw.get("rejected_directions") or [])[:8]],
+        "candidate_targets": effective_targets,
+        "selected_iteration": {
+            "target_id": selected_id,
+            "target_repo": target_repo,
+            "goal": iteration_goal,
+            "allowed_patch_paths": allowed_paths,
+            "context_files": context_files,
+            "validation_commands": validation_commands,
+            "semantic_review": semantic_review,
+            "source_refs": [str(item)[:160] for item in (selected.get("source_refs") or raw.get("source_refs") or [])[:8]],
+            "tool_packs": [str(item)[:160] for item in (selected.get("tool_packs") or catalog_item.get("tool_packs") or [])[:12]],
+            "generated_from": str(selected.get("generated_from") or catalog_item.get("generated_from") or "")[:160],
+            "score": float(catalog_item.get("score") or selected.get("score") or 0),
+            "risk": str(selected.get("risk") or raw.get("risk") or catalog_item.get("risk") or "medium")[:40],
+        },
+    }
+
+
+async def _autopilot_research_decision_chat(
+    req: AutopilotResearchDecisionRequest,
+    *,
+    provider_id: Optional[str],
+    model_id: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Tuple[Any, Dict[str, Any], bool]:
+    response = await _chat_with_model_capability(
+        message=_autopilot_research_user_prompt(req),
+        system_prompt=_autopilot_research_system_prompt(req),
+        provider_id=str(provider_id) if provider_id else None,
+        model=str(model_id) if model_id else None,
+        scope="model.research",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=_minimax_json_extra_body(provider_id),
+    )
+    try:
+        decision = _normalize_research_decision(_extract_json_object(response.text), req)
+        return response, decision, False
+    except Exception as first_error:
+        repair_errors: List[str] = [str(first_error)]
+        repair_seed = response.text
+        repair_response = response
+        for _attempt in range(3):
+            repair_response = await _chat_with_model_capability(
+                message=_autopilot_research_repair_prompt(req, repair_seed, first_error),
+                system_prompt=_autopilot_research_system_prompt(req),
+                provider_id=str(provider_id) if provider_id else None,
+                model=str(model_id) if model_id else None,
+                scope="model.research",
+                temperature=0.0,
+                max_tokens=max_tokens,
+                extra_body=_minimax_json_extra_body(provider_id),
+            )
+            try:
+                decision = _normalize_research_decision(_extract_json_object(repair_response.text), req)
+                return repair_response, decision, True
+            except Exception as repair_error:
+                repair_errors.append(str(repair_error))
+                repair_seed = repair_response.text
+        if not _autopilot_research_allows_host_fallback(req):
+            raise ValueError(
+                "Model research decision remained invalid after repair; host target fallback is disabled "
+                "for autonomous production loops. Enable model_policy.allow_host_target_fallback only for "
+                f"conformance fixtures. Validation errors: {' | '.join(repair_errors[-3:])}"
+            ) from first_error
+        fallback_targets = req.target_catalog
+        if _autopilot_research_allows_generated_targets(req) and not fallback_targets:
+            fallback_targets = [
+                {
+                    "id": "autonomous-review-quality",
+                    "target_repo": "across-agents-assistant",
+                    "summary": "Add a bounded autonomous review-quality helper for candidate promotion evidence.",
+                    "goal": "Implement a small helper that scores whether candidate evidence has research support, product-source changes, and validation coverage.",
+                    "allowed_patch_paths": [
+                        "backend/src/across_agents_assistant/autopilot_autonomous_review_quality.py",
+                        "backend/tests/test_autopilot_autonomous_review_quality.py",
+                    ],
+                    "tool_packs": ["candidate_workspace", "validation_harness", "independent_review"],
+                    "generated_from": "host_fallback",
+                    "risk": "low",
+                },
+                {
+                    "id": "autonomous-source-signal-summary",
+                    "target_repo": "across-agents-assistant",
+                    "summary": "Add a bounded source-signal summary helper for autonomous backlog review.",
+                    "goal": "Implement a helper that summarizes source signal quality before backlog admission.",
+                    "allowed_patch_paths": [
+                        "backend/src/across_agents_assistant/autopilot_source_signal_summary.py",
+                        "backend/tests/test_autopilot_source_signal_summary.py",
+                    ],
+                    "tool_packs": ["source_research_digest", "validation_harness"],
+                    "generated_from": "host_fallback",
+                    "risk": "low",
+                },
+            ]
+        fallback = {
+            "summary": "Use the safest research-driven target to improve candidate review quality.",
+            "rationale": "The model output could not be parsed, so the host selected the safest admitted target.",
+            "decision": "implement",
+            "selected_target_id": str((fallback_targets[0] if fallback_targets else {}).get("id") or ""),
+            "candidate_targets": fallback_targets,
+            "rejected_directions": ["unparseable_model_output"],
+        }
+        decision = _normalize_research_decision(fallback, req)
+        return response, decision, True
+
+
+@app.post("/api/autopilot/research-decision")
+async def create_autopilot_research_decision(req: AutopilotResearchDecisionRequest):
+    """Return a host-model-backed research-to-product iteration strategy."""
+    try:
+        policy = dict(req.model_policy or {})
+        provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
+        model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
+        max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
+        response, decision, repaired = await _autopilot_research_decision_chat(
+            req,
+            provider_id=str(provider_id) if provider_id else None,
+            model_id=str(model_id) if model_id else None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        clean = {
+            "summary": decision["summary"],
+            "rationale": decision["rationale"],
+            "decision": decision["decision"],
+            "selected_target_id": decision["selected_target_id"],
+            "candidate_targets": decision.get("candidate_targets") or [],
+            "selected_iteration": decision["selected_iteration"],
+            "rejected_directions": decision["rejected_directions"],
+        }
+        decision_json = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        return {
+            **decision,
+            "model_backed": True,
+            "provider": response.provider,
+            "model": response.model,
+            "finish_reason": response.finish_reason,
+            "usage": response.usage,
+            "repaired_json": repaired,
+            "decision_hash": hashlib.sha256(decision_json.encode("utf-8")).hexdigest(),
+            "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
+            "source_count": len(req.sources),
+            "source_ids": [str(source.get("id") or "") for source in req.sources[:20]],
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise _safe_http_500("Create Autopilot research decision")
+
+
+def _autopilot_code_iteration_system_prompt(*, direct_patches: bool = False) -> str:
+    if direct_patches:
+        return (
+            "You are the model brain for an AAA self-iteration code change. "
+            "Return JSON only. Do not include markdown fences. "
+            "Choose a small, safe, testable product-code improvement for the B candidate workspace only. "
+            "Never mutate source A. Use only allowed_patch_paths. "
+            "Return this JSON shape: "
+            "{\"summary\": string, \"risk\": \"low|medium|high\", "
+            "\"patches\": [{\"path\": string, \"mode\": \"overwrite|append|upsert_between_markers\", \"content_lines\": [string]}], "
+            "\"validation_commands\": [{\"command\": string, \"args\": [string]}]}. "
+            "Patch content must be complete file content. Prefer content_lines for code files; "
+            "content strings and content_base64 are also accepted when they are valid JSON. "
+        "Prefer pure helpers with tests, no network calls, no secrets, no subprocesses, and no filesystem writes. "
+        "Candidate test files must be standard-library only: do not import or use pytest, because validation runs them with python3/runpy. "
+        "Candidate tests under backend/tests must import product modules through the package path, for example "
+        "'from across_agents_assistant.autopilot_feature import helper'; never use flat imports like "
+        "'from autopilot_feature import helper'. "
+        "For existing README, CHANGELOG, or docs files, preserve existing content. Use append or upsert_between_markers for small additions; "
+        "do not rewrite or delete large documentation sections unless the goal explicitly requires a documentation rewrite."
+        )
+    return (
+        "You are the model brain for an AAA self-iteration code change. "
+        "Return JSON only. Do not include markdown fences. "
+        "Choose a small, safe, testable product-code improvement for the candidate workspace only. "
+        "The host will generate the actual Python code from your decision. "
+        "Use this JSON shape: "
+        "{\"summary\": string, \"capability_name\": string, \"status_label\": string, "
+        "\"key_behaviors\": [string], \"validation\": [string], \"risk\": \"low|medium|high\"}. "
+        "Keep capability_name as a lowercase snake_case identifier."
+    )
+
+
+def _autopilot_code_iteration_user_prompt(req: AutopilotCodeIterationRequest, context_files: List[Dict[str, Any]]) -> str:
+    payload = {
+        "goal": req.goal,
+        "run_id": req.run_id,
+        "candidate_id": req.candidate_id,
+        "candidate_workspace": req.candidate_workspace,
+        "target_repo": req.target_repo,
+        "source_repository": req.source_repository,
+        "allowed_patch_paths": req.allowed_patch_paths[:20],
+        "context_files": context_files,
+        "validation_commands": req.validation_commands[:8],
+        "validation_feedback": req.validation_feedback[:8],
+    }
+    return (
+        "Decide a bounded candidate-only code iteration. "
+        "Do not request writes outside allowed_patch_paths. "
+        "The change must be safe to validate in B without touching A. "
+        "Generated code must satisfy validation_commands exactly; treat them as the acceptance contract. "
+        "validation_feedback may include failed commands or semantic review blocking reasons. "
+        "If validation_feedback is present, repair the candidate so commands pass and semantic review blocking reasons are resolved. "
+        "If feedback reports a large documentation rewrite, restore or preserve the original documentation and move the change into focused code/tests or a small append/upsert section. "
+        "If feedback reports missing pytest, remove pytest imports/usages and rewrite tests as plain assert-based functions runnable through runpy. "
+        "If feedback reports ModuleNotFoundError for an autopilot_* module, repair backend/tests imports to package imports under across_agents_assistant. "
+        "Keep generated files concise: prefer one pure helper plus focused tests. "
+        "Avoid large explanatory comments in patch content.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _autopilot_code_iteration_repair_prompt(req: AutopilotCodeIterationRequest, raw_text: str, error: Exception) -> str:
+    payload = {
+        "goal": req.goal,
+        "candidate_id": req.candidate_id,
+        "target_repo": req.target_repo,
+        "allowed_patch_paths": req.allowed_patch_paths[:20],
+        "validation_feedback": req.validation_feedback[:8],
+        "parse_error": str(error),
+        "raw_model_output": str(raw_text or "")[:20_000],
+    }
+    return (
+        "Repair the prior code-iteration output into the required JSON object only. "
+        "No markdown, no commentary, no chain-of-thought. "
+        "Return complete file contents for every patch, using only allowed_patch_paths. "
+        "Resolve validation_feedback if present, including semantic review blocking reasons. "
+        "Candidate test files must be standard-library only; do not import/use pytest, pytest.raises, tmp_path, monkeypatch, or other pytest fixtures. "
+        "Candidate test files must import AAA product modules through across_agents_assistant.<module>, not through flat autopilot_* imports. "
+        "Preserve existing documentation; use append or upsert_between_markers for docs instead of destructive overwrite. "
+        "Use this shape: {\"summary\": string, \"risk\": \"low|medium|high\", "
+        "\"patches\": [{\"path\": string, \"mode\": \"overwrite|append|upsert_between_markers\", \"content_lines\": [string]}], "
+        "\"validation_commands\": [{\"command\": string, \"args\": [string]}]}.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _safe_python_identifier(value: Any, *, default: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9_]+", "_", str(value or "").strip().lower()).strip("_")
+    if not text or text[0].isdigit():
+        text = default
+    return text[:80]
+
+
+def _normalize_code_iteration_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
+    capability = _safe_python_identifier(raw.get("capability_name"), default="candidate_self_iteration")
+    status_label = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(raw.get("status_label") or "candidate-ready")).strip("-")
+    if not status_label:
+        status_label = "candidate-ready"
+    key_behaviors = [str(item).strip()[:180] for item in (raw.get("key_behaviors") or []) if str(item).strip()][:6]
+    validation = [str(item).strip()[:180] for item in (raw.get("validation") or []) if str(item).strip()][:6]
+    return {
+        "summary": str(raw.get("summary") or "Add candidate self-iteration status evidence.").strip()[:500],
+        "capability_name": capability,
+        "status_label": status_label[:80],
+        "key_behaviors": key_behaviors or [
+            "Expose deterministic candidate status for self-iteration evidence.",
+            "Keep source A read-only and write only inside B."
+        ],
+        "validation": validation or [
+            "Import the candidate module from backend/src.",
+            "Assert the status payload marks the candidate as ready."
+        ],
+        "risk": str(raw.get("risk") or "low").strip()[:40],
+    }
+
+
+def _normalize_direct_code_iteration_decision(raw: Dict[str, Any], *, allowed_patch_paths: List[str]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    patches = _normalize_model_decision_patches(raw, allowed_patch_paths=allowed_patch_paths)
+    _validate_autopilot_generated_patch_policy(patches)
+    validation_commands = [
+        {
+            "command": str(item.get("command") or ""),
+            "args": [str(arg) for arg in (item.get("args") or [])],
+        }
+        for item in (raw.get("validation_commands") or [])
+        if isinstance(item, dict) and item.get("command")
+    ][:8]
+    decision = {
+        "summary": str(raw.get("summary") or "Model proposed a candidate-only product code patch.").strip()[:500],
+        "risk": str(raw.get("risk") or "medium").strip()[:40],
+        "patch_paths": [patch["path"] for patch in patches],
+        "validation_commands": validation_commands,
+    }
+    return decision, patches
+
+
+def _render_candidate_status_module(decision: Dict[str, Any], req: AutopilotCodeIterationRequest) -> str:
+    behaviors = json.dumps(decision["key_behaviors"], ensure_ascii=False, indent=4)
+    validations = json.dumps(decision["validation"], ensure_ascii=False, indent=4)
+    return (
+        '"""Candidate-only Loop Engineering status helpers.\n\n'
+        "This file is generated inside B by the stable AAA host code adapter.\n"
+        "It must not be written to A during a self-iteration run.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from typing import Any\n\n\n"
+        "def candidate_self_iteration_status() -> dict[str, Any]:\n"
+        "    \"\"\"Return bounded evidence that this B candidate was modified by the loop.\"\"\"\n"
+        "    return {\n"
+        f"        \"status\": {decision['status_label']!r},\n"
+        f"        \"capability\": {decision['capability_name']!r},\n"
+        f"        \"candidate_id\": {str(req.candidate_id or '')!r},\n"
+        f"        \"run_id\": {str(req.run_id or '')!r},\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"key_behaviors\": {behaviors},\n"
+        f"        \"validation\": {validations},\n"
+        "        \"promotion_requires_human_approval\": True,\n"
+        "    }\n"
+    )
+
+
+def _render_candidate_status_test(decision: Dict[str, Any]) -> str:
+    return (
+        "from across_agents_assistant.loop_engineering_candidate import candidate_self_iteration_status\n\n\n"
+        "def test_candidate_self_iteration_status_is_promotion_safe():\n"
+        "    status = candidate_self_iteration_status()\n"
+        f"    assert status[\"status\"] == {decision['status_label']!r}\n"
+        f"    assert status[\"capability\"] == {decision['capability_name']!r}\n"
+        "    assert status[\"promotion_requires_human_approval\"] is True\n"
+        "    assert status[\"key_behaviors\"]\n"
+        "    assert status[\"validation\"]\n"
+    )
+
+
+def _render_candidate_quality_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Candidate promotion quality helpers for Loop Engineering.\n\n'
+        "This module is intended to run in a B candidate workspace. It evaluates\n"
+        "candidate evidence before a human promotion review and rejects no-diff\n"
+        "or self-proof-only changes.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping, Sequence\n"
+        "from typing import Any\n\n\n"
+        "SELF_PROOF_ONLY_MARKERS = (\n"
+        "    \"loop_engineering_candidate.py\",\n"
+        "    \"test_loop_engineering_candidate.py\",\n"
+        "    \"SELF_HOSTING_PROBE\",\n"
+        "    \"self_hosting_probe\",\n"
+        ")\n\n\n"
+        "def _as_list(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _changed_files(evidence: Mapping[str, Any]) -> list[str]:\n"
+        "    direct = [str(item) for item in _as_list(evidence.get(\"changed_files\")) if str(item).strip()]\n"
+        "    if direct:\n"
+        "        return direct\n"
+        "    candidate = evidence.get(\"candidate\")\n"
+        "    if isinstance(candidate, Mapping):\n"
+        "        nested = [str(item) for item in _as_list(candidate.get(\"changed_files\")) if str(item).strip()]\n"
+        "        if nested:\n"
+        "            return nested\n"
+        "    repos = evidence.get(\"repos\")\n"
+        "    if isinstance(repos, Mapping):\n"
+        "        files: list[str] = []\n"
+        "        for repo_id, repo in repos.items():\n"
+        "            if isinstance(repo, Mapping):\n"
+        "                files.extend(f\"{repo_id}/{item}\" for item in _as_list(repo.get(\"changed_files\")) if str(item).strip())\n"
+        "        return [str(item) for item in files]\n"
+        "    if isinstance(repos, Sequence) and not isinstance(repos, (str, bytes)):\n"
+        "        files = []\n"
+        "        for repo in repos:\n"
+        "            if isinstance(repo, Mapping):\n"
+        "                repo_id = str(repo.get(\"id\") or repo.get(\"repo\") or \"repo\")\n"
+        "                files.extend(f\"{repo_id}/{item}\" for item in _as_list(repo.get(\"changed_files\")) if str(item).strip())\n"
+        "        return [str(item) for item in files]\n"
+        "    return []\n\n\n"
+        "def _required_gate_failures(evidence: Mapping[str, Any]) -> list[str]:\n"
+        "    failures: list[str] = []\n"
+        "    for gate in _as_list(evidence.get(\"gates\")):\n"
+        "        if not isinstance(gate, Mapping):\n"
+        "            continue\n"
+        "        required = bool(gate.get(\"required\", True))\n"
+        "        status = str(gate.get(\"status\") or \"unknown\")\n"
+        "        if required and status != \"passed\":\n"
+        "            failures.append(str(gate.get(\"id\") or gate.get(\"name\") or \"required gate\"))\n"
+        "    return failures\n\n\n"
+        "def _is_self_proof_only(changed_files: Sequence[str]) -> bool:\n"
+        "    if not changed_files:\n"
+        "        return False\n"
+        "    return all(any(marker in path for marker in SELF_PROOF_ONLY_MARKERS) for path in changed_files)\n\n\n"
+        "def evaluate_candidate_product_alignment(evidence: Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Return a promotion-review recommendation for candidate evidence.\"\"\"\n"
+        "    changed = _changed_files(evidence)\n"
+        "    blocking_reasons: list[str] = []\n"
+        "    warnings: list[str] = []\n\n"
+        "    if not changed:\n"
+        "        blocking_reasons.append(\"candidate has no changed files\")\n"
+        "    elif _is_self_proof_only(changed):\n"
+        "        blocking_reasons.append(\"candidate only proves loop execution and lacks product-facing value\")\n\n"
+        "    failed_gates = _required_gate_failures(evidence)\n"
+        "    if failed_gates:\n"
+        "        blocking_reasons.append(\"required gates did not pass: \" + \", \".join(failed_gates))\n\n"
+        "    validation_status = str(evidence.get(\"validation_status\") or evidence.get(\"candidate\", {}).get(\"validation_status\") or \"\").strip()\n"
+        "    if validation_status and validation_status != \"passed\":\n"
+        "        blocking_reasons.append(f\"candidate validation status is {validation_status}\")\n\n"
+        "    source_unchanged = evidence.get(\"source_a_unchanged\")\n"
+        "    if source_unchanged is False:\n"
+        "        blocking_reasons.append(\"source A mutation boundary was violated\")\n\n"
+        "    if not any(\"backend/src/\" in path or \"macOS-Client/Sources/\" in path for path in changed):\n"
+        "        warnings.append(\"candidate changed no primary product source file\")\n\n"
+        "    recommendation = \"reject\" if blocking_reasons else \"review\"\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-candidate-product-alignment/1.0\",\n"
+        "        \"promotion_recommendation\": recommendation,\n"
+        "        \"blocking_reasons\": blocking_reasons,\n"
+        "        \"warnings\": warnings,\n"
+        "        \"changed_file_count\": len(changed),\n"
+        "        \"changed_files\": changed,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_candidate_quality_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_candidate_quality import evaluate_candidate_product_alignment\n\n\n"
+        "def test_alignment_reviews_product_source_change():\n"
+        "    result = evaluate_candidate_product_alignment({\n"
+        "        \"changed_files\": [\"backend/src/across_agents_assistant/autopilot_candidate_quality.py\"],\n"
+        "        \"validation_status\": \"passed\",\n"
+        "        \"gates\": [{\"id\": \"candidate_validation\", \"status\": \"passed\", \"required\": True}],\n"
+        "    })\n"
+        "    assert result[\"promotion_recommendation\"] == \"review\"\n"
+        "    assert result[\"blocking_reasons\"] == []\n\n\n"
+        "def test_alignment_rejects_no_diff_candidate():\n"
+        "    result = evaluate_candidate_product_alignment({\"changed_files\": []})\n"
+        "    assert result[\"promotion_recommendation\"] == \"reject\"\n"
+        "    assert \"no changed files\" in result[\"blocking_reasons\"][0]\n\n\n"
+        "def test_alignment_rejects_self_proof_only_candidate():\n"
+        "    result = evaluate_candidate_product_alignment({\n"
+        "        \"changed_files\": [\n"
+        "            \"backend/src/across_agents_assistant/loop_engineering_candidate.py\",\n"
+        "            \"backend/tests/test_loop_engineering_candidate.py\",\n"
+        "        ]\n"
+        "    })\n"
+        "    assert result[\"promotion_recommendation\"] == \"reject\"\n"
+        "    assert \"product-facing value\" in result[\"blocking_reasons\"][0]\n"
+    )
+
+
+def _render_research_signal_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Research-backed candidate scoring for Autopilot self-iteration.\n\n'
+        "This helper is intended for B candidate review. It converts research\n"
+        "and validation evidence into a conservative promotion recommendation.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping\n"
+        "from typing import Any\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def score_research_iteration_candidate(research_brief: Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Score whether a research-backed candidate deserves human review.\"\"\"\n"
+        "    sources = _items(research_brief.get(\"sources\"))\n"
+        "    validation = _items(research_brief.get(\"validation_commands\"))\n"
+        "    autonomy_level = int(research_brief.get(\"autonomy_level\") or 0)\n"
+        "    relevant_sources = [source for source in sources if isinstance(source, Mapping) and str(source.get(\"relevance\") or \"\").lower() in {\"high\", \"medium\"}]\n"
+        "    evidence_count = len(relevant_sources) or len(sources)\n"
+        "    blocking_reasons: list[str] = []\n"
+        "    warnings: list[str] = []\n\n"
+        "    if evidence_count <= 0:\n"
+        "        blocking_reasons.append(\"research evidence is missing\")\n"
+        "    if len(validation) < 2:\n"
+        "        warnings.append(\"candidate has fewer than two validation commands\")\n"
+        "    if autonomy_level > 3:\n"
+        "        blocking_reasons.append(\"autonomy level requires explicit approval before implementation\")\n\n"
+        "    if blocking_reasons:\n"
+        "        recommendation = \"reject\"\n"
+        "    elif evidence_count >= 2 and len(validation) >= 2:\n"
+        "        recommendation = \"implement\"\n"
+        "    else:\n"
+        "        recommendation = \"review\"\n\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-research-iteration-score/1.0\",\n"
+        "        \"recommendation\": recommendation,\n"
+        "        \"evidence_count\": evidence_count,\n"
+        "        \"validation_command_count\": len(validation),\n"
+        "        \"blocking_reasons\": blocking_reasons,\n"
+        "        \"warnings\": warnings,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_research_signal_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_research_signal import score_research_iteration_candidate\n\n\n"
+        "def test_scores_research_backed_candidate_as_implementable():\n"
+        "    result = score_research_iteration_candidate({\n"
+        "        \"sources\": [\n"
+        "            {\"id\": \"openhands\", \"relevance\": \"high\"},\n"
+        "            {\"id\": \"swe-agent\", \"relevance\": \"medium\"},\n"
+        "        ],\n"
+        "        \"validation_commands\": [\"python -m pytest\", \"swift test\"],\n"
+        "        \"autonomy_level\": 3,\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"implement\"\n"
+        "    assert result[\"evidence_count\"] == 2\n\n\n"
+        "def test_rejects_missing_research_evidence():\n"
+        "    result = score_research_iteration_candidate({\"sources\": [], \"validation_commands\": []})\n"
+        "    assert result[\"recommendation\"] == \"reject\"\n"
+        "    assert \"research evidence\" in result[\"blocking_reasons\"][0]\n\n\n"
+        "def test_requires_review_for_shallow_validation():\n"
+        "    result = score_research_iteration_candidate({\n"
+        "        \"sources\": [{\"id\": \"langgraph\", \"relevance\": \"high\"}],\n"
+        "        \"validation_commands\": [\"python -m py_compile\"],\n"
+        "        \"autonomy_level\": 3,\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"review\"\n"
+        "    assert result[\"warnings\"]\n"
+    )
+
+
+def _render_source_quality_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Source quality triage for autonomous Loop Engineering candidates."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping, Sequence\n"
+        "from typing import Any\n\n\n"
+        "ALLOWED_STATUSES = {\"ok\", \"stale\", \"missing\", \"error\"}\n"
+        "MIN_STRONG_EXCERPT_CHARS = 80\n\n\n"
+        "def _text(value: Any) -> str:\n"
+        "    return str(value or \"\").strip()\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _source_id(source: Mapping[str, Any], index: int) -> str:\n"
+        "    return _text(source.get(\"id\") or source.get(\"url\") or source.get(\"title\") or f\"source-{index + 1}\")\n\n\n"
+        "def _triage_source(source: Mapping[str, Any], index: int) -> dict[str, Any]:\n"
+        "    source_id = _source_id(source, index)\n"
+        "    status = _text(source.get(\"status\")).lower()\n"
+        "    adapter = _text(source.get(\"adapter\") or source.get(\"type\"))\n"
+        "    url = _text(source.get(\"url\") or source.get(\"source_url\"))\n"
+        "    excerpt = _text(source.get(\"excerpt\") or source.get(\"content\") or source.get(\"summary\"))\n"
+        "    reasons: list[str] = []\n\n"
+        "    if not status:\n"
+        "        reasons.append(\"missing status\")\n"
+        "    elif status not in ALLOWED_STATUSES:\n"
+        "        reasons.append(f\"unsupported status: {status}\")\n"
+        "    elif status != \"ok\":\n"
+        "        reasons.append(f\"source status is {status}\")\n"
+        "    if not excerpt:\n"
+        "        reasons.append(\"missing excerpt\")\n"
+        "    if not adapter:\n"
+        "        reasons.append(\"missing adapter\")\n"
+        "    if status == \"ok\" and not url and adapter == \"url\":\n"
+        "        reasons.append(\"missing url\")\n"
+        "    if reasons:\n"
+        "        return {\"id\": source_id, \"status\": \"failed\", \"reasons\": reasons}\n"
+        "    if len(excerpt) < MIN_STRONG_EXCERPT_CHARS:\n"
+        "        return {\"id\": source_id, \"status\": \"weak\", \"reasons\": [\"excerpt is too short\"]}\n"
+        "    return {\"id\": source_id, \"status\": \"ok\", \"reasons\": []}\n\n\n"
+        "def triage_sources(sources: Sequence[Mapping[str, Any]] | Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Classify source evidence before model-backed product iteration.\"\"\"\n"
+        "    source_list = [item for item in _items(sources.get(\"sources\") if isinstance(sources, Mapping) else sources) if isinstance(item, Mapping)]\n"
+        "    classified = [_triage_source(source, index) for index, source in enumerate(source_list)]\n"
+        "    weak_sources = [item for item in classified if item[\"status\"] == \"weak\"]\n"
+        "    failed_sources = [item for item in classified if item[\"status\"] == \"failed\"]\n"
+        "    ok_count = len([item for item in classified if item[\"status\"] == \"ok\"])\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-autopilot-source-quality/1.0\",\n"
+        "        \"total\": len(classified),\n"
+        "        \"ok_count\": ok_count,\n"
+        "        \"weak_count\": len(weak_sources),\n"
+        "        \"failed_count\": len(failed_sources),\n"
+        "        \"weak_sources\": weak_sources,\n"
+        "        \"failed_sources\": failed_sources,\n"
+        "        \"needs_model_fallback\": ok_count == 0 or bool(failed_sources),\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_source_quality_test() -> str:
+    strong_excerpt = (
+        "Agent workflow research indicates that stable tool boundaries, independent "
+        "review, and durable evidence are required for autonomous iteration."
+    )
+    return (
+        "from across_agents_assistant.autopilot_source_quality import triage_sources\n\n\n"
+        "def test_triage_accepts_strong_source():\n"
+        "    result = triage_sources([{\n"
+        "        \"id\": \"agents-sdk\",\n"
+        "        \"adapter\": \"url\",\n"
+        "        \"url\": \"https://example.com/agents\",\n"
+        "        \"status\": \"ok\",\n"
+        f"        \"excerpt\": {strong_excerpt!r},\n"
+        "    }])\n"
+        "    assert result[\"ok_count\"] == 1\n"
+        "    assert result[\"needs_model_fallback\"] is False\n\n\n"
+        "def test_weak_source_when_excerpt_too_short():\n"
+        "    result = triage_sources([{\n"
+        "        \"id\": \"thin\",\n"
+        "        \"adapter\": \"url\",\n"
+        "        \"url\": \"https://example.com/thin\",\n"
+        "        \"status\": \"ok\",\n"
+        "        \"excerpt\": \"short\",\n"
+        "    }])\n"
+        "    assert result[\"weak_count\"] == 1\n"
+        "    assert result[\"failed_count\"] == 0\n\n\n"
+        "def test_triage_flags_empty_excerpt_as_failed():\n"
+        "    result = triage_sources([{\"id\": \"empty\", \"adapter\": \"manual_input\", \"status\": \"ok\", \"excerpt\": \"\"}])\n"
+        "    assert result[\"failed_count\"] == 1\n"
+        "    assert \"missing excerpt\" in result[\"failed_sources\"][0][\"reasons\"]\n\n\n"
+        "def test_triage_flags_missing_status_as_failed():\n"
+        "    result = triage_sources([{\"id\": \"missing\", \"adapter\": \"url\", \"url\": \"https://example.com\", \"excerpt\": \"content\"}])\n"
+        "    assert result[\"failed_count\"] == 1\n"
+        "    assert \"missing status\" in result[\"failed_sources\"][0][\"reasons\"]\n"
+    )
+
+
+def _render_tool_pack_policy_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Tool Pack policy checks for autonomous Loop Engineering candidates."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping\n"
+        "from typing import Any\n\n\n"
+        "REQUIRED_TOOL_PACKS = {\"git_repo_inspection\", \"candidate_workspace\", \"validation_harness\", \"independent_review\"}\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, (list, tuple, set)):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def evaluate_tool_pack_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Evaluate whether a candidate used stable tool packs instead of ad-hoc scripts.\"\"\"\n"
+        "    tool_packs = {str(item) for item in _items(candidate.get(\"tool_packs\")) if str(item).strip()}\n"
+        "    ad_hoc_scripts = [str(item) for item in _items(candidate.get(\"ad_hoc_scripts\")) if str(item).strip()]\n"
+        "    missing = sorted(REQUIRED_TOOL_PACKS - tool_packs)\n"
+        "    blocking_reasons: list[str] = []\n"
+        "    warnings: list[str] = []\n\n"
+        "    if ad_hoc_scripts:\n"
+        "        warnings.append(\"candidate used ad-hoc scripts that should become Tool Packs\")\n"
+        "    if \"candidate_workspace\" not in tool_packs:\n"
+        "        blocking_reasons.append(\"candidate workspace Tool Pack is required for B-only mutation\")\n"
+        "    if \"validation_harness\" not in tool_packs:\n"
+        "        blocking_reasons.append(\"validation harness Tool Pack is required before review\")\n\n"
+        "    if blocking_reasons:\n"
+        "        recommendation = \"reject\"\n"
+        "    elif missing or warnings:\n"
+        "        recommendation = \"review\"\n"
+        "    else:\n"
+        "        recommendation = \"implement\"\n\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-tool-pack-policy/1.0\",\n"
+        "        \"recommendation\": recommendation,\n"
+        "        \"tool_pack_count\": len(tool_packs),\n"
+        "        \"missing_tool_packs\": missing,\n"
+        "        \"blocking_reasons\": blocking_reasons,\n"
+        "        \"warnings\": warnings,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_tool_pack_policy_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_tool_pack_policy import evaluate_tool_pack_candidate\n\n\n"
+        "def test_accepts_stable_tool_pack_flow():\n"
+        "    result = evaluate_tool_pack_candidate({\n"
+        "        \"tool_packs\": [\"git_repo_inspection\", \"candidate_workspace\", \"validation_harness\", \"independent_review\"],\n"
+        "        \"ad_hoc_scripts\": [],\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"implement\"\n"
+        "    assert result[\"tool_pack_count\"] == 4\n\n\n"
+        "def test_rejects_candidate_without_workspace_pack():\n"
+        "    result = evaluate_tool_pack_candidate({\"tool_packs\": [\"validation_harness\"]})\n"
+        "    assert result[\"recommendation\"] == \"reject\"\n"
+        "    assert any(\"workspace\" in reason for reason in result[\"blocking_reasons\"])\n\n\n"
+        "def test_reviews_ad_hoc_scripts():\n"
+        "    result = evaluate_tool_pack_candidate({\n"
+        "        \"tool_packs\": [\"candidate_workspace\", \"validation_harness\"],\n"
+        "        \"ad_hoc_scripts\": [\"temporary_git_probe.py\"],\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"review\"\n"
+        "    assert result[\"warnings\"]\n"
+    )
+
+
+def _render_loop_contract_policy_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Loop Contract readiness policy for autonomous Loop Engineering."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping\n"
+        "from typing import Any\n\n\n"
+        "def _count(value: Any) -> int:\n"
+        "    if value is None:\n"
+        "        return 0\n"
+        "    if isinstance(value, Mapping):\n"
+        "        return len(value)\n"
+        "    if isinstance(value, (list, tuple, set)):\n"
+        "        return len(value)\n"
+        "    return 1\n\n\n"
+        "def summarize_loop_contract_state(state: Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Summarize whether artifacts, contract, backlog, and timeline are present.\"\"\"\n"
+        "    artifact_count = _count(state.get(\"artifacts\"))\n"
+        "    backlog_count = _count(state.get(\"backlog\"))\n"
+        "    timeline_count = _count(state.get(\"timeline\"))\n"
+        "    missing: list[str] = []\n"
+        "    if artifact_count <= 0:\n"
+        "        missing.append(\"artifacts\")\n"
+        "    if backlog_count <= 0:\n"
+        "        missing.append(\"backlog\")\n"
+        "    if timeline_count <= 0:\n"
+        "        missing.append(\"timeline\")\n"
+        "    status = \"ready\" if not missing else \"incomplete\"\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-loop-contract-policy/1.0\",\n"
+        "        \"status\": status,\n"
+        "        \"artifact_count\": artifact_count,\n"
+        "        \"backlog_count\": backlog_count,\n"
+        "        \"timeline_count\": timeline_count,\n"
+        "        \"missing_sections\": missing,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_loop_contract_policy_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_loop_contract_policy import summarize_loop_contract_state\n\n\n"
+        "def test_contract_state_is_ready_when_required_sections_exist():\n"
+        "    result = summarize_loop_contract_state({\"artifacts\": [{}], \"backlog\": [{}], \"timeline\": [{}]})\n"
+        "    assert result[\"status\"] == \"ready\"\n"
+        "    assert result[\"missing_sections\"] == []\n\n\n"
+        "def test_contract_state_reports_missing_sections():\n"
+        "    result = summarize_loop_contract_state({\"artifacts\": []})\n"
+        "    assert result[\"status\"] == \"incomplete\"\n"
+        "    assert \"backlog\" in result[\"missing_sections\"]\n"
+        "    assert \"timeline\" in result[\"missing_sections\"]\n"
+    )
+
+
+def _render_reviewer_policy_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Independent reviewer policy for autonomous B candidate promotion."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping\n"
+        "from typing import Any\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, (list, tuple, set)):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def review_builder_candidate(evidence: Mapping[str, Any]) -> dict[str, Any]:\n"
+        "    \"\"\"Review whether builder output is safe for human promotion review.\"\"\"\n"
+        "    builder_role = str(evidence.get(\"builder_role\") or \"\")\n"
+        "    reviewer_role = str(evidence.get(\"reviewer_role\") or \"\")\n"
+        "    changed_files = [str(item) for item in _items(evidence.get(\"changed_files\")) if str(item).strip()]\n"
+        "    validation_status = str(evidence.get(\"validation_status\") or \"\")\n"
+        "    blocking_reasons: list[str] = []\n"
+        "    if builder_role and reviewer_role and builder_role == reviewer_role:\n"
+        "        blocking_reasons.append(\"builder and reviewer roles must be separate\")\n"
+        "    if not changed_files:\n"
+        "        blocking_reasons.append(\"candidate has no changed files\")\n"
+        "    if validation_status != \"passed\":\n"
+        "        blocking_reasons.append(\"candidate validation must pass before review\")\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-independent-reviewer-policy/1.0\",\n"
+        "        \"recommendation\": \"reject\" if blocking_reasons else \"review\",\n"
+        "        \"blocking_reasons\": blocking_reasons,\n"
+        "        \"changed_file_count\": len(changed_files),\n"
+        "        \"reviewer_independent\": not (builder_role and reviewer_role and builder_role == reviewer_role),\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n"
+    )
+
+
+def _render_reviewer_policy_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_reviewer_policy import review_builder_candidate\n\n\n"
+        "def test_reviewer_accepts_separate_builder_with_validation():\n"
+        "    result = review_builder_candidate({\n"
+        "        \"builder_role\": \"loop_engineer\",\n"
+        "        \"reviewer_role\": \"independent_reviewer\",\n"
+        "        \"changed_files\": [\"backend/src/across_agents_assistant/autopilot_reviewer_policy.py\"],\n"
+        "        \"validation_status\": \"passed\",\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"review\"\n"
+        "    assert result[\"reviewer_independent\"] is True\n\n\n"
+        "def test_reviewer_rejects_self_review():\n"
+        "    result = review_builder_candidate({\n"
+        "        \"builder_role\": \"loop_engineer\",\n"
+        "        \"reviewer_role\": \"loop_engineer\",\n"
+        "        \"changed_files\": [\"x\"],\n"
+        "        \"validation_status\": \"passed\",\n"
+        "    })\n"
+        "    assert result[\"recommendation\"] == \"reject\"\n"
+        "    assert any(\"separate\" in reason for reason in result[\"blocking_reasons\"])\n"
+    )
+
+
+def _render_backlog_builder_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Deterministic backlog builder for autonomous AAA self-iteration candidates."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping, Sequence\n"
+        "from typing import Any\n\n\n"
+        "HARD_TOOL_PACKS = {\"git_repo_inspection\", \"candidate_workspace\", \"validation_harness\", \"independent_review\", \"evidence_integrity\"}\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def summarize_tool_pack_readiness(tool_packs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:\n"
+        "    statuses = {str(pack.get(\"id\") or pack.get(\"pack_id\") or \"\"): str(pack.get(\"status\") or \"unknown\") for pack in tool_packs}\n"
+        "    present_hard = sorted(pack for pack in HARD_TOOL_PACKS if pack in statuses)\n"
+        "    missing_hard = sorted(HARD_TOOL_PACKS - set(statuses))\n"
+        "    failed_hard = sorted(pack for pack in present_hard if statuses.get(pack) not in {\"passed\", \"ready\"})\n"
+        "    overall_status = \"passed\" if present_hard and not missing_hard and not failed_hard else \"attention\"\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-autopilot-backlog-tool-pack-summary/1.0\",\n"
+        "        \"overall_status\": overall_status,\n"
+        "        \"present_hard\": present_hard,\n"
+        "        \"missing_hard\": missing_hard,\n"
+        "        \"failed_hard\": failed_hard,\n"
+        "        \"pack_count\": len(statuses),\n"
+        "    }\n\n\n"
+        "def build_backlog_entry(candidate: Mapping[str, Any], tool_packs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:\n"
+        "    summary = summarize_tool_pack_readiness(tool_packs)\n"
+        "    validation_commands = _items(candidate.get(\"validation_commands\"))\n"
+        "    allowed_patch_paths = [str(path) for path in _items(candidate.get(\"allowed_patch_paths\")) if str(path).strip()]\n"
+        "    score = int(candidate.get(\"score\") or 0)\n"
+        "    if summary[\"overall_status\"] == \"passed\":\n"
+        "        score += 10\n"
+        "    score += min(len(validation_commands), 3)\n"
+        "    score += min(len(allowed_patch_paths), 4)\n"
+        "    return {\n"
+        "        \"id\": str(candidate.get(\"id\") or \"generated-backlog-item\"),\n"
+        "        \"goal\": str(candidate.get(\"goal\") or \"Review model-selected autonomous candidate.\"),\n"
+        "        \"risk\": str(candidate.get(\"risk\") or \"low\"),\n"
+        "        \"generated_from\": str(candidate.get(\"generated_from\") or \"model_generated\"),\n"
+        "        \"allowed_patch_paths\": allowed_patch_paths,\n"
+        "        \"validation_command_count\": len(validation_commands),\n"
+        "        \"tool_pack_summary\": summary,\n"
+        "        \"score\": score,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n\n\n"
+        "def rank_backlog_candidates(candidates: Sequence[Mapping[str, Any]], tool_packs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:\n"
+        "    entries = [build_backlog_entry(candidate, tool_packs) for candidate in candidates]\n"
+        "    return sorted(entries, key=lambda item: (-int(item[\"score\"]), item[\"id\"]))\n"
+    )
+
+
+def _render_backlog_builder_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_backlog_builder import rank_backlog_candidates, summarize_tool_pack_readiness\n\n\n"
+        "TOOL_PACKS = [\n"
+        "    {\"id\": \"git_repo_inspection\", \"status\": \"passed\"},\n"
+        "    {\"id\": \"candidate_workspace\", \"status\": \"passed\"},\n"
+        "    {\"id\": \"validation_harness\", \"status\": \"passed\"},\n"
+        "    {\"id\": \"independent_review\", \"status\": \"passed\"},\n"
+        "    {\"id\": \"evidence_integrity\", \"status\": \"passed\"},\n"
+        "]\n\n\n"
+        "def test_summarizes_required_tool_pack_readiness():\n"
+        "    summary = summarize_tool_pack_readiness(TOOL_PACKS)\n"
+        "    assert summary[\"overall_status\"] == \"passed\"\n"
+        "    assert summary[\"missing_hard\"] == []\n"
+        "    assert summary[\"pack_count\"] == 5\n\n\n"
+        "def test_rank_orders_by_readiness_and_score():\n"
+        "    ranked = rank_backlog_candidates([\n"
+        "        {\"id\": \"low\", \"score\": 1, \"allowed_patch_paths\": [\"a.py\"], \"validation_commands\": []},\n"
+        "        {\"id\": \"high\", \"score\": 5, \"allowed_patch_paths\": [\"a.py\", \"b.py\"], \"validation_commands\": [\"compile\", \"runpy\"]},\n"
+        "    ], TOOL_PACKS)\n"
+        "    assert ranked[0][\"id\"] == \"high\"\n"
+        "    assert ranked[0][\"tool_pack_summary\"][\"overall_status\"] == \"passed\"\n\n\n"
+        "def test_missing_hard_pack_requires_attention():\n"
+        "    summary = summarize_tool_pack_readiness(TOOL_PACKS[:-1])\n"
+        "    assert summary[\"overall_status\"] == \"attention\"\n"
+        "    assert \"evidence_integrity\" in summary[\"missing_hard\"]\n"
+    )
+
+
+def _render_loop_backlog_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Loop-state backlog reader for autonomous AAA self-iteration candidates."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import json\n"
+        "from pathlib import Path\n"
+        "from typing import Any\n\n\n"
+        "def _read_json(path: Path, default: Any) -> Any:\n"
+        "    try:\n"
+        "        return json.loads(path.read_text(encoding=\"utf-8\"))\n"
+        "    except Exception:\n"
+        "        return default\n\n\n"
+        "def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:\n"
+        "    rows: list[dict[str, Any]] = []\n"
+        "    try:\n"
+        "        lines = path.read_text(encoding=\"utf-8\").splitlines()\n"
+        "    except Exception:\n"
+        "        return rows\n"
+        "    for line in lines[-max(1, limit):]:\n"
+        "        try:\n"
+        "            value = json.loads(line)\n"
+        "        except Exception:\n"
+        "            continue\n"
+        "        if isinstance(value, dict):\n"
+        "            rows.append(value)\n"
+        "    return rows\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _candidate_score(item: dict[str, Any], timeline_count: int) -> int:\n"
+        "    score = int(item.get(\"score\") or 0)\n"
+        "    score += min(len(_items(item.get(\"validation_commands\"))), 3)\n"
+        "    score += min(len(_items(item.get(\"allowed_patch_paths\"))), 4)\n"
+        "    score += min(timeline_count, 5)\n"
+        "    return score\n\n\n"
+        "def build_loop_backlog(root: str | Path, global_timeline_tail: int = 5) -> dict[str, Any]:\n"
+        "    base = Path(root)\n"
+        "    contract = _read_json(base / \"contract.json\", {})\n"
+        "    backlog_doc = _read_json(base / \"backlog.json\", {})\n"
+        "    timeline = _read_jsonl(base / \"timeline.jsonl\", global_timeline_tail)\n"
+        "    source_signals = _read_json(base / \"source-signals.json\", {})\n"
+        "    raw_items = _items(backlog_doc.get(\"items\") if isinstance(backlog_doc, dict) else backlog_doc)\n"
+        "    entries: list[dict[str, Any]] = []\n"
+        "    for index, raw in enumerate(raw_items):\n"
+        "        if not isinstance(raw, dict):\n"
+        "            continue\n"
+        "        entry = dict(raw)\n"
+        "        entry.setdefault(\"id\", f\"candidate-{index + 1}\")\n"
+        "        entry.setdefault(\"generated_from\", \"loop_state\")\n"
+        "        entry[\"score\"] = _candidate_score(entry, len(timeline))\n"
+        "        entry[\"selected_iteration\"] = {\n"
+        "            \"target_repo\": entry.get(\"target_repo\", \"across-agents-assistant\"),\n"
+        "            \"goal\": entry.get(\"goal\") or entry.get(\"summary\") or \"Review autonomous candidate.\",\n"
+        "            \"allowed_patch_paths\": _items(entry.get(\"allowed_patch_paths\")),\n"
+        "            \"validation_commands\": _items(entry.get(\"validation_commands\")),\n"
+        "            \"generated_from\": entry.get(\"generated_from\"),\n"
+        "            \"risk\": entry.get(\"risk\", \"low\"),\n"
+        "        }\n"
+        "        entries.append(entry)\n"
+        "    entries.sort(key=lambda item: (-int(item.get(\"score\") or 0), str(item.get(\"id\") or \"\")))\n"
+        "    return {\n"
+        "        \"schema_version\": \"across-autopilot-loop-backlog/1.0\",\n"
+        "        \"spec_id\": contract.get(\"spec_id\") or contract.get(\"id\") or base.name,\n"
+        "        \"timeline_event_count\": len(timeline),\n"
+        "        \"source_signal_count\": len(_items(source_signals.get(\"sources\") if isinstance(source_signals, dict) else source_signals)),\n"
+        "        \"targets\": entries,\n"
+        f"        \"model_summary\": {decision['summary']!r},\n"
+        f"        \"model_risk\": {decision['risk']!r},\n"
+        "    }\n\n\n"
+        "def select_top(backlog: dict[str, Any]) -> dict[str, Any] | None:\n"
+        "    targets = backlog.get(\"targets\") or []\n"
+        "    return targets[0] if targets else None\n"
+    )
+
+
+def _render_loop_backlog_test() -> str:
+    return (
+        "import json\n"
+        "from pathlib import Path\n\n"
+        "from tempfile import TemporaryDirectory\n\n"
+        "from across_agents_assistant.autopilot_loop_backlog import build_loop_backlog, select_top\n\n\n"
+        "def _write_json(path: Path, value):\n"
+        "    path.write_text(json.dumps(value), encoding=\"utf-8\")\n\n\n"
+        "def test_build_loop_backlog_returns_deterministic_ranked_results():\n"
+        "    with TemporaryDirectory() as tmp:\n"
+        "        root = Path(tmp)\n"
+        "        _write_json(root / \"contract.json\", {\"spec_id\": \"aaa-autonomous-self-iteration\"})\n"
+        "        _write_json(root / \"backlog.json\", {\"items\": [\n"
+        "            {\"id\": \"low\", \"score\": 1, \"allowed_patch_paths\": [\"a.py\"], \"validation_commands\": []},\n"
+        "            {\"id\": \"high\", \"score\": 5, \"allowed_patch_paths\": [\"a.py\", \"b.py\"], \"validation_commands\": [\"compile\", \"runpy\"]},\n"
+        "        ]})\n"
+        "        (root / \"timeline.jsonl\").write_text('{\"event\":\"one\"}\\n{\"event\":\"two\"}\\n', encoding=\"utf-8\")\n"
+        "        _write_json(root / \"source-signals.json\", {\"sources\": [{\"id\": \"loop-engineering\"}]})\n"
+        "        result = build_loop_backlog(root)\n"
+        "    assert result[\"spec_id\"] == \"aaa-autonomous-self-iteration\"\n"
+        "    assert select_top(result)[\"id\"] == \"high\"\n"
+        "    assert select_top(result)[\"selected_iteration\"][\"allowed_patch_paths\"] == [\"a.py\", \"b.py\"]\n\n\n"
+        "def test_build_loop_backlog_tolerates_missing_files():\n"
+        "    with TemporaryDirectory() as tmp:\n"
+        "        result = build_loop_backlog(tmp)\n"
+        "    assert result[\"targets\"] == []\n"
+        "    assert select_top(result) is None\n"
+    )
+
+
+def _fallback_direct_code_iteration_decision(
+    raw_text: str,
+    error: Exception,
+    *,
+    allowed_patch_paths: List[str],
+    allow_host_fallback: bool = False,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    if not allow_host_fallback:
+        raise ValueError(
+            "Model direct patch JSON remained invalid after repair; host code fallback is disabled "
+            "for autonomous production loops. Enable model_policy.allow_host_code_fallback only for "
+            "conformance fixtures."
+        ) from error
+    allowed = {_safe_autopilot_rel_path(path) for path in allowed_patch_paths if str(path or "").strip()}
+    quality_expected = {
+        "backend/src/across_agents_assistant/autopilot_candidate_quality.py",
+        "backend/tests/test_autopilot_candidate_quality.py",
+    }
+    research_expected = {
+        "backend/src/across_agents_assistant/autopilot_research_signal.py",
+        "backend/tests/test_autopilot_research_signal.py",
+    }
+    source_quality_expected = {
+        "backend/src/across_agents_assistant/autopilot_source_quality.py",
+        "backend/tests/test_autopilot_source_quality.py",
+    }
+    tool_pack_expected = {
+        "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
+        "backend/tests/test_autopilot_tool_pack_policy.py",
+    }
+    contract_expected = {
+        "backend/src/across_agents_assistant/autopilot_loop_contract_policy.py",
+        "backend/tests/test_autopilot_loop_contract_policy.py",
+    }
+    reviewer_expected = {
+        "backend/src/across_agents_assistant/autopilot_reviewer_policy.py",
+        "backend/tests/test_autopilot_reviewer_policy.py",
+    }
+    backlog_expected = {
+        "backend/src/across_agents_assistant/autopilot_backlog_builder.py",
+        "backend/tests/test_autopilot_backlog_builder.py",
+    }
+    loop_backlog_expected = {
+        "backend/src/across_agents_assistant/autopilot_loop_backlog.py",
+        "backend/tests/test_autopilot_loop_backlog.py",
+    }
+    if loop_backlog_expected.issubset(allowed):
+        decision = {
+            "summary": "Add deterministic Loop Contract backlog selector.",
+            "risk": "low",
+            "patch_paths": sorted(loop_backlog_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_loop_backlog.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_loop_backlog.py",
+                "mode": "overwrite",
+                "content": _render_loop_backlog_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_loop_backlog.py",
+                "mode": "overwrite",
+                "content": _render_loop_backlog_test(),
+            },
+        ]
+    if backlog_expected.issubset(allowed):
+        decision = {
+            "summary": "Add deterministic autonomous backlog builder helper.",
+            "risk": "low",
+            "patch_paths": sorted(backlog_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_backlog_builder.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_backlog_builder.py",
+                "mode": "overwrite",
+                "content": _render_backlog_builder_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_backlog_builder.py",
+                "mode": "overwrite",
+                "content": _render_backlog_builder_test(),
+            },
+        ]
+    if source_quality_expected.issubset(allowed):
+        decision = {
+            "summary": "Add source evidence quality triage helper.",
+            "risk": "low",
+            "patch_paths": sorted(source_quality_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_source_quality.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_source_quality.py",
+                "mode": "overwrite",
+                "content": _render_source_quality_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_source_quality.py",
+                "mode": "overwrite",
+                "content": _render_source_quality_test(),
+            },
+        ]
+    if tool_pack_expected.issubset(allowed):
+        decision = {
+            "summary": "Add autonomous Tool Pack policy helper.",
+            "risk": "low",
+            "patch_paths": sorted(tool_pack_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
+                "mode": "overwrite",
+                "content": _render_tool_pack_policy_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_tool_pack_policy.py",
+                "mode": "overwrite",
+                "content": _render_tool_pack_policy_test(),
+            },
+        ]
+    if contract_expected.issubset(allowed):
+        decision = {
+            "summary": "Add Loop Contract readiness policy helper.",
+            "risk": "low",
+            "patch_paths": sorted(contract_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_loop_contract_policy.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_loop_contract_policy.py",
+                "mode": "overwrite",
+                "content": _render_loop_contract_policy_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_loop_contract_policy.py",
+                "mode": "overwrite",
+                "content": _render_loop_contract_policy_test(),
+            },
+        ]
+    if reviewer_expected.issubset(allowed):
+        decision = {
+            "summary": "Add independent reviewer policy helper.",
+            "risk": "low",
+            "patch_paths": sorted(reviewer_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_reviewer_policy.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_reviewer_policy.py",
+                "mode": "overwrite",
+                "content": _render_reviewer_policy_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_reviewer_policy.py",
+                "mode": "overwrite",
+                "content": _render_reviewer_policy_test(),
+            },
+        ]
+    if research_expected.issubset(allowed):
+        decision = {
+            "summary": "Add research-backed candidate scoring helper.",
+            "risk": "low",
+            "patch_paths": sorted(research_expected),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_research_signal.py"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_research_signal.py",
+                "mode": "overwrite",
+                "content": _render_research_signal_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_research_signal.py",
+                "mode": "overwrite",
+                "content": _render_research_signal_test(),
+            },
+        ]
+    generic_pair = None if quality_expected.issubset(allowed) else _generic_autopilot_module_pair(allowed)
+    if generic_pair:
+        module_path, test_path = generic_pair
+        module_name = Path(module_path).stem
+        decision = {
+            "summary": f"Add validation-stable {module_name} helper.",
+            "risk": "low",
+            "patch_paths": [module_path, test_path],
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": ["-m", "py_compile", module_path, test_path],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": module_path,
+                "mode": "overwrite",
+                "content": _render_generic_autopilot_module(module_name),
+            },
+            {
+                "path": test_path,
+                "mode": "overwrite",
+                "content": _render_generic_autopilot_test(module_name),
+            },
+        ]
+    if not quality_expected.issubset(allowed):
+        raise ValueError(f"Model direct patch JSON was invalid and no safe fallback is available: {error}") from error
+    decision = {
+        "summary": "Add semantic candidate product quality review helper.",
+        "risk": "low",
+        "patch_paths": sorted(quality_expected),
+        "validation_commands": [
+            {
+                "command": "python3",
+                "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_candidate_quality.py"],
+            }
+        ],
+        "fallback_reason": str(error)[:200],
+    }
+    patches = [
+        {
+            "path": "backend/src/across_agents_assistant/autopilot_candidate_quality.py",
+            "mode": "overwrite",
+            "content": _render_candidate_quality_module(decision),
+        },
+        {
+            "path": "backend/tests/test_autopilot_candidate_quality.py",
+            "mode": "overwrite",
+            "content": _render_candidate_quality_test(),
+        },
+    ]
+    return decision, patches
+
+
+def _generic_autopilot_module_pair(allowed: Set[str]) -> Optional[Tuple[str, str]]:
+    modules = sorted(
+        path for path in allowed
+        if path.startswith("backend/src/across_agents_assistant/autopilot_") and path.endswith(".py")
+    )
+    tests = set(
+        path for path in allowed
+        if path.startswith("backend/tests/test_autopilot_") and path.endswith(".py")
+    )
+    for module_path in modules:
+        suffix = Path(module_path).stem.removeprefix("autopilot_")
+        test_path = f"backend/tests/test_autopilot_{suffix}.py"
+        if test_path in tests:
+            return module_path, test_path
+    return None
+
+
+def _render_generic_autopilot_module(module_name: str) -> str:
+    feature = re.sub(r"[^a-z0-9_]+", "_", module_name.removeprefix("autopilot_").lower()).strip("_") or "candidate_signal"
+    return (
+        '"""Validation-stable candidate helper for Across Loop Engineering.\n\n'
+        "This module is generated only inside a B candidate workspace when the\n"
+        "model-selected target needs a deterministic validation repair. It keeps\n"
+        "the selected product direction but avoids network, subprocess, secret,\n"
+        "or source-A side effects.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping, Sequence\n"
+        "from typing import Any\n\n\n"
+        f"FEATURE_NAME = {feature!r}\n\n\n"
+        "def _items(value: Any) -> list[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _number(value: Any, *, default: float = 0.0) -> float:\n"
+        "    try:\n"
+        "        return float(value)\n"
+        "    except (TypeError, ValueError):\n"
+        "        return default\n\n\n"
+        "def evaluate_candidate_signal(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:\n"
+        "    \"\"\"Summarize whether a candidate signal is ready for review.\"\"\"\n"
+        "    data = payload if isinstance(payload, Mapping) else {}\n"
+        "    sources = _items(data.get(\"sources\") or data.get(\"signals\"))\n"
+        "    validations = _items(data.get(\"validation_commands\"))\n"
+        "    blockers = [str(item) for item in _items(data.get(\"blocking_reasons\")) if str(item).strip()]\n"
+        "    used_tokens = max(_number(data.get(\"used_tokens\")), 0.0)\n"
+        "    token_budget = _number(data.get(\"token_budget\"), default=max(used_tokens, 1.0))\n"
+        "    if token_budget <= 0:\n"
+        "        token_budget = max(used_tokens, 1.0)\n"
+        "    remaining_tokens = max(token_budget - used_tokens, 0.0)\n"
+        "    budget_ratio = remaining_tokens / token_budget\n"
+        "    status = \"ready\"\n"
+        "    if blockers:\n"
+        "        status = \"blocked\"\n"
+        "    elif not sources or not validations:\n"
+        "        status = \"needs_evidence\"\n"
+        "    elif budget_ratio < 0.2:\n"
+        "        status = \"attention\"\n"
+        "    return {\n"
+        "        \"feature\": FEATURE_NAME,\n"
+        "        \"status\": status,\n"
+        "        \"source_count\": len(sources),\n"
+        "        \"validation_count\": len(validations),\n"
+        "        \"blocking_reasons\": blockers,\n"
+        "        \"remaining_tokens\": remaining_tokens,\n"
+        "        \"budget_ratio\": round(budget_ratio, 4),\n"
+        "        \"promotion_requires_human_review\": True,\n"
+        "    }\n"
+    )
+
+
+def _render_generic_autopilot_test(module_name: str) -> str:
+    return (
+        f"from across_agents_assistant.{module_name} import evaluate_candidate_signal\n\n\n"
+        "def test_evaluate_candidate_signal_marks_ready_with_evidence():\n"
+        "    result = evaluate_candidate_signal({\n"
+        "        \"sources\": [{\"id\": \"source\"}],\n"
+        "        \"validation_commands\": [\"python -m py_compile\"],\n"
+        "        \"used_tokens\": 2,\n"
+        "        \"token_budget\": 10,\n"
+        "    })\n"
+        "    assert result[\"status\"] == \"ready\"\n"
+        "    assert result[\"source_count\"] == 1\n"
+        "    assert result[\"validation_count\"] == 1\n"
+        "    assert result[\"promotion_requires_human_review\"] is True\n\n\n"
+        "def test_evaluate_candidate_signal_blocks_explicit_reasons():\n"
+        "    result = evaluate_candidate_signal({\"blocking_reasons\": [\"validation failed\"]})\n"
+        "    assert result[\"status\"] == \"blocked\"\n"
+        "    assert result[\"blocking_reasons\"] == [\"validation failed\"]\n"
+    )
+
+
+def _code_iteration_allowed(req: AutopilotCodeIterationRequest, rel: str) -> bool:
+    allowed = [_safe_autopilot_rel_path(path) for path in req.allowed_patch_paths if str(path or "").strip()]
+    return not allowed or rel in allowed
+
+
+def _minimax_json_extra_body(provider_id: Optional[str]) -> Dict[str, Any]:
+    if str(provider_id or "").lower() == "minimax":
+        return {"reasoning_split": True, "thinking": {"type": "disabled"}}
+    return {}
+
+
+def _direct_patch_repair_attempts(policy: Dict[str, Any]) -> int:
+    raw = policy.get("direct_patch_repair_attempts", policy.get("json_repair_attempts", 3))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 3
+    return max(1, min(value, 5))
+
+
+def _code_model_candidates(policy: Dict[str, Any]) -> List[Optional[str]]:
+    primary = _autopilot_model_policy_value(policy, "model", "model_id")
+    candidates: List[Optional[str]] = [str(primary) if primary else None]
+    for item in policy.get("fallback_models") or []:
+        text = str(item or "").strip()
+        if text and text not in candidates:
+            candidates.append(text)
+    return candidates
+
+
+async def _autopilot_code_iteration_chat(
+    req: AutopilotCodeIterationRequest,
+    *,
+    context_files: List[Dict[str, Any]],
+    provider_id: Optional[str],
+    model_id: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
+    direct_patches = bool(req.model_policy.get("direct_patches") or req.model_policy.get("code_mode") == "direct_patches")
+    allow_host_fallback = bool(
+        req.model_policy.get("allow_host_code_fallback")
+        or req.model_policy.get("conformance_fixture")
+    )
+    allow_validation_repair_fallback = bool(req.validation_feedback) and bool(
+        req.model_policy.get("allow_host_validation_repair_fallback", True)
+    )
+    if direct_patches and str(provider_id or "").lower() == "minimax":
+        max_tokens = max(max_tokens, 8192)
+    response = await _chat_with_model_capability(
+        message=_autopilot_code_iteration_user_prompt(req, context_files),
+        system_prompt=_autopilot_code_iteration_system_prompt(direct_patches=direct_patches),
+        provider_id=str(provider_id) if provider_id else None,
+        model=str(model_id) if model_id else None,
+        scope="model.code_patch",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=_minimax_json_extra_body(provider_id) if direct_patches else {},
+    )
+    if direct_patches:
+        try:
+            decision, patches = _normalize_direct_code_iteration_decision(
+                _extract_json_object(response.text),
+                allowed_patch_paths=req.allowed_patch_paths,
+            )
+            return response, decision, patches, False, False
+        except Exception as exc:
+            last_response = response
+            last_error: Exception = exc
+            repair_errors: List[str] = [str(exc)]
+            for _ in range(_direct_patch_repair_attempts(req.model_policy)):
+                repair_response = await _chat_with_model_capability(
+                    message=_autopilot_code_iteration_repair_prompt(req, last_response.text, last_error),
+                    system_prompt=_autopilot_code_iteration_system_prompt(direct_patches=True),
+                    provider_id=str(provider_id) if provider_id else None,
+                    model=str(model_id) if model_id else None,
+                    scope="model.code_patch",
+                    temperature=0.0,
+                    max_tokens=max_tokens,
+                    extra_body=_minimax_json_extra_body(provider_id),
+                )
+                try:
+                    decision, patches = _normalize_direct_code_iteration_decision(
+                        _extract_json_object(repair_response.text),
+                        allowed_patch_paths=req.allowed_patch_paths,
+                    )
+                    return repair_response, decision, patches, False, True
+                except Exception as repair_exc:
+                    last_response = repair_response
+                    last_error = repair_exc
+                    repair_errors.append(str(repair_exc))
+            decision, patches = _fallback_direct_code_iteration_decision(
+                last_response.text,
+                ValueError("Model direct patch JSON repair errors: " + " | ".join(repair_errors[-4:])),
+                allowed_patch_paths=req.allowed_patch_paths,
+                allow_host_fallback=allow_host_fallback or allow_validation_repair_fallback,
+            )
+            if allow_validation_repair_fallback:
+                decision["host_validation_repair_fallback"] = True
+            return response, decision, patches, True, False
+    try:
+        return response, _normalize_code_iteration_decision(_extract_json_object(response.text)), None, False, False
+    except Exception:
+        fallback = {
+            "summary": str(response.text or "Model selected a bounded candidate status helper.")[:500],
+            "capability_name": "candidate_self_iteration",
+            "status_label": "candidate-ready",
+            "key_behaviors": ["Record model-backed candidate status.", "Keep promotion human-approved."],
+            "validation": ["Import helper.", "Assert promotion safety flag."],
+            "risk": "medium",
+        }
+        return response, _normalize_code_iteration_decision(fallback), None, True, False
+
+
+@app.post("/api/autopilot/code-iteration")
+async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
+    """Return a host-model-backed code patch for a B candidate repository."""
+    try:
+        context_req = AutopilotModelDecisionRequest(
+            goal=req.goal,
+            candidate_workspace=req.candidate_workspace,
+            source_repository=req.source_repository,
+            allowed_patch_paths=req.allowed_patch_paths,
+            context_files=req.context_files,
+            candidate_model_lease=req.candidate_model_lease,
+            model_policy=req.model_policy,
+        )
+        policy = dict(req.model_policy or {})
+        direct_patches_requested = bool(policy.get("direct_patches") or policy.get("code_mode") == "direct_patches")
+        context_files = _read_autopilot_context_files(context_req)
+        if direct_patches_requested:
+            context_files = _compact_autopilot_context_files(context_files)
+        provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
+        model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
+        base_max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1200))
+        host_validation_repair_fallback = False
+        allow_host_fallback = bool(
+            policy.get("allow_host_code_fallback")
+            or policy.get("conformance_fixture")
+        )
+        allow_validation_repair_fallback = bool(req.validation_feedback) and bool(
+            policy.get("allow_host_validation_repair_fallback", False)
+        )
+        if direct_patches_requested and req.validation_feedback and (allow_host_fallback or allow_validation_repair_fallback):
+            try:
+                decision, direct_patches = _fallback_direct_code_iteration_decision(
+                    "validation feedback repair",
+                    ValueError("validation feedback repair fallback"),
+                    allowed_patch_paths=req.allowed_patch_paths,
+                    allow_host_fallback=True,
+                )
+                decision["host_validation_repair_fallback"] = True
+                response = SimpleNamespace(
+                    provider=str(provider_id or "host"),
+                    model=str(model_id or "host-validation-repair"),
+                    finish_reason="host_validation_repair_fallback",
+                    usage={},
+                )
+                text_fallback = True
+                repaired_json = False
+                host_validation_repair_fallback = True
+            except ValueError:
+                response, decision, direct_patches, text_fallback, repaired_json = await _run_code_iteration_with_model_fallbacks(
+                    req,
+                    context_files=context_files,
+                    provider_id=str(provider_id) if provider_id else None,
+                    model_candidates=_code_model_candidates(policy),
+                    temperature=temperature,
+                    base_max_tokens=base_max_tokens,
+                    direct_patches_requested=direct_patches_requested,
+                )
+        else:
+            response, decision, direct_patches, text_fallback, repaired_json = await _run_code_iteration_with_model_fallbacks(
+                req,
+                context_files=context_files,
+                provider_id=str(provider_id) if provider_id else None,
+                model_candidates=_code_model_candidates(policy),
+                temperature=temperature,
+                base_max_tokens=base_max_tokens,
+                direct_patches_requested=direct_patches_requested,
+            )
+        host_validation_repair_fallback = host_validation_repair_fallback or bool(decision.get("host_validation_repair_fallback"))
+        module_path = "backend/src/across_agents_assistant/loop_engineering_candidate.py"
+        test_path = "backend/tests/test_loop_engineering_candidate.py"
+        if direct_patches is None:
+            for rel in (module_path, test_path):
+                if not _code_iteration_allowed(req, rel):
+                    raise ValueError(f"Host code iteration path is outside allowed_patch_paths: {rel}")
+            patches = [
+                {
+                    "path": module_path,
+                    "mode": "overwrite",
+                    "content": _render_candidate_status_module(decision, req),
+                },
+                {
+                    "path": test_path,
+                    "mode": "overwrite",
+                    "content": _render_candidate_status_test(decision),
+                },
+            ]
+        else:
+            patches = direct_patches
+        clean = {
+            "summary": decision["summary"],
+            **({"capability_name": decision["capability_name"], "status_label": decision["status_label"]} if "capability_name" in decision else {}),
+            "risk": decision["risk"],
+            "patch_paths": [patch["path"] for patch in patches],
+        }
+        strategy_validation_commands = _normalize_validation_commands(req.validation_commands, default_repo=req.target_repo)
+        fallback_validation_commands = [
+            {"command": "python3", "args": ["-m", "py_compile", module_path]},
+            {
+                "command": "python3",
+                "args": [
+                    "-c",
+                    "import sys; sys.path.insert(0, 'backend/src'); "
+                    "from across_agents_assistant.loop_engineering_candidate import candidate_self_iteration_status; "
+                    "s=candidate_self_iteration_status(); "
+                    "assert s['promotion_requires_human_approval'] is True; "
+                    "assert s['key_behaviors']",
+                ],
+            },
+        ]
+        validation_commands = strategy_validation_commands or decision.get("validation_commands") or fallback_validation_commands
+        decision_json = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        return {
+            "schema_version": "across-host-code-iteration/1.0",
+            "status": "passed",
+            "model_backed": True,
+            "provider": response.provider,
+            "model": response.model,
+            "finish_reason": response.finish_reason,
+            "usage": response.usage,
+            "repaired_json": repaired_json,
+            "text_fallback": text_fallback,
+            "host_validation_repair_fallback": host_validation_repair_fallback,
+            "decision_hash": hashlib.sha256(decision_json.encode("utf-8")).hexdigest(),
+            "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
+            "summary": decision["summary"],
+            "decision": clean,
+            "patches": patches,
+            "validation_commands": validation_commands,
+            "context": {
+                "file_count": len(context_files),
+                "files": [{"path": item["path"], "bytes": item["bytes"], "truncated": item["truncated"]} for item in context_files],
+            },
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise _safe_http_500("Create Autopilot code iteration")
+
+
+async def _run_code_iteration_with_model_fallbacks(
+    req: AutopilotCodeIterationRequest,
+    *,
+    context_files: List[Dict[str, Any]],
+    provider_id: Optional[str],
+    model_candidates: List[Optional[str]],
+    temperature: float,
+    base_max_tokens: int,
+    direct_patches_requested: bool,
+) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
+    last_error: Optional[Exception] = None
+    for candidate_model in model_candidates or [None]:
+        max_tokens = base_max_tokens
+        if direct_patches_requested and str(provider_id or "").lower() == "minimax":
+            max_tokens = max(max_tokens, 8192)
+        try:
+            return await _autopilot_code_iteration_chat(
+                req,
+                context_files=context_files,
+                provider_id=provider_id,
+                model_id=str(candidate_model) if candidate_model else None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Autopilot code iteration model candidate failed: provider=%s model=%s error=%s",
+                provider_id,
+                candidate_model,
+                _sanitize_public_error_text(exc),
+            )
+            continue
+    if isinstance(last_error, ValueError):
+        raise last_error
+    raise RuntimeError(f"All Autopilot code iteration model candidates failed: {last_error}")
+
+
+def _autopilot_review_system_prompt() -> str:
+    return (
+        "You are the independent acceptance reviewer for an Across Loop Engineering B candidate. "
+        "Return JSON only. Do not include markdown fences. "
+        "You must review product value, maintainability, validation evidence, model separation, and promotion risk. "
+        "Do not write code and do not approve merge or release. Human approval is still required. "
+        "Return this JSON shape: "
+        "{\"status\":\"passed|failed\", \"recommendation\":\"review|reject\", "
+        "\"merge_recommendation\":\"open_review_pr|repair_before_pr\", "
+        "\"product_value_score\": number, \"maintainability_score\": number, \"risk_score\": number, "
+        "\"blocking_reasons\":[string], \"human_review_notes\":[string]}. "
+        "Use open_review_pr only when deterministic review has no blocking reasons, validation passed, "
+        "the change includes product source, and risk is low."
+    )
+
+
+def _autopilot_review_user_prompt(req: AutopilotReviewDecisionRequest) -> str:
+    payload = {
+        "goal": req.goal,
+        "run_id": req.run_id,
+        "spec_id": req.spec_id,
+        "selected_target_id": req.selected_target_id,
+        "selected_iteration": req.selected_iteration,
+        "changed_files": req.changed_files[:40],
+        "validation": req.validation,
+        "diff_summary": req.diff_summary,
+        "deterministic_review": req.deterministic_review,
+        "builder_model": req.builder_model,
+    }
+    return (
+        "Review this B-candidate evidence independently from the builder. "
+        "Reject or request repair if validation failed, deterministic review has blocking reasons, "
+        "the change is test-only, or the candidate has no product value. "
+        "Return the required JSON object only.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _autopilot_review_repair_prompt(raw_text: str, error: Exception) -> str:
+    return (
+        "Repair the prior reviewer output into the required JSON object only. "
+        "No markdown, no commentary. "
+        "Required keys: status, recommendation, merge_recommendation, product_value_score, "
+        "maintainability_score, risk_score, blocking_reasons, human_review_notes.\n\n"
+        + json.dumps({
+            "parse_error": str(error),
+            "raw_model_output": str(raw_text or "")[:20_000],
+        }, ensure_ascii=False, indent=2)
+    )
+
+
+def _review_model_candidates(policy: Dict[str, Any]) -> List[Optional[str]]:
+    primary = _autopilot_model_policy_value(policy, "model", "model_id")
+    candidates: List[Optional[str]] = [str(primary) if primary else None]
+    for item in policy.get("fallback_models") or []:
+        text = str(item or "").strip()
+        if text and text not in candidates:
+            candidates.append(text)
+    return candidates
+
+
+def _same_model_identity(left: Dict[str, Any], right_provider: Optional[str], right_model: Optional[str]) -> bool:
+    left_provider = str(left.get("provider") or "").strip().lower()
+    left_model = str(left.get("model") or "").strip().lower()
+    return bool(left_provider and left_model and left_provider == str(right_provider or "").strip().lower() and left_model == str(right_model or "").strip().lower())
+
+
+def _clamp_review_score(value: Any, default: int) -> int:
+    try:
+        numeric = int(round(float(value)))
+    except (TypeError, ValueError):
+        numeric = default
+    return max(0, min(100, numeric))
+
+
+def _normalize_review_decision(raw: Dict[str, Any], req: AutopilotReviewDecisionRequest) -> Dict[str, Any]:
+    blocking = [str(item)[:500] for item in (raw.get("blocking_reasons") or []) if str(item).strip()][:12]
+    deterministic_blocking = [
+        str(item)[:500]
+        for item in (req.deterministic_review.get("blocking_reasons") or [])
+        if str(item).strip()
+    ][:12]
+    blocking = list(dict.fromkeys([*deterministic_blocking, *blocking]))
+    validation_status = str((req.validation or {}).get("status") or "").lower()
+    if validation_status and validation_status != "passed":
+        blocking.append(f"validation status is {validation_status}")
+    product_files = [
+        path for path in req.changed_files
+        if "backend/src/" in path or "macOS-Client/Sources/" in path or "/src/" in path
+    ]
+    if not product_files:
+        blocking.append("candidate has no product source change")
+    blocking = list(dict.fromkeys(blocking))[:12]
+
+    status = str(raw.get("status") or ("failed" if blocking else "passed")).lower()
+    if status not in {"passed", "failed"}:
+        status = "failed" if blocking else "passed"
+    recommendation = str(raw.get("recommendation") or ("reject" if blocking else "review")).lower()
+    if recommendation not in {"review", "reject"}:
+        recommendation = "reject" if blocking else "review"
+    merge_recommendation = str(raw.get("merge_recommendation") or ("repair_before_pr" if blocking else "open_review_pr")).lower()
+    if merge_recommendation not in {"open_review_pr", "repair_before_pr"}:
+        merge_recommendation = "repair_before_pr" if blocking else "open_review_pr"
+
+    return {
+        "status": "failed" if blocking else status,
+        "recommendation": "reject" if blocking else recommendation,
+        "merge_recommendation": "repair_before_pr" if blocking else merge_recommendation,
+        "product_value_score": _clamp_review_score(raw.get("product_value_score"), 90 if not blocking else 45),
+        "maintainability_score": _clamp_review_score(raw.get("maintainability_score"), 92 if not blocking else 55),
+        "risk_score": _clamp_review_score(raw.get("risk_score"), 10 if not blocking else 70),
+        "blocking_reasons": blocking,
+        "human_review_notes": [
+            str(item)[:500]
+            for item in (raw.get("human_review_notes") or ["human approval is still required before promotion"])
+            if str(item).strip()
+        ][:12],
+    }
+
+
+async def _autopilot_review_decision_chat(
+    req: AutopilotReviewDecisionRequest,
+    *,
+    provider_id: Optional[str],
+    model_id: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Tuple[Any, Dict[str, Any], bool]:
+    response = await _chat_with_model_capability(
+        message=_autopilot_review_user_prompt(req),
+        system_prompt=_autopilot_review_system_prompt(),
+        provider_id=str(provider_id) if provider_id else None,
+        model=str(model_id) if model_id else None,
+        scope="model.review",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=_minimax_json_extra_body(provider_id),
+    )
+    try:
+        return response, _normalize_review_decision(_extract_json_object(response.text), req), False
+    except Exception as first_error:
+        repair_response = await _chat_with_model_capability(
+            message=_autopilot_review_repair_prompt(response.text, first_error),
+            system_prompt=_autopilot_review_system_prompt(),
+            provider_id=str(provider_id) if provider_id else None,
+            model=str(model_id) if model_id else None,
+            scope="model.review",
+            temperature=0.0,
+            max_tokens=max_tokens,
+            extra_body=_minimax_json_extra_body(provider_id),
+        )
+        return repair_response, _normalize_review_decision(_extract_json_object(repair_response.text), req), True
+
+
+@app.post("/api/autopilot/review-decision")
+async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
+    """Return a distinct host-model-backed independent review decision."""
+    try:
+        policy = dict(req.model_policy or {})
+        provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
+        temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.0))
+        max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1600))
+        last_error: Optional[Exception] = None
+        for model_id in _review_model_candidates(policy):
+            if _same_model_identity(req.builder_model, str(provider_id) if provider_id else None, str(model_id) if model_id else None):
+                last_error = ValueError("reviewer model must differ from builder model")
+                continue
+            try:
+                response, decision, repaired = await _autopilot_review_decision_chat(
+                    req,
+                    provider_id=str(provider_id) if provider_id else None,
+                    model_id=str(model_id) if model_id else None,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                clean_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
+                return {
+                    "schema_version": "across-host-review-decision/1.0",
+                    "model_backed": True,
+                    "role": "independent_reviewer",
+                    "provider": response.provider,
+                    "model": response.model,
+                    "finish_reason": response.finish_reason,
+                    "usage": response.usage,
+                    "repaired_json": repaired,
+                    "decision_hash": hashlib.sha256(clean_json.encode("utf-8")).hexdigest(),
+                    "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
+                    **decision,
+                }
+            except Exception as exc:
+                last_error = exc
+                continue
+        raise ValueError(str(last_error or "No reviewer model candidate succeeded."))
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise _safe_http_500("Create Autopilot review decision")
+
+
 @app.post("/api/plugins/{plugin_id}/actions")
 async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionRequest):
     """Run an explicit user-triggered plugin lifecycle action."""
@@ -1480,13 +4790,519 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
             if action == "uninstall":
                 result = await asyncio.to_thread(manager.uninstall_plugin)
                 return _sanitize_public_payload(result)
+        if plugin_id == "across-autopilot":
+            result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+            return _sanitize_public_payload(result)
         raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
     except HTTPException:
         raise
     except (PluginLifecycleError, OrchestratorPluginUnavailable):
         raise HTTPException(status_code=500, detail=_safe_error_message("Plugin lifecycle action"))
     except Exception as exc:
-        raise _safe_http_500("Plugin lifecycle action", exc)
+        raise _safe_http_500("Plugin lifecycle action")
+
+
+def _autopilot_http_error(operation: str, exc: PluginLifecycleError) -> HTTPException:
+    detail = _sanitize_public_error_text(exc)
+    lowered = str(detail or "").lower()
+    if "not installed" in lowered or "must be repaired" in lowered:
+        return HTTPException(status_code=503, detail="Across Autopilot plugin is not available")
+    if "requires" in lowered or "unexpected json payload" in lowered:
+        return HTTPException(status_code=400, detail=detail)
+    logger.debug("%s failed via Across Autopilot: %s", operation, detail)
+    return HTTPException(status_code=502, detail=_safe_error_message(operation))
+
+
+@app.get("/api/autopilot/registry")
+async def get_autopilot_registry():
+    """Return built-in and registered LoopSpec packs exposed by Across Autopilot."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().registry)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Across Autopilot registry", exc)
+    except Exception as exc:
+        raise _safe_http_500("Across Autopilot registry")
+
+
+@app.get("/api/autopilot/capability-packs")
+async def get_autopilot_capability_packs():
+    """Return AAA-hosted reusable Loop Engineering capability packs."""
+    try:
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        return _sanitize_public_payload(loop_engineering_capability_pack())
+    except Exception as exc:
+        raise _safe_http_500("Across Autopilot capability packs")
+
+
+@app.post("/api/autopilot/specs/validate")
+async def validate_autopilot_spec(req: AutopilotSpecRequest):
+    """Validate a built-in or user-provided Across LoopSpec through Autopilot."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().validate_spec, req.spec)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Validate Across Autopilot LoopSpec", exc)
+    except Exception as exc:
+        raise _safe_http_500("Validate Across Autopilot LoopSpec")
+
+
+@app.post("/api/autopilot/specs/dry-run")
+async def dry_run_autopilot_spec(req: AutopilotSpecRequest):
+    """Preview the adapters, autonomy, evidence, and outputs a LoopSpec would use."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().dry_run, req.spec)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Dry-run Across Autopilot LoopSpec", exc)
+    except Exception as exc:
+        raise _safe_http_500("Dry-run Across Autopilot LoopSpec")
+
+
+@app.post("/api/autopilot/triggers")
+async def enqueue_autopilot_trigger(req: AutopilotTriggerRequest):
+    """Persist a replayable Across Autopilot trigger through AAA."""
+    try:
+        result = await asyncio.to_thread(
+            get_autopilot_client().enqueue_trigger,
+            req.spec,
+            trigger_type=req.type or "manual",
+            payload=req.payload,
+            idempotency_key=req.idempotency_key,
+            not_before=req.not_before,
+            source=req.source or "aaa",
+            actor=req.actor or "user",
+        )
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Enqueue Across Autopilot trigger", exc)
+    except Exception as exc:
+        raise _safe_http_500("Enqueue Across Autopilot trigger")
+
+
+@app.get("/api/autopilot/triggers")
+async def get_autopilot_trigger_queue():
+    """Return the durable Across Autopilot trigger queue."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot trigger queue", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot trigger queue")
+
+
+@app.post("/api/autopilot/triggers/run")
+async def run_autopilot_trigger(req: AutopilotRunTriggerRequest):
+    """Claim and run one queued Across Autopilot trigger."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().run_trigger, req.trigger_id)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Run Across Autopilot trigger", exc)
+    except Exception as exc:
+        raise _safe_http_500("Run Across Autopilot trigger")
+
+
+@app.post("/api/autopilot/trigger-configs")
+async def register_autopilot_trigger_config(req: AutopilotTriggerConfigRequest):
+    """Register a reusable AAA-hosted cron/webhook/daemon trigger config."""
+    try:
+        result = await asyncio.to_thread(
+            get_autopilot_trigger_registry().register,
+            spec=req.spec,
+            trigger_type=req.type,
+            payload=req.payload,
+            schedule=req.schedule,
+            webhook=req.webhook,
+            daemon=req.daemon,
+            enabled=req.enabled,
+            actor=req.actor or "user",
+            source=req.source or "aaa",
+            trigger_id=req.trigger_id,
+        )
+        return _sanitize_public_payload(result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
+    except Exception as exc:
+        raise _safe_http_500("Register Across Autopilot trigger config")
+
+
+@app.get("/api/autopilot/trigger-configs")
+async def list_autopilot_trigger_configs():
+    """Return registered AAA-hosted Autopilot trigger configs."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_registry().list))
+    except Exception as exc:
+        raise _safe_http_500("List Across Autopilot trigger configs")
+
+
+@app.patch("/api/autopilot/trigger-configs/{trigger_id}/pause")
+async def pause_autopilot_trigger_config(trigger_id: str, req: AutopilotTriggerPauseRequest):
+    """Pause or resume one AAA-hosted Autopilot trigger config."""
+    try:
+        return _sanitize_public_payload(
+            await asyncio.to_thread(get_autopilot_trigger_registry().set_paused, trigger_id, req.paused)
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Autopilot trigger config not found")
+    except Exception as exc:
+        raise _safe_http_500("Pause Across Autopilot trigger config")
+
+
+@app.delete("/api/autopilot/trigger-configs/{trigger_id}")
+async def delete_autopilot_trigger_config(trigger_id: str):
+    """Delete one AAA-hosted Autopilot trigger config."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_registry().delete, trigger_id))
+    except Exception as exc:
+        raise _safe_http_500("Delete Across Autopilot trigger config")
+
+
+@app.post("/api/autopilot/trigger-configs/tick")
+async def tick_autopilot_trigger_configs():
+    """Evaluate due cron/daemon trigger configs and enqueue replayable triggers."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_trigger_registry().tick, get_autopilot_client())
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Tick Across Autopilot trigger configs", exc)
+    except Exception as exc:
+        raise _safe_http_500("Tick Across Autopilot trigger configs")
+
+
+@app.get("/api/autopilot/trigger-scheduler")
+async def get_autopilot_trigger_scheduler_status():
+    """Return local scheduler lifecycle status for AAA-hosted Autopilot triggers."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_scheduler().status))
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot trigger scheduler status")
+
+
+@app.post("/api/autopilot/trigger-scheduler/start")
+async def start_autopilot_trigger_scheduler(req: AutopilotTriggerSchedulerRequest):
+    """Start the local trigger scheduler loop."""
+    try:
+        return _sanitize_public_payload(
+            await asyncio.to_thread(get_autopilot_trigger_scheduler().start, interval_seconds=req.interval_seconds)
+        )
+    except Exception as exc:
+        raise _safe_http_500("Start Across Autopilot trigger scheduler")
+
+
+@app.post("/api/autopilot/trigger-scheduler/stop")
+async def stop_autopilot_trigger_scheduler():
+    """Stop the local trigger scheduler loop."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_scheduler().stop))
+    except Exception as exc:
+        raise _safe_http_500("Stop Across Autopilot trigger scheduler")
+
+
+@app.post("/api/autopilot/webhooks/{trigger_id}")
+async def accept_autopilot_webhook(trigger_id: str, request: Request):
+    """Accept a webhook payload and enqueue the matching Autopilot trigger."""
+    try:
+        raw_body = await request.body()
+        try:
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        except json.JSONDecodeError:
+            payload = {"raw_body_sha256": hashlib.sha256(raw_body).hexdigest()}
+        result = await asyncio.to_thread(
+            get_autopilot_trigger_registry().accept_webhook,
+            get_autopilot_client(),
+            trigger_id=trigger_id,
+            raw_body=raw_body,
+            headers=dict(request.headers),
+            payload=payload if isinstance(payload, dict) else {"payload": payload},
+        )
+        if result.get("status") == "rejected":
+            raise HTTPException(status_code=401, detail=result.get("reason") or "Webhook rejected")
+        return _sanitize_public_payload(result)
+    except HTTPException:
+        raise
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Accept Across Autopilot webhook", exc)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Autopilot trigger config not found")
+    except Exception as exc:
+        raise _safe_http_500("Accept Across Autopilot webhook")
+
+
+@app.get("/api/autopilot/self-iteration-plan")
+async def get_autopilot_self_iteration_plan():
+    """Return the host-visible continuous AAA self-iteration plan."""
+    try:
+        trigger_registry = await asyncio.to_thread(get_autopilot_trigger_registry().list)
+    except Exception:
+        trigger_registry = {}
+    try:
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        capability_pack = loop_engineering_capability_pack()
+    except Exception:
+        capability_pack = {}
+    return _sanitize_public_payload(
+        build_self_iteration_plan(
+            trigger_registry=trigger_registry,
+            capability_pack=capability_pack,
+        )
+    )
+
+
+@app.post("/api/autopilot/self-iteration-plan/ensure")
+async def ensure_autopilot_self_iteration_plan(req: AutopilotSelfIterationPlanRequest):
+    """Ensure the default continuous AAA self-iteration trigger is registered."""
+    try:
+        registry = get_autopilot_trigger_registry()
+        await asyncio.to_thread(
+            ensure_self_iteration_plan,
+            registry,
+            spec=req.spec,
+            interval_seconds=req.interval_seconds,
+            enabled=req.enabled,
+            actor=req.actor,
+            source=req.source,
+            trigger_id=req.trigger_id,
+            payload=req.payload,
+        )
+        trigger_registry = await asyncio.to_thread(registry.list)
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        return _sanitize_public_payload(
+            build_self_iteration_plan(
+                trigger_registry=trigger_registry,
+                capability_pack=loop_engineering_capability_pack(),
+                spec=req.spec,
+                trigger_id=req.trigger_id,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
+    except Exception as exc:
+        raise _safe_http_500("Ensure Across Autopilot self-iteration plan")
+
+
+@app.post("/api/autopilot/runs")
+async def run_autopilot_loop(req: AutopilotSpecRequest):
+    """Start and complete one supervised Across Autopilot LoopSpec run."""
+    try:
+        result = await asyncio.to_thread(
+            get_autopilot_client().run,
+            req.spec,
+            trigger=req.trigger or "aaa-user",
+            model_policy_overrides=req.model_policy_overrides,
+        )
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Run Across Autopilot LoopSpec", exc)
+    except Exception as exc:
+        raise _safe_http_500("Run Across Autopilot LoopSpec")
+
+
+@app.get("/api/autopilot/runs")
+async def list_autopilot_runs():
+    """List recent persisted Across Autopilot runs."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().list_runs)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("List Across Autopilot runs", exc)
+    except Exception as exc:
+        raise _safe_http_500("List Across Autopilot runs")
+
+
+@app.get("/api/autopilot/runs/{run_id}")
+async def get_autopilot_run(run_id: str):
+    """Return status for one Across Autopilot run."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().status, run_id)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot run", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot run")
+
+
+@app.get("/api/autopilot/runs/{run_id}/evidence")
+async def get_autopilot_run_evidence(run_id: str):
+    """Return the evidence envelope for one Across Autopilot run."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().evidence, run_id)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot evidence", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot evidence")
+
+
+@app.get("/api/autopilot/runs/{run_id}/promotion-review")
+async def get_autopilot_promotion_review(run_id: str):
+    """Return a bounded human-review packet derived from Autopilot evidence."""
+    try:
+        evidence = await asyncio.to_thread(get_autopilot_client().evidence, run_id)
+        return _sanitize_public_payload(build_promotion_review_packet(evidence))
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot promotion review", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot promotion review")
+
+
+@app.get("/api/autopilot/runs/{run_id}/events")
+async def get_autopilot_run_events(run_id: str, after_sequence: Optional[int] = None):
+    """Return durable audit events for one Across Autopilot run."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().events, run_id, after_sequence=after_sequence)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot events", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot events")
+
+
+@app.get("/api/autopilot/telemetry")
+async def get_autopilot_telemetry():
+    """Return aggregate Across Autopilot telemetry without raw source content."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().telemetry)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot telemetry", exc)
+    except Exception as exc:
+        raise _safe_http_500("Get Across Autopilot telemetry")
+
+
+@app.get("/api/autopilot/ops-dashboard")
+async def get_autopilot_ops_dashboard():
+    """Return a Loop Engineering operations dashboard across telemetry and host controls."""
+    try:
+        telemetry = await asyncio.to_thread(get_autopilot_client().telemetry)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Get Across Autopilot ops dashboard", exc)
+    except Exception:
+        telemetry = {}
+    try:
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        capability_pack = loop_engineering_capability_pack()
+    except Exception:
+        capability_pack = {}
+    try:
+        registry_payload = _build_unified_capability_registry_payload(refresh=False)
+        registry_health = evaluate_unified_capability_registry_health(registry_payload)
+    except Exception:
+        registry_health = {}
+    try:
+        trigger_registry = await asyncio.to_thread(get_autopilot_trigger_registry().list)
+    except Exception:
+        trigger_registry = {}
+    try:
+        trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
+    except Exception:
+        trigger_scheduler = {}
+    try:
+        self_iteration_plan = build_self_iteration_plan(
+            trigger_registry=trigger_registry,
+            capability_pack=capability_pack,
+        )
+    except Exception:
+        self_iteration_plan = {}
+    return _sanitize_public_payload(
+        build_loop_engineering_ops_dashboard(
+            telemetry=telemetry,
+            trigger_registry=trigger_registry,
+            trigger_scheduler=trigger_scheduler,
+            capability_pack=capability_pack,
+            registry_health=registry_health,
+            self_iteration_plan=self_iteration_plan,
+        )
+    )
+
+
+@app.post("/api/autopilot/runs/{run_id}/cancel")
+async def cancel_autopilot_run(run_id: str, req: AutopilotCancelRequest):
+    """Cancel one Across Autopilot run through the plugin control plane."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().cancel, run_id, reason=req.reason or "cancelled by host")
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Cancel Across Autopilot run", exc)
+    except Exception as exc:
+        raise _safe_http_500("Cancel Across Autopilot run")
+
+
+@app.post("/api/autopilot/runs/{run_id}/retry")
+async def retry_autopilot_run(run_id: str):
+    """Retry a failed Across Autopilot run from its stored LoopSpec."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().retry, run_id)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Retry Across Autopilot run", exc)
+    except Exception as exc:
+        raise _safe_http_500("Retry Across Autopilot run")
+
+
+@app.post("/api/autopilot/runs/{run_id}/outputs/quarantine")
+async def quarantine_autopilot_output(run_id: str, req: AutopilotOutputRequest):
+    """Quarantine one generated output from an Across Autopilot run."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().quarantine_output, run_id, req.outputId)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Quarantine Across Autopilot output", exc)
+    except Exception as exc:
+        raise _safe_http_500("Quarantine Across Autopilot output")
+
+
+@app.post("/api/autopilot/specs/{spec_id}/pause")
+async def pause_autopilot_spec(spec_id: str):
+    """Disable future runs for one Across Autopilot LoopSpec."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().set_spec_paused, spec_id, True)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Pause Across Autopilot LoopSpec", exc)
+    except Exception as exc:
+        raise _safe_http_500("Pause Across Autopilot LoopSpec")
+
+
+@app.post("/api/autopilot/specs/{spec_id}/resume")
+async def resume_autopilot_spec(spec_id: str):
+    """Re-enable future runs for one Across Autopilot LoopSpec."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().set_spec_paused, spec_id, False)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Resume Across Autopilot LoopSpec", exc)
+    except Exception as exc:
+        raise _safe_http_500("Resume Across Autopilot LoopSpec")
+
+
+@app.post("/api/autopilot/adapters/{adapter_id}/pause")
+async def pause_autopilot_adapter(adapter_id: str):
+    """Disable one Across Autopilot source/action/output adapter."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().set_adapter_paused, adapter_id, True)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Pause Across Autopilot adapter", exc)
+    except Exception as exc:
+        raise _safe_http_500("Pause Across Autopilot adapter")
+
+
+@app.post("/api/autopilot/adapters/{adapter_id}/resume")
+async def resume_autopilot_adapter(adapter_id: str):
+    """Re-enable one Across Autopilot source/action/output adapter."""
+    try:
+        result = await asyncio.to_thread(get_autopilot_client().set_adapter_paused, adapter_id, False)
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Resume Across Autopilot adapter", exc)
+    except Exception as exc:
+        raise _safe_http_500("Resume Across Autopilot adapter")
 
 
 class MemoryRememberRequest(BaseModel):
@@ -1522,7 +5338,7 @@ async def list_across_context_memories(
     except PluginLifecycleError:
         raise HTTPException(status_code=503, detail="Across Context plugin is not available")
     except Exception as exc:
-        raise _safe_http_500("List Across Context memories", exc)
+        raise _safe_http_500("List Across Context memories")
 
 
 @app.get("/api/memory/agent-loop-metrics")
@@ -1541,7 +5357,7 @@ async def get_across_context_agent_loop_memory_metrics(
     except PluginLifecycleError:
         raise HTTPException(status_code=503, detail="Across Context plugin is not available")
     except Exception as exc:
-        raise _safe_http_500("Get Across Context Agent Loop memory metrics", exc)
+        raise _safe_http_500("Get Across Context Agent Loop memory metrics")
 
 
 @app.post("/api/memory/remember")
@@ -1563,7 +5379,7 @@ async def remember_across_context_memory(req: MemoryRememberRequest):
             raise HTTPException(status_code=503, detail="Across Context plugin is not available")
         raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
     except Exception as exc:
-        raise _safe_http_500("Remember Across Context memory", exc)
+        raise _safe_http_500("Remember Across Context memory")
 
 
 @app.post("/api/memory/memories/{memory_id}/status")
@@ -1579,7 +5395,7 @@ async def update_across_context_memory_status(memory_id: str, req: MemoryStatusR
             raise HTTPException(status_code=503, detail="Across Context plugin is not available")
         raise HTTPException(status_code=404, detail="Memory not found")
     except Exception as exc:
-        raise _safe_http_500("Update Across Context memory", exc)
+        raise _safe_http_500("Update Across Context memory")
 
 
 @app.post("/api/memory/memories/{memory_id}/forget")
@@ -1597,7 +5413,7 @@ async def forget_across_context_memory(memory_id: str):
             raise HTTPException(status_code=503, detail="Across Context plugin is not available")
         raise HTTPException(status_code=404, detail="Memory not found")
     except Exception as exc:
-        raise _safe_http_500("Forget Across Context memory", exc)
+        raise _safe_http_500("Forget Across Context memory")
 
 
 @app.get("/api/orchestrator/plugin")
@@ -2044,7 +5860,7 @@ async def get_chat_history(session_id: str, limit: int = 30, offset: int = 0):
             "has_more": has_more
         }
     except Exception as e:
-        raise _safe_http_500("Get chat history", e)
+        raise _safe_http_500("Get chat history")
 
 def _session_info_from_row(s: Dict[str, Any]) -> SessionInfo:
     preview = s.get("first_user_message")
@@ -2093,7 +5909,7 @@ async def list_projects(session_limit: int = 5):
             projects.append(_project_info_from_row(p, sessions=sessions))
         return ProjectListResponse(projects=projects)
     except Exception as e:
-        raise _safe_http_500("List projects", e)
+        raise _safe_http_500("List projects")
 
 @app.post("/api/projects/blank", response_model=ProjectInfo)
 async def create_blank_project(req: CreateBlankProjectRequest):
@@ -2101,7 +5917,7 @@ async def create_blank_project(req: CreateBlankProjectRequest):
         project = persistence.create_blank_project(req.name)
         return _project_info_from_row(project)
     except Exception as e:
-        raise _safe_http_500("Create blank project", e)
+        raise _safe_http_500("Create blank project")
 
 @app.post("/api/projects/from-folder", response_model=ProjectInfo)
 async def create_folder_project(req: CreateFolderProjectRequest):
@@ -2120,7 +5936,7 @@ async def create_folder_project(req: CreateFolderProjectRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Create folder project", e)
+        raise _safe_http_500("Create folder project")
 
 @app.patch("/api/projects/{project_id}/pin", response_model=ProjectInfo)
 async def pin_project(project_id: str, req: PinRequest):
@@ -2133,7 +5949,7 @@ async def pin_project(project_id: str, req: PinRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Get task status", e)
+        raise _safe_http_500("Get task status")
 
 @app.get("/api/sessions", response_model=SessionListResponse)
 async def list_sessions(limit: int = 50, offset: int = 0, project_id: Optional[str] = None):
@@ -2161,7 +5977,7 @@ async def list_sessions(limit: int = 50, offset: int = 0, project_id: Optional[s
             has_more=safe_offset + len(session_infos) < total,
         )
     except Exception as e:
-        raise _safe_http_500("List sessions", e)
+        raise _safe_http_500("List sessions")
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
@@ -2170,7 +5986,7 @@ async def delete_session(session_id: str):
         persistence.clear_session(session_id)
         return {"status": "success", "session_id": session_id}
     except Exception as e:
-        raise _safe_http_500("Delete session", e)
+        raise _safe_http_500("Delete session")
 
 @app.patch("/api/sessions/{session_id}/rename")
 async def rename_session(session_id: str, req: RenameSessionRequest):
@@ -2179,7 +5995,7 @@ async def rename_session(session_id: str, req: RenameSessionRequest):
         persistence.rename_session(session_id, req.name)
         return {"status": "success", "session_id": session_id, "name": req.name}
     except Exception as e:
-        raise _safe_http_500("Rename session", e)
+        raise _safe_http_500("Rename session")
 
 @app.patch("/api/sessions/{session_id}/pin")
 async def pin_session(session_id: str, req: PinRequest):
@@ -2191,7 +6007,7 @@ async def pin_session(session_id: str, req: PinRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Pin session", e)
+        raise _safe_http_500("Pin session")
 
 @app.get("/api/tools", response_model=List[Dict[str, Any]])
 async def get_tools():
@@ -2455,6 +6271,59 @@ async def export_host_agent_capabilities(refresh: bool = False):
         tool_schemas=available_tools,
         native_skills_by_agent=native_skills_by_agent,
     )
+
+
+def _build_unified_capability_registry_payload(refresh: bool = False) -> Dict[str, Any]:
+    store = get_agent_capability_store()
+    available_tools = _runtime_tool_schemas()
+    native_skill_states = _native_skill_states_for_capability_ui(refresh=refresh)
+    native_skills_by_agent = {
+        agent_id: [
+            skill
+            for skill in (state.get("skills") if isinstance(state, dict) else []) or []
+            if isinstance(skill, dict)
+        ]
+        for agent_id, state in native_skill_states.items()
+    }
+    host_registry = store.build_host_registry(
+        tool_schemas=available_tools,
+        native_skills_by_agent=native_skills_by_agent,
+    )
+    try:
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        autopilot_capability_pack = loop_engineering_capability_pack()
+    except Exception:
+        autopilot_capability_pack = {}
+    configured_provider_ids = [
+        provider_id
+        for provider_id in _known_provider_ids()
+        if _provider_has_backend_key(provider_id)
+    ]
+    return build_unified_capability_registry(
+        host_registry=host_registry,
+        tool_schemas=available_tools,
+        skill_catalog=store.skill_catalog(),
+        agent_configs=agent_manager.config.get("agents", {}),
+        active_agent=agent_manager.get_active_agent(),
+        llm_config=load_llm_config(),
+        configured_provider_ids=configured_provider_ids,
+        plugins=discover_across_plugins(probe=False),
+        autopilot_capability_pack=autopilot_capability_pack,
+    )
+
+
+@app.get("/api/capability-registry")
+async def export_unified_capability_registry(refresh: bool = False):
+    """Export a non-secret unified capability index without merging executors."""
+    return _sanitize_public_payload(_build_unified_capability_registry_payload(refresh=refresh))
+
+
+@app.get("/api/capability-registry/health")
+async def get_unified_capability_registry_health(refresh: bool = False):
+    """Return machine-readable compatibility and health checks for the unified registry."""
+    payload = _build_unified_capability_registry_payload(refresh=refresh)
+    return _sanitize_public_payload(evaluate_unified_capability_registry_health(payload))
 
 
 @app.post("/api/agent-capabilities/skills")
@@ -2846,7 +6715,7 @@ async def list_llm_providers():
             ))
         return result
     except Exception as e:
-        raise _safe_http_500("List LLM providers", e)
+        raise _safe_http_500("List LLM providers")
 
 @app.get("/api/llm/models/{provider_id}", response_model=List[LLMModelInfo])
 async def list_llm_models(provider_id: str, refresh: bool = True):
@@ -2869,7 +6738,7 @@ async def list_llm_models(provider_id: str, refresh: bool = True):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("List LLM models", e)
+        raise _safe_http_500("List LLM models")
 
 @app.post("/api/llm/switch")
 async def switch_llm_provider(req: LLMSwitchRequest):
@@ -2883,7 +6752,7 @@ async def switch_llm_provider(req: LLMSwitchRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Switch LLM provider", e)
+        raise _safe_http_500("Switch LLM provider")
 
 @app.get("/api/llm/status")
 async def get_llm_status():
@@ -2893,18 +6762,31 @@ async def get_llm_status():
         current = gw.get_current_provider_id()
         config = load_llm_config()
         provider = next((p for p in config.providers if p.provider_id == current), None)
+        adapter = gw.get_current_adapter()
+        lease_status = _candidate_model_lease_status("model.chat")
+        candidate_mode = lease_status.get("lease") is not None
+        local_available = adapter.is_available() if adapter else False
+        if candidate_mode:
+            available = bool(lease_status["available"])
+            availability_source = "candidate_model_lease" if available else "missing_candidate_model_lease"
+        else:
+            available = local_available
+            availability_source = "local_credentials" if local_available else "missing_credentials"
         return {
             "current_provider": current,
             "provider_name": provider.name if provider else None,
-            "available": gw.get_current_adapter().is_available() if gw.get_current_adapter() else False
+            "available": available,
+            "availability_source": availability_source,
+            "candidate_model_lease": lease_status["public"],
         }
     except Exception as e:
-        raise _safe_http_500("Get LLM status", e)
+        raise _safe_http_500("Get LLM status")
 
 class LLMChatRequest(BaseModel):
     message: str
     system_prompt: Optional[str] = None
     context: Optional[Dict[str, str]] = None
+    provider_id: Optional[str] = None
     model: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 2048
@@ -2920,12 +6802,13 @@ class LLMChatResponse(BaseModel):
 async def llm_chat(req: LLMChatRequest):
     """Direct LLM chat endpoint (for testing the gateway)."""
     try:
-        gw = get_gateway()
-        response = await gw.chat(
+        response = await _chat_with_model_capability(
             message=req.message,
             system_prompt=req.system_prompt,
             context=req.context,
+            provider_id=req.provider_id,
             model=req.model,
+            scope="model.chat",
             temperature=req.temperature,
             max_tokens=req.max_tokens
         )
@@ -2937,7 +6820,7 @@ async def llm_chat(req: LLMChatRequest):
             usage=response.usage
         )
     except Exception as e:
-        raise _safe_http_500("LLM chat", e)
+        raise _safe_http_500("LLM chat")
 
 @app.post("/api/chat/cancel")
 async def cancel_chat(req: ChatCancelRequest):
@@ -2949,7 +6832,7 @@ async def cancel_chat(req: ChatCancelRequest):
             return {"status": "success", "message": "Chat cancelled"}
         return {"status": "ignored", "message": "No active chat found to cancel"}
     except Exception as e:
-        raise _safe_http_500("Cancel chat", e)
+        raise _safe_http_500("Cancel chat")
 
 
 
@@ -3585,7 +7468,7 @@ async def get_tool_authorizations():
         auths = persistence.get_all_authorizations()
         return {"authorizations": auths}
     except Exception as e:
-        raise _safe_http_500("Get tool authorizations", e)
+        raise _safe_http_500("Get tool authorizations")
 
 class RevokeRequest(BaseModel):
     tool_name: str
@@ -3597,7 +7480,7 @@ async def revoke_tool_authorization(req: RevokeRequest):
         persistence.set_tool_authorization(req.tool_name, False)
         return {"status": "success", "tool_name": req.tool_name}
     except Exception as e:
-        raise _safe_http_500("Revoke tool authorization", e)
+        raise _safe_http_500("Revoke tool authorization")
 
 def _public_native_skill(skill: Dict[str, Any]) -> Dict[str, Any]:
     return {
@@ -4913,7 +8796,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
             has_more=offset + len(page_summaries) < total,
         )
     except Exception as e:
-        raise _safe_http_500("List task summaries", e)
+        raise _safe_http_500("List task summaries")
 
 
 # Release verification helper logic lives in release_verification.py.
@@ -4936,7 +8819,7 @@ async def get_release_evaluation(limit: int = 100):
         )
         return _sanitize_public_payload(build_release_evaluation_summary(rows))
     except Exception as e:
-        raise _safe_http_500("Get release evaluation", e)
+        raise _safe_http_500("Get release evaluation")
 
 
 @app.post("/api/release/verification")
@@ -4958,7 +8841,7 @@ async def run_release_verification():
         )
         return _sanitize_public_payload(report)
     except Exception as e:
-        raise _safe_http_500("Run release verification", e)
+        raise _safe_http_500("Run release verification")
 
 @app.get("/api/tasks/{task_id}", response_model=TaskInfo)
 async def get_task(task_id: str):
@@ -4991,7 +8874,7 @@ async def get_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Get task", e)
+        raise _safe_http_500("Get task")
 
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
@@ -5039,7 +8922,7 @@ async def list_tasks():
             reverse=True,
         )
     except Exception as e:
-        raise _safe_http_500("List tasks", e)
+        raise _safe_http_500("List tasks")
 
 @app.get("/api/tasks/{task_id}/jobs/{job_id}", response_model=JobInfo)
 async def get_job(task_id: str, job_id: str):
@@ -5062,7 +8945,7 @@ async def get_job(task_id: str, job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Get job", e)
+        raise _safe_http_500("Get job")
 
 @app.post("/api/tasks/{task_id}/jobs/{job_id}/cancel")
 async def cancel_job(task_id: str, job_id: str):
@@ -5090,7 +8973,7 @@ async def cancel_job(task_id: str, job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Cancel job", e)
+        raise _safe_http_500("Cancel job")
 
 
 def _default_external_orchestrator_project_dir() -> str:
@@ -5434,7 +9317,7 @@ async def get_task_status(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Get task status", e)
+        raise _safe_http_500("Get task status")
 
 
 def _comma_separated_values(value: Optional[str]) -> List[str]:
@@ -5767,7 +9650,7 @@ async def pause_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Pause task", e)
+        raise _safe_http_500("Pause task")
 
 @app.post("/api/tasks/{task_id}/resume")
 async def resume_task(task_id: str):
@@ -5785,7 +9668,7 @@ async def resume_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Resume task", e)
+        raise _safe_http_500("Resume task")
 
 @app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str):
@@ -5804,7 +9687,7 @@ async def cancel_task(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _safe_http_500("Cancel task", e)
+        raise _safe_http_500("Cancel task")
 
 
 @app.get("/api/resumable_tasks", response_model=List[Dict[str, Any]])
@@ -5817,7 +9700,7 @@ async def get_resumable_tasks():
         resumable = _task_state.get_resumable_tasks()
         return resumable
     except Exception as e:
-        raise _safe_http_500("Get resumable tasks", e)
+        raise _safe_http_500("Get resumable tasks")
 
 
 @app.post("/api/tasks/{task_id}/restore")

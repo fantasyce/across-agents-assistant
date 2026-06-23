@@ -83,6 +83,7 @@ def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     plugins = discover_across_plugins(env=env, probe=False)
     context = next(item for item in plugins if item["plugin_id"] == "across-context")
     orchestrator = next(item for item in plugins if item["plugin_id"] == "across-orchestrator")
+    autopilot = next(item for item in plugins if item["plugin_id"] == "across-autopilot")
 
     assert context["installed"] is True
     assert context["manifest_path"] == str(manifest_path)
@@ -93,6 +94,9 @@ def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     assert context["command_exists"] is False
     assert orchestrator["installed"] is False
     assert orchestrator["paths"]["data"] == str(across_home / "data" / "across-orchestrator")
+    assert autopilot["installed"] is False
+    assert autopilot["kind"] == "autonomous-workflow"
+    assert autopilot["paths"]["data"] == str(across_home / "data" / "across-autopilot")
 
 
 def test_inspect_across_plugin_probe_uses_command_status(tmp_path):
@@ -226,7 +230,7 @@ def test_plugins_api_returns_known_plugins(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     plugins = response.json()["plugins"]
-    assert {item["plugin_id"] for item in plugins} == {"across-context", "across-orchestrator"}
+    assert {item["plugin_id"] for item in plugins} == {"across-context", "across-orchestrator", "across-autopilot"}
     orchestrator = next(item for item in plugins if item["plugin_id"] == "across-orchestrator")
     assert orchestrator["installed"] is True
     assert orchestrator["kind"] == "task-runtime"

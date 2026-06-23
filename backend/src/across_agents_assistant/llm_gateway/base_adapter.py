@@ -47,6 +47,7 @@ class ChatCompletionRequest:
     top_p: float = 1.0
     stop: Optional[List[str]] = None
     functions: Optional[List[Dict]] = None
+    extra_body: Dict[str, Any] = field(default_factory=dict)
 
 
 class KeychainError(Exception):
@@ -110,6 +111,22 @@ class BaseLLMAdapter(ABC):
             return True
         key = os.environ.get(self._config.api_key_env)
         return bool(key and key.strip())
+
+    def timeout_seconds(self, *, kind: str = "chat", default: float = 60.0) -> float:
+        """Return provider HTTP timeout seconds from environment or a safe default."""
+        provider_key = f"ACROSS_LLM_{self.provider_id.upper().replace('-', '_')}_{kind.upper()}_TIMEOUT_SECONDS"
+        generic_key = f"ACROSS_LLM_{kind.upper()}_TIMEOUT_SECONDS"
+        for key in (provider_key, generic_key):
+            raw = os.environ.get(key)
+            if not raw:
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            if value > 0:
+                return value
+        return default
 
     @abstractmethod
     def chat(self, request: ChatCompletionRequest) -> LLMResponse:

@@ -18,6 +18,15 @@ def test_load_all_returns_empty_when_file_missing(tmp_path):
     assert result == {}
 
 
+def test_default_path_can_be_overridden_for_host_runtime(tmp_path, monkeypatch):
+    override = tmp_path / "host-creds.json"
+    monkeypatch.setenv("ACROSS_AGENTS_CREDENTIALS_FILE", str(override))
+
+    store = CredentialStore()
+
+    assert store.path == override.resolve()
+
+
 def test_save_many_writes_atomic_json_with_0600_permissions(tmp_path):
     store = CredentialStore(path=tmp_path / "creds.json")
     saved = store.save_many({"deepseek": "unit-valid-deepseek-key"}, source="frontend_save")
