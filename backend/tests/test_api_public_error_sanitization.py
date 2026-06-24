@@ -114,14 +114,28 @@ def test_orchestrator_plugin_install_endpoint_sanitizes_exception_payload(monkey
     assert_no_stack_trace(response)
 
 
-def test_release_verification_endpoint_sanitizes_report_payload(monkeypatch):
+def test_release_verification_endpoint_sanitizes_report_payload(monkeypatch, tmp_path):
+    class FakeState:
+        _persistence = None
+
+        def get_all_tasks(self):
+            return []
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
     monkeypatch.setattr(
         api_server,
-        "_build_release_verification_report",
-        lambda **_kwargs: {
+        "_build_startup_diagnostics",
+        lambda: {
+            "schema_version": "1.0",
+            "app_version": "0.4.0",
+            "generated_at": "2026-05-31T12:00:00Z",
             "status": "blocked",
-            "startup": {"checks": [{"detail": TRACEBACK_TEXT}]},
-            "release_evaluation": {"error": TRACEBACK_TEXT},
+            "summary": {"status": "blocked", "passed": 0, "warnings": 0, "failed": 1, "check_count": 1},
+            "paths": {},
+            "runtime": {},
+            "keys": {"has_any_key": False, "providers": {}, "readiness_blockers": [TRACEBACK_TEXT]},
+            "checks": [{"id": "boom", "title": "Boom", "status": "failed", "detail": TRACEBACK_TEXT}],
         },
     )
 

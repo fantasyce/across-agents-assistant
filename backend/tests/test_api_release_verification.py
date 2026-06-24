@@ -223,7 +223,7 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert gates_by_id["github_live_e2e"]["evidence"]["evidence_path"] == "github_live_e2e-gate-evidence.json"
     assert str(tmp_path) not in json.dumps(gates_by_id["github_live_e2e"]["evidence"])
     assert body["pre_release_gate_parse_errors"][0]["evidence_path"] == "broken-gate-evidence.json"
-    assert body["pre_release_gate_parse_errors"][0]["error_type"] == "JSONDecodeError"
+    assert body["pre_release_gate_parse_errors"][0]["error_type"] == "ParseError"
     assert str(tmp_path) not in json.dumps(body["pre_release_gate_parse_errors"])
     assert body["audit"]["read_only"] is True
     assert body["audit"]["repair_or_resume_triggered"] is False
