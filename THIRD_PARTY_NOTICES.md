@@ -81,12 +81,14 @@ Reviewed LobeHub Icons entries currently bundled from
 | App asset | LobeHub source icon | Usage |
 | --- | --- | --- |
 | `agent.claude.svg` | `claude-color.svg` | Claude Code local agent |
+| `agent.cloudcode-desktop.svg` | `claudecode-color.svg` from `@lobehub/icons-static-svg@1.91.0` | CloudCode Desktop local agent bundled fallback; installed Claude.app or Claude Code URL Handler icon is read at runtime when present |
 | `agent.codex.svg` | `openai.svg` | Codex local agent fallback; installed OpenAI-signed Codex.app icon is read at runtime when present |
 | `agent.cursor.svg` | `cursor.svg` | Cursor local agent |
 | `agent.openai.svg` | `openai.svg` | OpenAI cloud provider |
 | `agent.anthropic.svg` | `anthropic.svg` | Anthropic cloud provider |
 | `agent.deepseek.svg` | `deepseek-color.svg` | DeepSeek cloud provider |
 | `agent.minimax.svg` | `minimax-color.svg` | MiniMax cloud provider |
+| `agent.agnes.svg` | Project-original `Ag` compatibility tile | Agnes cloud provider; not an official Agnes logo or brand mark |
 | `agent.bailian.svg` | `qwen-color.svg` | Alibaba Bailian / Qwen cloud provider |
 | `agent.moonshot.svg` | `kimi-color.svg` | Moonshot / Kimi cloud provider |
 | `agent.zhipu.svg` | `zhipu-color.svg` | Zhipu GLM cloud provider |
@@ -108,6 +110,17 @@ inside the app tile.
 `opencode.svg` source from `@lobehub/icons-static-svg@1.91.0` inside the same
 neutral tile treatment. Treat it as a third-party provider mark; the SVG asset
 source is MIT-licensed, and trademark rights remain with the brand owner.
+
+`agent.cloudcode-desktop.svg` and `agent.cloudcode-desktop.light.svg` use the
+LobeHub Icons `claudecode-color.svg` source from
+`@lobehub/icons-static-svg@1.91.0` inside the same neutral tile treatment.
+Treat it as a third-party provider mark; the SVG asset source is MIT-licensed,
+and trademark rights remain with the brand owner.
+
+`agent.agnes.svg` and `agent.agnes.light.svg` are project-original compatibility
+tiles created for provider identification. They intentionally do not include an
+Agnes official logo or brand glyph because no reusable open-source Agnes icon
+was found in the reviewed icon package.
 
 The macOS client may still display icons from locally installed applications at
 runtime as a fallback. Those local application icons are read from the user's

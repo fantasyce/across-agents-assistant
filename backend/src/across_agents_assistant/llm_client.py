@@ -4,6 +4,7 @@ import os
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 from .attachments import convert_openai_content_to_anthropic
+from .llm_gateway.provider_registry import get_provider_definition
 
 logger = logging.getLogger("across_agents_assistant")
 
@@ -45,6 +46,13 @@ class OrchestratorClient:
     def _is_deepseek_endpoint(cls, base_url: str) -> bool:
         return cls._is_provider_host(base_url, {"deepseek.com"})
 
+    @staticmethod
+    def _registry_api_key(agent_id: str) -> str:
+        provider = get_provider_definition(agent_id)
+        if not provider:
+            return ""
+        return os.environ.get(provider.api_key_env, "")
+
     def _get_openai_client(self, agent_config):
         import httpx
         from openai import AsyncOpenAI
@@ -52,6 +60,8 @@ class OrchestratorClient:
         base_url = agent_config.get("base_url", "").strip()
         agent_id = agent_config.get("id", "")
 
+        if not api_key:
+            api_key = self._registry_api_key(agent_id)
         if not api_key:
             if self._is_minimax_endpoint(base_url) or agent_id == "minimax":
                 api_key = os.environ.get("MINIMAX_API_KEY", "")
@@ -82,6 +92,8 @@ class OrchestratorClient:
         base_url = agent_config.get("base_url", "").strip()
         agent_id = agent_config.get("id", "")
 
+        if not api_key:
+            api_key = self._registry_api_key(agent_id)
         if not api_key:
             if self._is_minimax_endpoint(base_url) or agent_id == "minimax":
                 api_key = os.environ.get("MINIMAX_API_KEY", "")
@@ -132,7 +144,7 @@ class OrchestratorClient:
                 logger.debug(f"  [{i}] role={m['role']}, tc={bool(tc)}, tcid={tcid}, content={c}")
 
         # Check if API key is configured (unless it's local like ollama which might not need one, but let's just warn)
-        if not agent_config.get("api_key"):
+        if not agent_config.get("api_key") and not self._registry_api_key(agent_id):
             logger.warning(f"Agent {agent_id} 没有配置 API Key。可能导致请求失败。")
 
         try:

@@ -20,6 +20,7 @@ def test_default_provider_registry_includes_major_openai_compatible_clouds():
         "anthropic",
         "deepseek",
         "minimax",
+        "agnes",
         "bailian",
         "moonshot",
         "zhipu",
@@ -39,6 +40,7 @@ def test_default_provider_registry_includes_major_openai_compatible_clouds():
 def test_provider_registry_records_protocol_and_model_discovery_shape():
     anthropic = get_provider_definition("anthropic")
     deepseek = get_provider_definition("deepseek")
+    agnes = get_provider_definition("agnes")
     google = get_provider_definition("google")
     openrouter = get_provider_definition("openrouter")
 
@@ -48,6 +50,10 @@ def test_provider_registry_records_protocol_and_model_discovery_shape():
     assert deepseek is not None
     assert deepseek.provider_type == "openai_compatible"
     assert deepseek.models_endpoint.endswith("/models")
+    assert agnes is not None
+    assert agnes.provider_type == "openai_compatible"
+    assert agnes.endpoint == "https://apihub.agnes-ai.com/v1"
+    assert agnes.models_endpoint == "https://apihub.agnes-ai.com/v1/models"
     assert google is not None
     assert google.provider_type == "openai_compatible"
     assert "/openai" in google.endpoint
@@ -60,6 +66,7 @@ def test_default_provider_registry_uses_current_curated_fallback_models():
     assert get_provider_definition("openai").default_models[0].model_id == "gpt-5.5"
     assert get_provider_definition("deepseek").default_models[0].model_id == "deepseek-v4-pro"
     assert get_provider_definition("minimax").default_models[0].model_id == "MiniMax-M3"
+    assert get_provider_definition("agnes").default_models[0].model_id == "agnes-2.0-flash"
     assert get_provider_definition("zhipu").default_models[0].model_id == "glm-5.1"
     assert get_provider_definition("google").default_models[0].model_id == "gemini-3.1-pro"
     assert get_provider_definition("openrouter").default_models[0].model_id == "openrouter/auto"

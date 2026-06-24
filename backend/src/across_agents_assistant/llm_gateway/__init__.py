@@ -1,7 +1,7 @@
 """
 LLM Gateway - Unified interface for multiple LLM providers.
 
-Supports: MiniMax, Bailian (Alibaba), Deepseek
+Supports registry-backed OpenAI-compatible and Anthropic providers.
 """
 from .gateway import LLMGateway
 from .base_adapter import LLMResponse

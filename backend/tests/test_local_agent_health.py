@@ -216,6 +216,42 @@ def test_claude_detection_does_not_run_prompt_probe(monkeypatch):
     )
 
 
+def test_cloudcode_desktop_detection_is_lightweight_and_uses_claude_alias(monkeypatch):
+    local_agent_health.clear_local_agent_health_cache()
+    calls = []
+
+    def fake_which(name):
+        if name == "cloudcode-desktop":
+            return None
+        return f"/usr/local/bin/{name}"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd == ["/bin/zsh", "-l", "-c", "echo $PATH"]:
+            return _Completed(stdout="/usr/local/bin\n")
+        if cmd[-1] in {"--version", "version"}:
+            return _Completed(stdout=f"{cmd[0]} 1.2.3\n")
+        if cmd == ["/usr/local/bin/openclaw", "gateway", "status"]:
+            return _Completed(stdout="Runtime: running\nConnectivity probe: ok\n")
+        if cmd == ["/usr/local/bin/hermes", "status"]:
+            return _Completed(stdout="Provider: MiniMax\nMiniMax ✓ configured\n")
+        return _Completed(stdout="OK\n")
+
+    monkeypatch.setattr(local_agent_health.shutil, "which", fake_which)
+    monkeypatch.setattr(local_agent_health.subprocess, "run", fake_run)
+
+    detected = local_agent_health.detect_local_agents(force=True)
+
+    assert detected["cloudcode-desktop"]["available"] is True
+    assert detected["cloudcode-desktop"]["path"] == "/usr/local/bin/claude"
+    assert detected["cloudcode-desktop"]["detection_method"] == "which claude"
+    assert ["/usr/local/bin/claude", "--version"] in calls
+    assert not any(
+        cmd and cmd[0] == "/usr/local/bin/claude" and "-p" in cmd
+        for cmd in calls
+    )
+
+
 def test_codex_detection_is_lightweight_and_does_not_run_prompt(monkeypatch):
     local_agent_health.clear_local_agent_health_cache()
     calls = []
@@ -272,10 +308,13 @@ def test_new_local_agent_detection_is_lightweight(monkeypatch):
 
     detected = local_agent_health.detect_local_agents(force=True)
 
+    assert detected["cloudcode-desktop"]["available"] is True
     assert detected["opencode"]["available"] is True
     assert detected["cursor"]["available"] is True
+    assert ["/usr/local/bin/cloudcode-desktop", "--version"] in calls
     assert ["/usr/local/bin/opencode", "--version"] in calls
     assert ["/usr/local/bin/cursor-agent", "--version"] in calls
+    assert not any(cmd and cmd[0] == "/usr/local/bin/cloudcode-desktop" and "-p" in cmd for cmd in calls)
     assert not any(cmd[:2] == ["/usr/local/bin/opencode", "run"] for cmd in calls)
     assert not any(cmd and cmd[0] == "/usr/local/bin/cursor-agent" and "-p" in cmd for cmd in calls)
 

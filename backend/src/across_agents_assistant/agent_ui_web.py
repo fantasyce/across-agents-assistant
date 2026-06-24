@@ -416,7 +416,12 @@ HTML_CONTENT = """
             'openclaw': 'OpenClaw',
             'local': 'OpenClaw',
             'hermes': 'Hermes',
-            'claude': 'Claude Code'
+            'claude': 'Claude Code',
+            'cloudcode-desktop': 'CloudCode Desktop',
+            'codex': 'Codex',
+            'opencode': 'OpenCode',
+            'cursor': 'Cursor Agent',
+            'agnes': 'Agnes'
         };
 
         function getDisplayName(id) {
@@ -604,11 +609,18 @@ class Api:
     def detect_or_config(self, agent_id):
         # Auto detection logic
         import shutil
+        from .local_agent_health import LOCAL_AGENT_SPECS, resolve_local_agent_executable
+
         normalized_agent_id = normalize_agent_id(agent_id) or agent_id
         executable_name = "openclaw" if normalized_agent_id == LOCAL_AGENT_ID else normalized_agent_id
 
+        path = None
+        if normalized_agent_id in LOCAL_AGENT_SPECS:
+            path = resolve_local_agent_executable(normalized_agent_id)
+
         # Try `which` first, which checks system PATH
-        path = shutil.which(executable_name)
+        if not path:
+            path = shutil.which(executable_name)
 
         # If not found, try a common zsh execution to capture user aliases
         if not path:

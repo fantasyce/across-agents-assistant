@@ -258,7 +258,7 @@ struct LocalAgentCard: View {
         if agent.status == .unavailable {
             return agent.error ?? appPreferences.text("models.warning.unavailable")
         }
-        if agent.id == "claude" && agent.status == .notAuthenticated {
+        if (agent.id == "claude" || agent.id == AgentIDs.cloudcodeDesktop) && agent.status == .notAuthenticated {
             return appPreferences.text("models.warning.claudeAuth")
         }
         return nil

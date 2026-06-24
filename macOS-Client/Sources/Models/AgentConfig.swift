@@ -2,6 +2,7 @@ import Foundation
 
 enum AgentIDs {
     static let openclaw = "openclaw"
+    static let cloudcodeDesktop = "cloudcode-desktop"
     static let opencode = "opencode"
     static let cursor = "cursor"
 
@@ -76,6 +77,16 @@ struct AgentConfig: Identifiable, Codable {
         executablePath: nil,
         version: nil,
         status: .notInstalled
+    )
+
+    static let cloudcodeDesktop = AgentConfig(
+        id: AgentIDs.cloudcodeDesktop,
+        name: "CloudCode Desktop",
+        executablePath: nil,
+        version: nil,
+        status: .notInstalled,
+        selectedModel: "sonnet",
+        availableModels: ["sonnet", "opus", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
     )
 
     static let codex = AgentConfig(

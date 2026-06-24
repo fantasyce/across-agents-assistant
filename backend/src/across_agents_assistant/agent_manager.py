@@ -39,6 +39,12 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "model": "MiniMax-M3"
         },
+        "agnes": {
+            "type": "openai_compatible",
+            "base_url": "https://apihub.agnes-ai.com/v1",
+            "api_key": "",
+            "model": "agnes-2.0-flash"
+        },
         LOCAL_AGENT_ID: {
             "type": "openai_compatible",
             "base_url": "https://api.deepseek.com",
@@ -53,6 +59,12 @@ DEFAULT_CONFIG = {
         },
         "claude": {
             "type": "anthropic",
+            "base_url": "",
+            "api_key": "",
+            "model": "sonnet"
+        },
+        "cloudcode-desktop": {
+            "type": "local_cli",
             "base_url": "",
             "api_key": "",
             "model": "sonnet"
@@ -83,6 +95,7 @@ SUPERSEDED_AGENT_DEFAULT_MODELS = {
     "anthropic": {"claude-3-5-sonnet-20241022"},
     "hermes": {"gpt-4o-mini"},
     "claude": {"claude-3-5-sonnet-20241022"},
+    "cloudcode-desktop": {"claude-3-5-sonnet-20241022"},
     "codex": {"gpt-5.1", "gpt-5-codex"},
 }
 

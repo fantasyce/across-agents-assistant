@@ -40,9 +40,11 @@ Across Agents Assistant uses a similar source strategy, but with explicit
 source tracking:
 
 - most provider glyphs come from `@lobehub/icons-static-svg@1.73.0`
-- OpenCode uses `@lobehub/icons-static-svg@1.91.0` because that version adds
-  `opencode.svg`
+- OpenCode and CloudCode Desktop use `@lobehub/icons-static-svg@1.91.0`
+  because that version adds `opencode.svg` and `claudecode-color.svg`
 - OpenClaw and Hermes remain project-created assets
+- Agnes uses a project-created `Ag` compatibility tile because no reusable
+  open-source Agnes brand glyph was found in the reviewed icon package
 - Cursor uses a bundled neutral SVG tile first and can fall back to the
   installed local app icon at runtime
 - all bundled icon provenance is recorded in
@@ -63,12 +65,14 @@ Current bundled coverage:
 | Hermes | `agent.hermes` | Project-original |
 | OpenCode | `agent.opencode` | LobeHub `opencode.svg` |
 | Claude Code | `agent.claude` | LobeHub `claude-color.svg` |
+| CloudCode Desktop | `agent.cloudcode-desktop` | Runtime `/Applications/Claude.app` icon; bundled fallback is LobeHub `claudecode-color.svg` |
 | Codex | `agent.codex` | Runtime `/Applications/Codex.app` icon; bundled fallback is LobeHub `openai.svg` |
 | Cursor | `agent.cursor` | LobeHub `cursor.svg` |
 | OpenAI | `agent.openai` | LobeHub `openai.svg` |
 | Anthropic | `agent.anthropic` | LobeHub `anthropic.svg` |
 | DeepSeek | `agent.deepseek` | LobeHub `deepseek-color.svg` |
 | MiniMax | `agent.minimax` | LobeHub `minimax-color.svg` |
+| Agnes | `agent.agnes` | Project-original `Ag` compatibility tile |
 | Alibaba Bailian / Qwen | `agent.bailian` | LobeHub `qwen-color.svg` |
 | Moonshot / Kimi | `agent.moonshot` | LobeHub `kimi-color.svg` |
 | Zhipu GLM | `agent.zhipu` | LobeHub `zhipu-color.svg` |
@@ -92,21 +96,22 @@ Some local-agent brands are better handled at runtime rather than bundled:
 | Agent | Runtime app icon candidates |
 | --- | --- |
 | Codex | `/Applications/Codex.app`, `~/Applications/Codex.app` |
+| CloudCode Desktop | `/Applications/Claude.app`, `~/Applications/Claude.app`, `~/Applications/Claude Code URL Handler.app` |
 | Cursor | `/Applications/Cursor.app`, `~/Applications/Cursor.app` |
 
 The app only reads these icons from the user's machine with `NSWorkspace`.
-Codex is runtime-preferred so installed OpenAI-signed `Codex.app` provides the
-primary icon, while the bundled OpenAI tile is the fallback. Cursor remains
-bundled-first because many macOS `.icns` assets include app-icon shadows, edge
-glow, or outer transparency that create visible halos when rendered in the
-compact sidebar.
+Codex and CloudCode Desktop are runtime-preferred so installed vendor app icons
+provide the primary icon, while the bundled glyph tiles remain fallbacks. Cursor
+remains bundled-first because many macOS `.icns` assets include app-icon
+shadows, edge glow, or outer transparency that create visible halos when
+rendered in the compact sidebar.
 
 ## Loading Order
 
 The Swift icon loader uses this order:
 
 1. user override from Application Support
-2. runtime-preferred installed local app icon for Codex
+2. runtime-preferred installed local app icon for Codex or CloudCode Desktop
 3. bundled SVG/light SVG asset
 4. installed local app icon fallback for Cursor
 5. fallback initials/system icon
@@ -136,6 +141,13 @@ tile transform matches the other monochrome provider glyphs:
 translate(24 24) scale(2.16667)
 ```
 
+CloudCode Desktop uses the LobeHub `claudecode-color.svg` mark with a `24x24`
+view box and the same tile transform. The installed local Claude app icon is
+preferred at runtime when available; the bundled tile is the fallback.
+
+Agnes uses a project-original `Ag` compatibility tile. It is intentionally not
+an official Agnes logo or brand glyph.
+
 Google Gemini originally used the LobeHub `gemini-color.svg`, but macOS CoreSVG
 rendered the gradient SVG too small inside the tile. The current Gemini tile
 uses a stabilized sparkle glyph based on the Gemini visual form so the macOS
@@ -150,6 +162,7 @@ registry and macOS UI:
 - Anthropic
 - DeepSeek
 - MiniMax
+- Agnes
 - Alibaba Bailian / Qwen
 - Moonshot / Kimi
 - Zhipu GLM

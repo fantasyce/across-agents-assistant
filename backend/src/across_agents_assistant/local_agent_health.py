@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Optional
 
-from .agent_ids import LOCAL_AGENT_ID, normalize_agent_id
+from .agent_ids import CLOUDCODE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
 from .paths import data_file
 
 
@@ -54,6 +54,18 @@ LOCAL_AGENT_SPECS = {
         # Claude Code can inspect the current workspace or request filesystem
         # permissions as part of a prompt run, which is too invasive for a
         # lightweight installed-agent check.
+        "probe_args": None,
+        "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": ["sonnet", "opus", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    },
+    CLOUDCODE_DESKTOP_AGENT_ID: {
+        "display_name": "CloudCode Desktop",
+        "executable": CLOUDCODE_DESKTOP_AGENT_ID,
+        # Current desktop installs expose the task-capable Claude Code CLI as
+        # `claude`; keep the AAA agent ID separate while sharing that contract.
+        "executable_aliases": ["claude"],
+        "version_args": ["--version"],
         "probe_args": None,
         "candidate_dirs": ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
         "model_args": ["--model"],

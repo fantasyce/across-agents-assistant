@@ -212,6 +212,7 @@ struct StartupDiagnosticsReport: Decodable, Identifiable {
         let knownProviders = [
             ("deepseek", "DeepSeek"),
             ("minimax", "MiniMax"),
+            ("agnes", "Agnes"),
         ]
         return knownProviders
             .map { id, title in

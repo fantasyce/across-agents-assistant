@@ -32,6 +32,11 @@ private let installedAppIconCandidates: [String: [String]] = [
         "/Applications/Codex.app",
         "~/Applications/Codex.app",
     ],
+    "agent.cloudcode-desktop": [
+        "/Applications/Claude.app",
+        "~/Applications/Claude.app",
+        "~/Applications/Claude Code URL Handler.app",
+    ],
     "agent.cursor": [
         "/Applications/Cursor.app",
         "~/Applications/Cursor.app",
@@ -40,6 +45,7 @@ private let installedAppIconCandidates: [String: [String]] = [
 
 private let runtimePreferredInstalledAppIconNames: Set<String> = [
     "agent.codex",
+    "agent.cloudcode-desktop",
 ]
 
 private func themedIconBaseNames(_ name: String, colorScheme: ColorScheme?) -> [String] {

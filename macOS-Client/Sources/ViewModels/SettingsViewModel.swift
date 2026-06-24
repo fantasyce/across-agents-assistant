@@ -134,6 +134,7 @@ final class SettingsViewModel: ObservableObject {
         "anthropic": ["claude-opus-4-1", "claude-3-5-sonnet-20241022"],
         "deepseek": ["deepseek-chat", "deepseek-reasoner"],
         "minimax": ["MiniMax-M2.7"],
+        "agnes": ["agnes-1.5-flash", "agnes-1.5-pro"],
         "bailian": ["qwen-plus", "qwen-max", "qwen-turbo"],
         "moonshot": ["kimi-k2-0711-preview", "moonshot-v1-32k"],
         "zhipu": ["glm-4.5", "glm-4.5-air"],
@@ -145,6 +146,7 @@ final class SettingsViewModel: ObservableObject {
 
     private static let supersededLocalDefaultModels: [String: Set<String>] = [
         "claude": ["claude-3-5-sonnet-20241022"],
+        "cloudcode-desktop": ["claude-3-5-sonnet-20241022"],
         "codex": ["gpt-5.1", "gpt-5-codex"]
     ]
     @Published var startupDiagnosticsError: String? = nil
@@ -172,6 +174,7 @@ final class SettingsViewModel: ObservableObject {
         .localAgent,
         .hermes,
         .claude,
+        .cloudcodeDesktop,
         .codex,
         .opencode,
         .cursor
@@ -1037,6 +1040,7 @@ final class SettingsViewModel: ObservableObject {
         case "openclaw": return "OpenClaw"
         case "hermes": return "Hermes"
         case "claude": return "Claude Code"
+        case "cloudcode-desktop": return "CloudCode Desktop"
         case "codex": return "Codex"
         case "opencode": return "OpenCode"
         case "cursor": return "Cursor Agent"

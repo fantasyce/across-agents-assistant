@@ -33,7 +33,7 @@ func testStartupDiagnosticsDecodeAndSummaries() throws {
       },
       "keys": {
         "has_any_key": false,
-        "providers": {"deepseek": "not_configured", "minimax": "not_configured"},
+        "providers": {"deepseek": "not_configured", "minimax": "not_configured", "agnes": "not_configured"},
         "readiness_blockers": ["api_keys"]
       },
       "checks": [
@@ -51,7 +51,7 @@ func testStartupDiagnosticsDecodeAndSummaries() throws {
     assert(report.warningChecks.map(\.id) == ["provider_keys"], "Warning checks should be filtered")
     assert(report.failedChecks.isEmpty, "Failed checks should be filtered")
     assert(report.readyHeadline == "Attention · 8 passed · 1 warning", "Headline should stay compact")
-    assert(report.providerSummary == "DeepSeek: not configured · MiniMax: not configured", "Provider summary should be deterministic")
+    assert(report.providerSummary == "DeepSeek: not configured · MiniMax: not configured · Agnes: not configured", "Provider summary should be deterministic")
     assert(report.paths.evidenceDir.hasSuffix("/evidence"), "Evidence path should decode from snake case")
     assert(report.runtime.knownTasks == 3, "Runtime should decode from snake case")
     assert(report.checks[1].metadataString.contains("providers"), "Metadata should be printable for diagnostics details")
@@ -67,7 +67,7 @@ func testStartupDiagnosticsReadyHeadline() throws {
       "summary": {"status": "ready", "passed": 9, "warnings": 0, "failed": 0, "check_count": 9},
       "paths": {"app_home": "/tmp/a", "logs_dir": "/tmp/l", "run_dir": "/tmp/r", "tmp_dir": "/tmp/t", "evidence_dir": "/tmp/e", "socket_path": "/tmp/s", "database_path": "/tmp/db"},
       "runtime": {"pid": 1, "started_at": 1.0, "uptime_sec": 2.0, "known_tasks": 0, "persistence_initialized": true, "dispatcher_initialized": true},
-      "keys": {"has_any_key": true, "providers": {"deepseek": "configured", "minimax": "not_configured"}, "readiness_blockers": []},
+      "keys": {"has_any_key": true, "providers": {"deepseek": "configured", "minimax": "not_configured", "agnes": "not_configured"}, "readiness_blockers": []},
       "checks": []
     }
     """.data(using: .utf8)!
@@ -75,7 +75,7 @@ func testStartupDiagnosticsReadyHeadline() throws {
     let report = try JSONDecoder().decode(StartupDiagnosticsReport.self, from: json)
 
     assert(report.readyHeadline == "Ready · 9 passed", "Ready headline should omit empty warning and failed counts")
-    assert(report.providerSummary == "DeepSeek: configured · MiniMax: not configured", "Provider summary should include known providers")
+    assert(report.providerSummary == "DeepSeek: configured · MiniMax: not configured · Agnes: not configured", "Provider summary should include known providers")
 }
 
 @main

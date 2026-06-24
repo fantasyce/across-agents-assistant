@@ -24,6 +24,14 @@ def test_normalize_local_path_rejects_control_characters():
         _normalize_local_path("/tmp/project\x00other")
 
 
+def test_orchestrator_client_uses_provider_registry_api_key_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("AGNES_API_KEY", "agnes-test-key")
+
+    assert OrchestratorClient._registry_api_key("agnes") == "agnes-test-key"
+    assert OrchestratorClient._registry_api_key("unknown") == ""
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_client_preserves_existing_system_context(monkeypatch):
     class FakeManager:
