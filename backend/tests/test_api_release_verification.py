@@ -245,21 +245,15 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert "api_key" not in encoded.lower()
 
 
-def test_pre_release_gate_parse_error_redacts_parent_paths(tmp_path):
+def test_pre_release_gate_parse_error_uses_public_error_shape(tmp_path):
     evidence_path = tmp_path / "private" / "nested" / "broken-gate-evidence.json"
-    error = PermissionError(f"permission denied while scanning {evidence_path.parent}")
 
-    parse_error = release_verification._pre_release_gate_parse_error(evidence_path, error)
+    parse_error = release_verification._pre_release_gate_parse_error(evidence_path)
 
     assert parse_error["evidence_path"] == "broken-gate-evidence.json"
-    assert parse_error["error_type"] == "PermissionError"
+    assert parse_error["error_type"] == "ParseError"
+    assert parse_error["message"] == "Could not parse pre-release gate evidence; see local report for details."
     assert str(tmp_path) not in json.dumps(parse_error)
-    assert len(parse_error["message"]) <= release_verification.PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX
-
-    long_error = ValueError("x" * 400)
-    long_parse_error = release_verification._pre_release_gate_parse_error(evidence_path, long_error)
-    assert long_parse_error["message"].endswith("(truncated)")
-    assert len(long_parse_error["message"]) <= release_verification.PRE_RELEASE_GATE_PARSE_ERROR_MESSAGE_MAX
 
 
 def test_release_verification_reports_attention_when_release_e2e_is_missing(monkeypatch, tmp_path):
