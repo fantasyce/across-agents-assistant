@@ -1,4 +1,5 @@
 import subprocess
+import re
 from pathlib import Path
 
 
@@ -34,7 +35,7 @@ def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
     assert "scripts/run_live_e2e.sh" in workflow
     assert "ACROSS_AGENTS_ORCHESTRATOR_COMMAND" in workflow
     assert "ACROSS_AGENTS_LIVE_E2E_GATE_ID=\"github_live_e2e\"" in workflow
-    assert "actions/upload-artifact@v4" in workflow
+    assert re.search(r"uses:\s*actions/upload-artifact@v\d+\b", workflow)
     assert "live-e2e-gate-evidence" in workflow
 
 
