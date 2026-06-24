@@ -2798,7 +2798,7 @@ struct AgentIdentityBadge: View {
         [
             "openai", "anthropic", "deepseek", "minimax", "bailian", "moonshot",
             "zhipu", "volcengine", "google", "xai", "mistral", "groq", "cohere",
-            "openrouter", "together", "fireworks"
+            "openrouter", "together", "fireworks", "agnes"
         ].contains(resolvedAgentId)
     }
 
@@ -2812,8 +2812,10 @@ struct AgentIdentityBadge: View {
         case "openclaw": return "OpenClaw"
         case "hermes": return "Hermes"
         case "claude": return "Claude Code"
+        case "cloudcode-desktop": return "CloudCode Desktop"
         case "deepseek": return "DeepSeek"
         case "minimax": return "MiniMax"
+        case "agnes": return "Agnes"
         case "owner": return appPreferences.text("tasks.owner")
         case "": return appPreferences.text("tasks.unknownAgent")
         default: return resolvedAgentId

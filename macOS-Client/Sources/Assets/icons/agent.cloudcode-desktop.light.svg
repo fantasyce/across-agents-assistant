@@ -1,0 +1,14 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+    <defs>
+        <linearGradient id='agentTileBg' x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='0%' stop-color='#FFFFFF'/>
+            <stop offset='100%' stop-color='#F4F6FA'/>
+        </linearGradient>
+    </defs>
+    <rect x='2' y='2' width='96' height='96' rx='22' fill='url(#agentTileBg)' stroke='#E2E8F0' stroke-width='2'/>
+    <rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='#111827' stroke-opacity='0.06' stroke-width='1'/>
+    <g transform='translate(24 24) scale(2.16667) translate(0 0)'>
+        <title>Claude Code</title>
+        <path clip-rule='evenodd' d='M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z' fill='#D97757' fill-rule='evenodd'/>
+    </g>
+</svg>

@@ -6,9 +6,11 @@ import re
 from pathlib import Path
 from typing import Optional
 from ..agent_manager import AgentManager
-from ..agent_ids import LOCAL_AGENT_ID, normalize_agent_id
+from ..agent_ids import CLOUDCODE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
 from ..credentials.validation import is_usable_secret
 from ..paths import app_subdir
+
+CLAUDE_FAMILY_AGENT_IDS = {"claude", CLOUDCODE_DESKTOP_AGENT_ID}
 
 
 def default_local_agent_workspace() -> Path:
@@ -86,6 +88,18 @@ class UniversalAgentClient:
         return False
 
     @staticmethod
+    def _is_claude_family(agent_id: str) -> bool:
+        return agent_id in CLAUDE_FAMILY_AGENT_IDS
+
+    @staticmethod
+    def _agent_display_name(agent_id: str) -> str:
+        if agent_id == CLOUDCODE_DESKTOP_AGENT_ID:
+            return "CloudCode Desktop"
+        if agent_id == "claude":
+            return "Claude Code"
+        return agent_id
+
+    @staticmethod
     def _sanitize_agent_env(env: dict) -> None:
         for key in list(env.keys()):
             upper_key = key.upper()
@@ -141,7 +155,7 @@ class UniversalAgentClient:
         if not args_template:
             if agent_id == "hermes":
                 args_template = ["chat", "-q", "{message}", "-Q", "--yolo"]
-            elif agent_id == "claude":
+            elif self._is_claude_family(agent_id):
                 args_template = ["-p", "--permission-mode", "acceptEdits", "--output-format", "json", "{message}"]
             elif agent_id == "codex":
                 args_template = [
@@ -179,7 +193,7 @@ class UniversalAgentClient:
             elif agent_id == "hermes" and "chat" in args:
                 chat_index = args.index("chat")
                 args[chat_index + 1:chat_index + 1] = ["--model", configured_model]
-            elif agent_id == "claude":
+            elif self._is_claude_family(agent_id):
                 args[1:1] = ["--model", configured_model]
             elif agent_id == "opencode" and "run" in args:
                 run_index = args.index("run")
@@ -278,7 +292,7 @@ class UniversalAgentClient:
             # metadata into the user's deliverable tree.
             is_task_scenario = bool(project_dir and os.path.isdir(project_dir))
 
-            if agent_id == "claude":
+            if self._is_claude_family(agent_id):
                 if is_task_scenario:
                     process_cwd = project_dir
                 else:
@@ -296,7 +310,7 @@ class UniversalAgentClient:
 
             # For Claude Code, --resume resumes the previous CLI session.
             # Tracked via claude_sessions dict (app session -> Claude session UUID).
-            if agent_id == "claude" and session_id and session_id in self.claude_sessions:
+            if self._is_claude_family(agent_id) and session_id and session_id in self.claude_sessions:
                 args[1:1] = ["--resume", self.claude_sessions[session_id]]
 
             # For hermes, --resume resumes the previous hermes session
@@ -333,7 +347,7 @@ class UniversalAgentClient:
 
             # PinTaskSession: Detect and persist session_id from output immediately
             # This ensures session_id is saved even if the process crashes later
-            if session_id and agent_id == "claude":
+            if session_id and self._is_claude_family(agent_id):
                 claude_sid = self._extract_claude_session_id(stdout)
                 if claude_sid:
                     self.claude_sessions[session_id] = claude_sid
@@ -395,7 +409,7 @@ class UniversalAgentClient:
         if (not clean or not clean.strip()) and clean_err:
             clean = clean_err
 
-        if output_format == "json" or agent_id in [LOCAL_AGENT_ID, "claude"]:
+        if output_format == "json" or agent_id == LOCAL_AGENT_ID or self._is_claude_family(agent_id):
             start_idx = clean.find("{")
             if start_idx == -1:
                 import logging
@@ -438,7 +452,7 @@ class UniversalAgentClient:
                         reply_text = error_msg
 
                 # Claude Code JSON format: {"result": "text", "session_id": "..."}
-                elif agent_id == "claude":
+                elif self._is_claude_family(agent_id):
                     raw_result = data.get("result")
                     if isinstance(raw_result, str):
                         reply_text = raw_result
@@ -458,7 +472,10 @@ class UniversalAgentClient:
                             "tool_name": tool_name,
                             "risk_level": "medium",
                             "tool_args": denial.get("tool_input", {}),
-                            "description": denial.get("tool_input", {}).get("description", f"Claude Code 需要执行 {tool_name}")
+                            "description": denial.get("tool_input", {}).get(
+                                "description",
+                                f"{self._agent_display_name(agent_id)} 需要执行 {tool_name}",
+                            )
                         }
                         return LocalAgentReply(
                             text=reply_text, session_id=returned_session, elapsed_sec=elapsed,
@@ -509,7 +526,7 @@ class UniversalAgentClient:
         agent_id = normalize_agent_id(target_agent or self.manager.get_active_agent()) or LOCAL_AGENT_ID
 
         # Check if agent supports streaming
-        supports_streaming = agent_id in ["claude", "hermes"]
+        supports_streaming = self._is_claude_family(agent_id) or agent_id == "hermes"
 
         if not supports_streaming:
             # Fall back to blocking send for OpenClaw
@@ -551,7 +568,7 @@ class UniversalAgentClient:
         # Build args with streaming flags
         args = [executable_path]
 
-        if agent_id == "claude":
+        if self._is_claude_family(agent_id):
             if is_task_scenario:
                 stream_cwd = project_dir
             else:
@@ -563,6 +580,9 @@ class UniversalAgentClient:
             # --resume resumes the previous Claude Code session
             if session_id and session_id in self.claude_sessions:
                 args.extend(["--resume", self.claude_sessions[session_id]])
+            configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
+            if configured_model and configured_model.lower() != "auto":
+                args.extend(["--model", configured_model])
             args.extend(["-p", "--permission-mode", "acceptEdits", "--output-format", "stream-json", message])
         elif agent_id == "hermes":
             if session_id and session_id in self.hermes_sessions:
@@ -614,7 +634,7 @@ class UniversalAgentClient:
                     if data.get("type") == "system" and data.get("subtype") == "init":
                         sid = data.get("session_id")
                         if sid and session_id:
-                            if agent_id == "claude":
+                            if self._is_claude_family(agent_id):
                                 self.claude_sessions[session_id] = sid
                             elif agent_id == "hermes":
                                 self.hermes_sessions[session_id] = sid
@@ -627,7 +647,7 @@ class UniversalAgentClient:
             await process.wait()
             # PinTaskSession: Also try to extract session_id from complete stdout if not already tracked
             if session_id:
-                if agent_id == "claude" and session_id not in self.claude_sessions:
+                if self._is_claude_family(agent_id) and session_id not in self.claude_sessions:
                     # For streaming, session_id might be in the accumulated output
                     pass  # Streaming mode already tracks via init message above
                 elif agent_id == "hermes" and session_id not in self.hermes_sessions:

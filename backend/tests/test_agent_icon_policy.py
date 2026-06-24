@@ -15,6 +15,7 @@ def test_agent_icon_loader_orders_overrides_bundled_and_runtime_icons():
 
     assert override_index < runtime_preferred_index < bundled_index < fallback_installed_index
     assert '"agent.codex"' in source
+    assert '"agent.cloudcode-desktop"' in source
 
 
 def test_bundled_agent_icon_loader_prefers_png_before_svg():
@@ -26,7 +27,7 @@ def test_bundled_agent_icon_loader_prefers_png_before_svg():
 def test_local_agent_sidebar_icons_have_bundled_clean_tiles():
     icon_dir = ROOT / "macOS-Client/Sources/Assets/icons"
 
-    for asset_base in ["agent.cursor"]:
+    for asset_base in ["agent.cursor", "agent.cloudcode-desktop", "agent.agnes"]:
         assert (icon_dir / f"{asset_base}.svg").exists()
         assert (icon_dir / f"{asset_base}.light.svg").exists()
 
@@ -42,12 +43,21 @@ def test_icon_source_manifest_tracks_local_runtime_icon_policy():
     assert bundled["codex"]["source_package_version"] == "1.73.0"
     assert bundled["opencode"]["source_icon"] == "opencode.svg"
     assert bundled["opencode"]["source_package_version"] == "1.91.0"
-    assert set(manifest["runtime_app_icon_agents"]) == {"codex", "cursor"}
+    assert bundled["cloudcode-desktop"]["source_icon"] == "claudecode-color.svg"
+    assert bundled["cloudcode-desktop"]["source_package_version"] == "1.91.0"
+    assert bundled["agnes"]["source_type"] == "project-original"
+    assert "not an official Agnes logo" in bundled["agnes"]["visual_treatment"]
+    assert set(manifest["runtime_app_icon_agents"]) == {"codex", "cloudcode-desktop", "cursor"}
     assert manifest["runtime_app_icon_agents"]["codex"] == [
         "/Applications/Codex.app",
         "~/Applications/Codex.app",
     ]
-    assert manifest["runtime_preferred_app_icon_agents"] == ["codex"]
+    assert manifest["runtime_app_icon_agents"]["cloudcode-desktop"] == [
+        "/Applications/Claude.app",
+        "~/Applications/Claude.app",
+        "~/Applications/Claude Code URL Handler.app",
+    ]
+    assert manifest["runtime_preferred_app_icon_agents"] == ["codex", "cloudcode-desktop"]
     assert manifest["deferred_or_local_only"] == []
 
 

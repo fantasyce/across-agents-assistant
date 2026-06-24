@@ -193,6 +193,75 @@ def test_universal_agent_client_passes_configured_model_to_opencode(monkeypatch,
     assert observed["cwd"] == str(tmp_path)
 
 
+def test_universal_agent_client_runs_cloudcode_desktop_as_claude_family(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class CloudCodeDesktopManager:
+        def get_active_agent(self):
+            return "cloudcode-desktop"
+
+        def get_agent_config(self, agent_id):
+            return {"output_format": "raw"}
+
+    monkeypatch.setattr(
+        client_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"),
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "resolve_local_agent_executable",
+        lambda agent_id: "/usr/local/bin/claude",
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "get_configured_agent_model",
+        lambda agent_id: "sonnet",
+    )
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ('{"result":"cloudcode completed","session_id":"claude-session"}', "")
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        observed["cwd"] = kwargs.get("cwd")
+        observed["stdin"] = kwargs.get("stdin")
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+
+    client = UniversalAgentClient(CloudCodeDesktopManager())
+    reply = client.send(
+        "repair the delivery",
+        target_agent="cloudcode-desktop",
+        session_id="app-session",
+        project_dir=str(tmp_path),
+        timeout=23.0,
+    )
+
+    assert reply.text == "cloudcode completed"
+    assert observed["args"] == [
+        "/usr/local/bin/claude",
+        "--model",
+        "sonnet",
+        "-p",
+        "--permission-mode",
+        "acceptEdits",
+        "--output-format",
+        "json",
+        "repair the delivery",
+    ]
+    assert observed["cwd"] == str(tmp_path)
+    assert observed["stdin"] is client_mod.subprocess.DEVNULL
+    assert client.claude_sessions["app-session"] == "claude-session"
+
+
 def test_universal_agent_client_leaves_cursor_auto_model_to_cli(monkeypatch, tmp_path):
     observed = {}
 

@@ -7580,7 +7580,7 @@ async def _run_chat_tool_loop(
 async def chat_stream_endpoint(req: ChatRequest):
     """Streaming version of chat endpoint using Server-Sent Events.
 
-    Supports Claude Code and Hermes agents with streaming output.
+    Supports Claude-family local agents and Hermes agents with streaming output.
     Falls back to non-streaming for OpenClaw.
     """
     async def event_generator():

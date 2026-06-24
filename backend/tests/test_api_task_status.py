@@ -10,8 +10,14 @@ import tempfile
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
 
 from across_agents_assistant.api_server import _compute_task_status
+from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_definitions
 from across_agents_assistant.task_history.models import JobStatus, SubTask, Task, TaskStatus
 from across_agents_assistant.task_history.state import TaskState
+
+
+def _clear_provider_key_env(monkeypatch):
+    for provider in get_default_provider_definitions():
+        monkeypatch.delenv(provider.api_key_env, raising=False)
 
 
 def test_compute_task_status_pending_task_without_subtasks_returns_created():
@@ -339,8 +345,7 @@ def test_key_readiness_reports_missing(monkeypatch):
 
     monkeypatch.setattr(srv, "_credential_cache", {}, raising=False)
     monkeypatch.setattr(srv, "_get_credential_store", lambda: EmptyStore())
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    _clear_provider_key_env(monkeypatch)
 
     readiness = srv._build_key_readiness()
 
@@ -354,8 +359,7 @@ def test_key_readiness_reports_configured_from_cache(monkeypatch):
     import across_agents_assistant.api_server as srv
 
     monkeypatch.setattr(srv, "_credential_cache", {"minimax": "unit-valid-minimax-key"}, raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    _clear_provider_key_env(monkeypatch)
 
     readiness = srv._build_key_readiness()
 
@@ -373,8 +377,7 @@ def test_key_readiness_rejects_placeholder_cache(monkeypatch):
 
     monkeypatch.setattr(srv, "_credential_cache", {"minimax": "placeholder-secret"}, raising=False)
     monkeypatch.setattr(srv, "_get_credential_store", lambda: EmptyStore())
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    _clear_provider_key_env(monkeypatch)
 
     readiness = srv._build_key_readiness()
 

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.9.2 - 2026-06-24
+
+### Added
+
+- Added CloudCode Desktop as a local Agent integration, including backend
+  discovery, Swift model/catalog support, runtime icon fallback, and task
+  routing visibility.
+- Added Agnes as a cloud provider with API key configuration, provider/model
+  registry support, Swift settings integration, and an Across-owned
+  compatibility icon tile.
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.2`, Across Context
+  `v0.8.2`, and Across Autopilot `v0.2.2`.
+- Updated README guidance to describe Across Orchestrator, Across Context, and
+  Across Autopilot as generic host plugins for Codex, CloudCode Desktop/CLI,
+  Claude Desktop/CLI, AAA, and other CLI/MCP-capable hosts, not AAA-only
+  implementation modules.
+
 ## 0.9.1 - 2026-06-24
 
 ### Added

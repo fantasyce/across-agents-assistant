@@ -11,15 +11,21 @@
       "/Applications/Codex.app",
       "~/Applications/Codex.app"
     ],
+    "cloudcode-desktop": [
+      "/Applications/Claude.app",
+      "~/Applications/Claude.app",
+      "~/Applications/Claude Code URL Handler.app"
+    ],
     "cursor": [
       "/Applications/Cursor.app",
       "~/Applications/Cursor.app"
     ]
   },
   "runtime_preferred_app_icon_agents": [
-    "codex"
+    "codex",
+    "cloudcode-desktop"
   ],
-  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
+  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. CloudCode Desktop prefers the installed Claude.app or Claude Code URL Handler icon when present, then falls back to the bundled Claude Code glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
   "bundled_icons": [
     {
       "agent_id": "openclaw",
@@ -77,6 +83,23 @@
       "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
       "redistribution_status": "descriptive-provider-mark",
       "note": "Claude mark used for Claude Code local agent"
+    },
+    {
+      "agent_id": "cloudcode-desktop",
+      "display_name": "CloudCode Desktop",
+      "asset_paths": [
+        "agent.cloudcode-desktop.svg",
+        "agent.cloudcode-desktop.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "claudecode-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library Claude Code glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Bundled fallback for CloudCode Desktop; installed Claude.app or Claude Code URL Handler icon is read at runtime when present"
     },
     {
       "agent_id": "codex",
@@ -179,6 +202,19 @@
       "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
       "redistribution_status": "descriptive-provider-mark",
       "note": "MiniMax cloud provider"
+    },
+    {
+      "agent_id": "agnes",
+      "display_name": "Agnes",
+      "asset_paths": [
+        "agent.agnes.svg",
+        "agent.agnes.light.svg"
+      ],
+      "source_type": "project-original",
+      "license": "Across Agents Assistant project asset",
+      "visual_treatment": "Project-owned neutral Ag compatibility tile; not an official Agnes logo or brand mark",
+      "redistribution_status": "project-owned",
+      "note": "No Agnes brand glyph was found in the reviewed LobeHub Icons package; this is an original descriptive tile"
     },
     {
       "agent_id": "bailian",

@@ -18,7 +18,7 @@ if [[ -n "$forbidden_tracked" ]]; then
 fi
 
 echo "== sensitive text scan =="
-SENSITIVE_PATTERN='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|OPENAI_API_KEY=|ANTHROPIC_API_KEY=|DEEPSEEK_API_KEY=|MINIMAX_API_KEY=|/Users/fanhcy|BEGIN (RSA|OPENSSH|PRIVATE) KEY|Apple Developer|com\.apple\.developer\.team-identifier'
+SENSITIVE_PATTERN='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|(^|[^A-Za-z0-9])[A-Z0-9_]*API_KEY=|/Users/fanhcy|BEGIN (RSA|OPENSSH|PRIVATE) KEY|Apple Developer|com\.apple\.developer\.team-identifier'
 if command -v rg >/dev/null 2>&1; then
   sensitive_hits="$(
     rg -n --hidden \

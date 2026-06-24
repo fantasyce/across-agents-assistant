@@ -34,11 +34,21 @@ struct LLMConfig: Identifiable {
         availableModels: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"]
     )
 
+    static let agnes = LLMConfig(
+        id: "agnes",
+        name: "Agnes",
+        endpoint: "https://apihub.agnes-ai.com/v1",
+        model: "agnes-2.0-flash",
+        modelsEndpoint: "https://apihub.agnes-ai.com/v1/models",
+        availableModels: ["agnes-2.0-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-video-v2.0"]
+    )
+
     static let allDefaults: [LLMConfig] = [
         LLMConfig(id: "openai", name: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-5.5", modelsEndpoint: "https://api.openai.com/v1/models", availableModels: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]),
         LLMConfig(id: "anthropic", name: "Anthropic", endpoint: "https://api.anthropic.com/v1", model: "claude-opus-4-8", providerType: "anthropic", modelsEndpoint: "https://api.anthropic.com/v1/models", availableModels: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]),
         .deepSeek,
         .miniMax,
+        .agnes,
         LLMConfig(id: "bailian", name: "Alibaba Bailian / Qwen", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3.7-max", modelsEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/models", availableModels: ["qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen-plus-latest", "qwen-max-latest"]),
         LLMConfig(id: "moonshot", name: "Moonshot / Kimi", endpoint: "https://api.moonshot.ai/v1", model: "kimi-k2.6", modelsEndpoint: "https://api.moonshot.ai/v1/models", availableModels: ["kimi-k2.6", "kimi-k2-thinking-turbo", "moonshot-v1-128k"]),
         LLMConfig(id: "zhipu", name: "Zhipu GLM", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-5.1", modelsEndpoint: "https://open.bigmodel.cn/api/paas/v4/models", availableModels: ["glm-5.1", "glm-5"]),

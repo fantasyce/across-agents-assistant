@@ -78,6 +78,19 @@ DEFAULT_PROVIDER_DEFINITIONS: tuple[ProviderDefinition, ...] = (
         ),
     ),
     ProviderDefinition(
+        provider_id="agnes",
+        name="Agnes",
+        api_key_env="AGNES_API_KEY",
+        endpoint="https://apihub.agnes-ai.com/v1",
+        models_endpoint="https://apihub.agnes-ai.com/v1/models",
+        default_models=(
+            ModelInfo("agnes-2.0-flash", "Agnes 2.0 Flash", supports_function_calling=True, max_tokens=8192),
+            ModelInfo("agnes-image-2.1-flash", "Agnes Image 2.1 Flash", supports_vision=True, max_tokens=8192),
+            ModelInfo("agnes-image-2.0-flash", "Agnes Image 2.0 Flash", supports_vision=True, max_tokens=8192),
+            ModelInfo("agnes-video-v2.0", "Agnes Video v2.0", max_tokens=8192),
+        ),
+    ),
+    ProviderDefinition(
         provider_id="bailian",
         name="Alibaba Bailian / Qwen",
         api_key_env="BAILIAN_API_KEY",
