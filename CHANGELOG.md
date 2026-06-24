@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.9.3 - 2026-06-24
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.3`, Across Context
+  `v0.8.3`, and Across Autopilot `v0.2.3`.
+- Updated the GitHub Live E2E workflow to install Across Orchestrator
+  `v0.7.3` from the main-derived release tag.
+
+### Fixed
+
+- Includes the merged release verification hardening and CodeQL quality fixes
+  that keep public release gate responses bounded and non-sensitive.
+- Includes Dependabot updates for GitHub Actions, FastAPI, MCP, and pytest.
+
 ## 0.9.2 - 2026-06-24
 
 ### Added
