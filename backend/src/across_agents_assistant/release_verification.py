@@ -704,6 +704,335 @@ def _write_release_verification_report(report: Dict[str, Any], *, report_directo
     return report["report_files"]
 
 
+def _public_text(value: Any, *, default: str = "", limit: int = 500) -> str:
+    text = str(value if value is not None else default)
+    if "Traceback (most recent call last)" in text or "\n  File " in text:
+        return "See local report for details."
+    return re.sub(r"[\r\n\t]+", " ", text).strip()[:limit]
+
+
+def _public_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _public_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _public_bool(value: Any) -> bool:
+    return bool(value)
+
+
+def _public_str_list(value: Any, *, limit: int = 50) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [_public_text(item, limit=240) for item in value[:limit]]
+
+
+def _public_int_dict(value: Any) -> Dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {_public_text(key, limit=120): _public_int(item) for key, item in value.items()}
+
+
+def _public_startup_report(startup: Any, *, app_version: str, generated_at: str) -> Dict[str, Any]:
+    startup = startup if isinstance(startup, dict) else {}
+    summary = startup.get("summary") if isinstance(startup.get("summary"), dict) else {}
+    paths = startup.get("paths") if isinstance(startup.get("paths"), dict) else {}
+    runtime = startup.get("runtime") if isinstance(startup.get("runtime"), dict) else {}
+    keys = startup.get("keys") if isinstance(startup.get("keys"), dict) else {}
+    providers = keys.get("providers") if isinstance(keys.get("providers"), dict) else {}
+
+    checks = []
+    for check in startup.get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        status = _public_text(check.get("status") or "info", limit=80)
+        if status == "passed":
+            detail = "Check passed."
+        elif status in {"failed", "blocked"}:
+            detail = "Check failed; see startup diagnostics for details."
+        elif status in {"warning", "attention"}:
+            detail = "Check requires attention; see startup diagnostics for details."
+        else:
+            detail = "Check status recorded."
+        checks.append(
+            {
+                "id": _public_text(check.get("id") or "startup_check", limit=120),
+                "title": _public_text(check.get("title") or "Startup check", limit=160),
+                "status": status,
+                "detail": detail,
+                "remediation": None,
+                "metadata": {},
+            }
+        )
+
+    readiness_blockers = []
+    if keys.get("readiness_blockers"):
+        readiness_blockers = ["See startup diagnostics for provider readiness details."]
+
+    return {
+        "schema_version": _public_text(startup.get("schema_version") or "1.0", limit=40),
+        "app_version": _public_text(startup.get("app_version") or app_version, limit=80),
+        "generated_at": _public_text(startup.get("generated_at") or generated_at, limit=80),
+        "status": _public_text(startup.get("status") or summary.get("status") or "attention", limit=80),
+        "summary": {
+            "status": _public_text(summary.get("status") or startup.get("status") or "attention", limit=80),
+            "passed": _public_int(summary.get("passed")),
+            "warnings": _public_int(summary.get("warnings")),
+            "failed": _public_int(summary.get("failed")),
+            "check_count": _public_int(summary.get("check_count"), len(checks)),
+        },
+        "paths": {
+            "app_home": _public_text(paths.get("app_home"), limit=500),
+            "logs_dir": _public_text(paths.get("logs_dir"), limit=500),
+            "run_dir": _public_text(paths.get("run_dir"), limit=500),
+            "tmp_dir": _public_text(paths.get("tmp_dir"), limit=500),
+            "evidence_dir": _public_text(paths.get("evidence_dir"), limit=500),
+            "socket_path": _public_text(paths.get("socket_path"), limit=500),
+            "database_path": _public_text(paths.get("database_path"), limit=500),
+        },
+        "runtime": {
+            "pid": _public_int(runtime.get("pid")),
+            "started_at": _public_float(runtime.get("started_at")) or 0.0,
+            "uptime_sec": _public_float(runtime.get("uptime_sec")) or 0.0,
+            "known_tasks": _public_int(runtime.get("known_tasks")),
+            "persistence_initialized": _public_bool(runtime.get("persistence_initialized")),
+        },
+        "keys": {
+            "has_any_key": _public_bool(keys.get("has_any_key")),
+            "providers": {
+                _public_text(key, limit=80): _public_text(value, limit=80)
+                for key, value in providers.items()
+            },
+            "readiness_blockers": readiness_blockers,
+        },
+        "checks": checks,
+    }
+
+
+def _public_release_evaluation(summary: Any) -> Dict[str, Any]:
+    summary = summary if isinstance(summary, dict) else {}
+    return {
+        "release_readiness": _public_text(summary.get("release_readiness") or "unknown", limit=80),
+        "generated_at": _public_float(summary.get("generated_at")),
+        "evaluated_task_count": _public_int(summary.get("evaluated_task_count")),
+        "terminal_task_count": _public_int(summary.get("terminal_task_count")),
+        "passed_task_count": _public_int(summary.get("passed_task_count")),
+        "blocked_task_count": _public_int(summary.get("blocked_task_count")),
+        "manual_task_count": _public_int(summary.get("manual_task_count")),
+        "skipped_task_count": _public_int(summary.get("skipped_task_count")),
+        "pass_rate": _public_float(summary.get("pass_rate")) or 0.0,
+        "average_final_quality_score": (
+            None
+            if summary.get("average_final_quality_score") is None
+            else _public_int(summary.get("average_final_quality_score"))
+        ),
+        "total_remediation_count": _public_int(summary.get("total_remediation_count")),
+        "recommendation": None,
+        "top_risks": [],
+        "recent_evaluations": [],
+        "quality_trend": None,
+        "agent_mix_summary": None,
+        "probe_coverage": None,
+        "readiness_checks": [],
+        "gate_breakdown": _public_int_dict(summary.get("gate_breakdown")),
+        "stack_coverage": _public_int_dict(summary.get("stack_coverage")),
+        "agent_coverage": _public_int_dict(summary.get("agent_coverage")),
+    }
+
+
+def _public_benchmark(benchmark: Any) -> Dict[str, Any]:
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    summary = benchmark.get("summary") if isinstance(benchmark.get("summary"), dict) else {}
+    scenarios = []
+    for scenario in benchmark.get("scenarios") or []:
+        if not isinstance(scenario, dict):
+            continue
+        checks = scenario.get("checks") if isinstance(scenario.get("checks"), dict) else {}
+        failure_count = len(scenario.get("failures") or [])
+        scenarios.append(
+            {
+                "task_id": _public_text(scenario.get("task_id"), limit=160),
+                "status": _public_text(scenario.get("status") or "unknown", limit=80),
+                "quality_gate": _public_text(scenario.get("quality_gate"), limit=80),
+                "final_status": _public_text(scenario.get("final_status"), limit=80),
+                "quality_score": _public_int(scenario.get("quality_score")),
+                "remediation_attempts": _public_int(scenario.get("remediation_attempts")),
+                "produced_files": _public_str_list(scenario.get("produced_files")),
+                "checks": {_public_text(key, limit=120): bool(value) for key, value in checks.items()},
+                "failures": (
+                    ["Release benchmark recorded failed checks; see local report for details."]
+                    if failure_count
+                    else []
+                ),
+            }
+        )
+        break
+
+    return {
+        "benchmark_id": _public_text(benchmark.get("benchmark_id"), limit=180),
+        "benchmark_version": _public_text(benchmark.get("benchmark_version"), limit=80),
+        "app_version": _public_text(benchmark.get("app_version"), limit=80),
+        "status": _public_text(benchmark.get("status") or "unknown", limit=80),
+        "summary": {
+            "scenario_count": _public_int(summary.get("scenario_count")),
+            "passed_scenarios": _public_int(summary.get("passed_scenarios")),
+            "failed_scenarios": _public_int(summary.get("failed_scenarios")),
+            "min_quality_score": _public_int(summary.get("min_quality_score")),
+            "max_remediation_attempts": _public_int(summary.get("max_remediation_attempts")),
+        },
+        "scenarios": scenarios,
+    }
+
+
+def _public_latest_release_e2e(latest: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(latest, dict):
+        return None
+    summary = latest.get("summary") if isinstance(latest.get("summary"), dict) else {}
+    return {
+        "task_id": _public_text(latest.get("task_id"), limit=160),
+        "description": _public_text(latest.get("description"), limit=500),
+        "task_status": _public_text(latest.get("task_status") or "unknown", limit=80),
+        "project_dir": _public_text(latest.get("project_dir"), limit=500),
+        "updated_at": _public_float(latest.get("updated_at")),
+        "benchmark": _public_benchmark(latest.get("benchmark")),
+        "summary": {
+            "status": _public_text(summary.get("status") or "unknown", limit=80),
+            "quality_score": (
+                None if summary.get("quality_score") is None else _public_int(summary.get("quality_score"))
+            ),
+            "remediation_attempts": _public_int(summary.get("remediation_attempts")),
+            "failed_scenarios": _public_int(summary.get("failed_scenarios")),
+        },
+    }
+
+
+def _public_gate_evidence(gate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    evidence = gate.get("evidence")
+    if not isinstance(evidence, dict):
+        return None
+    status = _public_text(evidence.get("status") or "unknown", limit=80)
+    label = _public_text(gate.get("label") or gate.get("id") or "Pre-release gate", limit=160)
+    return {
+        "schema_version": _public_text(evidence.get("schema_version") or "1.0", limit=40),
+        "gate_id": _public_text(evidence.get("gate_id") or gate.get("id"), limit=120),
+        "status": status,
+        "source": _public_text(evidence.get("source") or gate.get("source"), limit=120),
+        "summary": f"{label} evidence status: {status}.",
+        "generated_at": _public_text(evidence.get("generated_at"), limit=120) or None,
+        "started_at": _public_text(evidence.get("started_at"), limit=120) or None,
+        "completed_at": _public_text(evidence.get("completed_at"), limit=120) or None,
+        "duration_seconds": (
+            None if evidence.get("duration_seconds") is None else _public_int(evidence.get("duration_seconds"))
+        ),
+        "tier": _public_text(evidence.get("tier"), limit=80) or None,
+        "run_url": _public_text(evidence.get("run_url"), limit=500) or None,
+        "workflow_run_url": _public_text(evidence.get("workflow_run_url"), limit=500) or None,
+        "commit_sha": _public_text(evidence.get("commit_sha"), limit=120) or None,
+        "evidence_path": _public_text(evidence.get("evidence_path"), limit=240) or None,
+    }
+
+
+def _public_pre_release_gates(gates: Any) -> List[Dict[str, Any]]:
+    public_gates: List[Dict[str, Any]] = []
+    for gate in gates or []:
+        if not isinstance(gate, dict):
+            continue
+        status = _public_text(gate.get("status") or "unknown", limit=80)
+        detail = "Pre-release gate is configured."
+        if status == "manual_required":
+            detail = "Manual evidence is required before release approval."
+        elif status == "missing":
+            detail = "Required gate files are missing."
+        elif status in {"failed", "blocked"}:
+            detail = "Gate evidence did not pass; see local report for details."
+        public_gate = {
+            "id": _public_text(gate.get("id"), limit=120),
+            "label": _public_text(gate.get("label") or gate.get("id"), limit=160),
+            "status": status,
+            "source": _public_text(gate.get("source") or "unknown", limit=120),
+            "command": _public_text(gate.get("command"), limit=500),
+            "detail": detail,
+            "paths": _public_str_list(gate.get("paths")),
+            "required": _public_bool(gate.get("required")),
+            "readiness_impact": _public_text(gate.get("readiness_impact") or "required", limit=80),
+        }
+        evidence = _public_gate_evidence(gate)
+        if evidence:
+            public_gate["evidence"] = evidence
+        public_gates.append(public_gate)
+    return public_gates
+
+
+def _public_parse_errors(parse_errors: Any) -> List[Dict[str, str]]:
+    public_errors: List[Dict[str, str]] = []
+    for error in parse_errors or []:
+        if not isinstance(error, dict):
+            continue
+        public_errors.append(
+            {
+                "evidence_path": _public_text(error.get("evidence_path"), limit=240),
+                "error_type": _public_text(error.get("error_type") or "Error", limit=120),
+                "message": "Could not parse pre-release gate evidence; see local report for details.",
+            }
+        )
+    return public_errors
+
+
+def _public_report_files(report_files: Any) -> Dict[str, str]:
+    report_files = report_files if isinstance(report_files, dict) else {}
+    return {
+        "directory": _public_text(report_files.get("directory"), limit=500),
+        "json_name": _public_text(report_files.get("json_name"), limit=240),
+        "json_path": _public_text(report_files.get("json_path"), limit=500),
+        "markdown_name": _public_text(report_files.get("markdown_name"), limit=240),
+        "markdown_path": _public_text(report_files.get("markdown_path"), limit=500),
+    }
+
+
+def _public_audit(audit: Any) -> Dict[str, Any]:
+    audit = audit if isinstance(audit, dict) else {}
+    return {
+        "read_only": _public_bool(audit.get("read_only")),
+        "repair_or_resume_triggered": _public_bool(audit.get("repair_or_resume_triggered")),
+        "secrets_redacted": _public_bool(audit.get("secrets_redacted")),
+        "expected_files": _public_str_list(audit.get("expected_files")),
+        "required_probes": _public_str_list(audit.get("required_probes")),
+    }
+
+
+def _build_public_release_verification_response(report: Dict[str, Any]) -> Dict[str, Any]:
+    app_version = _public_text(report.get("app_version"), limit=80)
+    generated_at = _public_text(report.get("generated_at"), limit=80)
+    return {
+        "schema_version": _public_text(report.get("schema_version") or "1.0", limit=40),
+        "app_version": app_version,
+        "generated_at": generated_at,
+        "status": _public_text(report.get("status") or "attention", limit=80),
+        "startup": _public_startup_report(
+            report.get("startup"),
+            app_version=app_version,
+            generated_at=generated_at,
+        ),
+        "release_evaluation": _public_release_evaluation(report.get("release_evaluation")),
+        "latest_release_e2e": _public_latest_release_e2e(report.get("latest_release_e2e")),
+        "pre_release_gates": _public_pre_release_gates(report.get("pre_release_gates")),
+        "pre_release_gate_summary": _public_int_dict(report.get("pre_release_gate_summary")),
+        "pre_release_gate_missing_paths": _public_str_list(report.get("pre_release_gate_missing_paths")),
+        "pre_release_gate_parse_errors": _public_parse_errors(report.get("pre_release_gate_parse_errors")),
+        "remediations": _public_str_list(report.get("remediations")),
+        "report_files": _public_report_files(report.get("report_files")),
+        "audit": _public_audit(report.get("audit")),
+    }
+
+
 def _build_release_verification_report(
     *,
     write_report: bool = True,

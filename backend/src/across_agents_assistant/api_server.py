@@ -109,11 +109,6 @@ def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     return value
 
 
-def _json_safe_public_payload(value: Any) -> Any:
-    sanitized = _sanitize_public_payload(value)
-    return json.loads(json.dumps(sanitized, ensure_ascii=False))
-
-
 def _should_fetch_external_task_evidence(task_payload: Dict[str, Any]) -> bool:
     return str((task_payload or {}).get("status") or "").strip().lower() in _EXTERNAL_TASK_EVIDENCE_STATUSES
 
@@ -280,6 +275,7 @@ from .release_verification import (
     RELEASE_VERIFICATION_REQUIRED_PROBES,
     _collect_release_task_rows,
     _build_release_verification_report,
+    _build_public_release_verification_response,
     _redact_sensitive_evidence,
 )
 from .task_api_models import (
@@ -9150,7 +9146,7 @@ async def run_release_verification():
             required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
             write_report_directory=app_subdir("release-reports"),
         )
-        return _json_safe_public_payload(report)
+        return _build_public_release_verification_response(report)
     except Exception as e:
         raise _safe_http_500("Run release verification")
 
