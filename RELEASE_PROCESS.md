@@ -15,6 +15,25 @@ For the repository boundaries this process operates within, see
 
 ## Feature PR Gate
 
+## Cross-Project Protocol Release Order
+
+When a release changes plugin protocols, managed plugin pins, Agent Loop
+contracts, memory candidate contracts, or LoopSpec supervision behavior, publish
+the provider products before the AAA host that consumes them:
+
+1. **Across Orchestrator** first for task runtime, Agent Loop, protocol
+   gateway, evidence, and quality-gate changes.
+2. **Across Context** second for memory policy, context packs, MCP memory
+   tools, and memory-candidate contract changes.
+3. **Across Autopilot** third for LoopSpec supervision, host-session recovery,
+   candidate evidence, and autonomous iteration changes.
+4. **Across Agents Assistant** last for host UI/API, managed plugin pins,
+   local-agent catalog, cloud-provider catalog, and packaged-app behavior.
+
+Each producer release must have a GitHub Release tag and passing CI before AAA
+updates its managed install source. Record the exact producer tags, CI checks,
+and release URLs in the AAA release PR and release notes.
+
 For each feature PR:
 
 1. Confirm the PR is not draft.
