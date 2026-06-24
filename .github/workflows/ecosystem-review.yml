@@ -45,7 +45,7 @@ jobs:
             --output ecosystem-review.md
 
       - name: Upload ecosystem review
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ecosystem-review
           path: ecosystem-review.md
