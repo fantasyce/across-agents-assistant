@@ -128,7 +128,10 @@ def test_release_verification_endpoint_sanitizes_report_payload(monkeypatch):
     response = TestClient(app).post("/api/release/verification")
 
     assert response.status_code == 200
-    assert_no_stack_trace(response)
+    encoded = _encoded(response)
+    assert "Traceback (most recent call last)" not in encoded
+    assert 'File "/Users/example/private/app.py"' not in encoded
+    assert "private internal path" not in encoded
 
 
 def test_external_task_stream_sanitizes_runtime_exception(monkeypatch):
