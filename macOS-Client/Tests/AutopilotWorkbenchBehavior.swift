@@ -1,0 +1,142 @@
+import Foundation
+
+func assert(_ condition: @autoclosure () -> Bool, _ message: String) {
+    if !condition() {
+        fatalError(message)
+    }
+}
+
+func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
+    let json = """
+    {
+      "schema_version": "across-aaa-autopilot-workbench/1.0",
+      "status": "attention",
+      "generated_at": "2026-06-23T00:00:00Z",
+      "summary": {
+        "run_count": 2,
+        "completed_run_count": 1,
+        "failed_run_count": 1,
+        "pending_trigger_count": 1,
+        "registered_trigger_count": 2,
+        "active_trigger_count": 1,
+        "scheduler_running": false,
+        "self_iteration_status": "active",
+        "capability_ready_count": 42,
+        "registry_health_status": "passed",
+        "pending_memory_count": 1,
+        "promotion_ready_count": 1,
+        "autopilot_available": true,
+        "ecosystem_route_count": 7,
+        "ecosystem_ready_route_count": 5,
+        "external_agent_count": 1,
+        "healthy_external_agent_count": 1,
+        "agent_plugin_count": 1,
+        "ready_agent_plugin_count": 1,
+        "agent_plugin_context_pack_count": 1
+      },
+      "status_reasons": ["registered triggers exist but scheduler is stopped"],
+      "sections": {
+        "promotion": {
+          "id": "promotion",
+          "title": "Promotion Review",
+          "status": "attention",
+          "summary": {"ready_count": 1, "human_approval_required": true},
+          "items": [{"run_id": "run-ui", "status": "completed", "promotion_ready": true}],
+          "endpoint": "/api/autopilot/runs/{run_id}/promotion-review"
+        },
+        "memory": {
+          "id": "memory",
+          "title": "Context Memory Review",
+          "status": "attention",
+          "summary": {"pending_count": 1},
+          "items": [{"id": "mem-ui", "status": "pending"}],
+          "endpoint": "/api/memory/memories?status=pending"
+        },
+        "protocol_gateway": {
+          "id": "protocol_gateway",
+          "title": "Protocol Gateway",
+          "status": "passed",
+          "summary": {"adapter_count": 6, "ready_adapter_count": 6},
+          "items": [{"id": "agent_cards", "status": "passed"}],
+          "endpoint": "/api/ecosystem/protocol-gateway"
+        }
+      },
+      "actions": [
+        {
+          "id": "open_promotion_review",
+          "priority": "high",
+          "title": "Review promotion candidate",
+          "reason": "Promotion-ready output must remain human-gated.",
+          "endpoint": "/api/autopilot/runs/{run_id}/promotion-review"
+        }
+      ],
+      "endpoints": {
+        "snapshot": "/api/autopilot/workbench",
+        "refresh": "/api/autopilot/workbench/refresh"
+      }
+    }
+    """.data(using: .utf8)!
+
+    let snapshot = try JSONDecoder().decode(AutopilotWorkbenchSnapshot.self, from: json)
+
+    assert(snapshot.schemaVersion == "across-aaa-autopilot-workbench/1.0", "Workbench schema should decode")
+    assert(snapshot.status == "attention", "Workbench status should decode")
+    assert(snapshot.needsAttention, "Pending memories, failures, stopped scheduler, and promotion review should require attention")
+    assert(snapshot.summary.runCount == 2, "Run count should decode from snake_case")
+    assert(snapshot.summary.schedulerRunning == false, "Scheduler state should decode")
+    assert(snapshot.summary.ecosystemRouteCount == 7, "Ecosystem route count should decode")
+    assert(snapshot.summary.ecosystemReadyRouteCount == 5, "Ecosystem ready route count should decode")
+    assert(snapshot.summary.agentPluginCount == 1, "Agent plugin count should decode")
+    assert(snapshot.summary.readyAgentPluginCount == 1, "Ready agent plugin count should decode")
+    assert(snapshot.sections["promotion"]?.items.first?.objectValue?["run_id"]?.description == "run-ui", "Section item objects should decode")
+    assert(snapshot.sections["protocol_gateway"]?.endpoint == "/api/ecosystem/protocol-gateway", "Protocol gateway section should decode")
+    assert(snapshot.actions.first?.id == "open_promotion_review", "Actions should decode")
+    assert(snapshot.endpoints["refresh"] == "/api/autopilot/workbench/refresh", "Endpoint map should decode")
+}
+
+func testAutopilotWorkbenchSnapshotDecodesHealthyContract() throws {
+    let json = """
+    {
+      "schema_version": "across-aaa-autopilot-workbench/1.0",
+      "status": "passed",
+      "summary": {
+        "run_count": 1,
+        "completed_run_count": 1,
+        "failed_run_count": 0,
+        "pending_trigger_count": 0,
+        "registered_trigger_count": 1,
+        "active_trigger_count": 1,
+        "scheduler_running": true,
+        "self_iteration_status": "active",
+        "capability_ready_count": 42,
+        "registry_health_status": "passed",
+        "pending_memory_count": 0,
+        "promotion_ready_count": 0,
+        "autopilot_available": true,
+        "ecosystem_route_count": 7,
+        "ecosystem_ready_route_count": 7,
+        "agent_plugin_count": 1,
+        "ready_agent_plugin_count": 1
+      },
+      "status_reasons": [],
+      "sections": {},
+      "actions": [],
+      "endpoints": {}
+    }
+    """.data(using: .utf8)!
+
+    let snapshot = try JSONDecoder().decode(AutopilotWorkbenchSnapshot.self, from: json)
+
+    assert(snapshot.status == "passed", "Healthy Workbench should decode passed status")
+    assert(snapshot.needsAttention == false, "Healthy Workbench should not need attention")
+    assert(snapshot.summary.selfIterationStatus == "active", "Self-iteration status should decode")
+}
+
+@main
+struct AutopilotWorkbenchBehavior {
+    static func main() throws {
+        try testAutopilotWorkbenchSnapshotDecodesAttentionContract()
+        try testAutopilotWorkbenchSnapshotDecodesHealthyContract()
+        print("AutopilotWorkbenchBehavior passed")
+    }
+}

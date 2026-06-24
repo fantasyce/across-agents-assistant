@@ -55,6 +55,26 @@ func testLocalizedStringsFallbackToEnglish() {
         "Diagnostics tab should be localized in Simplified Chinese"
     )
     assert(
+        AppPreferences.localizedString("settings.workbench", localeIdentifier: "en") == "Workbench",
+        "Workbench tab should be localized in English"
+    )
+    assert(
+        AppPreferences.localizedString("toolbar.workbench", localeIdentifier: "zh-Hans") == "Autopilot 工作台",
+        "Workbench toolbar help should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("workbench.actions", localeIdentifier: "zh-Hans") == "下一步动作",
+        "Workbench action section should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("workbench.ecosystem", localeIdentifier: "zh-Hans") == "生态路线",
+        "Workbench ecosystem summary should be localized in Simplified Chinese"
+    )
+    assert(
+        AppPreferences.localizedString("workbench.agentPlugins", localeIdentifier: "en") == "Agent Plugins",
+        "Workbench agent plugin summary should be localized in English"
+    )
+    assert(
         AppPreferences.localizedString("diagnostics.status.warning", localeIdentifier: "en") == "Warning",
         "Diagnostics status labels should be localized in English"
     )

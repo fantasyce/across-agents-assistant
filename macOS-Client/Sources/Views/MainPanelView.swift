@@ -642,6 +642,10 @@ struct MainPanelView: View {
                     activeSettingsHubTab = nil
                     showTaskOrchestration = true
                 }
+                InteractiveIconButton(systemName: "point.3.connected.trianglepath.dotted", help: appPreferences.text("toolbar.workbench"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
+                    showTaskOrchestration = false
+                    activeSettingsHubTab = .workbench
+                }
                 InteractiveIconButton(systemName: "cpu", help: appPreferences.text("toolbar.models"), iconSize: MainPanelIconMetrics.glyphSize, foregroundColor: .gray, frameSize: MainPanelIconMetrics.buttonSize) {
                     showTaskOrchestration = false
                     activeSettingsHubTab = .models

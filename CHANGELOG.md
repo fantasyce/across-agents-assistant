@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-06-24
+
+### Added
+
+- Added the Autopilot Workbench and generic external agent plugin gateway
+  surfaces so AAA can validate host-neutral plugin contracts outside the
+  original in-app task orchestration flow.
+- Added backend and Swift coverage for the Autopilot Workbench, ecosystem
+  roadmap reporting, and cross-process agent plugin runtime E2E paths.
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.1`, Across Context
+  `v0.8.1`, and Across Autopilot `v0.2.1`.
+- Hardened managed plugin runtime boundaries so Codex, Claude Desktop, Claude
+  CLI, and AAA load wrappers through `~/.across/bin` instead of developer
+  checkout paths.
+
+### Fixed
+
+- Preserved Orchestrator-owned loop recovery by letting Autopilot host-session
+  supervision re-enter incomplete host sessions without human repair guidance.
+- Extended release/open-source checks with path-boundary assertions for managed
+  plugin install sources and runtime wrappers.
+
 ## 0.9.0 - 2026-06-23
 
 ### Added
