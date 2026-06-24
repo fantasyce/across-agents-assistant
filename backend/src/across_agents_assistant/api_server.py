@@ -275,7 +275,6 @@ from .release_verification import (
     RELEASE_VERIFICATION_REQUIRED_PROBES,
     _collect_release_task_rows,
     _build_release_verification_report,
-    _build_public_release_verification_response,
     _redact_sensitive_evidence,
 )
 from .task_api_models import (
@@ -9146,7 +9145,7 @@ async def run_release_verification():
             required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
             write_report_directory=app_subdir("release-reports"),
         )
-        return _build_public_release_verification_response(report)
+        return report
     except Exception as e:
         raise _safe_http_500("Run release verification")
 

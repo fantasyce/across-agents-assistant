@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
-import copy
 import json
 import re
 import time
@@ -979,7 +978,7 @@ def _public_parse_errors(parse_errors: Any) -> List[Dict[str, str]]:
         public_errors.append(
             {
                 "evidence_path": _public_text(error.get("evidence_path"), limit=240),
-                "error_type": _public_text(error.get("error_type") or "Error", limit=120),
+                "error_type": "ParseError",
                 "message": "Could not parse pre-release gate evidence; see local report for details.",
             }
         )
@@ -1005,31 +1004,6 @@ def _public_audit(audit: Any) -> Dict[str, Any]:
         "secrets_redacted": _public_bool(audit.get("secrets_redacted")),
         "expected_files": _public_str_list(audit.get("expected_files")),
         "required_probes": _public_str_list(audit.get("required_probes")),
-    }
-
-
-def _build_public_release_verification_response(report: Dict[str, Any]) -> Dict[str, Any]:
-    app_version = _public_text(report.get("app_version"), limit=80)
-    generated_at = _public_text(report.get("generated_at"), limit=80)
-    return {
-        "schema_version": _public_text(report.get("schema_version") or "1.0", limit=40),
-        "app_version": app_version,
-        "generated_at": generated_at,
-        "status": _public_text(report.get("status") or "attention", limit=80),
-        "startup": _public_startup_report(
-            report.get("startup"),
-            app_version=app_version,
-            generated_at=generated_at,
-        ),
-        "release_evaluation": _public_release_evaluation(report.get("release_evaluation")),
-        "latest_release_e2e": _public_latest_release_e2e(report.get("latest_release_e2e")),
-        "pre_release_gates": _public_pre_release_gates(report.get("pre_release_gates")),
-        "pre_release_gate_summary": _public_int_dict(report.get("pre_release_gate_summary")),
-        "pre_release_gate_missing_paths": _public_str_list(report.get("pre_release_gate_missing_paths")),
-        "pre_release_gate_parse_errors": _public_parse_errors(report.get("pre_release_gate_parse_errors")),
-        "remediations": _public_str_list(report.get("remediations")),
-        "report_files": _public_report_files(report.get("report_files")),
-        "audit": _public_audit(report.get("audit")),
     }
 
 
@@ -1097,29 +1071,33 @@ def _build_release_verification_report(
         pre_release_summary,
     )
 
-    report: Dict[str, Any] = {
+    public_report: Dict[str, Any] = {
         "schema_version": "1.0",
         "app_version": app_version or __version__,
         "generated_at": generated_at,
         "status": status,
-        "startup": startup,
-        "release_evaluation": copy.deepcopy(release_evaluation),
-        "latest_release_e2e": latest_release_e2e,
-        "pre_release_gates": pre_release_gates,
-        "pre_release_gate_summary": pre_release_summary,
-        "pre_release_gate_missing_paths": pre_release_missing_paths,
-        "pre_release_gate_parse_errors": pre_release_parse_errors,
-        "remediations": remediations,
+        "startup": _public_startup_report(
+            startup,
+            app_version=app_version or __version__,
+            generated_at=generated_at,
+        ),
+        "release_evaluation": _public_release_evaluation(release_evaluation),
+        "latest_release_e2e": _public_latest_release_e2e(latest_release_e2e),
+        "pre_release_gates": _public_pre_release_gates(pre_release_gates),
+        "pre_release_gate_summary": _public_int_dict(pre_release_summary),
+        "pre_release_gate_missing_paths": _public_str_list(pre_release_missing_paths),
+        "pre_release_gate_parse_errors": _public_parse_errors(pre_release_parse_errors),
+        "remediations": _public_str_list(remediations),
         "report_files": {},
-        "audit": {
+        "audit": _public_audit({
             "read_only": True,
             "repair_or_resume_triggered": False,
             "secrets_redacted": True,
             "expected_files": list(expected_files or RELEASE_VERIFICATION_EXPECTED_FILES),
             "required_probes": list(required_probes or RELEASE_VERIFICATION_REQUIRED_PROBES),
-        },
+        }),
     }
 
     if write_report:
-        _write_release_verification_report(report, report_directory=report_directory)
-    return report
+        _write_release_verification_report(public_report, report_directory=report_directory)
+    return public_report
