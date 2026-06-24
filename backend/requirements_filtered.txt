@@ -1,7 +1,7 @@
 edge-tts>=7.0.0
 pynput>=1.7.0
 requests>=2.31.0
-pytest>=8.0.0
+pytest>=9.1.1
 sounddevice>=0.5.5
 numpy>=2.2.6
 faster-whisper>=1.2.1
