@@ -4,6 +4,7 @@ import AppKit
 
 enum SettingsHubTab: String, CaseIterable, Identifiable {
     case diagnostics
+    case workbench
     case models
     case capabilities
     case mcp
@@ -16,6 +17,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .diagnostics: return "stethoscope"
+        case .workbench: return "point.3.connected.trianglepath.dotted"
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .mcp: return "square.grid.2x2"
@@ -29,6 +31,7 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     func title(preferences: AppPreferences) -> String {
         switch self {
         case .diagnostics: return preferences.text("settings.diagnostics")
+        case .workbench: return preferences.text("settings.workbench")
         case .models: return preferences.text("settings.models")
         case .capabilities: return preferences.text("settings.capabilities")
         case .mcp: return preferences.text("settings.mcp")
@@ -134,6 +137,9 @@ struct SettingsHubView: View {
         switch selectedTab {
         case .diagnostics:
             StartupDiagnosticsView(settingsViewModel: settingsViewModel)
+                .environmentObject(preferences)
+        case .workbench:
+            AutopilotWorkbenchView()
                 .environmentObject(preferences)
         case .models:
             ModelSettingsView(viewModel: settingsViewModel, onClose: nil, embeddedInHub: true)

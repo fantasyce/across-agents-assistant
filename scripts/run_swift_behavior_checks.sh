@@ -27,6 +27,13 @@ swiftc -parse-as-library \
   -o "$TMP_DIR/PluginLifecycleBehavior"
 "$TMP_DIR/PluginLifecycleBehavior"
 
+echo "== AutopilotWorkbenchBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/AutopilotWorkbenchBehavior.swift \
+  macOS-Client/Sources/Models/AutopilotWorkbenchModels.swift \
+  -o "$TMP_DIR/AutopilotWorkbenchBehavior"
+"$TMP_DIR/AutopilotWorkbenchBehavior"
+
 echo "== ReleaseVerificationBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/ReleaseVerificationBehavior.swift \

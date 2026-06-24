@@ -689,6 +689,10 @@ def test_orchestrator_plugin_installer_installs_into_app_managed_venv(tmp_path):
     assert state["status"] == "installed"
     assert state["installed"] is True
     assert state["command"] == str(plugin_home / "across-orchestrator" / "venv" / "bin" / "across-orchestrator")
+    wrapper_text = (plugin_home.parent / "bin" / "across-orchestrator").read_text(encoding="utf-8")
+    assert "$SCRIPT_DIR" in wrapper_text
+    assert "../plugins/across-orchestrator/venv/bin/across-orchestrator" in wrapper_text
+    assert str(plugin_home) not in wrapper_text
     assert not (plugin_home / "across-orchestrator" / "source").exists()
     assert calls[0][:3] == [installer.python_executable, "-m", "venv"]
     assert calls[1][1:4] == ["-m", "pip", "install"]

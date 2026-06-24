@@ -313,6 +313,9 @@ from .orchestrator_plugin import (
     external_task_to_app_info,
 )
 from .autopilot_client import AutopilotClient
+from .aaa_ecosystem_roadmap import build_aaa_ecosystem_roadmap, ecosystem_route_section
+from .autopilot_workbench import build_autopilot_workbench_snapshot
+from .external_agent_plugin_gateway import probe_agent_plugin_runtime_status
 from .plugin_runtime import (
     PluginLifecycleError,
     discover_across_plugins,
@@ -5221,6 +5224,305 @@ async def get_autopilot_ops_dashboard():
     )
 
 
+async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[str, Any]:
+    try:
+        plugins = await asyncio.to_thread(discover_across_plugins, probe=refresh)
+    except Exception:
+        plugins = []
+
+    try:
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        capability_pack = loop_engineering_capability_pack()
+    except Exception:
+        capability_pack = {}
+
+    try:
+        trigger_registry = await asyncio.to_thread(get_autopilot_trigger_registry().list)
+    except Exception:
+        trigger_registry = {}
+
+    try:
+        trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
+    except Exception:
+        trigger_scheduler = {}
+
+    try:
+        self_iteration_plan = build_self_iteration_plan(
+            trigger_registry=trigger_registry,
+            capability_pack=capability_pack,
+        )
+    except Exception:
+        self_iteration_plan = {}
+
+    try:
+        registry = await asyncio.to_thread(get_autopilot_client().registry)
+    except Exception:
+        registry = {}
+
+    try:
+        trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+    except Exception:
+        trigger_queue = {}
+
+    try:
+        runs = await asyncio.to_thread(get_autopilot_client().list_runs)
+    except Exception:
+        runs = {}
+
+    try:
+        telemetry = await asyncio.to_thread(get_autopilot_client().telemetry)
+    except Exception:
+        telemetry = {}
+
+    try:
+        capability_registry = await asyncio.to_thread(_build_unified_capability_registry_payload, refresh)
+        registry_health = evaluate_unified_capability_registry_health(capability_registry)
+    except Exception:
+        capability_registry = {}
+        registry_health = {}
+
+    try:
+        ops_dashboard = build_loop_engineering_ops_dashboard(
+            telemetry=telemetry,
+            trigger_registry=trigger_registry,
+            trigger_scheduler=trigger_scheduler,
+            capability_pack=capability_pack,
+            registry_health=registry_health,
+            self_iteration_plan=self_iteration_plan,
+        )
+    except Exception:
+        ops_dashboard = {}
+
+    try:
+        agent_loop_memory_metrics = await asyncio.to_thread(get_agent_loop_memory_metrics, all_projects=True)
+    except Exception:
+        agent_loop_memory_metrics = {}
+
+    try:
+        pending_memories = await asyncio.to_thread(list_context_memories, status="pending")
+    except Exception:
+        pending_memories = []
+
+    try:
+        agent_plugin_runtime = await asyncio.to_thread(probe_agent_plugin_runtime_status)
+    except Exception:
+        agent_plugin_runtime = {}
+
+    try:
+        ecosystem_roadmap = await _build_ecosystem_roadmap_response(
+            refresh=refresh,
+            plugins=plugins,
+            capability_registry=capability_registry,
+            registry_health=registry_health,
+            autopilot_registry=registry,
+            autopilot_runs=runs,
+            autopilot_telemetry=telemetry,
+            ops_dashboard=ops_dashboard,
+            memory_metrics=agent_loop_memory_metrics,
+            pending_memories=pending_memories,
+            agent_plugin_runtime=agent_plugin_runtime,
+        )
+    except Exception:
+        ecosystem_roadmap = {}
+
+    return _sanitize_public_payload(
+        build_autopilot_workbench_snapshot(
+            plugins=plugins,
+            registry=registry,
+            trigger_queue=trigger_queue,
+            trigger_registry=trigger_registry,
+            trigger_scheduler=trigger_scheduler,
+            self_iteration_plan=self_iteration_plan,
+            runs=runs,
+            telemetry=telemetry,
+            ops_dashboard=ops_dashboard,
+            capability_registry=capability_registry,
+            registry_health=registry_health,
+            agent_loop_memory_metrics=agent_loop_memory_metrics,
+            pending_memories=pending_memories,
+            ecosystem_roadmap=ecosystem_roadmap,
+            agent_plugin_runtime=agent_plugin_runtime,
+        )
+    )
+
+
+@app.get("/api/autopilot/workbench")
+async def get_autopilot_workbench(refresh: bool = False):
+    """Return a bounded host Workbench snapshot for AAA self-iteration."""
+    return await _build_autopilot_workbench_response(refresh=refresh)
+
+
+@app.post("/api/autopilot/workbench/refresh")
+async def refresh_autopilot_workbench():
+    """Probe where supported and return the latest host Workbench snapshot."""
+    return await _build_autopilot_workbench_response(refresh=True)
+
+
+async def _release_evaluation_payload(limit: int = 100) -> Dict[str, Any]:
+    try:
+        external_rows = get_orchestrator_plugin_manager().list_task_summaries()
+    except Exception:
+        external_rows = []
+    try:
+        safe_limit = max(1, min(int(limit or 100), 500))
+        rows = _collect_release_task_rows(
+            safe_limit,
+            task_state=_task_state,
+            external_task_rows=lambda: external_rows,
+        )
+        return build_release_evaluation_summary(rows)
+    except Exception:
+        return {}
+
+
+async def _build_ecosystem_roadmap_response(
+    *,
+    refresh: bool = False,
+    plugins: Optional[List[Dict[str, Any]]] = None,
+    capability_registry: Optional[Dict[str, Any]] = None,
+    registry_health: Optional[Dict[str, Any]] = None,
+    autopilot_registry: Optional[Dict[str, Any]] = None,
+    autopilot_runs: Optional[Dict[str, Any]] = None,
+    autopilot_telemetry: Optional[Dict[str, Any]] = None,
+    ops_dashboard: Optional[Dict[str, Any]] = None,
+    memory_metrics: Optional[Dict[str, Any]] = None,
+    pending_memories: Optional[List[Dict[str, Any]]] = None,
+    agent_plugin_runtime: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if plugins is None:
+        try:
+            plugins = await asyncio.to_thread(discover_across_plugins, probe=refresh)
+        except Exception:
+            plugins = []
+    if capability_registry is None or registry_health is None:
+        try:
+            capability_registry = await asyncio.to_thread(_build_unified_capability_registry_payload, refresh)
+            registry_health = evaluate_unified_capability_registry_health(capability_registry)
+        except Exception:
+            capability_registry = capability_registry or {}
+            registry_health = registry_health or {}
+    if autopilot_registry is None:
+        try:
+            autopilot_registry = await asyncio.to_thread(get_autopilot_client().registry)
+        except Exception:
+            autopilot_registry = {}
+    if autopilot_runs is None:
+        try:
+            autopilot_runs = await asyncio.to_thread(get_autopilot_client().list_runs)
+        except Exception:
+            autopilot_runs = {}
+    if autopilot_telemetry is None:
+        try:
+            autopilot_telemetry = await asyncio.to_thread(get_autopilot_client().telemetry)
+        except Exception:
+            autopilot_telemetry = {}
+    if ops_dashboard is None:
+        try:
+            telemetry = autopilot_telemetry or {}
+            trigger_registry = await asyncio.to_thread(get_autopilot_trigger_registry().list)
+            trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
+            from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+            capability_pack = loop_engineering_capability_pack()
+            self_iteration_plan = build_self_iteration_plan(
+                trigger_registry=trigger_registry,
+                capability_pack=capability_pack,
+            )
+            ops_dashboard = build_loop_engineering_ops_dashboard(
+                telemetry=telemetry,
+                trigger_registry=trigger_registry,
+                trigger_scheduler=trigger_scheduler,
+                capability_pack=capability_pack,
+                registry_health=registry_health or {},
+                self_iteration_plan=self_iteration_plan,
+            )
+        except Exception:
+            ops_dashboard = {}
+    if memory_metrics is None:
+        try:
+            memory_metrics = await asyncio.to_thread(get_agent_loop_memory_metrics, all_projects=True)
+        except Exception:
+            memory_metrics = {}
+    if pending_memories is None:
+        try:
+            pending_memories = await asyncio.to_thread(list_context_memories, status="pending")
+        except Exception:
+            pending_memories = []
+    if agent_plugin_runtime is None:
+        try:
+            agent_plugin_runtime = await asyncio.to_thread(probe_agent_plugin_runtime_status)
+        except Exception:
+            agent_plugin_runtime = {}
+    try:
+        agent_cards = await asyncio.to_thread(_build_agent_cards_payload)
+    except Exception:
+        agent_cards = {}
+    try:
+        mcp_safety = await asyncio.to_thread(mcp_manager.get_safety_report)
+    except Exception:
+        mcp_safety = {}
+    release_evaluation = await _release_evaluation_payload()
+    return _sanitize_public_payload(
+        build_aaa_ecosystem_roadmap(
+            plugins=plugins,
+            capability_registry=capability_registry,
+            registry_health=registry_health,
+            agent_cards=agent_cards,
+            mcp_safety=mcp_safety,
+            autopilot_registry=autopilot_registry,
+            autopilot_runs=autopilot_runs,
+            autopilot_telemetry=autopilot_telemetry,
+            ops_dashboard=ops_dashboard,
+            release_evaluation=release_evaluation,
+            memory_metrics=memory_metrics,
+            pending_memories=pending_memories,
+            agent_plugin_runtime=agent_plugin_runtime,
+        )
+    )
+
+
+@app.get("/api/ecosystem/roadmap")
+async def get_ecosystem_roadmap(refresh: bool = False):
+    """Return the full AAA next-step ecosystem route state."""
+    return await _build_ecosystem_roadmap_response(refresh=refresh)
+
+
+@app.get("/api/ecosystem/protocol-gateway")
+async def get_ecosystem_protocol_gateway(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "protocol_gateway")
+
+
+@app.get("/api/ecosystem/tool-packs")
+async def get_ecosystem_tool_packs(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "tool_pack_registry")
+
+
+@app.get("/api/ecosystem/trust-sandbox")
+async def get_ecosystem_trust_sandbox(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "trust_sandbox")
+
+
+@app.get("/api/ecosystem/evaluation-telemetry")
+async def get_ecosystem_evaluation_telemetry(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "evaluation_telemetry")
+
+
+@app.get("/api/ecosystem/context-packs")
+async def get_ecosystem_context_packs(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "context_packs")
+
+
+@app.get("/api/ecosystem/external-agents")
+async def get_ecosystem_external_agents(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "external_agents")
+
+
+@app.get("/api/ecosystem/agent-plugins")
+async def get_ecosystem_agent_plugins(refresh: bool = False):
+    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "agent_plugin_runtime")
+
+
 @app.post("/api/autopilot/runs/{run_id}/cancel")
 async def cancel_autopilot_run(run_id: str, req: AutopilotCancelRequest):
     """Cancel one Across Autopilot run through the plugin control plane."""
@@ -6219,9 +6521,7 @@ async def list_agent_capabilities(refresh: bool = False):
     }
 
 
-@app.get("/api/agent-cards")
-async def export_agent_cards():
-    """Export public, non-secret internal agent cards for orchestration audits."""
+def _build_agent_cards_payload() -> Dict[str, Any]:
     store = get_agent_capability_store()
     available_tools = _runtime_tool_schemas()
     native_skill_states = get_native_skill_manager().list_all_agent_skills()
@@ -6251,6 +6551,12 @@ async def export_agent_cards():
             for card in base_cards
         ],
     }
+
+
+@app.get("/api/agent-cards")
+async def export_agent_cards():
+    """Export public, non-secret internal agent cards for orchestration audits."""
+    return _build_agent_cards_payload()
 
 
 @app.get("/api/host/agent-capabilities")

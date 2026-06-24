@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,7 +46,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.7.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.7.1"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -560,7 +561,12 @@ class OrchestratorPluginInstaller:
 
     def _write_wrapper(self) -> None:
         self.bin_dir.mkdir(parents=True, exist_ok=True)
-        script = "#!/bin/sh\nexec \"{}\" \"$@\"\n".format(str(self.command_path).replace('"', '\\"'))
+        command_relpath = os.path.relpath(self.command_path, start=self.wrapper_path.parent)
+        script = (
+            "#!/bin/sh\n"
+            "SCRIPT_DIR=$(CDPATH= cd \"$(dirname \"$0\")\" && pwd)\n"
+            f"exec \"$SCRIPT_DIR\"/{shlex.quote(command_relpath)} \"$@\"\n"
+        )
         self.wrapper_path.write_text(script, encoding="utf-8")
         self.wrapper_path.chmod(0o755)
 
