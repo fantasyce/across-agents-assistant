@@ -139,6 +139,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.3` | Refreshes managed plugin pins to Autopilot `v0.2.3`, Orchestrator `v0.7.3`, and Context `v0.8.3`, incorporates release verification hardening and CodeQL quality fixes, and includes the latest Dependabot security/maintenance updates. |
 | `0.9.2` | Adds CloudCode Desktop as a local Agent and Agnes as a cloud provider, documents the three core plugins as generic Codex/CloudCode/Claude/AAA host plugins, and moves managed pins to Autopilot `v0.2.2`, Orchestrator `v0.7.2`, and Context `v0.8.2`. |
 | `0.9.1` | Hardens the generic agent-plugin path across AAA, Codex, Claude Desktop, and Claude CLI with managed `~/.across` wrappers, Autopilot host-session supervision, Orchestrator protocol-gateway helpers, Context host-plugin context/search surfaces, and managed pins for Autopilot `v0.2.1`, Orchestrator `v0.7.1`, and Context `v0.8.1`. |
 | `0.9.0` | Ships the four-product Loop Engineering platform with Across Autopilot managed plugin support, A/B/C candidate workspaces, Candidate Model Capability Lease, distinct-model review, candidate app lifecycle validation, and managed pins for Autopilot `v0.2.0`, Orchestrator `v0.7.0`, and Context `v0.8.0`. |
@@ -220,17 +221,18 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.2` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.3` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.2` release adds CloudCode Desktop as a local Agent and Agnes as a
-cloud provider while keeping AAA as a generic plugin host rather than the owner
-of the three core plugins. Across Autopilot supervises LoopSpec execution and
-host-session recovery, Across Orchestrator owns task/loop runtime metadata plus
-protocol-gateway handoff, and Across Context owns loop memory plus host-plugin
-context/search surfaces. The release pairs with Across Autopilot `v0.2.2`,
-Across Orchestrator `v0.7.2`, and Across Context `v0.8.2`; all three managed
-plugins are installed under `~/.across` and can also be consumed by Codex,
-CloudCode Desktop/CLI, Claude Desktop/CLI, and other CLI/MCP-capable hosts.
+The `0.9.3` release refreshes AAA's generic plugin host pins after the
+main-derived plugin releases. Across Autopilot supervises LoopSpec execution
+and host-session recovery, Across Orchestrator owns task/loop runtime metadata
+plus protocol-gateway handoff, and Across Context owns loop memory plus
+host-plugin context/search surfaces. The release pairs with Across Autopilot
+`v0.2.3`, Across Orchestrator `v0.7.3`, and Across Context `v0.8.3`; all three
+managed plugins are installed under `~/.across` and can also be consumed by
+Codex, CloudCode Desktop/CLI, Claude Desktop/CLI, and other CLI/MCP-capable
+hosts. It also includes release verification hardening, CodeQL quality fixes,
+and the latest Dependabot maintenance updates.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse
@@ -620,11 +622,11 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.2
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.2
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.3
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.3
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.2
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.3
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -718,7 +720,7 @@ It writes a non-secret gate evidence JSON file to
 `$HOME/.across/data/across-agents-assistant/release-reports/*-gate-evidence.json`
 to clear stale local gate evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.7.2` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.7.3` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON
