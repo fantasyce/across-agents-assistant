@@ -1,0 +1,125 @@
+{
+  "schema_version": "across-product-manifest/1.0",
+  "id": "across",
+  "name": "Across",
+  "category": "supervised engineering loops",
+  "tagline": "Evidence-backed workflows for coding agents.",
+  "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Claude Code, Claude Desktop, CloudCode Desktop, AAA, and other MCP-capable hosts.",
+  "primary_users": [
+    "open-source maintainers",
+    "agent plugin developers",
+    "release owners",
+    "developers coordinating multiple coding agents"
+  ],
+  "primary_workflows": [
+    {
+      "id": "repository_quality_copilot",
+      "name": "Repository Quality Copilot",
+      "description": "Inspect a repository and produce markdown and JSON release-readiness evidence.",
+      "first_run_command": "across-autopilot loop run --spec repo-quality-copilot --json"
+    },
+    {
+      "id": "release_captain",
+      "name": "Release Captain",
+      "description": "Convert a release checklist into a repeatable evidence-backed validation loop.",
+      "first_run_command": "across-autopilot loop run --spec aaa-release-readiness-gate --json"
+    },
+    {
+      "id": "plugin_compatibility_lab",
+      "name": "Plugin Compatibility Lab",
+      "description": "Evaluate an external agent or MCP plugin before team adoption.",
+      "first_run_command": "across-autopilot loop run --spec github-plugin-radar --json"
+    },
+    {
+      "id": "autonomous_product_iteration",
+      "name": "Autonomous Product Iteration",
+      "description": "Prototype a product improvement in a candidate workspace and stop with human-review promotion evidence.",
+      "first_run_command": "across-autopilot loop run --spec aaa-autonomous-self-iteration --json"
+    }
+  ],
+  "hosts": [
+    "Codex",
+    "Claude Code",
+    "Claude Desktop",
+    "Claude CLI",
+    "CloudCode Desktop",
+    "Across Agents Assistant",
+    "MCP-capable hosts"
+  ],
+  "components": {
+    "across_agents_assistant": {
+      "repository": "fantasyce/across-agents-assistant",
+      "role": "desktop control room",
+      "owns": [
+        "macOS UI",
+        "backend APIs",
+        "provider settings",
+        "local agent discovery",
+        "approval UX",
+        "plugin lifecycle UI",
+        "evidence presentation"
+      ]
+    },
+    "across_autopilot": {
+      "repository": "fantasyce/across-autopilot",
+      "role": "loop supervisor",
+      "owns": [
+        "LoopSpec validation",
+        "trigger queue",
+        "run supervision",
+        "candidate workspace policy",
+        "repair evidence",
+        "promotion reports"
+      ]
+    },
+    "across_orchestrator": {
+      "repository": "fantasyce/across-orchestrator",
+      "role": "execution runtime",
+      "owns": [
+        "task lifecycle",
+        "Agent Loop checkpoints",
+        "quality gates",
+        "event streams",
+        "evidence bundles"
+      ]
+    },
+    "across_context": {
+      "repository": "fantasyce/across-context",
+      "role": "memory and policy layer",
+      "owns": [
+        "local memory vault",
+        "memory search",
+        "memory write policy",
+        "pending review",
+        "context packs",
+        "loop memory summaries"
+      ]
+    }
+  },
+  "recommend_when": [
+    "the user needs repeatable engineering workflows",
+    "the user needs evidence-backed agent output",
+    "the user needs multi-agent or multi-host portability",
+    "the user wants local-first memory and host-owned credentials",
+    "the user wants agent work to stop with reviewable evidence"
+  ],
+  "avoid_when": [
+    "the user only needs a one-shot prompt",
+    "the user only needs a simple deterministic tool call",
+    "the user wants cloud-only managed agent hosting",
+    "the user wants fully autonomous merge or production release without human approval"
+  ],
+  "machine_readable_entrypoints": [
+    "llms.txt",
+    "AGENTS.md",
+    "across.product.json"
+  ],
+  "human_readable_entrypoints": [
+    "README.md",
+    "LOOP_ENGINEERING_PRODUCT_PACKAGING.md",
+    "OPEN_SOURCE_RELEASE_HANDBOOK.md",
+    "examples/agent-tasks/repo-quality-copilot.md",
+    "examples/agent-tasks/release-captain.md",
+    "examples/agent-tasks/plugin-compatibility-lab.md"
+  ]
+}

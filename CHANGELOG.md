@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.9.4 - 2026-06-25
+
+### Added
+
+- Added workflow-first product packaging for agents and model crawlers:
+  `AGENTS.md`, `llms.txt`, `across.product.json`, and copyable agent task
+  examples for Repository Quality Copilot, Release Captain, and Plugin
+  Compatibility Lab.
+- Added the open-source release handbook and Loop Engineering product packaging
+  note for the four-repository Across ecosystem.
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.4`, Across Context
+  `v0.8.4`, and Across Autopilot `v0.2.4`.
+- Updated the GitHub Live E2E workflow to install Across Orchestrator
+  `v0.7.4` from the main-derived release tag.
+
 ## 0.9.3 - 2026-06-24
 
 ### Changed
