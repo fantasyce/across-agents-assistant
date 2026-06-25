@@ -216,12 +216,12 @@ def test_claude_detection_does_not_run_prompt_probe(monkeypatch):
     )
 
 
-def test_cloudcode_desktop_detection_is_lightweight_and_uses_claude_alias(monkeypatch):
+def test_claude_code_desktop_detection_is_lightweight_and_uses_claude_alias(monkeypatch):
     local_agent_health.clear_local_agent_health_cache()
     calls = []
 
     def fake_which(name):
-        if name == "cloudcode-desktop":
+        if name == "claude-desktop":
             return None
         return f"/usr/local/bin/{name}"
 
@@ -242,9 +242,9 @@ def test_cloudcode_desktop_detection_is_lightweight_and_uses_claude_alias(monkey
 
     detected = local_agent_health.detect_local_agents(force=True)
 
-    assert detected["cloudcode-desktop"]["available"] is True
-    assert detected["cloudcode-desktop"]["path"] == "/usr/local/bin/claude"
-    assert detected["cloudcode-desktop"]["detection_method"] == "which claude"
+    assert detected["claude-desktop"]["available"] is True
+    assert detected["claude-desktop"]["path"] == "/usr/local/bin/claude"
+    assert detected["claude-desktop"]["detection_method"] == "which claude"
     assert ["/usr/local/bin/claude", "--version"] in calls
     assert not any(
         cmd and cmd[0] == "/usr/local/bin/claude" and "-p" in cmd
@@ -308,13 +308,13 @@ def test_new_local_agent_detection_is_lightweight(monkeypatch):
 
     detected = local_agent_health.detect_local_agents(force=True)
 
-    assert detected["cloudcode-desktop"]["available"] is True
+    assert detected["claude-desktop"]["available"] is True
     assert detected["opencode"]["available"] is True
     assert detected["cursor"]["available"] is True
-    assert ["/usr/local/bin/cloudcode-desktop", "--version"] in calls
+    assert ["/usr/local/bin/claude-desktop", "--version"] in calls
     assert ["/usr/local/bin/opencode", "--version"] in calls
     assert ["/usr/local/bin/cursor-agent", "--version"] in calls
-    assert not any(cmd and cmd[0] == "/usr/local/bin/cloudcode-desktop" and "-p" in cmd for cmd in calls)
+    assert not any(cmd and cmd[0] == "/usr/local/bin/claude-desktop" and "-p" in cmd for cmd in calls)
     assert not any(cmd[:2] == ["/usr/local/bin/opencode", "run"] for cmd in calls)
     assert not any(cmd and cmd[0] == "/usr/local/bin/cursor-agent" and "-p" in cmd for cmd in calls)
 

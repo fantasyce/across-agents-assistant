@@ -788,7 +788,7 @@ enum AgentCapabilityCatalog {
         "openclaw": ["general_execution", "macos_automation", "test_authoring"],
         "hermes": ["frontend_design", "interaction_design", "test_authoring"],
         "claude": ["architecture_review", "code_review", "test_strategy"],
-        "cloudcode-desktop": ["architecture_review", "code_review", "test_strategy"],
+        "claude-desktop": ["architecture_review", "code_review", "test_strategy"],
         "codex": ["general_execution", "code_review", "test_authoring"],
         "opencode": ["general_execution", "code_review", "test_authoring"],
         "cursor": ["general_execution", "frontend_design", "code_review"],

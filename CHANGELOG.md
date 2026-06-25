@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.9.5 - 2026-06-26
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.5`, Across Context
+  `v0.8.5`, and Across Autopilot `v0.2.5`.
+- Updated the GitHub Live E2E workflow to install Across Orchestrator
+  `v0.7.5` from the main-derived release tag.
+- Revalidated the host/plugin release path with the packaged macOS app,
+  host APIs, and all three managed plugins under `~/.across`.
+
+### Fixed
+
+- Removed stale Claude naming variants and duplicate host references from public
+  README/CHANGELOG surfaces.
+- Updated the route-evidence smoke matcher to use the official Claude Desktop
+  name.
+
 ## 0.9.4 - 2026-06-25
 
 ### Added
@@ -39,7 +57,7 @@
 
 ### Added
 
-- Added CloudCode Desktop as a local Agent integration, including backend
+- Added Claude Desktop as a local Agent integration, including backend
   discovery, Swift model/catalog support, runtime icon fallback, and task
   routing visibility.
 - Added Agnes as a cloud provider with API key configuration, provider/model
@@ -51,8 +69,8 @@
 - Updated managed plugin pins to Across Orchestrator `v0.7.2`, Across Context
   `v0.8.2`, and Across Autopilot `v0.2.2`.
 - Updated README guidance to describe Across Orchestrator, Across Context, and
-  Across Autopilot as generic host plugins for Codex, CloudCode Desktop/CLI,
-  Claude Desktop/CLI, AAA, and other CLI/MCP-capable hosts, not AAA-only
+  Across Autopilot as generic host plugins for Codex, Claude Code,
+  Claude Desktop, AAA, and other CLI/MCP-capable hosts, not AAA-only
   implementation modules.
 
 ## 0.9.1 - 2026-06-24
@@ -69,8 +87,8 @@
 
 - Updated managed plugin pins to Across Orchestrator `v0.7.1`, Across Context
   `v0.8.1`, and Across Autopilot `v0.2.1`.
-- Hardened managed plugin runtime boundaries so Codex, Claude Desktop, Claude
-  CLI, and AAA load wrappers through `~/.across/bin` instead of developer
+- Hardened managed plugin runtime boundaries so Codex, Claude Code,
+  Claude Desktop, and AAA load wrappers through `~/.across/bin` instead of developer
   checkout paths.
 
 ### Fixed

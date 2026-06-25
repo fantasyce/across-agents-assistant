@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, Optional
 
-from .agent_ids import CLOUDCODE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
+from .agent_ids import CLAUDE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
 from .paths import data_file
 
 
@@ -59,10 +59,10 @@ LOCAL_AGENT_SPECS = {
         "model_args": ["--model"],
         "default_models": ["sonnet", "opus", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
     },
-    CLOUDCODE_DESKTOP_AGENT_ID: {
-        "display_name": "CloudCode Desktop",
-        "executable": CLOUDCODE_DESKTOP_AGENT_ID,
-        # Current desktop installs expose the task-capable Claude Code CLI as
+    CLAUDE_DESKTOP_AGENT_ID: {
+        "display_name": "Claude Desktop",
+        "executable": CLAUDE_DESKTOP_AGENT_ID,
+        # Current desktop installs expose the task-capable Claude Code command as
         # `claude`; keep the AAA agent ID separate while sharing that contract.
         "executable_aliases": ["claude"],
         "version_args": ["--version"],

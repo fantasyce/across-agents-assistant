@@ -193,15 +193,15 @@ def test_universal_agent_client_passes_configured_model_to_opencode(monkeypatch,
     assert observed["cwd"] == str(tmp_path)
 
 
-def test_universal_agent_client_runs_cloudcode_desktop_as_claude_family(monkeypatch, tmp_path):
+def test_universal_agent_client_runs_claude_code_desktop_as_claude_family(monkeypatch, tmp_path):
     observed = {}
 
     from across_agents_assistant import local_agent_health
     from across_agents_assistant.local_agent import client as client_mod
 
-    class CloudCodeDesktopManager:
+    class ClaudeCodeDesktopManager:
         def get_active_agent(self):
-            return "cloudcode-desktop"
+            return "claude-desktop"
 
         def get_agent_config(self, agent_id):
             return {"output_format": "raw"}
@@ -226,7 +226,7 @@ def test_universal_agent_client_runs_cloudcode_desktop_as_claude_family(monkeypa
         returncode = 0
 
         def communicate(self, timeout=None):
-            return ('{"result":"cloudcode completed","session_id":"claude-session"}', "")
+            return ('{"result":"claude code completed","session_id":"claude-session"}', "")
 
     def fake_popen(args, **kwargs):
         observed["args"] = args
@@ -236,16 +236,16 @@ def test_universal_agent_client_runs_cloudcode_desktop_as_claude_family(monkeypa
 
     monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
 
-    client = UniversalAgentClient(CloudCodeDesktopManager())
+    client = UniversalAgentClient(ClaudeCodeDesktopManager())
     reply = client.send(
         "repair the delivery",
-        target_agent="cloudcode-desktop",
+        target_agent="claude-desktop",
         session_id="app-session",
         project_dir=str(tmp_path),
         timeout=23.0,
     )
 
-    assert reply.text == "cloudcode completed"
+    assert reply.text == "claude code completed"
     assert observed["args"] == [
         "/usr/local/bin/claude",
         "--model",

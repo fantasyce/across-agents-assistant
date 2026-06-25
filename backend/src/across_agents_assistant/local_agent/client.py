@@ -6,11 +6,11 @@ import re
 from pathlib import Path
 from typing import Optional
 from ..agent_manager import AgentManager
-from ..agent_ids import CLOUDCODE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
+from ..agent_ids import CLAUDE_DESKTOP_AGENT_ID, LOCAL_AGENT_ID, normalize_agent_id
 from ..credentials.validation import is_usable_secret
 from ..paths import app_subdir
 
-CLAUDE_FAMILY_AGENT_IDS = {"claude", CLOUDCODE_DESKTOP_AGENT_ID}
+CLAUDE_FAMILY_AGENT_IDS = {"claude", CLAUDE_DESKTOP_AGENT_ID}
 
 
 def default_local_agent_workspace() -> Path:
@@ -93,8 +93,8 @@ class UniversalAgentClient:
 
     @staticmethod
     def _agent_display_name(agent_id: str) -> str:
-        if agent_id == CLOUDCODE_DESKTOP_AGENT_ID:
-            return "CloudCode Desktop"
+        if agent_id == CLAUDE_DESKTOP_AGENT_ID:
+            return "Claude Desktop"
         if agent_id == "claude":
             return "Claude Code"
         return agent_id

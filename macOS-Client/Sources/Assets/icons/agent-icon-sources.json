@@ -11,7 +11,7 @@
       "/Applications/Codex.app",
       "~/Applications/Codex.app"
     ],
-    "cloudcode-desktop": [
+    "claude-desktop": [
       "/Applications/Claude.app",
       "~/Applications/Claude.app",
       "~/Applications/Claude Code URL Handler.app"
@@ -23,9 +23,9 @@
   },
   "runtime_preferred_app_icon_agents": [
     "codex",
-    "cloudcode-desktop"
+    "claude-desktop"
   ],
-  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. CloudCode Desktop prefers the installed Claude.app or Claude Code URL Handler icon when present, then falls back to the bundled Claude Code glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
+  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. Claude Desktop prefers the installed Claude.app or Claude Code URL Handler icon when present, then falls back to the bundled Claude glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
   "bundled_icons": [
     {
       "agent_id": "openclaw",
@@ -85,21 +85,21 @@
       "note": "Claude mark used for Claude Code local agent"
     },
     {
-      "agent_id": "cloudcode-desktop",
-      "display_name": "CloudCode Desktop",
+      "agent_id": "claude-desktop",
+      "display_name": "Claude Desktop",
       "asset_paths": [
-        "agent.cloudcode-desktop.svg",
-        "agent.cloudcode-desktop.light.svg"
+        "agent.claude-desktop.svg",
+        "agent.claude-desktop.light.svg"
       ],
       "source_type": "lobehub-icons-static-svg",
       "source_package": "@lobehub/icons-static-svg",
-      "source_package_version": "1.91.0",
-      "source_icon": "claudecode-color.svg",
+      "source_package_version": "1.73.0",
+      "source_icon": "claude-color.svg",
       "source_url": "https://github.com/lobehub/lobe-icons",
       "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
-      "visual_treatment": "Official/library Claude Code glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "visual_treatment": "Official/library Claude glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
       "redistribution_status": "descriptive-provider-mark",
-      "note": "Bundled fallback for CloudCode Desktop; installed Claude.app or Claude Code URL Handler icon is read at runtime when present"
+      "note": "Bundled fallback for Claude Desktop; installed Claude.app or Claude Code URL Handler icon is read at runtime when present"
     },
     {
       "agent_id": "codex",

@@ -63,7 +63,7 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "model": "sonnet"
         },
-        "cloudcode-desktop": {
+        "claude-desktop": {
             "type": "local_cli",
             "base_url": "",
             "api_key": "",
@@ -95,7 +95,7 @@ SUPERSEDED_AGENT_DEFAULT_MODELS = {
     "anthropic": {"claude-3-5-sonnet-20241022"},
     "hermes": {"gpt-4o-mini"},
     "claude": {"claude-3-5-sonnet-20241022"},
-    "cloudcode-desktop": {"claude-3-5-sonnet-20241022"},
+    "claude-desktop": {"claude-3-5-sonnet-20241022"},
     "codex": {"gpt-5.1", "gpt-5-codex"},
 }
 
