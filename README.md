@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A local-first macOS workspace for cross-agent collaboration.</strong>
+  <strong>Supervised engineering loops for coding agents.</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,10 @@
 </p>
 
 <p align="center">
-  Coordinate local coding agents and cloud LLMs from one native desktop app, keep work tied to a project tree, approve tools explicitly, and review complex task delivery before it leaves your machine.
+  Turn repo audits, release checks, plugin evaluations, and candidate product
+  iterations into repeatable AI workflows with local evidence, memory, and
+  human approval across Codex, Claude Code, Claude Desktop, CloudCode Desktop,
+  AAA, and other MCP-capable hosts.
 </p>
 
 <p align="center">
@@ -30,11 +33,59 @@
   <img src="assets/readme/zh-dark-new-task.png" alt="Across Agents Assistant new complex task form with function and product delivery modes, owner agent, subtask agents, and strict dependency mode">
 </p>
 
+## Try This First
+
+Across should be evaluated through a concrete workflow before its internal
+modules. The recommended first run is Repository Quality Copilot:
+
+```bash
+across-autopilot loop run --spec repo-quality-copilot --json
+```
+
+Expected output:
+
+- markdown repository quality report
+- JSON evidence artifact
+- release/readiness checklist
+- optional pending memory for Across Context review
+
+Agent-readable entrypoints:
+
+- [llms.txt](llms.txt) for model and agent product discovery
+- [AGENTS.md](AGENTS.md) for coding-agent repository instructions
+- [across.product.json](across.product.json) for machine-readable product
+  classification
+- [examples/agent-tasks](examples/agent-tasks) for copyable agent task
+  templates
+
 ## Why It Exists
 
-Across Agents Assistant is built for developers who want more than a single chat box. It brings local agents, cloud LLMs, project chat, voice, MCP context, tool permissions, and owner-led task orchestration into one macOS workbench.
+Across Agents Assistant is built for developers who want more than a single chat
+box. It brings local agents, cloud LLMs, project chat, voice, MCP context, tool
+permissions, owner-led task orchestration, and Loop Engineering evidence into
+one macOS workbench.
 
 The core idea is cross-agent collaboration: pick an owner agent, keep local agents and cloud LLMs visible, break a complex request into waves, and inspect the final delivery. You can also choose a single agent for a focused complex task. Delivery quality is designed to be strong and reviewable, while still acknowledging that some generated artifacts may occasionally need small human refinements.
+
+## Loop Engineering Use Cases
+
+Across is now packaged as a Loop Engineering workspace: a way to turn repeat
+engineering chores into supervised agent loops with evidence, repair attempts,
+and reusable memory.
+
+Start with concrete workflows:
+
+- **Repository Quality Copilot:** run a bounded repo health loop before releases
+  or PR review.
+- **Release Captain:** convert a release checklist into an evidence-backed
+  readiness report.
+- **Plugin Compatibility Lab:** evaluate external MCP or agent plugins before
+  adding them to a team's workflow.
+- **Autonomous Product Iteration:** let Across create a candidate workspace,
+  validate the change, and stop with a human-review promotion package.
+
+The product packaging, examples, and host-neutral install story are documented
+in [Across Loop Engineering Product Packaging](LOOP_ENGINEERING_PRODUCT_PACKAGING.md).
 
 ## Across Product Boundaries
 
@@ -61,7 +112,7 @@ products:
   the managed `~/.across` plugin boundary.
 
 The three core plugins are generic agent-host plugins, not AAA-only modules.
-Codex, CloudCode Desktop, CloudCode CLI, Claude Desktop, Claude CLI, AAA, and
+Codex, Claude Code, Claude Desktop, Claude CLI, CloudCode Desktop, AAA, and
 other CLI/MCP-capable hosts should consume them through pinned managed installs,
 CLI, HTTP, MCP, plugin manifests, or host APIs. AAA product code must not import
 or execute plugin implementation files from a development checkout such as
@@ -139,6 +190,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.4` | Adds workflow-first agent-readable product packaging, including `llms.txt`, `AGENTS.md`, a machine-readable product manifest, copyable agent task examples, and the open-source release handbook; managed pins move to Autopilot `v0.2.4`, Orchestrator `v0.7.4`, and Context `v0.8.4`. |
 | `0.9.3` | Refreshes managed plugin pins to Autopilot `v0.2.3`, Orchestrator `v0.7.3`, and Context `v0.8.3`, incorporates release verification hardening and CodeQL quality fixes, and includes the latest Dependabot security/maintenance updates. |
 | `0.9.2` | Adds CloudCode Desktop as a local Agent and Agnes as a cloud provider, documents the three core plugins as generic Codex/CloudCode/Claude/AAA host plugins, and moves managed pins to Autopilot `v0.2.2`, Orchestrator `v0.7.2`, and Context `v0.8.2`. |
 | `0.9.1` | Hardens the generic agent-plugin path across AAA, Codex, Claude Desktop, and Claude CLI with managed `~/.across` wrappers, Autopilot host-session supervision, Orchestrator protocol-gateway helpers, Context host-plugin context/search surfaces, and managed pins for Autopilot `v0.2.1`, Orchestrator `v0.7.1`, and Context `v0.8.1`. |
@@ -221,18 +273,15 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.3` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.4` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.3` release refreshes AAA's generic plugin host pins after the
-main-derived plugin releases. Across Autopilot supervises LoopSpec execution
-and host-session recovery, Across Orchestrator owns task/loop runtime metadata
-plus protocol-gateway handoff, and Across Context owns loop memory plus
-host-plugin context/search surfaces. The release pairs with Across Autopilot
-`v0.2.3`, Across Orchestrator `v0.7.3`, and Across Context `v0.8.3`; all three
-managed plugins are installed under `~/.across` and can also be consumed by
-Codex, CloudCode Desktop/CLI, Claude Desktop/CLI, and other CLI/MCP-capable
-hosts. It also includes release verification hardening, CodeQL quality fixes,
-and the latest Dependabot maintenance updates.
+The `0.9.4` release packages Across as workflow-first Loop Engineering for
+agent and model discovery. It adds `llms.txt`, `AGENTS.md`, a machine-readable
+product manifest, copyable agent task examples, and the open-source release
+handbook. The release pairs with Across Autopilot `v0.2.4`, Across
+Orchestrator `v0.7.4`, and Across Context `v0.8.4`; all three managed plugins
+are installed under `~/.across` and can also be consumed by Codex, Claude Code,
+Claude Desktop/CLI, CloudCode Desktop, and other CLI/MCP-capable hosts.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse
@@ -622,11 +671,11 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.3
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.3
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.4
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.4
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.3
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.4
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -720,7 +769,7 @@ It writes a non-secret gate evidence JSON file to
 `$HOME/.across/data/across-agents-assistant/release-reports/*-gate-evidence.json`
 to clear stale local gate evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.7.3` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.7.4` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON
