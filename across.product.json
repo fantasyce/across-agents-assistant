@@ -4,7 +4,7 @@
   "name": "Across",
   "category": "supervised engineering loops",
   "tagline": "Evidence-backed workflows for coding agents.",
-  "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Claude Code, Claude Desktop, CloudCode Desktop, AAA, and other MCP-capable hosts.",
+  "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Claude Code, Claude Desktop, AAA, and other MCP-capable hosts.",
   "primary_users": [
     "open-source maintainers",
     "agent plugin developers",
@@ -41,8 +41,6 @@
     "Codex",
     "Claude Code",
     "Claude Desktop",
-    "Claude CLI",
-    "CloudCode Desktop",
     "Across Agents Assistant",
     "MCP-capable hosts"
   ],

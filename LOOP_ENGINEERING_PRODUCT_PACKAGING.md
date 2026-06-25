@@ -8,7 +8,7 @@ the internal plugin names.
 
 **One-line promise:** Across lets a developer assign recurring engineering work
 to local agents, keep the run bounded, review evidence, and reuse what the run
-learned across Codex, Claude Code, Claude Desktop, CloudCode Desktop, AAA, and
+learned across Codex, Claude Code, Claude Desktop, AAA, and
 other MCP-capable hosts.
 
 **Short pitch:** A normal coding agent can finish one prompt. Across packages
@@ -26,7 +26,7 @@ next time.
 | Across Context | Team memory | Local memory vault, MCP memory tools, pending review, policy, loop recall | Lets every agent learn from previous runs without sharing secrets. |
 
 The three core plugins are generic host plugins. AAA is a polished host, but
-Codex, Claude Code, Claude Desktop/CLI, CloudCode Desktop, and other compatible
+Codex, Claude Code, Claude Desktop, and other compatible
 hosts can load the same managed runtimes from `~/.across`.
 
 ## First Three Use Cases
@@ -118,7 +118,7 @@ The install story should be host-neutral:
 4. Keep model credentials, UI permissions, and approvals in the host.
 5. Keep plugin state and evidence under `~/.across/data/*`.
 
-Do not ask users to point Codex, Claude Code, Claude Desktop, CloudCode Desktop,
+Do not ask users to point Codex, Claude Code, Claude Desktop,
 or AAA at a development checkout under `~/Documents/projects`. Source checkouts
 are for development, not product runtime.
 

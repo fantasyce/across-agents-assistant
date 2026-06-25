@@ -417,7 +417,7 @@ HTML_CONTENT = """
             'local': 'OpenClaw',
             'hermes': 'Hermes',
             'claude': 'Claude Code',
-            'cloudcode-desktop': 'CloudCode Desktop',
+            'claude-desktop': 'Claude Desktop',
             'codex': 'Codex',
             'opencode': 'OpenCode',
             'cursor': 'Cursor Agent',

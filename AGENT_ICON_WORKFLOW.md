@@ -39,9 +39,10 @@ and generates an embedded icon index for provider rendering.
 Across Agents Assistant uses a similar source strategy, but with explicit
 source tracking:
 
-- most provider glyphs come from `@lobehub/icons-static-svg@1.73.0`
-- OpenCode and CloudCode Desktop use `@lobehub/icons-static-svg@1.91.0`
-  because that version adds `opencode.svg` and `claudecode-color.svg`
+- most provider glyphs, including Claude Desktop fallback, come from
+  `@lobehub/icons-static-svg@1.73.0`
+- OpenCode uses `@lobehub/icons-static-svg@1.91.0`
+  because that version adds `opencode.svg`
 - OpenClaw and Hermes remain project-created assets
 - Agnes uses a project-created `Ag` compatibility tile because no reusable
   open-source Agnes brand glyph was found in the reviewed icon package
@@ -65,7 +66,7 @@ Current bundled coverage:
 | Hermes | `agent.hermes` | Project-original |
 | OpenCode | `agent.opencode` | LobeHub `opencode.svg` |
 | Claude Code | `agent.claude` | LobeHub `claude-color.svg` |
-| CloudCode Desktop | `agent.cloudcode-desktop` | Runtime `/Applications/Claude.app` icon; bundled fallback is LobeHub `claudecode-color.svg` |
+| Claude Desktop | `agent.claude-desktop` | Runtime `/Applications/Claude.app` icon; bundled fallback is LobeHub `claude-color.svg` |
 | Codex | `agent.codex` | Runtime `/Applications/Codex.app` icon; bundled fallback is LobeHub `openai.svg` |
 | Cursor | `agent.cursor` | LobeHub `cursor.svg` |
 | OpenAI | `agent.openai` | LobeHub `openai.svg` |
@@ -96,11 +97,11 @@ Some local-agent brands are better handled at runtime rather than bundled:
 | Agent | Runtime app icon candidates |
 | --- | --- |
 | Codex | `/Applications/Codex.app`, `~/Applications/Codex.app` |
-| CloudCode Desktop | `/Applications/Claude.app`, `~/Applications/Claude.app`, `~/Applications/Claude Code URL Handler.app` |
+| Claude Desktop | `/Applications/Claude.app`, `~/Applications/Claude.app`, `~/Applications/Claude Code URL Handler.app` |
 | Cursor | `/Applications/Cursor.app`, `~/Applications/Cursor.app` |
 
 The app only reads these icons from the user's machine with `NSWorkspace`.
-Codex and CloudCode Desktop are runtime-preferred so installed vendor app icons
+Codex and Claude Desktop are runtime-preferred so installed vendor app icons
 provide the primary icon, while the bundled glyph tiles remain fallbacks. Cursor
 remains bundled-first because many macOS `.icns` assets include app-icon
 shadows, edge glow, or outer transparency that create visible halos when
@@ -111,7 +112,7 @@ rendered in the compact sidebar.
 The Swift icon loader uses this order:
 
 1. user override from Application Support
-2. runtime-preferred installed local app icon for Codex or CloudCode Desktop
+2. runtime-preferred installed local app icon for Codex or Claude Desktop
 3. bundled SVG/light SVG asset
 4. installed local app icon fallback for Cursor
 5. fallback initials/system icon
@@ -141,7 +142,7 @@ tile transform matches the other monochrome provider glyphs:
 translate(24 24) scale(2.16667)
 ```
 
-CloudCode Desktop uses the LobeHub `claudecode-color.svg` mark with a `24x24`
+Claude Desktop uses the LobeHub `claude-color.svg` mark with a `24x24`
 view box and the same tile transform. The installed local Claude app icon is
 preferred at runtime when available; the bundled tile is the fallback.
 

@@ -81,7 +81,7 @@ Reviewed LobeHub Icons entries currently bundled from
 | App asset | LobeHub source icon | Usage |
 | --- | --- | --- |
 | `agent.claude.svg` | `claude-color.svg` | Claude Code local agent |
-| `agent.cloudcode-desktop.svg` | `claudecode-color.svg` from `@lobehub/icons-static-svg@1.91.0` | CloudCode Desktop local agent bundled fallback; installed Claude.app or Claude Code URL Handler icon is read at runtime when present |
+| `agent.claude-desktop.svg` | `claude-color.svg` from `@lobehub/icons-static-svg@1.73.0` | Claude Desktop local agent bundled fallback; installed Claude.app or Claude Code URL Handler icon is read at runtime when present |
 | `agent.codex.svg` | `openai.svg` | Codex local agent fallback; installed OpenAI-signed Codex.app icon is read at runtime when present |
 | `agent.cursor.svg` | `cursor.svg` | Cursor local agent |
 | `agent.openai.svg` | `openai.svg` | OpenAI cloud provider |
@@ -111,9 +111,9 @@ inside the app tile.
 neutral tile treatment. Treat it as a third-party provider mark; the SVG asset
 source is MIT-licensed, and trademark rights remain with the brand owner.
 
-`agent.cloudcode-desktop.svg` and `agent.cloudcode-desktop.light.svg` use the
-LobeHub Icons `claudecode-color.svg` source from
-`@lobehub/icons-static-svg@1.91.0` inside the same neutral tile treatment.
+`agent.claude-desktop.svg` and `agent.claude-desktop.light.svg` use the
+LobeHub Icons `claude-color.svg` source from
+`@lobehub/icons-static-svg@1.73.0` inside the same neutral tile treatment.
 Treat it as a third-party provider mark; the SVG asset source is MIT-licensed,
 and trademark rights remain with the brand owner.
 

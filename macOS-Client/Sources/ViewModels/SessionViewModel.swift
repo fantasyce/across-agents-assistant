@@ -300,7 +300,7 @@ class SessionViewModel: ObservableObject {
         AgentModel(id: AgentIDs.openclaw, name: "OpenClaw", iconName: "agent.openclaw", color: "#d97757", type: .local),
         AgentModel(id: "hermes", name: "Hermes", iconName: "agent.hermes", color: "#d97757", type: .local),
         AgentModel(id: "claude", name: "Claude Code", iconName: "agent.claude", color: "#d97757", type: .local),
-        AgentModel(id: AgentIDs.cloudcodeDesktop, name: "CloudCode Desktop", iconName: "agent.cloudcode-desktop", color: "#d97757", type: .local),
+        AgentModel(id: AgentIDs.claudeDesktop, name: "Claude Desktop", iconName: "agent.claude-desktop", color: "#d97757", type: .local),
         AgentModel(id: "codex", name: "Codex", iconName: "agent.codex", color: "#d97757", type: .local),
         AgentModel(id: "opencode", name: "OpenCode", iconName: "agent.opencode", color: "#d97757", type: .local),
         AgentModel(id: "cursor", name: "Cursor Agent", iconName: "agent.cursor", color: "#d97757", type: .local),
