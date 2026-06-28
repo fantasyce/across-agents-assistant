@@ -819,6 +819,12 @@ curl --request POST --unix-socket "$HOME/.across/run/across-agents-assistant/acr
   "http://backend/api/release/verification"
 ```
 
+The HTTP response is a fixed public DTO with status, counts, and bounded
+readiness summaries. Detailed task IDs, command output, evidence paths, run
+URLs, and diagnostics stay in the local JSON/Markdown reports so release
+verification remains useful without exposing stack traces or local machine
+details through the API boundary.
+
 When changing startup, task orchestration, delivery contracts, capability routing, native skills, MCP safety, or release evaluation, also run the focused tests for the touched area and verify the packaged app path before considering the change release-ready.
 
 ## Open-Source Quality Checks

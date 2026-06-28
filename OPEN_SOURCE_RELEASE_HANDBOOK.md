@@ -267,6 +267,7 @@ git status --short --branch
 git rev-parse origin/main vX.Y.Z^{}
 gh release view vX.Y.Z --json name,tagName,url,targetCommitish,publishedAt,isDraft,isPrerelease
 gh pr list --state open --json number,title,headRefName,isDraft
+gh issue list --state open --json number,title,url
 git ls-remote --heads origin
 gh api repos/<owner>/<repo>/code-scanning/alerts --jq '[.[] | select(.state=="open")] | length'
 ```
@@ -278,7 +279,9 @@ Expected state:
 - local `main` is aligned with `origin/main`
 - remote heads contain only expected long-lived branches, normally just `main`
 - open PR list is empty or contains only intentionally deferred work
-- CodeQL open alert count is zero
+- open issue list is empty or contains only intentionally deferred work
+- CodeQL open alert count is zero after the default-branch Security workflow
+  has completed
 
 To confirm all version tags are on the current `main` history:
 
