@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.7 - 2026-06-28
+
+### Fixed
+
+- Removed stack-trace logging from public API 500 handling so CodeQL stack-trace exposure alerts stay closed while HTTP responses continue to return only safe, non-secret error text.
+
 ## 0.9.6 - 2026-06-28
 
 ### Added

@@ -39,7 +39,7 @@ def _safe_error_message(operation: str) -> str:
 
 
 def _safe_http_500(operation: str) -> HTTPException:
-    logger.exception("%s failed", operation)
+    logger.error("%s failed; see local diagnostics for the exception context.", operation)
     return HTTPException(status_code=500, detail=_safe_error_message(operation))
 
 
