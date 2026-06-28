@@ -438,6 +438,28 @@ def test_loop_engineering_capability_pack_endpoint():
     assert body["policy"]["promotion"].startswith("commit")
 
 
+def test_agent_interop_e2e_endpoints(monkeypatch):
+    payload = {
+        "schema_version": "across-aaa-agent-interop-e2e/1.0",
+        "status": "passed",
+        "summary": {"passed_count": 11, "failed_count": 0, "host_target_count": 5, "mcp_server_count": 3},
+        "checks": [{"id": "three_plugin_mcp_load", "status": "passed"}],
+        "errors": [],
+    }
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: payload)
+    monkeypatch.setattr(api_server, "run_agent_interop_e2e", lambda: payload)
+    client = TestClient(app)
+
+    latest = client.get("/api/autopilot/agent-interop-e2e")
+    assert latest.status_code == 200
+    assert latest.json()["schema_version"] == "across-aaa-agent-interop-e2e/1.0"
+
+    run = client.post("/api/autopilot/agent-interop-e2e")
+    assert run.status_code == 200
+    assert run.json()["status"] == "passed"
+    assert run.json()["summary"]["mcp_server_count"] == 3
+
+
 def test_unified_capability_registry_endpoint_preserves_product_boundaries(monkeypatch):
     monkeypatch.setattr(
         api_server,

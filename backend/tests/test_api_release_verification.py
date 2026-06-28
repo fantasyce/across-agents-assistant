@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from across_agents_assistant import api_server, release_verification
+from across_agents_assistant import agent_interop_e2e, api_server, release_verification
 from across_agents_assistant.api_server import app
 
 
@@ -63,7 +63,14 @@ def _release_e2e_task(task_id: str) -> api_server.TaskInfo:
         "cli/quality-check.mjs",
         "tests/e2e-smoke.mjs",
     ]
-    probes = ["static_web_smoke", "browser_e2e", "api_service", "cli_generic"]
+    probes = [
+        "workspace_hygiene",
+        "security_privacy",
+        "static_web_smoke",
+        "browser_e2e",
+        "api_service",
+        "cli_generic",
+    ]
     probe_results = [
         {"id": f"probe-{probe}", "probe_type": probe, "passed": True, "required": True}
         for probe in probes
@@ -121,7 +128,33 @@ def _release_e2e_task(task_id: str) -> api_server.TaskInfo:
     )
 
 
-def _write_gate_evidence(report_root, gate_id: str, *, status: str = "passed", run_url: str | None = None):
+def _interop_payload(status: str = "passed"):
+    failed = 0 if status == "passed" else 1
+    passed = 10 if status == "passed" else 9
+    return {
+        "schema_version": "1.0",
+        "status": status,
+        "generated_at": "2026-06-25T10:00:00Z",
+        "summary": {
+            "status": status,
+            "passed_count": passed,
+            "failed_count": failed,
+            "host_target_count": 3,
+            "mcp_server_count": 3,
+            "protocol_readiness_score": 100 if status == "passed" else 70,
+        },
+        "endpoint": "/api/agent-interop/e2e",
+    }
+
+
+def _write_gate_evidence(
+    report_root,
+    gate_id: str,
+    *,
+    status: str = "passed",
+    run_url: str | None = None,
+    workspace_dirty: bool | str = False,
+):
     report_root.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "1.0",
@@ -134,13 +167,21 @@ def _write_gate_evidence(report_root, gate_id: str, *, status: str = "passed", r
         "completed_at": "2026-06-20T01:05:00Z",
         "duration_seconds": 300,
         "run_url": run_url,
+        "workspace_dirty": workspace_dirty,
     }
     path = report_root / f"{gate_id}-gate-evidence.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
+def _materialize_source_markers(repo_root):
+    (repo_root / "backend" / "src" / "across_agents_assistant").mkdir(parents=True, exist_ok=True)
+    (repo_root / "macOS-Client").mkdir(parents=True, exist_ok=True)
+    (repo_root / "macOS-Client" / "Package.swift").write_text("// package fixture\n", encoding="utf-8")
+
+
 def _materialize_gate_paths(repo_root):
+    _materialize_source_markers(repo_root)
     for definition in release_verification.PRE_RELEASE_GATE_DEFINITIONS:
         for relative_path in definition.get("paths") or []:
             path = repo_root / relative_path
@@ -164,6 +205,13 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
                         "updated_at": 1.0,
                     },
                     {
+                        "task_id": "task-third",
+                        "description": "Release E2E scenario: additional recent release candidate",
+                        "status": "completed",
+                        "created_at": 5.0,
+                        "updated_at": 15.0,
+                    },
+                    {
                         "task_id": "task-rc",
                         "description": "Release E2E scenario: web api cli release candidate",
                         "status": "completed",
@@ -184,12 +232,21 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
     monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
     monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: _release_e2e_task(task_id))
+    monkeypatch.setattr(agent_interop_e2e, "load_agent_interop_e2e_latest", lambda: _interop_payload("passed"))
     monkeypatch.setattr(
         api_server,
         "_repair_task_dispatch_if_possible",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not repair during RC verification")),
     )
-    _write_gate_evidence(tmp_path / "release-reports", "local_live_e2e")
+    for gate_id in [
+        "backend_regression",
+        "open_source_check",
+        "swift_behavior_checks",
+        "swift_package_gate",
+        "quality_ci",
+        "local_live_e2e",
+    ]:
+        _write_gate_evidence(tmp_path / "release-reports", gate_id)
     _write_gate_evidence(
         tmp_path / "release-reports",
         "github_live_e2e",
@@ -204,11 +261,18 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     assert body["schema_version"] == "1.0"
     assert body["status"] == "ready"
     assert body["startup"]["summary"]["status"] == "ready"
+    assert body["release_evaluation"]["release_readiness"] == "ready"
+    assert body["release_evaluation"]["evaluated_task_count"] == 3
+    assert body["release_evaluation"]["agent_interop_e2e_status"] == "passed"
+    assert body["release_evaluation"]["release_evidence_count"] == 4
+    assert body["release_evaluation"]["passed_evidence_count"] == 4
+    assert body["release_evaluation"]["supplemental_evidence"][0]["kind"] == "host_interop_e2e"
     assert body["latest_release_e2e"]["task_id"] == "task-rc"
     assert body["latest_release_e2e"]["benchmark"]["status"] == "passed"
     assert body["pre_release_gate_summary"]["required_missing"] == 0
     assert body["pre_release_gate_summary"]["required_manual"] == 0
-    assert body["pre_release_gate_summary"]["passed"] == 2
+    assert body["pre_release_gate_summary"]["required_unverified"] == 0
+    assert body["pre_release_gate_summary"]["passed"] == 7
     assert body["pre_release_gate_missing_paths"] == []
     assert {gate["id"] for gate in body["pre_release_gates"]} >= {
         "backend_regression",
@@ -219,6 +283,7 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     }
     gates_by_id = {gate["id"]: gate for gate in body["pre_release_gates"]}
     assert gates_by_id["local_live_e2e"]["status"] == "passed"
+    assert gates_by_id["local_live_e2e"]["evidence"]["workspace_dirty"] is False
     assert gates_by_id["github_live_e2e"]["evidence"]["run_url"].endswith("/123")
     assert gates_by_id["github_live_e2e"]["evidence"]["evidence_path"] == "github_live_e2e-gate-evidence.json"
     assert str(tmp_path) not in json.dumps(gates_by_id["github_live_e2e"]["evidence"])
@@ -234,8 +299,12 @@ def test_release_verification_endpoint_writes_ready_report_without_secret_leaks(
     markdown = (tmp_path / "release-reports").joinpath(body["report_files"]["markdown_name"]).read_text()
     assert "task-rc" in markdown
     assert "Pre-Release Gates" in markdown
+    assert "Release Evaluation" in markdown
+    assert "Agent interop E2E: passed" in markdown
+    assert "- host_interop_e2e: passed (10 passed, 0 failed)" in markdown
     assert "Required missing: 0" in markdown
     assert "Required manual: 0" in markdown
+    assert "Required unverified: 0" in markdown
     assert "bash scripts/run_live_e2e.sh all" in markdown
     assert "Run URL: https://github.com/fantasyce/across-agents-assistant/actions/runs/123" in markdown
     assert "Gate evidence parse errors:" in markdown
@@ -256,6 +325,58 @@ def test_pre_release_gate_parse_error_uses_public_error_shape(tmp_path):
     assert str(tmp_path) not in json.dumps(parse_error)
 
 
+def test_pre_release_gate_evidence_preserves_workspace_dirty(tmp_path):
+    evidence_path = tmp_path / "quality_ci-gate-evidence.json"
+    raw = {
+        "schema_version": "1.0",
+        "gates": [
+            {
+                "id": "quality_ci",
+                "status": "passed",
+                "summary": "quality passed",
+                "workspace_dirty": "false",
+            },
+            {
+                "id": "local_live_e2e",
+                "status": "passed",
+                "summary": "live e2e passed",
+                "runner": "scripts/run_live_e2e.sh",
+                "orchestrator_command": "across-orchestrator",
+                "workspace_dirty": True,
+            },
+        ],
+    }
+
+    normalized = release_verification._normalize_pre_release_gate_evidence(raw, evidence_path=evidence_path)
+    gates = release_verification._public_pre_release_gates(
+        [
+            {"id": "quality_ci", "label": "Quality CI", "source": "github_actions", "status": "passed", "evidence": normalized[0]},
+            {
+                "id": "local_live_e2e",
+                "label": "Local Live E2E",
+                "source": "local_script",
+                "status": "passed",
+                "evidence": normalized[1],
+            },
+        ]
+    )
+
+    gates_by_id = {gate["id"]: gate for gate in gates}
+    assert gates_by_id["quality_ci"]["evidence"]["workspace_dirty"] is False
+    assert gates_by_id["local_live_e2e"]["evidence"]["workspace_dirty"] is True
+    assert gates_by_id["local_live_e2e"]["evidence"]["runner"] == "scripts/run_live_e2e.sh"
+    assert gates_by_id["local_live_e2e"]["evidence"]["orchestrator_command"] == "across-orchestrator"
+
+
+def test_pre_release_gates_do_not_report_source_paths_missing_in_packaged_runtime(tmp_path):
+    gates = release_verification._build_pre_release_gates(repo_root=tmp_path / "Packaged.app" / "Resources")
+
+    assert gates
+    assert all(gate["status"] != "missing" for gate in gates)
+    assert all(gate["source_checkout_available"] is False for gate in gates)
+    assert any("attach gate evidence" in gate["detail"] for gate in gates)
+
+
 def test_release_verification_reports_attention_when_release_e2e_is_missing(monkeypatch, tmp_path):
     class FakePersistence:
         def get_task_summaries(self, *, limit=100, offset=0):
@@ -270,6 +391,7 @@ def test_release_verification_reports_attention_when_release_e2e_is_missing(monk
     monkeypatch.setattr(api_server, "_task_state", FakeState())
     monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
     monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
+    monkeypatch.setattr(agent_interop_e2e, "load_agent_interop_e2e_latest", lambda: {})
 
     response = TestClient(app).post("/api/release/verification")
 
@@ -312,6 +434,7 @@ def test_release_verification_reports_attention_when_manual_gate_evidence_is_mis
     monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
     monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: _release_e2e_task(task_id))
     monkeypatch.setattr(release_verification, "_repository_root", lambda: repo_root)
+    monkeypatch.setattr(agent_interop_e2e, "load_agent_interop_e2e_latest", lambda: {})
 
     response = TestClient(app).post("/api/release/verification")
 
@@ -347,12 +470,14 @@ def test_release_verification_reports_attention_when_required_gate_is_missing(mo
 
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _materialize_source_markers(repo_root)
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
     monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
     monkeypatch.setattr(api_server, "app_subdir", lambda name: tmp_path / name)
     monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: _release_e2e_task(task_id))
     monkeypatch.setattr(release_verification, "_repository_root", lambda: repo_root)
+    monkeypatch.setattr(agent_interop_e2e, "load_agent_interop_e2e_latest", lambda: {})
 
     response = TestClient(app).post("/api/release/verification")
 
@@ -366,3 +491,23 @@ def test_release_verification_reports_attention_when_required_gate_is_missing(mo
     assert "Required missing: 7" in markdown
     assert "Missing required gate paths:" in markdown
     assert "scripts/run_live_e2e.sh" in markdown
+
+
+def test_release_verification_evaluation_uses_interop_evidence_without_task_rows(tmp_path):
+    report = release_verification._build_release_verification_report(
+        write_report=False,
+        task_state=None,
+        startup_diagnostics=_startup_report(),
+        write_report_directory=tmp_path,
+        repo_root=tmp_path / "repo",
+        agent_interop_e2e=_interop_payload("passed"),
+    )
+
+    assert report["status"] == "attention"
+    assert report["release_evaluation"]["release_readiness"] == "attention"
+    assert report["release_evaluation"]["release_evidence_count"] == 1
+    assert report["release_evaluation"]["passed_evidence_count"] == 1
+    assert report["release_evaluation"]["agent_interop_e2e_status"] == "passed"
+    assert report["release_evaluation"]["supplemental_evidence"][0]["endpoint"] == "/api/autopilot/agent-interop-e2e"
+    assert "quality-gated release task evidence" in report["release_evaluation"]["recommendation"]
+    assert any("Release E2E" in item for item in report["remediations"])

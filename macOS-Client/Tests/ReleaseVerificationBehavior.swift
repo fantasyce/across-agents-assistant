@@ -27,6 +27,9 @@ func testReleaseVerificationDecodeAndSummary() throws {
       "release_evaluation": {
         "release_readiness": "ready",
         "generated_at": 1780000000.0,
+        "release_evidence_count": 5,
+        "passed_evidence_count": 5,
+        "agent_interop_e2e_status": "passed",
         "evaluated_task_count": 4,
         "terminal_task_count": 4,
         "passed_task_count": 4,
@@ -36,7 +39,23 @@ func testReleaseVerificationDecodeAndSummary() throws {
         "pass_rate": 1.0,
         "top_risks": [],
         "recent_evaluations": [],
-        "readiness_checks": [],
+        "readiness_checks": [
+          {"id": "agent_interop_e2e", "status": "passed", "label": "Agent interop E2E", "message": "Agent interop E2E passed.", "severity": "info"}
+        ],
+        "supplemental_evidence": [
+          {
+            "id": "agent_interop_e2e",
+            "kind": "host_interop_e2e",
+            "status": "passed",
+            "quality_gate": "passed",
+            "passed_count": 10,
+            "failed_count": 0,
+            "host_target_count": 3,
+            "mcp_server_count": 3,
+            "protocol_readiness_score": 100,
+            "endpoint": "/api/agent-interop/e2e"
+          }
+        ],
         "gate_breakdown": {},
         "stack_coverage": {},
         "agent_coverage": {}
@@ -80,11 +99,12 @@ func testReleaseVerificationDecodeAndSummary() throws {
             "tier": "all",
             "completed_at": "2026-06-20T01:05:00Z",
             "duration_seconds": 300,
+            "workspace_dirty": true,
             "run_url": "https://github.com/fantasyce/across-agents-assistant/actions/runs/123"
           }
         }
       ],
-      "pre_release_gate_summary": {"total": 2, "passed": 1, "configured": 1, "manual_required": 0, "missing": 0, "failed": 0, "required_missing": 0, "required_manual": 0, "required_failed": 0},
+      "pre_release_gate_summary": {"total": 2, "passed": 1, "configured": 1, "manual_required": 0, "missing": 0, "failed": 0, "required_missing": 0, "required_manual": 0, "required_failed": 0, "required_unverified": 1},
       "pre_release_gate_missing_paths": [],
       "pre_release_gate_parse_errors": [
         {"evidence_path": "broken-gate-evidence.json", "error_type": "JSONDecodeError", "message": "Expecting property name"}
@@ -117,11 +137,16 @@ func testReleaseVerificationDecodeAndSummary() throws {
     assert(report.reportFiles.markdownPath.hasSuffix(".md"), "Markdown report path should decode")
     assert(report.audit.readOnly, "Audit should decode read-only flag")
     assert(report.audit.secretsRedacted, "Audit should decode redaction flag")
+    assert(report.releaseEvaluation.releaseEvidenceCount == 5, "Release verification should decode release evidence count")
+    assert(report.releaseEvaluation.agentInteropE2EStatus == "passed", "Release verification should decode interop status")
+    assert(report.releaseEvaluation.supplementalEvidence.first?.kind == "host_interop_e2e", "Release verification should decode supplemental evidence")
     assert(report.readyHeadline == "Ready · Release E2E passed · score 91", "Headline should summarize RC readiness")
     assert(report.preReleaseGates?.count == 2, "Pre-release gates should decode")
     assert(report.preReleaseGates?.last?.evidence?.runURL?.hasSuffix("/123") == true, "Gate evidence run URL should decode")
+    assert(report.preReleaseGates?.last?.evidence?.workspaceDirty == true, "Gate evidence should decode dirty workspace flag")
     assert(report.gateSummary.passed == 1, "Passed pre-release gate count should decode")
     assert(report.gateSummary.manualRequired == 0, "Manual pre-release gate count should decode")
+    assert(report.gateSummary.requiredUnverified == 1, "Unverified required gate count should decode")
     assert(report.preReleaseGateMissingPaths.isEmpty, "Missing gate paths should decode")
     assert(report.preReleaseGateParseErrors.first?.evidencePath == "broken-gate-evidence.json", "Gate parse errors should decode")
     assert(report.gateHeadline == "1 passed · 1 configured · 0 manual · 0 missing", "Gate headline should summarize pre-release gates")

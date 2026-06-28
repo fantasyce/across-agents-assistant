@@ -14,6 +14,7 @@ struct ReleaseVerificationPreReleaseGateEvidence: Decodable {
     let runURL: String?
     let workflowRunURL: String?
     let commitSHA: String?
+    let workspaceDirty: Bool
     let evidencePath: String?
 
     enum CodingKeys: String, CodingKey {
@@ -30,6 +31,7 @@ struct ReleaseVerificationPreReleaseGateEvidence: Decodable {
         case runURL = "run_url"
         case workflowRunURL = "workflow_run_url"
         case commitSHA = "commit_sha"
+        case workspaceDirty = "workspace_dirty"
         case evidencePath = "evidence_path"
     }
 
@@ -48,6 +50,7 @@ struct ReleaseVerificationPreReleaseGateEvidence: Decodable {
         runURL = try container.decodeIfPresent(String.self, forKey: .runURL)
         workflowRunURL = try container.decodeIfPresent(String.self, forKey: .workflowRunURL)
         commitSHA = try container.decodeIfPresent(String.self, forKey: .commitSHA)
+        workspaceDirty = try container.decodeIfPresent(Bool.self, forKey: .workspaceDirty) ?? false
         evidencePath = try container.decodeIfPresent(String.self, forKey: .evidencePath)
     }
 }
@@ -102,6 +105,7 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
     let requiredMissing: Int
     let requiredManual: Int
     let requiredFailed: Int
+    let requiredUnverified: Int
 
     enum CodingKeys: String, CodingKey {
         case total
@@ -113,6 +117,7 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
         case requiredMissing = "required_missing"
         case requiredManual = "required_manual"
         case requiredFailed = "required_failed"
+        case requiredUnverified = "required_unverified"
     }
 
     init(
@@ -124,7 +129,8 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
         failed: Int = 0,
         requiredMissing: Int = 0,
         requiredManual: Int = 0,
-        requiredFailed: Int = 0
+        requiredFailed: Int = 0,
+        requiredUnverified: Int = 0
     ) {
         self.total = total
         self.passed = passed
@@ -135,6 +141,7 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
         self.requiredMissing = requiredMissing
         self.requiredManual = requiredManual
         self.requiredFailed = requiredFailed
+        self.requiredUnverified = requiredUnverified
     }
 
     init(from decoder: Decoder) throws {
@@ -148,6 +155,7 @@ struct ReleaseVerificationPreReleaseGateSummary: Decodable {
         requiredMissing = try container.decodeIfPresent(Int.self, forKey: .requiredMissing) ?? 0
         requiredManual = try container.decodeIfPresent(Int.self, forKey: .requiredManual) ?? 0
         requiredFailed = try container.decodeIfPresent(Int.self, forKey: .requiredFailed) ?? 0
+        requiredUnverified = try container.decodeIfPresent(Int.self, forKey: .requiredUnverified) ?? 0
     }
 }
 
@@ -316,7 +324,8 @@ struct ReleaseVerificationReport: Decodable, Identifiable {
             failed: gates.filter { $0.status == "failed" || $0.status == "blocked" }.count,
             requiredMissing: gates.filter { $0.required && $0.status == "missing" }.count,
             requiredManual: gates.filter { $0.required && $0.status == "manual_required" }.count,
-            requiredFailed: gates.filter { $0.required && ($0.status == "failed" || $0.status == "blocked") }.count
+            requiredFailed: gates.filter { $0.required && ($0.status == "failed" || $0.status == "blocked") }.count,
+            requiredUnverified: gates.filter { $0.required && $0.status == "configured" }.count
         )
     }
 

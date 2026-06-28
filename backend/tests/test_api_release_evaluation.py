@@ -3,6 +3,25 @@ from fastapi.testclient import TestClient
 from across_agents_assistant.api_server import app
 
 
+class _NoExternalTasks:
+    def list_task_summaries(self):
+        return []
+
+
+def _interop_payload(status="not_run", *, failed_count=0, passed_count=0):
+    return {
+        "status": status,
+        "summary": {
+            "passed_count": passed_count,
+            "failed_count": failed_count,
+            "host_target_count": 5 if status == "passed" else 0,
+            "mcp_server_count": 3 if status == "passed" else 0,
+            "protocol_readiness_score": 70 if status == "passed" else None,
+        },
+        "checks": [],
+    }
+
+
 def _quality_row(task_id: str, *, score: int = 90, gate: str = "passed"):
     return {
         "task_id": task_id,
@@ -21,6 +40,14 @@ def _quality_row(task_id: str, *, score: int = 90, gate: str = "passed"):
         "last_owner_decision": {
             "delivery_quality": {
                 "delivery_quality": gate,
+                "probe_results": [
+                    {"probe_type": "workspace_hygiene", "passed": True},
+                    {"probe_type": "security_privacy", "passed": True},
+                    {"probe_type": "static_web", "passed": True},
+                    {"probe_type": "api_service", "passed": True},
+                    {"probe_type": "cli_generic", "passed": True},
+                    {"probe_type": "browser_e2e", "passed": True},
+                ],
                 "quality_report": {
                     "quality_gate": gate,
                     "final_quality_score": score,
@@ -58,6 +85,8 @@ def test_release_evaluation_endpoint_uses_lightweight_task_rows(monkeypatch):
             return []
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: _NoExternalTasks())
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: _interop_payload())
 
     response = TestClient(app).get("/api/release/evaluation")
 
@@ -88,6 +117,8 @@ def test_release_evaluation_endpoint_clamps_limit_and_reports_blockers(monkeypat
             return []
 
     monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: _NoExternalTasks())
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: _interop_payload("passed", passed_count=28))
 
     response = TestClient(app).get("/api/release/evaluation?limit=9999")
 
@@ -96,3 +127,83 @@ def test_release_evaluation_endpoint_clamps_limit_and_reports_blockers(monkeypat
     assert body["release_readiness"] == "blocked"
     assert body["blocked_task_count"] == 1
     assert body["top_risks"][0]["kind"] == "required_gate_failure"
+    assert body["release_evidence_count"] == 3
+
+
+def test_release_evaluation_endpoint_uses_interop_e2e_when_task_quality_is_empty(monkeypatch):
+    import across_agents_assistant.api_server as api_server
+
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=50, offset=0):
+            return ([], 0)
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: _NoExternalTasks())
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: _interop_payload("passed", passed_count=28))
+
+    response = TestClient(app).get("/api/release/evaluation")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["release_readiness"] == "attention"
+    assert body["evaluated_task_count"] == 0
+    assert body["release_evidence_count"] == 1
+    assert body["passed_evidence_count"] == 1
+    assert body["supplemental_evidence"][0]["id"] == "agent_interop_e2e"
+    assert body["supplemental_evidence"][0]["kind"] == "host_interop_e2e"
+    assert body["supplemental_evidence"][0]["quality_gate"] == "passed"
+    assert "quality-gated release task evidence" in body["recommendation"]
+
+
+def test_release_evaluation_endpoint_hydrates_latest_release_e2e_read_only(monkeypatch):
+    import across_agents_assistant.api_server as api_server
+
+    summary_row = {
+        "task_id": "task-release-e2e",
+        "description": "Run host-agent full delivery conformance. Scenario ID: cross_agent_full_delivery_v1.",
+        "status": "completed",
+        "created_at": 1.0,
+        "updated_at": 4.0,
+    }
+    full_payload = _quality_row("task-release-e2e", score=92)
+    full_payload["description"] = summary_row["description"]
+    full_payload["task_types"] = ["functional", "artifact"]
+    full_payload["delivery_mode"] = "composite"
+
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=50, offset=0):
+            return ([summary_row], 1)
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    loaded_task_ids = []
+
+    def load_read_only(task_id):
+        loaded_task_ids.append(task_id)
+        return full_payload
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: _NoExternalTasks())
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: _interop_payload("passed", passed_count=28))
+    monkeypatch.setattr(api_server, "_load_task_info_read_only", load_read_only)
+
+    response = TestClient(app).get("/api/release/evaluation")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert loaded_task_ids == ["task-release-e2e"]
+    assert body["evaluated_task_count"] == 1
+    assert body["passed_task_count"] == 1
+    assert body["release_evidence_count"] == 2
+    assert body["passed_evidence_count"] == 2
+    assert body["recent_evaluations"][0]["task_id"] == "task-release-e2e"

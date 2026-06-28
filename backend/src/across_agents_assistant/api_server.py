@@ -276,6 +276,9 @@ from .release_verification import (
     _collect_release_task_rows,
     _build_release_verification_report,
     _redact_sensitive_evidence,
+    _release_e2e_rows,
+    _release_evaluation_row_from_task_payload,
+    _upsert_release_evaluation_row,
 )
 from .task_api_models import (
     AutoTaskRequest,
@@ -314,6 +317,11 @@ from .orchestrator_plugin import (
 )
 from .autopilot_client import AutopilotClient
 from .aaa_ecosystem_roadmap import build_aaa_ecosystem_roadmap, ecosystem_route_section
+from .agent_interop_e2e import (
+    augment_release_evaluation_with_agent_interop,
+    load_agent_interop_e2e_latest,
+    run_agent_interop_e2e,
+)
 from .autopilot_workbench import build_autopilot_workbench_snapshot
 from .external_agent_plugin_gateway import probe_agent_plugin_runtime_status
 from .plugin_runtime import (
@@ -5105,6 +5113,25 @@ async def run_autopilot_loop(req: AutopilotSpecRequest):
         raise _safe_http_500("Run Across Autopilot LoopSpec")
 
 
+@app.get("/api/autopilot/agent-interop-e2e")
+async def get_agent_interop_e2e_result():
+    """Return the latest host-neutral plugin interop E2E result."""
+    try:
+        return _sanitize_public_payload(load_agent_interop_e2e_latest())
+    except Exception as exc:
+        raise _safe_http_500("Get agent interop E2E result")
+
+
+@app.post("/api/autopilot/agent-interop-e2e")
+async def run_agent_interop_e2e_endpoint():
+    """Run the complete Context/Orchestrator/Autopilot host interop E2E scenario."""
+    try:
+        result = await asyncio.to_thread(run_agent_interop_e2e)
+        return _sanitize_public_payload(result)
+    except Exception as exc:
+        raise _safe_http_500("Run agent interop E2E")
+
+
 @app.get("/api/autopilot/runs")
 async def list_autopilot_runs():
     """List recent persisted Across Autopilot runs."""
@@ -5187,6 +5214,10 @@ async def get_autopilot_ops_dashboard():
     except Exception:
         telemetry = {}
     try:
+        runs = await asyncio.to_thread(get_autopilot_client().list_runs)
+    except Exception:
+        runs = {}
+    try:
         from .loop_engineering_capability_pack import loop_engineering_capability_pack
 
         capability_pack = loop_engineering_capability_pack()
@@ -5215,6 +5246,7 @@ async def get_autopilot_ops_dashboard():
     return _sanitize_public_payload(
         build_loop_engineering_ops_dashboard(
             telemetry=telemetry,
+            runs=runs,
             trigger_registry=trigger_registry,
             trigger_scheduler=trigger_scheduler,
             capability_pack=capability_pack,
@@ -5285,6 +5317,7 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
     try:
         ops_dashboard = build_loop_engineering_ops_dashboard(
             telemetry=telemetry,
+            runs=runs,
             trigger_registry=trigger_registry,
             trigger_scheduler=trigger_scheduler,
             capability_pack=capability_pack,
@@ -5310,6 +5343,11 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
         agent_plugin_runtime = {}
 
     try:
+        agent_interop_e2e = await asyncio.to_thread(load_agent_interop_e2e_latest)
+    except Exception:
+        agent_interop_e2e = {}
+
+    try:
         ecosystem_roadmap = await _build_ecosystem_roadmap_response(
             refresh=refresh,
             plugins=plugins,
@@ -5322,6 +5360,7 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
             memory_metrics=agent_loop_memory_metrics,
             pending_memories=pending_memories,
             agent_plugin_runtime=agent_plugin_runtime,
+            agent_interop_e2e=agent_interop_e2e,
         )
     except Exception:
         ecosystem_roadmap = {}
@@ -5343,6 +5382,7 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
             pending_memories=pending_memories,
             ecosystem_roadmap=ecosystem_roadmap,
             agent_plugin_runtime=agent_plugin_runtime,
+            agent_interop_e2e=agent_interop_e2e,
         )
     )
 
@@ -5365,13 +5405,30 @@ async def _release_evaluation_payload(limit: int = 100) -> Dict[str, Any]:
     except Exception:
         external_rows = []
     try:
+        agent_interop_e2e = load_agent_interop_e2e_latest()
+    except Exception:
+        agent_interop_e2e = {}
+    try:
         safe_limit = max(1, min(int(limit or 100), 500))
         rows = _collect_release_task_rows(
             safe_limit,
             task_state=_task_state,
             external_task_rows=lambda: external_rows,
         )
-        return build_release_evaluation_summary(rows)
+        for latest_release_row in _release_e2e_rows(rows, limit=3):
+            task_id = str(latest_release_row.get("task_id") or "")
+            if task_id:
+                try:
+                    task_payload = await asyncio.to_thread(_load_task_info_read_only, task_id)
+                    serialized = dict(task_payload) if isinstance(task_payload, dict) else _pydantic_dump(task_payload)
+                    rows = _upsert_release_evaluation_row(
+                        rows,
+                        _release_evaluation_row_from_task_payload(serialized, latest_release_row),
+                    )
+                except Exception:
+                    pass
+        summary = build_release_evaluation_summary(rows)
+        return augment_release_evaluation_with_agent_interop(summary, agent_interop_e2e)
     except Exception:
         return {}
 
@@ -5389,6 +5446,7 @@ async def _build_ecosystem_roadmap_response(
     memory_metrics: Optional[Dict[str, Any]] = None,
     pending_memories: Optional[List[Dict[str, Any]]] = None,
     agent_plugin_runtime: Optional[Dict[str, Any]] = None,
+    agent_interop_e2e: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if plugins is None:
         try:
@@ -5431,6 +5489,7 @@ async def _build_ecosystem_roadmap_response(
             )
             ops_dashboard = build_loop_engineering_ops_dashboard(
                 telemetry=telemetry,
+                runs=autopilot_runs,
                 trigger_registry=trigger_registry,
                 trigger_scheduler=trigger_scheduler,
                 capability_pack=capability_pack,
@@ -5454,6 +5513,11 @@ async def _build_ecosystem_roadmap_response(
             agent_plugin_runtime = await asyncio.to_thread(probe_agent_plugin_runtime_status)
         except Exception:
             agent_plugin_runtime = {}
+    if agent_interop_e2e is None:
+        try:
+            agent_interop_e2e = await asyncio.to_thread(load_agent_interop_e2e_latest)
+        except Exception:
+            agent_interop_e2e = {}
     try:
         agent_cards = await asyncio.to_thread(_build_agent_cards_payload)
     except Exception:
@@ -5478,6 +5542,7 @@ async def _build_ecosystem_roadmap_response(
             memory_metrics=memory_metrics,
             pending_memories=pending_memories,
             agent_plugin_runtime=agent_plugin_runtime,
+            agent_interop_e2e=agent_interop_e2e,
         )
     )
 
@@ -9118,12 +9183,7 @@ async def get_release_evaluation(limit: int = 100):
     """
     try:
         safe_limit = max(1, min(int(limit or 100), 500))
-        rows = _collect_release_task_rows(
-            safe_limit,
-            task_state=_task_state,
-            external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
-        )
-        return _sanitize_public_payload(build_release_evaluation_summary(rows))
+        return _sanitize_public_payload(await _release_evaluation_payload(safe_limit))
     except Exception as e:
         raise _safe_http_500("Get release evaluation")
 

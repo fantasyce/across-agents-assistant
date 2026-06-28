@@ -94,6 +94,69 @@ def test_delivery_benchmark_fails_when_browser_e2e_or_file_inventory_is_bad():
     assert "debug.log" in " ".join(scenario["failures"])
 
 
+def test_delivery_benchmark_reads_orchestrator_quality_score_fallback():
+    payload = _passing_task_payload()
+    report_payload = payload["quality_health"]["delivery_quality_report"]
+    report_payload["quality_score"] = 83
+    report_payload["quality_report"].pop("final_quality_score")
+
+    report = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id="release-orchestrator-score",
+        expected_files=["index.html", "styles.css", "app.js", "README.md"],
+        required_probes=["static_web_smoke", "browser_e2e"],
+        min_quality_score=70,
+        max_remediation_attempts=2,
+    )
+
+    assert report["status"] == "passed"
+    assert report["scenarios"][0]["quality_score"] == 83
+
+
+def test_delivery_benchmark_accepts_external_app_grade_quality_shape():
+    payload = {
+        "task_id": "task-app-grade",
+        "status": "completed",
+        "quality_health": {
+            "quality_gate": "passed",
+            "delivery_quality_report": {
+                "quality_gate": "passed",
+                "quality_score": 100,
+                "produced_files": ["README.md", "web/index.html"],
+                "gate_results": {
+                    "workspace_hygiene": "passed",
+                    "security_privacy": "passed",
+                    "static_web_smoke": "passed",
+                    "browser_e2e": "passed",
+                },
+            },
+        },
+        "delivery_report": {
+            "status": "passed",
+            "final_status": "completed",
+            "checks": {
+                "workspace_hygiene": True,
+                "security_privacy": True,
+                "static_web_smoke": True,
+                "browser_e2e": True,
+            },
+        },
+    }
+
+    report = evaluate_delivery_benchmark(
+        [payload],
+        benchmark_id="external-app-grade",
+        expected_files=["README.md", "web/index.html"],
+        required_probes=["workspace_hygiene", "security_privacy", "static_web_smoke", "browser_e2e"],
+    )
+
+    assert report["status"] == "passed"
+    scenario = report["scenarios"][0]
+    assert scenario["quality_score"] == 100
+    assert scenario["checks"]["workspace_hygiene_passed"] is True
+    assert scenario["checks"]["browser_e2e_passed"] is True
+
+
 def test_delivery_benchmark_counts_bundled_remediation_subtasks_once():
     payload = _passing_task_payload()
     payload["task_id"] = "task-bundled-remediation"

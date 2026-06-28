@@ -85,6 +85,45 @@ def test_ecosystem_roadmap_marks_pending_memory_and_eval_gaps_attention():
     assert any(action["id"] == "advance_context_packs" for action in roadmap["actions"])
 
 
+def test_ecosystem_roadmap_accepts_agent_interop_e2e_as_release_evidence():
+    roadmap = build_aaa_ecosystem_roadmap(
+        plugins=[
+            {"plugin_id": "across-context", "available": True, "status": "installed"},
+            {"plugin_id": "across-orchestrator", "available": True, "status": "installed"},
+            {"plugin_id": "across-autopilot", "available": True, "status": "installed"},
+        ],
+        capability_registry={
+            "providers": [{"id": "across-agents-assistant"}, {"id": "across-autopilot"}],
+            "capabilities": _capabilities(),
+        },
+        registry_health={"status": "passed", "checks": [{"id": "non_secret", "status": "passed"}]},
+        agent_cards={"cards": [{"agent_id": "owner", "name": "Owner", "capabilities": [{"id": "review"}]}]},
+        mcp_safety={"servers": []},
+        autopilot_registry={"built_in": [{"id": "repo-quality-copilot"}]},
+        autopilot_runs={
+            "runs": [
+                {"run_id": "run-new", "spec_id": "repo-quality-copilot", "status": "completed"},
+                {"run_id": "run-old", "spec_id": "repo-quality-copilot", "status": "failed"},
+            ],
+            "run_count": 2,
+        },
+        autopilot_telemetry={"runs": {"total": 2, "completed": 1, "failed": 1}},
+        ops_dashboard={"status": "passed", "summary": {"capability_ready_count": 42}},
+        release_evaluation={"release_readiness": "no_evidence", "evaluated_task_count": 0},
+        memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0, "approved_count": 0}},
+        pending_memories=[],
+        agent_plugin_runtime=_agent_plugin_runtime(),
+        agent_interop_e2e={"status": "passed", "summary": {"failed_count": 0, "passed_count": 11}},
+        generated_at="2026-06-23T00:00:00Z",
+    )
+
+    assert roadmap["status"] == "passed"
+    assert roadmap["sections"]["evaluation_telemetry"]["status"] == "passed"
+    assert roadmap["sections"]["evaluation_telemetry"]["summary"]["failed_run_count"] == 0
+    assert roadmap["sections"]["evaluation_telemetry"]["summary"]["historical_failed_run_count"] == 1
+    assert roadmap["sections"]["evaluation_telemetry"]["summary"]["agent_interop_e2e_status"] == "passed"
+
+
 def test_ecosystem_roadmap_surfaces_virtual_agent_context_pack():
     runtime = {
         "status": "passed",

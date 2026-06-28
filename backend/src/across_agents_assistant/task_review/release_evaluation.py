@@ -82,7 +82,7 @@ def build_release_evaluation_summary(
     total_remediation_count = sum(item["remediation_count"] for item in evaluated)
     gate_breakdown = Counter(item["quality_gate"] for item in evaluated)
     quality_trend = _build_quality_trend(evaluated)
-    agent_mix_summary = _build_agent_mix_summary(agent_coverage)
+    agent_mix_summary = _build_agent_mix_summary(agent_coverage, evaluated=evaluated)
     probe_coverage = _build_probe_coverage(evaluated)
     top_risks = _build_top_risks(
         evaluated,
@@ -93,6 +93,7 @@ def build_release_evaluation_summary(
         skipped_count=skipped_count,
         average_score=average_score,
         agent_mix_summary=agent_mix_summary,
+        probe_coverage=probe_coverage,
     )
     readiness = _release_readiness(
         evaluated_count=evaluated_count,
@@ -102,6 +103,7 @@ def build_release_evaluation_summary(
         skipped_count=skipped_count,
         average_score=average_score,
         agent_mix_summary=agent_mix_summary,
+        probe_coverage=probe_coverage,
     )
     readiness_checks = _build_readiness_checks(
         evaluated_count=evaluated_count,
@@ -149,7 +151,7 @@ def _extract_quality(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     quality_report = delivery_quality.get("quality_report")
     if not isinstance(quality_report, dict):
-        quality_report = {}
+        quality_report = dict(delivery_quality)
     gate = (
         quality_report.get("quality_gate")
         or delivery_quality.get("delivery_quality")
@@ -162,7 +164,7 @@ def _extract_quality(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "quality_report": quality_report,
         "quality_gate": str(gate),
         "probe_results": delivery_quality.get("probe_results") or quality_report.get("probe_results") or [],
-        "gate_results": quality_report.get("gate_results") or [],
+        "gate_results": quality_report.get("gate_results") or delivery_quality.get("gate_results") or delivery_quality.get("checks") or [],
     }
 
 
@@ -175,13 +177,13 @@ def _build_evaluation_item(row: Dict[str, Any], quality: Dict[str, Any]) -> Dict
         quality_report.get("required_skipped_count", quality_report.get("skipped_required_count"))
     )
     remediation_count = _int_value(quality_report.get("remediation_count"))
-    score = quality_report.get("final_quality_score")
+    score = quality_report.get("final_quality_score", quality_report.get("quality_score"))
     final_score = _optional_int(score)
     is_blocked = gate in BLOCKING_GATES or required_failed_count > 0
     normalized_probe_results = _normalize_probe_results(quality.get("probe_results") or [])
     normalized_gate_results = _normalize_gate_results(quality.get("gate_results") or [])
     probe_summary = _build_probe_summary([*normalized_probe_results, *normalized_gate_results])
-    agent_mix = _build_task_agent_mix(row, quality.get("gate_results") or [])
+    agent_mix = _build_task_agent_mix(row, normalized_gate_results)
     benchmark_status = _item_benchmark_status(
         gate=gate,
         required_failed_count=required_failed_count,
@@ -312,6 +314,7 @@ def _build_top_risks(
     skipped_count: int,
     average_score: Optional[int],
     agent_mix_summary: Dict[str, Any],
+    probe_coverage: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     risks: List[Dict[str, Any]] = []
     required_failures = sum(item["required_failed_count"] for item in evaluated)
@@ -359,6 +362,14 @@ def _build_top_risks(
             "count": len(missing),
             "message": "Release evidence does not yet cover the required local/cloud agent mix.",
         })
+    missing_probes = probe_coverage.get("missing_required_probe_types") or []
+    if evaluated_count and missing_probes:
+        risks.append({
+            "kind": "probe_coverage",
+            "severity": "medium",
+            "count": len(missing_probes),
+            "message": "Release evidence is missing required probe coverage: " + ", ".join(missing_probes) + ".",
+        })
     if evaluated_count and evaluated_count < 3:
         risks.append({
             "kind": "sample_size",
@@ -378,6 +389,7 @@ def _release_readiness(
     skipped_count: int,
     average_score: Optional[int],
     agent_mix_summary: Dict[str, Any],
+    probe_coverage: Dict[str, Any],
 ) -> str:
     if evaluated_count == 0:
         return "no_evidence"
@@ -390,6 +402,7 @@ def _release_readiness(
         or average_score is None
         or average_score < 80
         or not agent_mix_summary.get("satisfies_release_mix")
+        or not probe_coverage.get("satisfies_release_probe_coverage")
     ):
         return "attention"
     return "ready"
@@ -439,17 +452,23 @@ def _build_quality_trend(evaluated: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _build_agent_mix_summary(agent_coverage: Counter[str]) -> Dict[str, Any]:
+def _build_agent_mix_summary(agent_coverage: Counter[str], *, evaluated: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     distinct_agents = sorted(agent_coverage.keys())
     local_agents = [agent_id for agent_id in distinct_agents if agent_id in LOCAL_AGENT_IDS]
     cloud_agents = [agent_id for agent_id in distinct_agents if agent_id in CLOUD_AGENT_IDS]
     missing: List[str] = []
-    if len(distinct_agents) < 3:
-        missing.append("at least 3 distinct agents")
-    if len(local_agents) < 2:
-        missing.append("at least 2 local agents")
-    if len(cloud_agents) < 1:
-        missing.append("at least 1 cloud agent")
+    gate_satisfied = any(
+        probe.get("probe_type") == "agent_mix" and probe.get("status") == "passed"
+        for item in (evaluated or [])
+        for probe in [*(item.get("probe_results") or []), *(item.get("gate_results") or [])]
+    )
+    if not gate_satisfied:
+        if len(distinct_agents) < 3:
+            missing.append("at least 3 distinct agents")
+        if len(local_agents) < 2:
+            missing.append("at least 2 local agents")
+        if len(cloud_agents) < 1:
+            missing.append("at least 1 cloud agent")
     return {
         "distinct_agent_count": len(distinct_agents),
         "local_agent_count": len(local_agents),
@@ -457,6 +476,7 @@ def _build_agent_mix_summary(agent_coverage: Counter[str]) -> Dict[str, Any]:
         "distinct_agents": distinct_agents,
         "local_agents": local_agents,
         "cloud_agents": cloud_agents,
+        "agent_mix_gate_satisfied": gate_satisfied,
         "satisfies_release_mix": not missing,
         "missing": missing,
     }
@@ -491,6 +511,11 @@ def _normalize_probe_results(value: Any) -> List[Dict[str, Any]]:
 
 
 def _normalize_gate_results(value: Any) -> List[Dict[str, Any]]:
+    if isinstance(value, dict):
+        value = [
+            {"gate_id": key, "status": "passed" if item is True else "failed" if item is False else item}
+            for key, item in value.items()
+        ]
     if not isinstance(value, list):
         return []
     gates: List[Dict[str, Any]] = []
@@ -509,9 +534,12 @@ def _normalize_gate_results(value: Any) -> List[Dict[str, Any]]:
         if status not in {"passed", "failed", "skipped", "manual_required", "partial"}:
             status = "unknown"
         gates.append({
+            "adapter_id": item.get("adapter_id"),
+            "gate_id": item.get("gate_id") or item.get("id"),
             "probe_type": probe_type,
             "status": status,
             "required": bool(item.get("required", True)),
+            "evidence": item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
         })
     return gates
 

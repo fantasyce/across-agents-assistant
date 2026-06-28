@@ -44,6 +44,7 @@ def build_aaa_ecosystem_roadmap(
     memory_metrics: Mapping[str, Any] | None = None,
     pending_memories: list[Mapping[str, Any]] | None = None,
     agent_plugin_runtime: Mapping[str, Any] | None = None,
+    agent_interop_e2e: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     plugins_list = [_dict(item) for item in plugins or []]
@@ -59,6 +60,7 @@ def build_aaa_ecosystem_roadmap(
     memory_metrics = _dict(memory_metrics)
     pending_memories_list = [_dict(item) for item in pending_memories or []]
     agent_plugin_runtime = _dict(agent_plugin_runtime)
+    agent_interop_e2e = _dict(agent_interop_e2e)
 
     sections = {
         "protocol_gateway": _protocol_gateway_section(
@@ -87,6 +89,7 @@ def build_aaa_ecosystem_roadmap(
             autopilot_telemetry=autopilot_telemetry,
             ops_dashboard=ops_dashboard,
             release_evaluation=release_evaluation,
+            agent_interop_e2e=agent_interop_e2e,
         ),
         "context_packs": _context_packs_section(
             memory_metrics=memory_metrics,
@@ -255,17 +258,37 @@ def _evaluation_telemetry_section(
     autopilot_telemetry: Mapping[str, Any],
     ops_dashboard: Mapping[str, Any],
     release_evaluation: Mapping[str, Any],
+    agent_interop_e2e: Mapping[str, Any],
 ) -> dict[str, Any]:
     run_count = _first_int(autopilot_runs.get("run_count"), _nested(autopilot_telemetry, "runs", "total"), len(_list(autopilot_runs.get("runs"))))
-    failed = _first_int(_nested(autopilot_telemetry, "runs", "failed"), _nested(autopilot_telemetry, "by_status", "failed"))
+    recent_runs = _list(autopilot_runs.get("runs"))
+    latest_runs = _latest_runs_by_spec(recent_runs)
+    historical_failed = _first_int(_nested(autopilot_telemetry, "runs", "failed"), _nested(autopilot_telemetry, "by_status", "failed"))
+    failed = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed
     readiness = str(release_evaluation.get("release_readiness") or "unknown")
     ops_status = str(ops_dashboard.get("status") or "unknown")
     evaluated = _first_int(release_evaluation.get("evaluated_task_count"))
-    status = "failed" if ops_status == "failed" else "attention" if failed or readiness not in {"ready", "passed"} or evaluated == 0 else "passed"
+    agent_interop_status = str(agent_interop_e2e.get("status") or "not_run")
+    agent_interop_failed = _first_int(_nested(agent_interop_e2e, "summary", "failed_count"))
+    interop_evidence_ready = agent_interop_status == "passed" and agent_interop_failed == 0
+    release_evidence_ready = readiness in {"ready", "passed"} and evaluated > 0
+    status = (
+        "failed"
+        if ops_status == "failed"
+        else "attention"
+        if failed or readiness == "blocked" or not (release_evidence_ready or interop_evidence_ready)
+        else "passed"
+    )
     items = [
-        {"id": "autopilot_runs", "status": "passed" if failed == 0 else "attention", "run_count": run_count, "failed": failed, "endpoint": ROUTE_ENDPOINTS["autopilot_telemetry"]},
+        {"id": "autopilot_runs", "status": "passed" if failed == 0 else "attention", "run_count": run_count, "failed": failed, "historical_failed": historical_failed, "endpoint": ROUTE_ENDPOINTS["autopilot_telemetry"]},
         {"id": "ops_dashboard", "status": ops_status, "endpoint": ROUTE_ENDPOINTS["autopilot_ops"]},
         {"id": "release_evaluation", "status": readiness, "evaluated_task_count": evaluated, "endpoint": ROUTE_ENDPOINTS["release_evaluation"]},
+        {
+            "id": "agent_interop_e2e",
+            "status": agent_interop_status,
+            "failed_count": agent_interop_failed,
+            "endpoint": "/api/autopilot/agent-interop-e2e",
+        },
     ]
     return _section(
         "evaluation_telemetry",
@@ -274,9 +297,11 @@ def _evaluation_telemetry_section(
         {
             "run_count": run_count,
             "failed_run_count": failed,
+            "historical_failed_run_count": historical_failed,
             "ops_status": ops_status,
             "release_readiness": readiness,
             "evaluated_task_count": evaluated,
+            "agent_interop_e2e_status": agent_interop_status,
         },
         items,
         ROUTE_ENDPOINTS["evaluation_telemetry"],
@@ -548,6 +573,21 @@ def _first_int(*values: Any) -> int:
         except (TypeError, ValueError):
             continue
     return 0
+
+
+def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
+    latest: dict[str, Mapping[str, Any]] = {}
+    for run in runs:
+        run_dict = _dict(run)
+        spec_id = str(run_dict.get("spec_id") or run_dict.get("spec") or run_dict.get("run_id") or "").strip()
+        if not spec_id or spec_id in latest:
+            continue
+        latest[spec_id] = run_dict
+    return latest
+
+
+def _count_by_status(items: list[Any], status: str) -> int:
+    return sum(1 for item in items if str(_dict(item).get("status") or "").lower() == status)
 
 
 def _now() -> str:

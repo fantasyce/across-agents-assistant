@@ -66,20 +66,43 @@ def _evaluate_scenario(
         or {}
     )
     quality_report = delivery_quality.get("quality_report") or delivery_report.get("quality_report") or {}
-    probe_results = list(delivery_quality.get("probe_results") or [])
+    probe_results = _normalize_probe_like_results(
+        delivery_quality.get("probe_results")
+        or quality_report.get("probe_results")
+        or []
+    )
+    probe_results.extend(
+        _normalize_probe_like_results(
+            quality_report.get("gate_results")
+            or delivery_quality.get("gate_results")
+            or delivery_quality.get("checks")
+            or []
+        )
+    )
     produced_files = _normalize_produced_files(
         delivery_quality.get("produced_required")
+        or delivery_quality.get("produced_files")
         or delivery_report.get("produced_required")
+        or delivery_report.get("produced_files")
         or []
     )
     remediation = dict(delivery_report.get("remediation") or {})
     remediation_attempts = _remediation_attempt_count(payload, remediation)
     active_remediation = list(remediation.get("active_subtasks") or quality_health.get("active_quality_remediation") or [])
-    quality_score = int(quality_report.get("final_quality_score") or 0)
+    quality_score = int(
+        quality_report.get("final_quality_score")
+        or quality_report.get("quality_score")
+        or delivery_quality.get("final_quality_score")
+        or delivery_quality.get("quality_score")
+        or delivery_report.get("final_quality_score")
+        or delivery_report.get("quality_score")
+        or 0
+    )
     quality_gate = (
         delivery_report.get("quality_gate")
         or quality_health.get("quality_gate")
         or quality_report.get("quality_gate")
+        or delivery_quality.get("quality_gate")
     )
     final_status = delivery_report.get("final_status") or payload.get("status")
 
@@ -136,6 +159,38 @@ def _normalize_produced_files(items: Iterable[Any]) -> List[str]:
     return sorted(dict.fromkeys(files))
 
 
+def _normalize_probe_like_results(value: Any) -> List[Dict[str, Any]]:
+    if isinstance(value, dict):
+        value = [
+            {"probe_type": key, "status": "passed" if item is True else "failed" if item is False else item}
+            for key, item in value.items()
+        ]
+    if not isinstance(value, list):
+        return []
+    probes: List[Dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        probe_type = item.get("probe_type") or item.get("adapter_id") or item.get("gate_id") or item.get("id")
+        if not probe_type:
+            continue
+        probes.append(
+            {
+                **item,
+                "probe_type": _canonical_probe_type(str(probe_type)),
+            }
+        )
+    return probes
+
+
+def _canonical_probe_type(value: str) -> str:
+    if value.startswith("gate-"):
+        value = value[5:]
+    if value == "static_web":
+        return "static_web_smoke"
+    return value
+
+
 def _expected_file_inventory_matches(produced_files: Sequence[str], expected_files: Sequence[str]) -> bool:
     if not expected_files:
         return True
@@ -145,7 +200,7 @@ def _expected_file_inventory_matches(produced_files: Sequence[str], expected_fil
 def _probe_passed(probe_results: Sequence[Dict[str, Any]], probe_type: str) -> bool:
     return any(
         str(probe.get("probe_type") or probe.get("id") or "") == probe_type
-        and bool(probe.get("passed"))
+        and (bool(probe.get("passed")) or str(probe.get("status") or "").lower() == "passed")
         for probe in probe_results
     )
 

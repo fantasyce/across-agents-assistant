@@ -211,9 +211,52 @@ struct ReleaseEvaluationReadinessCheck: Decodable, Identifiable {
     let severity: String
 }
 
+struct ReleaseEvaluationSupplementalEvidence: Decodable, Identifiable {
+    let id: String
+    let kind: String
+    let status: String
+    let qualityGate: String
+    let passedCount: Int
+    let failedCount: Int
+    let hostTargetCount: Int
+    let mcpServerCount: Int
+    let protocolReadinessScore: Int
+    let endpoint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case status
+        case qualityGate = "quality_gate"
+        case passedCount = "passed_count"
+        case failedCount = "failed_count"
+        case hostTargetCount = "host_target_count"
+        case mcpServerCount = "mcp_server_count"
+        case protocolReadinessScore = "protocol_readiness_score"
+        case endpoint
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? "supplemental"
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "unknown"
+        qualityGate = try container.decodeIfPresent(String.self, forKey: .qualityGate) ?? "unknown"
+        passedCount = try container.decodeIfPresent(Int.self, forKey: .passedCount) ?? 0
+        failedCount = try container.decodeIfPresent(Int.self, forKey: .failedCount) ?? 0
+        hostTargetCount = try container.decodeIfPresent(Int.self, forKey: .hostTargetCount) ?? 0
+        mcpServerCount = try container.decodeIfPresent(Int.self, forKey: .mcpServerCount) ?? 0
+        protocolReadinessScore = try container.decodeIfPresent(Int.self, forKey: .protocolReadinessScore) ?? 0
+        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint)
+    }
+}
+
 struct ReleaseEvaluationSummary: Decodable {
     let releaseReadiness: String
     let generatedAt: Double?
+    let releaseEvidenceCount: Int
+    let passedEvidenceCount: Int
+    let agentInteropE2EStatus: String?
     let evaluatedTaskCount: Int
     let terminalTaskCount: Int
     let passedTaskCount: Int
@@ -230,6 +273,7 @@ struct ReleaseEvaluationSummary: Decodable {
     let agentMixSummary: ReleaseEvaluationAgentMixSummary?
     let probeCoverage: ReleaseEvaluationProbeCoverage?
     let readinessChecks: [ReleaseEvaluationReadinessCheck]
+    let supplementalEvidence: [ReleaseEvaluationSupplementalEvidence]
     let gateBreakdown: [String: Int]
     let stackCoverage: [String: Int]
     let agentCoverage: [String: Int]
@@ -237,6 +281,9 @@ struct ReleaseEvaluationSummary: Decodable {
     enum CodingKeys: String, CodingKey {
         case releaseReadiness = "release_readiness"
         case generatedAt = "generated_at"
+        case releaseEvidenceCount = "release_evidence_count"
+        case passedEvidenceCount = "passed_evidence_count"
+        case agentInteropE2EStatus = "agent_interop_e2e_status"
         case evaluatedTaskCount = "evaluated_task_count"
         case terminalTaskCount = "terminal_task_count"
         case passedTaskCount = "passed_task_count"
@@ -253,6 +300,7 @@ struct ReleaseEvaluationSummary: Decodable {
         case agentMixSummary = "agent_mix_summary"
         case probeCoverage = "probe_coverage"
         case readinessChecks = "readiness_checks"
+        case supplementalEvidence = "supplemental_evidence"
         case gateBreakdown = "gate_breakdown"
         case stackCoverage = "stack_coverage"
         case agentCoverage = "agent_coverage"
@@ -263,8 +311,11 @@ struct ReleaseEvaluationSummary: Decodable {
         releaseReadiness = try container.decode(String.self, forKey: .releaseReadiness)
         generatedAt = try container.decodeIfPresent(Double.self, forKey: .generatedAt)
         evaluatedTaskCount = try container.decodeIfPresent(Int.self, forKey: .evaluatedTaskCount) ?? 0
+        releaseEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .releaseEvidenceCount) ?? evaluatedTaskCount
         terminalTaskCount = try container.decodeIfPresent(Int.self, forKey: .terminalTaskCount) ?? 0
         passedTaskCount = try container.decodeIfPresent(Int.self, forKey: .passedTaskCount) ?? 0
+        passedEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .passedEvidenceCount) ?? passedTaskCount
+        agentInteropE2EStatus = try container.decodeIfPresent(String.self, forKey: .agentInteropE2EStatus)
         blockedTaskCount = try container.decodeIfPresent(Int.self, forKey: .blockedTaskCount) ?? 0
         manualTaskCount = try container.decodeIfPresent(Int.self, forKey: .manualTaskCount) ?? 0
         skippedTaskCount = try container.decodeIfPresent(Int.self, forKey: .skippedTaskCount) ?? 0
@@ -278,6 +329,7 @@ struct ReleaseEvaluationSummary: Decodable {
         agentMixSummary = try container.decodeIfPresent(ReleaseEvaluationAgentMixSummary.self, forKey: .agentMixSummary)
         probeCoverage = try container.decodeIfPresent(ReleaseEvaluationProbeCoverage.self, forKey: .probeCoverage)
         readinessChecks = try container.decodeIfPresent([ReleaseEvaluationReadinessCheck].self, forKey: .readinessChecks) ?? []
+        supplementalEvidence = try container.decodeIfPresent([ReleaseEvaluationSupplementalEvidence].self, forKey: .supplementalEvidence) ?? []
         gateBreakdown = try container.decodeIfPresent([String: Int].self, forKey: .gateBreakdown) ?? [:]
         stackCoverage = try container.decodeIfPresent([String: Int].self, forKey: .stackCoverage) ?? [:]
         agentCoverage = try container.decodeIfPresent([String: Int].self, forKey: .agentCoverage) ?? [:]

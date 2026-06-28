@@ -58,43 +58,25 @@ write_live_e2e_evidence() {
   if [[ -n "$ORCHESTRATOR_COMMAND" ]]; then
     orchestrator_command_name="$(basename "$ORCHESTRATOR_COMMAND")"
   fi
-  mkdir -p "$(dirname "$LIVE_E2E_EVIDENCE_PATH")"
-  LIVE_E2E_STATUS="$status" \
-  LIVE_E2E_EXIT_CODE="$exit_code" \
-  LIVE_E2E_STARTED_AT="$STARTED_AT" \
-  LIVE_E2E_COMPLETED_AT="$completed_at" \
-  LIVE_E2E_DURATION_SECONDS="$duration_seconds" \
-  LIVE_E2E_TIER="$TIER" \
-  LIVE_E2E_GATE_ID="$LIVE_E2E_GATE_ID" \
-  LIVE_E2E_RUN_URL="$RUN_URL" \
-  LIVE_E2E_COMMIT_SHA="$COMMIT_SHA" \
-  LIVE_E2E_ORCHESTRATOR_COMMAND_NAME="$orchestrator_command_name" \
-  LIVE_E2E_EVIDENCE_PATH="$LIVE_E2E_EVIDENCE_PATH" \
-  "$PYTHON_BIN" - <<'PY'
-import json
-import os
-from pathlib import Path
-
-path = Path(os.environ["LIVE_E2E_EVIDENCE_PATH"])
-payload = {
-    "schema_version": "1.0",
-    "gate_id": os.environ["LIVE_E2E_GATE_ID"],
-    "status": os.environ["LIVE_E2E_STATUS"],
-    "source": "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local_script",
-    "summary": "Live E2E passed." if os.environ["LIVE_E2E_STATUS"] == "passed" else f"Live E2E failed with exit code {os.environ['LIVE_E2E_EXIT_CODE']}.",
-    "tier": os.environ["LIVE_E2E_TIER"],
-    "started_at": os.environ["LIVE_E2E_STARTED_AT"],
-    "completed_at": os.environ["LIVE_E2E_COMPLETED_AT"],
-    "duration_seconds": int(os.environ["LIVE_E2E_DURATION_SECONDS"]),
-    "runner": "scripts/run_live_e2e.sh",
-    "orchestrator_command": os.environ["LIVE_E2E_ORCHESTRATOR_COMMAND_NAME"],
-    "commit_sha": os.environ.get("LIVE_E2E_COMMIT_SHA") or None,
-    "run_url": os.environ.get("LIVE_E2E_RUN_URL") or None,
-}
-payload = {key: value for key, value in payload.items() if value not in (None, "")}
-path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-print(f"Live E2E evidence written to {path}")
-PY
+  local source="local_script"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    source="github_actions"
+  fi
+  local summary="Live E2E failed with exit code $exit_code."
+  if [[ "$status" == "passed" ]]; then
+    summary="Live E2E passed."
+  fi
+  ACROSS_AGENTS_PRE_RELEASE_GATE_EVIDENCE_PATH="$LIVE_E2E_EVIDENCE_PATH" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_STARTED_AT="$STARTED_AT" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_COMPLETED_AT="$completed_at" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_DURATION_SECONDS="$duration_seconds" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_TIER="$TIER" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_RUN_URL="$RUN_URL" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_COMMIT_SHA="$COMMIT_SHA" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_RUNNER="scripts/run_live_e2e.sh" \
+  ACROSS_AGENTS_PRE_RELEASE_GATE_ORCHESTRATOR_COMMAND="$orchestrator_command_name" \
+  PYTHON="$PYTHON_BIN" \
+    bash scripts/write_pre_release_gate_evidence.sh "$LIVE_E2E_GATE_ID" "$status" "$source" "$summary"
 }
 
 finish() {

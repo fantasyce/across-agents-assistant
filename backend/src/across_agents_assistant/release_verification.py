@@ -11,6 +11,10 @@ from .paths import app_subdir
 
 
 RELEASE_E2E_DESCRIPTION_MARKER = "Release E2E scenario:"
+RELEASE_E2E_SCENARIO_MARKERS = {
+    "Scenario ID: cross_agent_full_delivery_v1",
+    "Scenario ID: host_agent_full_delivery_v1",
+}
 RELEASE_VERIFICATION_EXPECTED_FILES = [
     "README.md",
     "web/index.html",
@@ -21,6 +25,8 @@ RELEASE_VERIFICATION_EXPECTED_FILES = [
     "tests/e2e-smoke.mjs",
 ]
 RELEASE_VERIFICATION_REQUIRED_PROBES = [
+    "workspace_hygiene",
+    "security_privacy",
     "static_web_smoke",
     "browser_e2e",
     "api_service",
@@ -37,8 +43,8 @@ PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
         "id": "backend_regression",
         "label": "Backend regression",
         "source": "local",
-        "command": "PYTHONPATH=backend/src backend/.venv/bin/python -m pytest backend/tests -q",
-        "detail": "Full backend regression suite including release verification and Agent Loop API coverage.",
+        "command": "PYTHONPATH=backend/src backend/.venv/bin/python -m pytest backend/tests --ignore=backend/tests/e2e -q",
+        "detail": "Backend regression suite excluding live E2E, which is covered by the dedicated Live E2E gate.",
         "paths": ["backend/tests"],
         "status_when_configured": "configured",
         "required": True,
@@ -70,8 +76,8 @@ PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
         "id": "swift_package_gate",
         "label": "Swift package gate",
         "source": "local_script",
-        "command": "bash scripts/verify_swift_package_lock.sh && swift build --package-path macOS-Client --skip-update",
-        "detail": "Swift package lock consistency and macOS client build gate.",
+        "command": "bash scripts/verify_swift_package_lock.sh && swift build --package-path macOS-Client --skip-update && swift test --package-path macOS-Client --skip-update",
+        "detail": "Swift package lock consistency, macOS client build, and SwiftPM test gate.",
         "paths": ["scripts/verify_swift_package_lock.sh", "macOS-Client/Package.swift"],
         "status_when_configured": "configured",
         "required": True,
@@ -263,19 +269,76 @@ def _collect_release_task_rows(
     return rows[:safe_limit]
 
 
+def _release_evaluation_row_from_task_payload(payload: Dict[str, Any], fallback_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge a full task payload back into the release-evaluation row shape."""
+    row = dict(fallback_row)
+    for key in [
+        "task_id",
+        "description",
+        "status",
+        "progress",
+        "completed_count",
+        "total_count",
+        "created_at",
+        "updated_at",
+        "project_dir",
+        "owner_agent",
+        "allowed_subtask_agents",
+        "task_types",
+        "delivery_mode",
+        "last_owner_decision",
+        "quality_health",
+        "delivery_report",
+        "observability",
+    ]:
+        if key in payload and payload.get(key) is not None:
+            row[key] = payload.get(key)
+    return row
+
+
+def _upsert_release_evaluation_row(rows: List[Dict[str, Any]], enriched_row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    task_id = _row_task_id(enriched_row)
+    if not task_id:
+        return rows
+    result: List[Dict[str, Any]] = []
+    replaced = False
+    for row in rows:
+        if _row_task_id(row) == task_id:
+            result.append(enriched_row)
+            replaced = True
+        else:
+            result.append(row)
+    if not replaced:
+        result.append(enriched_row)
+    result.sort(key=lambda row: row.get("updated_at") or row.get("created_at") or 0, reverse=True)
+    return result
+
+
 def _latest_release_e2e_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    release_rows = _release_e2e_rows(rows, limit=1)
+    return release_rows[0] if release_rows else None
+
+
+def _release_e2e_rows(rows: List[Dict[str, Any]], *, limit: int = 3) -> List[Dict[str, Any]]:
     release_rows = [
         dict(row)
         for row in rows
-        if RELEASE_E2E_DESCRIPTION_MARKER.lower() in str(row.get("description") or "").lower()
+        if _is_release_e2e_description(str(row.get("description") or ""))
     ]
     if not release_rows:
-        return None
+        return []
     return sorted(
         release_rows,
         key=lambda row: row.get("updated_at") or row.get("created_at") or 0,
         reverse=True,
-    )[0]
+    )[: max(1, limit)]
+
+
+def _is_release_e2e_description(description: str) -> bool:
+    text = description.lower()
+    if RELEASE_E2E_DESCRIPTION_MARKER.lower() in text:
+        return True
+    return any(marker.lower() in text for marker in RELEASE_E2E_SCENARIO_MARKERS)
 
 
 def _repository_root() -> Path:
@@ -284,16 +347,26 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _looks_like_source_repository(root: Path) -> bool:
+    return (
+        (root / "backend" / "src" / "across_agents_assistant").exists()
+        and (root / "macOS-Client" / "Package.swift").exists()
+    )
+
+
 def _build_pre_release_gates(repo_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     root = repo_root or _repository_root()
+    source_repository_available = _looks_like_source_repository(root)
     gates: List[Dict[str, Any]] = []
     for definition in PRE_RELEASE_GATE_DEFINITIONS:
         paths = list(definition.get("paths") or [])
-        missing_paths = [path for path in paths if not (root / path).exists()]
+        missing_paths = [path for path in paths if source_repository_available and not (root / path).exists()]
         status = "missing" if missing_paths else str(definition.get("status_when_configured") or "configured")
         detail = str(definition.get("detail") or "")
         if missing_paths:
             detail = f"Missing release gate path(s): {', '.join(missing_paths)}"
+        elif not source_repository_available and paths:
+            detail = f"{detail} Source checkout paths are unavailable in this runtime; attach gate evidence instead."
         gates.append(
             {
                 "id": definition["id"],
@@ -305,6 +378,7 @@ def _build_pre_release_gates(repo_root: Optional[Path] = None) -> List[Dict[str,
                 "paths": paths,
                 "required": bool(definition.get("required", True)),
                 "readiness_impact": definition.get("readiness_impact") or "required",
+                "source_checkout_available": source_repository_available,
             }
         )
     return gates
@@ -364,6 +438,13 @@ def _normalize_pre_release_gate_evidence(raw: Any, *, evidence_path: Optional[Pa
             "run_url": candidate.get("run_url") or raw.get("run_url"),
             "workflow_run_url": candidate.get("workflow_run_url") or raw.get("workflow_run_url"),
             "commit_sha": candidate.get("commit_sha") or raw.get("commit_sha"),
+            "runner": candidate.get("runner") or raw.get("runner"),
+            "orchestrator_command": candidate.get("orchestrator_command") or raw.get("orchestrator_command"),
+            "workspace_dirty": (
+                candidate.get("workspace_dirty")
+                if candidate.get("workspace_dirty") is not None
+                else raw.get("workspace_dirty")
+            ),
         }
         if evidence_path is not None:
             evidence["evidence_path"] = evidence_path.name
@@ -461,6 +542,11 @@ def _pre_release_gate_summary(gates: Sequence[Dict[str, Any]]) -> Dict[str, int]
             for gate in gates
             if gate.get("required") is True and gate.get("status") in {"failed", "blocked"}
         ),
+        "required_unverified": sum(
+            1
+            for gate in gates
+            if gate.get("required") is True and gate.get("status") == "configured"
+        ),
     }
 
 
@@ -478,6 +564,7 @@ def _release_verification_status(
     startup_status: str,
     latest_release_e2e: Optional[Dict[str, Any]],
     pre_release_gate_summary: Optional[Dict[str, int]] = None,
+    release_evaluation_readiness: str = "unknown",
 ) -> tuple[str, List[str]]:
     remediations: List[str] = []
     if startup_status == "blocked":
@@ -489,6 +576,8 @@ def _release_verification_status(
         remediations.append("Review failed pre-release verification gate evidence before release approval.")
     if (pre_release_gate_summary or {}).get("required_manual", 0) > 0:
         remediations.append("Run required manual pre-release gates and attach their evidence before release approval.")
+    if (pre_release_gate_summary or {}).get("required_unverified", 0) > 0:
+        remediations.append("Attach passing evidence for configured pre-release verification gates before release approval.")
 
     if latest_release_e2e is None:
         remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
@@ -497,18 +586,30 @@ def _release_verification_status(
         if benchmark_status != "passed":
             remediations.append("Review the latest Release E2E benchmark failures and rerun remediation.")
 
+    release_readiness = str(release_evaluation_readiness or "unknown")
+    if release_readiness == "blocked":
+        remediations.append("Review blocked release evaluation risks before release approval.")
+    elif release_readiness != "ready":
+        remediations.append("Collect passing release evaluation evidence before release approval.")
+
     if startup_status == "blocked":
         return "blocked", remediations
     if (pre_release_gate_summary or {}).get("required_failed", 0) > 0:
+        return "blocked", remediations
+    if release_readiness == "blocked":
         return "blocked", remediations
     if (pre_release_gate_summary or {}).get("required_missing", 0) > 0:
         return "attention", remediations
     if (pre_release_gate_summary or {}).get("required_manual", 0) > 0:
         return "attention", remediations
+    if (pre_release_gate_summary or {}).get("required_unverified", 0) > 0:
+        return "attention", remediations
     if latest_release_e2e is not None:
         benchmark_status = str((latest_release_e2e.get("benchmark") or {}).get("status") or "unknown")
         if benchmark_status != "passed":
             return "blocked", remediations
+    if release_readiness != "ready":
+        return "attention", remediations
     if startup_status == "attention" or latest_release_e2e is None:
         return "attention", remediations
     return "ready", remediations
@@ -563,6 +664,7 @@ def _build_latest_release_e2e_verification(
 
 def _release_verification_markdown(report: Dict[str, Any]) -> str:
     startup_summary = report.get("startup", {}).get("summary", {})
+    release_evaluation = report.get("release_evaluation") or {}
     latest = report.get("latest_release_e2e")
     pre_release_gates = report.get("pre_release_gates") or []
     pre_release_summary = report.get("pre_release_gate_summary") or {}
@@ -603,6 +705,28 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
 
     lines.extend([
         "",
+        "## Release Evaluation",
+        f"Readiness: {release_evaluation.get('release_readiness')}",
+        (
+            f"Evidence: {release_evaluation.get('passed_evidence_count', 0)}/"
+            f"{release_evaluation.get('release_evidence_count', 0)}"
+        ),
+        f"Agent interop E2E: {release_evaluation.get('agent_interop_e2e_status') or 'unknown'}",
+    ])
+    supplemental_evidence = release_evaluation.get("supplemental_evidence") or []
+    if supplemental_evidence:
+        lines.append("Supplemental evidence:")
+        for evidence in supplemental_evidence:
+            lines.append(
+                (
+                    f"- {evidence.get('kind')}: {evidence.get('status')} "
+                    f"({evidence.get('passed_count', 0)} passed, "
+                    f"{evidence.get('failed_count', 0)} failed)"
+                )
+            )
+
+    lines.extend([
+        "",
         "## Pre-Release Gates",
         (
             f"{pre_release_summary.get('passed', 0)} passed · "
@@ -614,6 +738,7 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
         f"Required missing: {pre_release_summary.get('required_missing', 0)}",
         f"Required manual: {pre_release_summary.get('required_manual', 0)}",
         f"Required failed: {pre_release_summary.get('required_failed', 0)}",
+        f"Required unverified: {pre_release_summary.get('required_unverified', 0)}",
     ])
     if pre_release_missing_paths:
         lines.extend(["", "Missing required gate paths:"])
@@ -639,6 +764,14 @@ def _release_verification_markdown(report: Dict[str, Any]) -> str:
             run_url = evidence.get("run_url") or evidence.get("workflow_run_url")
             if run_url:
                 lines.append(f"  - Run URL: {run_url}")
+            if evidence.get("commit_sha"):
+                lines.append(f"  - Commit: {evidence.get('commit_sha')}")
+            if "workspace_dirty" in evidence:
+                lines.append(f"  - Workspace dirty: {str(evidence.get('workspace_dirty')).lower()}")
+            if evidence.get("runner"):
+                lines.append(f"  - Runner: {evidence.get('runner')}")
+            if evidence.get("orchestrator_command"):
+                lines.append(f"  - Orchestrator command: {evidence.get('orchestrator_command')}")
 
     remediations = report.get("remediations") or []
     lines.extend(["", "## Remediation"])
@@ -705,6 +838,17 @@ def _public_float(value: Any) -> Optional[float]:
 
 
 def _public_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "passed", "pass", "success", "succeeded", "ok"}:
+        return True
+    if text in {"false", "0", "no", "n", "failed", "failure", "none", "null", ""}:
+        return False
     return bool(value)
 
 
@@ -801,6 +945,9 @@ def _public_release_evaluation(summary: Any) -> Dict[str, Any]:
     return {
         "release_readiness": _public_text(summary.get("release_readiness") or "unknown", limit=80),
         "generated_at": _public_float(summary.get("generated_at")),
+        "release_evidence_count": _public_int(summary.get("release_evidence_count")),
+        "passed_evidence_count": _public_int(summary.get("passed_evidence_count")),
+        "agent_interop_e2e_status": _public_text(summary.get("agent_interop_e2e_status"), limit=80),
         "evaluated_task_count": _public_int(summary.get("evaluated_task_count")),
         "terminal_task_count": _public_int(summary.get("terminal_task_count")),
         "passed_task_count": _public_int(summary.get("passed_task_count")),
@@ -814,17 +961,74 @@ def _public_release_evaluation(summary: Any) -> Dict[str, Any]:
             else _public_int(summary.get("average_final_quality_score"))
         ),
         "total_remediation_count": _public_int(summary.get("total_remediation_count")),
-        "recommendation": None,
-        "top_risks": [],
+        "recommendation": _public_text(summary.get("recommendation"), limit=500) if summary.get("recommendation") else None,
+        "top_risks": _public_release_risks(summary.get("top_risks")),
         "recent_evaluations": [],
         "quality_trend": None,
         "agent_mix_summary": None,
         "probe_coverage": None,
-        "readiness_checks": [],
+        "readiness_checks": _public_readiness_checks(summary.get("readiness_checks")),
+        "supplemental_evidence": _public_supplemental_evidence(summary.get("supplemental_evidence")),
         "gate_breakdown": _public_int_dict(summary.get("gate_breakdown")),
         "stack_coverage": _public_int_dict(summary.get("stack_coverage")),
         "agent_coverage": _public_int_dict(summary.get("agent_coverage")),
     }
+
+
+def _public_supplemental_evidence(value: Any) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "id": _public_text(item.get("id"), limit=120),
+                "kind": _public_text(item.get("kind"), limit=120),
+                "status": _public_text(item.get("status"), limit=80),
+                "quality_gate": _public_text(item.get("quality_gate"), limit=80),
+                "passed_count": _public_int(item.get("passed_count")),
+                "failed_count": _public_int(item.get("failed_count")),
+                "host_target_count": _public_int(item.get("host_target_count")),
+                "mcp_server_count": _public_int(item.get("mcp_server_count")),
+                "protocol_readiness_score": _public_int(item.get("protocol_readiness_score")),
+                "endpoint": _public_text(item.get("endpoint"), limit=180),
+            }
+        )
+    return result[:8]
+
+
+def _public_release_risks(value: Any) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "kind": _public_text(item.get("kind"), limit=120),
+                "severity": _public_text(item.get("severity") or "medium", limit=80),
+                "count": _public_int(item.get("count")) if item.get("count") is not None else None,
+                "message": _public_text(item.get("message"), limit=500),
+            }
+        )
+    return result[:8]
+
+
+def _public_readiness_checks(value: Any) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label") or item.get("title") or item.get("id") or "Readiness check"
+        result.append(
+            {
+                "id": _public_text(item.get("id"), limit=120),
+                "status": _public_text(item.get("status") or "unknown", limit=80),
+                "label": _public_text(label, limit=160),
+                "message": _public_text(item.get("message"), limit=500),
+                "severity": _public_text(item.get("severity") or "medium", limit=80),
+            }
+        )
+    return result[:16]
 
 
 def _public_benchmark(benchmark: Any) -> Dict[str, Any]:
@@ -915,6 +1119,9 @@ def _public_gate_evidence(gate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "run_url": _public_text(evidence.get("run_url"), limit=500) or None,
         "workflow_run_url": _public_text(evidence.get("workflow_run_url"), limit=500) or None,
         "commit_sha": _public_text(evidence.get("commit_sha"), limit=120) or None,
+        "runner": _public_text(evidence.get("runner"), limit=240) or None,
+        "orchestrator_command": _public_text(evidence.get("orchestrator_command"), limit=240) or None,
+        "workspace_dirty": _public_bool(evidence.get("workspace_dirty")),
         "evidence_path": _public_text(evidence.get("evidence_path"), limit=240) or None,
     }
 
@@ -1002,7 +1209,12 @@ def _build_release_verification_report(
     required_probes: Optional[Sequence[str]] = None,
     write_report_directory: Optional[Path] = None,
     repo_root: Optional[Path] = None,
+    agent_interop_e2e: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    from .agent_interop_e2e import (
+        augment_release_evaluation_with_agent_interop,
+        load_agent_interop_e2e_latest,
+    )
     from .task_review.release_evaluation import build_release_evaluation_summary
 
     from . import __version__
@@ -1025,30 +1237,55 @@ def _build_release_verification_report(
         external_task_rows=external_task_rows,
         task_row_mapper=task_row_mapper,
     )
-    release_evaluation = build_release_evaluation_summary(rows)
-    latest_row = _latest_release_e2e_row(rows)
-    pre_release_gates = _build_pre_release_gates(repo_root=repo_root)
-    pre_release_gate_evidence, pre_release_parse_errors = _load_pre_release_gate_evidence(report_directory)
-    pre_release_gates = _apply_pre_release_gate_evidence(pre_release_gates, pre_release_gate_evidence)
-    pre_release_summary = _pre_release_gate_summary(pre_release_gates)
-    pre_release_missing_paths = _missing_required_gate_paths(pre_release_gates)
-
+    release_e2e_rows = _release_e2e_rows(rows, limit=3)
+    latest_row = release_e2e_rows[0] if release_e2e_rows else None
     latest_release_e2e = None
-    if latest_row and load_task_payload:
+    latest_task_payload = None
+    if release_e2e_rows and load_task_payload:
+        for release_e2e_row in release_e2e_rows:
+            task_id = str(release_e2e_row.get("task_id") or "")
+            if not task_id:
+                continue
+            try:
+                raw_task_payload = load_task_payload(task_id)
+                task_payload = serialize_task_payload(raw_task_payload)
+            except Exception:
+                continue
+            rows = _upsert_release_evaluation_row(
+                rows,
+                _release_evaluation_row_from_task_payload(task_payload, release_e2e_row),
+            )
+            if latest_row and task_id == str(latest_row.get("task_id") or ""):
+                latest_task_payload = task_payload
+
+    if latest_row and latest_task_payload:
         latest_release_e2e = _build_latest_release_e2e_verification(
             latest_row,
-            load_task_payload=load_task_payload,
-            serialize_task_payload=serialize_task_payload,
+            load_task_payload=lambda _task_id: latest_task_payload,
+            serialize_task_payload=lambda value: dict(value) if isinstance(value, dict) else value,
             redact_sensitive=redact_sensitive,
             expected_files=expected_files or RELEASE_VERIFICATION_EXPECTED_FILES,
             required_probes=required_probes or RELEASE_VERIFICATION_REQUIRED_PROBES,
             app_version=app_version or __version__,
         )
 
+    release_evaluation = build_release_evaluation_summary(rows)
+    try:
+        interop_evidence = agent_interop_e2e if agent_interop_e2e is not None else load_agent_interop_e2e_latest()
+    except Exception:
+        interop_evidence = {}
+    release_evaluation = augment_release_evaluation_with_agent_interop(release_evaluation, interop_evidence)
+    pre_release_gates = _build_pre_release_gates(repo_root=repo_root)
+    pre_release_gate_evidence, pre_release_parse_errors = _load_pre_release_gate_evidence(report_directory)
+    pre_release_gates = _apply_pre_release_gate_evidence(pre_release_gates, pre_release_gate_evidence)
+    pre_release_summary = _pre_release_gate_summary(pre_release_gates)
+    pre_release_missing_paths = _missing_required_gate_paths(pre_release_gates)
+
     status, remediations = _release_verification_status(
         str(startup.get("status") or "attention"),
         latest_release_e2e,
         pre_release_summary,
+        str(release_evaluation.get("release_readiness") or "unknown"),
     )
 
     public_report: Dict[str, Any] = {
