@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.14 - 2026-06-29
+
+### Changed
+
+- Updated managed producer pins to Across Orchestrator `v0.7.7`, Across
+  Context `v0.8.7`, and Across Autopilot `v0.2.7` after all three producer
+  tags were verified against their current `origin/main` commits.
+
 ## 0.9.13 - 2026-06-29
 
 ### Changed
