@@ -91,6 +91,8 @@ def _sanitize_public_error_text(value: Any) -> Any:
 
 def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     lowered = key.lower()
+    if isinstance(value, str) and ("Traceback (most recent call last)" in value or "\n  File " in value):
+        return _sanitize_public_error_text(value)
     if lowered in _STRUCTURED_PUBLIC_ERROR_KEYS:
         if isinstance(value, dict):
             return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
@@ -5117,8 +5119,9 @@ async def run_autopilot_loop(req: AutopilotSpecRequest):
 async def get_agent_interop_e2e_result():
     """Return the latest host-neutral plugin interop E2E result."""
     try:
+        # codeql[py/stack-trace-exposure]: load_agent_interop_e2e_latest is recursively sanitized before return.
         return _sanitize_public_payload(load_agent_interop_e2e_latest())
-    except Exception as exc:
+    except Exception:
         raise _safe_http_500("Get agent interop E2E result")
 
 
@@ -9205,8 +9208,9 @@ async def run_release_verification():
             required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
             write_report_directory=app_subdir("release-reports"),
         )
-        return report
-    except Exception as e:
+        # codeql[py/stack-trace-exposure]: release verification reports are recursively sanitized before return.
+        return _sanitize_public_payload(report)
+    except Exception:
         raise _safe_http_500("Run release verification")
 
 @app.get("/api/tasks/{task_id}", response_model=TaskInfo)
