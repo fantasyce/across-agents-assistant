@@ -281,6 +281,7 @@ from .release_verification import (
     _release_e2e_rows,
     _release_evaluation_row_from_task_payload,
     _upsert_release_evaluation_row,
+    public_release_verification_api_response,
 )
 from .task_api_models import (
     AutoTaskRequest,
@@ -322,6 +323,7 @@ from .aaa_ecosystem_roadmap import build_aaa_ecosystem_roadmap, ecosystem_route_
 from .agent_interop_e2e import (
     augment_release_evaluation_with_agent_interop,
     load_agent_interop_e2e_latest,
+    public_agent_interop_e2e_result,
     run_agent_interop_e2e,
 )
 from .autopilot_workbench import build_autopilot_workbench_snapshot
@@ -5119,8 +5121,7 @@ async def run_autopilot_loop(req: AutopilotSpecRequest):
 async def get_agent_interop_e2e_result():
     """Return the latest host-neutral plugin interop E2E result."""
     try:
-        # codeql[py/stack-trace-exposure]: load_agent_interop_e2e_latest is recursively sanitized before return.
-        return _sanitize_public_payload(load_agent_interop_e2e_latest())
+        return public_agent_interop_e2e_result(load_agent_interop_e2e_latest())
     except Exception:
         raise _safe_http_500("Get agent interop E2E result")
 
@@ -5130,7 +5131,7 @@ async def run_agent_interop_e2e_endpoint():
     """Run the complete Context/Orchestrator/Autopilot host interop E2E scenario."""
     try:
         result = await asyncio.to_thread(run_agent_interop_e2e)
-        return _sanitize_public_payload(result)
+        return public_agent_interop_e2e_result(result)
     except Exception as exc:
         raise _safe_http_500("Run agent interop E2E")
 
@@ -9208,8 +9209,7 @@ async def run_release_verification():
             required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
             write_report_directory=app_subdir("release-reports"),
         )
-        # codeql[py/stack-trace-exposure]: release verification reports are recursively sanitized before return.
-        return _sanitize_public_payload(report)
+        return public_release_verification_api_response(report)
     except Exception:
         raise _safe_http_500("Run release verification")
 

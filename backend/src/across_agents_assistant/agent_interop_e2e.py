@@ -369,6 +369,42 @@ def load_agent_interop_e2e_latest() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def public_agent_interop_e2e_result(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Return the externally safe interop result shape.
+
+    The stored E2E evidence may contain local command output and failure text.
+    The public API intentionally exposes only status, counts, and bounded check
+    outcomes; full diagnostics stay in the local evidence file.
+    """
+
+    latest = dict(payload or {})
+    summary = latest.get("summary") if isinstance(latest.get("summary"), Mapping) else {}
+    status = _public_status(latest.get("status"), default="not_run")
+    return {
+        "schema_version": AGENT_INTEROP_E2E_SCHEMA,
+        "status": status,
+        "generated_at": None,
+        "summary": {
+            "passed_count": _safe_int(summary.get("passed_count")),
+            "failed_count": _safe_int(summary.get("failed_count")),
+            "host_target_count": _safe_int(summary.get("host_target_count")),
+            "mcp_server_count": _safe_int(summary.get("mcp_server_count")),
+            "evidence_node_count": _safe_int(summary.get("evidence_node_count")),
+            "protocol_readiness_score": _safe_optional_int(summary.get("protocol_readiness_score")),
+            "market_readiness_status": _public_status(summary.get("market_readiness_status"), default="unknown"),
+            "trust_receipt_status": _public_status(summary.get("trust_receipt_status"), default="unknown"),
+            "frontier_interop_status": _public_status(summary.get("frontier_interop_status"), default="unknown"),
+            "remote_mcp_template_status": _public_status(summary.get("remote_mcp_template_status"), default="unknown"),
+            "a2a_delegation_status": _public_status(summary.get("a2a_delegation_status"), default="unknown"),
+            "otel_span_count": _safe_int(summary.get("otel_span_count")),
+            "eval_case_count": _safe_int(summary.get("eval_case_count")),
+            "otlp_resource_span_count": _safe_int(summary.get("otlp_resource_span_count")),
+        },
+        "checks": _public_check_outcomes(latest.get("checks")),
+        "errors": _public_error_placeholders(latest.get("errors")),
+    }
+
+
 def build_agent_interop_workbench_section(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
     latest = dict(payload or load_agent_interop_e2e_latest())
     summary = dict(latest.get("summary") or {})
@@ -485,6 +521,54 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _public_status(value: Any, *, default: str = "unknown") -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized in {"passed", "pass", "success", "succeeded", "ok", "ready"}:
+        return "passed"
+    if normalized in {"failed", "failure", "error", "errored", "blocked"}:
+        return "failed"
+    if normalized in {"warning", "attention"}:
+        return "attention"
+    if normalized in {"running", "in_progress", "pending"}:
+        return "running"
+    if normalized in {"not_run", "missing", "skipped"}:
+        return "not_run"
+    if default == "not_run":
+        return "not_run"
+    return "unknown"
+
+
+def _public_check_outcomes(value: Any) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    source = value if isinstance(value, list) else []
+    for index, item in enumerate(source[:24], start=1):
+        if not isinstance(item, Mapping):
+            continue
+        checks.append(
+            {
+                "id": f"interop_check_{index}",
+                "status": _public_status(item.get("status"), default="not_run"),
+                "summary": "Interop check completed." if _public_status(item.get("status"), default="not_run") == "passed" else "Interop check needs review in local evidence.",
+            }
+        )
+    return checks
+
+
+def _public_error_placeholders(value: Any) -> list[str]:
+    if isinstance(value, list) and value:
+        return ["Interop E2E recorded errors; see local evidence for details."]
+    return []
 
 
 def _resolve_roots(projects_root: Path | None, env: Mapping[str, str]) -> dict[str, Path]:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.9 - 2026-06-28
+
+### Fixed
+
+- Replaced high-risk release verification and agent interop HTTP responses with fixed public DTOs that expose only status, counts, and bounded summaries while keeping detailed diagnostics in local reports/evidence, closing CodeQL stack-trace exposure alerts on the default branch.
+
 ## 0.9.8 - 2026-06-28
 
 ### Fixed
