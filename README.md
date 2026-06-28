@@ -197,6 +197,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.9` | Patch release that narrows release verification and agent interop HTTP responses to fixed public DTOs, keeping detailed diagnostics in local reports/evidence while closing CodeQL stack-trace exposure alerts on the default branch. |
 | `0.9.8` | Patch release that strengthens public API payload sanitization for traceback-shaped strings and keeps CodeQL stack-trace exposure alerts closed while preserving the `0.9.6` frontier agent-team interop release gate. |
 | `0.9.7` | Patch release that keeps public API 500 handling stack-trace safe for CodeQL while preserving the `0.9.6` frontier agent-team interop release gate and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
 | `0.9.6` | Adds the frontier agent-team interop release gate: host workbench surfaces, agent interop E2E evidence, stricter RC verification, unified pre-release gate evidence, and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
@@ -284,11 +285,13 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.8` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.9` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.8` release keeps the `0.9.6` frontier agent-team interoperability and
-release-gate evidence across the packaged macOS host, while strengthening public
-API payload sanitization for traceback-shaped strings. It revalidates the local socket APIs,
+The `0.9.9` release keeps the `0.9.6` frontier agent-team interoperability and
+release-gate evidence across the packaged macOS host, while narrowing release
+verification and agent interop HTTP responses to fixed public DTOs. Detailed
+diagnostics remain available in local reports and evidence files instead of
+being returned through external API boundaries. It revalidates the local socket APIs,
 Claude Desktop and Agnes catalog surfaces, Agent interop E2E, workbench
 readiness, release evaluation, and all three managed plugins under
 `~/.across`. The release pairs with Across Autopilot `v0.2.6`, Across

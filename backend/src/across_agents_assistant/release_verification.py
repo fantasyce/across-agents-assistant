@@ -117,6 +117,13 @@ PRE_RELEASE_GATE_DEFINITIONS: List[Dict[str, Any]] = [
         "readiness_impact": "manual",
     },
 ]
+PUBLIC_PRE_RELEASE_GATE_PATHS = sorted(
+    {
+        str(path)
+        for definition in PRE_RELEASE_GATE_DEFINITIONS
+        for path in (definition.get("paths") or [])
+    }
+)
 
 
 SENSITIVE_EVIDENCE_KEY_RE = re.compile(
@@ -1192,6 +1199,341 @@ def _public_audit(audit: Any) -> Dict[str, Any]:
         "expected_files": _public_str_list(audit.get("expected_files")),
         "required_probes": _public_str_list(audit.get("required_probes")),
     }
+
+
+def public_release_verification_api_response(report: Any) -> Dict[str, Any]:
+    """Project an internal release report into the stable public API shape.
+
+    The internal report is also written to the local release-report directory.
+    The HTTP response intentionally avoids arbitrary diagnostic strings so
+    exception text, stack traces, command output, and local file contents cannot
+    cross the user-facing API boundary.
+    """
+
+    from . import __version__
+
+    report = report if isinstance(report, dict) else {}
+    startup = report.get("startup") if isinstance(report.get("startup"), dict) else {}
+    startup_summary = startup.get("summary") if isinstance(startup.get("summary"), dict) else {}
+    startup_runtime = startup.get("runtime") if isinstance(startup.get("runtime"), dict) else {}
+    release_evaluation = report.get("release_evaluation") if isinstance(report.get("release_evaluation"), dict) else {}
+    latest_release_e2e = report.get("latest_release_e2e") if isinstance(report.get("latest_release_e2e"), dict) else None
+    gate_summary = report.get("pre_release_gate_summary") if isinstance(report.get("pre_release_gate_summary"), dict) else {}
+    audit = report.get("audit") if isinstance(report.get("audit"), dict) else {}
+    status = _public_status_literal(report.get("status"), default="attention")
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    return {
+        "schema_version": "1.0",
+        "app_version": __version__,
+        "generated_at": generated_at,
+        "status": status,
+        "startup": _public_api_startup(startup, startup_summary, startup_runtime, __version__, generated_at),
+        "release_evaluation": _public_api_release_evaluation(release_evaluation),
+        "latest_release_e2e": _public_api_latest_release_e2e(latest_release_e2e),
+        "pre_release_gates": _public_api_pre_release_gates(report.get("pre_release_gates")),
+        "pre_release_gate_summary": _public_int_dict(gate_summary),
+        "pre_release_gate_missing_paths": _public_api_missing_gate_paths(report.get("pre_release_gate_missing_paths")),
+        "pre_release_gate_parse_errors": _public_api_parse_errors(report.get("pre_release_gate_parse_errors")),
+        "remediations": _public_api_remediations(
+            latest_release_e2e=latest_release_e2e,
+            gate_summary=gate_summary,
+            release_evaluation=release_evaluation,
+        ),
+        "report_files": {
+            "directory": "",
+            "json_name": "",
+            "json_path": "",
+            "markdown_name": "",
+            "markdown_path": "",
+        },
+        "audit": {
+            "read_only": _public_bool(audit.get("read_only")),
+            "repair_or_resume_triggered": _public_bool(audit.get("repair_or_resume_triggered")),
+            "secrets_redacted": True,
+            "expected_files": list(RELEASE_VERIFICATION_EXPECTED_FILES),
+            "required_probes": list(RELEASE_VERIFICATION_REQUIRED_PROBES),
+        },
+    }
+
+
+def _public_status_literal(value: Any, *, default: str = "unknown") -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized == "ready":
+        return "ready"
+    if normalized in {"passed", "pass", "success", "succeeded", "ok"}:
+        return "passed"
+    if normalized in {"blocked", "failed", "failure", "error", "errored"}:
+        return "blocked" if default == "attention" else "failed"
+    if normalized in {"attention", "warning", "manual_required", "configured", "missing", "unknown"}:
+        return normalized
+    if normalized in {"running", "in_progress", "pending"}:
+        return "running"
+    return default
+
+
+def _public_api_startup(
+    startup: Dict[str, Any],
+    summary: Dict[str, Any],
+    runtime: Dict[str, Any],
+    app_version: str,
+    generated_at: str,
+) -> Dict[str, Any]:
+    checks: List[Dict[str, Any]] = []
+    for index, check in enumerate(startup.get("checks") or [], start=1):
+        if not isinstance(check, dict):
+            continue
+        check_status = _public_status_literal(check.get("status"), default="unknown")
+        checks.append(
+            {
+                "id": f"startup_check_{index}",
+                "title": "Startup check",
+                "status": check_status,
+                "detail": "Startup check passed." if check_status in {"ready", "passed"} else "Startup check needs local review.",
+                "remediation": None,
+                "metadata": {},
+            }
+        )
+    status = _public_status_literal(startup.get("status") or summary.get("status"), default="attention")
+    return {
+        "schema_version": "1.0",
+        "app_version": app_version,
+        "generated_at": generated_at,
+        "status": status,
+        "summary": {
+            "status": status,
+            "passed": _public_int(summary.get("passed")),
+            "warnings": _public_int(summary.get("warnings")),
+            "failed": _public_int(summary.get("failed")),
+            "check_count": _public_int(summary.get("check_count"), len(checks)),
+        },
+        "paths": {
+            "app_home": "",
+            "logs_dir": "",
+            "run_dir": "",
+            "tmp_dir": "",
+            "evidence_dir": "",
+            "socket_path": "",
+            "database_path": "",
+        },
+        "runtime": {
+            "pid": _public_int(runtime.get("pid")),
+            "started_at": _public_float(runtime.get("started_at")) or 0.0,
+            "uptime_sec": _public_float(runtime.get("uptime_sec")) or 0.0,
+            "known_tasks": _public_int(runtime.get("known_tasks")),
+            "persistence_initialized": _public_bool(runtime.get("persistence_initialized")),
+        },
+        "keys": {
+            "has_any_key": False,
+            "providers": {},
+            "readiness_blockers": [],
+        },
+        "checks": checks[:16],
+    }
+
+
+def _public_api_release_evaluation(summary: Dict[str, Any]) -> Dict[str, Any]:
+    readiness = _public_status_literal(summary.get("release_readiness"), default="unknown")
+    interop_status = _public_status_literal(summary.get("agent_interop_e2e_status"), default="unknown")
+    return {
+        "release_readiness": readiness,
+        "generated_at": _public_float(summary.get("generated_at")),
+        "release_evidence_count": _public_int(summary.get("release_evidence_count")),
+        "passed_evidence_count": _public_int(summary.get("passed_evidence_count")),
+        "agent_interop_e2e_status": interop_status,
+        "evaluated_task_count": _public_int(summary.get("evaluated_task_count")),
+        "terminal_task_count": _public_int(summary.get("terminal_task_count")),
+        "passed_task_count": _public_int(summary.get("passed_task_count")),
+        "blocked_task_count": _public_int(summary.get("blocked_task_count")),
+        "manual_task_count": _public_int(summary.get("manual_task_count")),
+        "skipped_task_count": _public_int(summary.get("skipped_task_count")),
+        "pass_rate": _public_float(summary.get("pass_rate")) or 0.0,
+        "average_final_quality_score": (
+            None
+            if summary.get("average_final_quality_score") is None
+            else _public_int(summary.get("average_final_quality_score"))
+        ),
+        "total_remediation_count": _public_int(summary.get("total_remediation_count")),
+        "recommendation": None if readiness == "ready" else "Review the local release verification report before approval.",
+        "top_risks": [],
+        "recent_evaluations": [],
+        "quality_trend": None,
+        "agent_mix_summary": None,
+        "probe_coverage": None,
+        "readiness_checks": _public_api_readiness_checks(summary.get("readiness_checks")),
+        "supplemental_evidence": _public_api_supplemental_evidence(summary.get("supplemental_evidence")),
+        "gate_breakdown": _public_int_dict(summary.get("gate_breakdown")),
+        "stack_coverage": _public_int_dict(summary.get("stack_coverage")),
+        "agent_coverage": _public_int_dict(summary.get("agent_coverage")),
+    }
+
+
+def _public_api_readiness_checks(value: Any) -> List[Dict[str, Any]]:
+    checks: List[Dict[str, Any]] = []
+    for index, item in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        status = _public_status_literal(item.get("status"), default="unknown")
+        checks.append(
+            {
+                "id": f"readiness_check_{index}",
+                "status": status,
+                "label": "Readiness check",
+                "message": "Readiness check passed." if status in {"ready", "passed"} else "Readiness check needs local review.",
+                "severity": "medium",
+            }
+        )
+    return checks[:16]
+
+
+def _public_api_supplemental_evidence(value: Any) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    for index, item in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        kind = "host_interop_e2e" if str(item.get("kind") or "") == "host_interop_e2e" else "supplemental_evidence"
+        evidence.append(
+            {
+                "id": "agent_interop_e2e" if kind == "host_interop_e2e" else f"supplemental_evidence_{index}",
+                "kind": kind,
+                "status": _public_status_literal(item.get("status"), default="unknown"),
+                "quality_gate": _public_status_literal(item.get("quality_gate"), default="unknown"),
+                "passed_count": _public_int(item.get("passed_count")),
+                "failed_count": _public_int(item.get("failed_count")),
+                "host_target_count": _public_int(item.get("host_target_count")),
+                "mcp_server_count": _public_int(item.get("mcp_server_count")),
+                "protocol_readiness_score": _public_int(item.get("protocol_readiness_score")),
+                "endpoint": "/api/autopilot/agent-interop-e2e" if kind == "host_interop_e2e" else "",
+            }
+        )
+    return evidence[:8]
+
+
+def _public_api_latest_release_e2e(latest: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(latest, dict):
+        return None
+    summary = latest.get("summary") if isinstance(latest.get("summary"), dict) else {}
+    benchmark = latest.get("benchmark") if isinstance(latest.get("benchmark"), dict) else {}
+    benchmark_summary = benchmark.get("summary") if isinstance(benchmark.get("summary"), dict) else {}
+    benchmark_status = _public_status_literal(benchmark.get("status"), default="unknown")
+    task_status = _public_status_literal(latest.get("task_status"), default="unknown")
+    return {
+        "task_id": "release-e2e-latest",
+        "description": "Latest Release E2E scenario",
+        "task_status": task_status,
+        "project_dir": None,
+        "updated_at": _public_float(latest.get("updated_at")),
+        "benchmark": {
+            "benchmark_id": "release-e2e-benchmark",
+            "benchmark_version": None,
+            "app_version": None,
+            "status": benchmark_status,
+            "summary": {
+                "scenario_count": _public_int(benchmark_summary.get("scenario_count")),
+                "passed_scenarios": _public_int(benchmark_summary.get("passed_scenarios")),
+                "failed_scenarios": _public_int(benchmark_summary.get("failed_scenarios")),
+                "min_quality_score": _public_int(benchmark_summary.get("min_quality_score")),
+                "max_remediation_attempts": _public_int(benchmark_summary.get("max_remediation_attempts")),
+            },
+            "scenarios": [],
+        },
+        "summary": {
+            "status": _public_status_literal(summary.get("status"), default="unknown"),
+            "quality_score": None if summary.get("quality_score") is None else _public_int(summary.get("quality_score")),
+            "remediation_attempts": _public_int(summary.get("remediation_attempts")),
+            "failed_scenarios": _public_int(summary.get("failed_scenarios")),
+        },
+    }
+
+
+def _public_api_pre_release_gates(gates: Any) -> List[Dict[str, Any]]:
+    public_gates: List[Dict[str, Any]] = []
+    for index, gate in enumerate(gates if isinstance(gates, list) else [], start=1):
+        if not isinstance(gate, dict):
+            continue
+        status = _public_status_literal(gate.get("status"), default="unknown")
+        source = str(gate.get("source") or "")
+        source_value = source if source in {"local", "local_script", "github_actions"} else "unknown"
+        public_gates.append(
+            {
+                "id": f"pre_release_gate_{index}",
+                "label": "Pre-release gate",
+                "status": status,
+                "source": source_value,
+                "command": "",
+                "detail": "Pre-release gate passed." if status in {"ready", "passed"} else "Pre-release gate needs local review.",
+                "paths": [],
+                "required": _public_bool(gate.get("required")),
+                "readiness_impact": "required",
+                "evidence": _public_api_gate_evidence(gate, index),
+            }
+        )
+    return public_gates
+
+
+def _public_api_gate_evidence(gate: Dict[str, Any], index: int) -> Optional[Dict[str, Any]]:
+    evidence = gate.get("evidence")
+    if not isinstance(evidence, dict):
+        return None
+    status = _public_status_literal(evidence.get("status") or gate.get("status"), default="unknown")
+    return {
+        "schema_version": "1.0",
+        "gate_id": f"pre_release_gate_{index}",
+        "status": status,
+        "source": "github_actions" if str(evidence.get("source") or gate.get("source") or "") == "github_actions" else "local",
+        "summary": "Pre-release gate evidence passed." if status in {"ready", "passed"} else "Pre-release gate evidence needs local review.",
+        "generated_at": None,
+        "started_at": None,
+        "completed_at": None,
+        "duration_seconds": None,
+        "tier": None,
+        "run_url": None,
+        "workflow_run_url": None,
+        "commit_sha": None,
+        "runner": None,
+        "orchestrator_command": None,
+        "workspace_dirty": _public_bool(evidence.get("workspace_dirty")),
+        "evidence_path": None,
+    }
+
+
+def _public_api_parse_errors(parse_errors: Any) -> List[Dict[str, str]]:
+    errors = parse_errors if isinstance(parse_errors, list) else []
+    return [
+        {
+            "evidence_path": "",
+            "error_type": "ParseError",
+            "message": "Could not parse pre-release gate evidence; see local report for details.",
+        }
+        for _item in errors[:8]
+    ]
+
+
+def _public_api_missing_gate_paths(value: Any) -> List[str]:
+    reported = {str(item) for item in value} if isinstance(value, list) else set()
+    return [path for path in PUBLIC_PRE_RELEASE_GATE_PATHS if path in reported]
+
+
+def _public_api_remediations(
+    *,
+    latest_release_e2e: Optional[Dict[str, Any]],
+    gate_summary: Dict[str, Any],
+    release_evaluation: Dict[str, Any],
+) -> List[str]:
+    remediations: List[str] = []
+    if latest_release_e2e is None:
+        remediations.append("Run the fixed Release E2E scenario from the frontend and wait for passing evidence.")
+    if _public_int(gate_summary.get("required_missing")) > 0:
+        remediations.append("Restore missing pre-release verification gates before release approval.")
+    if _public_int(gate_summary.get("required_failed")) > 0:
+        remediations.append("Review failed pre-release verification gate evidence before release approval.")
+    if _public_int(gate_summary.get("required_manual")) > 0:
+        remediations.append("Run required manual pre-release gates and attach their evidence before release approval.")
+    if _public_int(gate_summary.get("required_unverified")) > 0:
+        remediations.append("Attach passing evidence for configured pre-release verification gates before release approval.")
+    if _public_status_literal(release_evaluation.get("release_readiness"), default="unknown") not in {"ready", "passed"}:
+        remediations.append("Collect passing release evaluation evidence before release approval.")
+    return remediations
 
 
 def _build_release_verification_report(
