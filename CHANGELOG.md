@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.9.12 - 2026-06-29
+
+### Changed
+
+- Replaced the Codex, Hermes, OpenClaw, and local-agent icon rendering path with
+  packaged WebP-first upstream assets plus SVG fallbacks, preserving auditable
+  source metadata for open-source release review.
+- Unified direct local-agent icon sizing and rounded-square clipping across the
+  sidebar, model cards, and Agent Capabilities views so upstream image canvases
+  no longer appear as oversized square tiles.
+
+### Fixed
+
+- Removed the stale `agent.cloudcode-desktop.svg` asset in favor of the
+  official Claude Desktop naming surface.
+- Loaded backend agent icon data URLs from packaged icon assets instead of
+  handwritten placeholder SVG constants.
+
 ## 0.9.11 - 2026-06-28
 
 ### Added

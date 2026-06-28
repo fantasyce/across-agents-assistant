@@ -1,10 +1,39 @@
+from __future__ import annotations
 
-AGENT_ICONS = {
-    "openclaw": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><text x='50' y='68' font-size='55' text-anchor='middle'>🦞</text></svg>",
-    "hermes": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient><linearGradient id='hermesGrad' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%23FACC15'/><stop offset='45%25' stop-color='%23EAB308'/><stop offset='75%25' stop-color='%23B45309'/><stop offset='100%25' stop-color='%2378350F'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><g fill='url(%23hermesGrad)' stroke='%23B45309' stroke-width='1.5' stroke-linejoin='miter'><path d='M25,20 h12 v22 h26 v-22 h12 v60 h-12 v-24 h-26 v24 h-12 z'/></g><g fill='none' stroke='%23FCD34D' stroke-width='0.5'><path d='M26,21 h10 v22 h28 v-22 h10 v58 h-10 v-24 h-28 v24 h-10 z'/></g></svg>",
-    "claude": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><path d='M30,27 L70,27 L70,42 L80,42 L80,57 L70,57 L70,73 L64,73 L64,57 L60,57 L60,73 L54,73 L54,57 L46,57 L46,73 L40,73 L40,57 L36,57 L36,73 L30,73 L30,57 L20,57 L20,42 L30,42 Z' fill='%23D9775A'/><rect x='36' y='36' width='6' height='10' fill='url(%23bg)'/><rect x='58' y='36' width='6' height='10' fill='url(%23bg)'/></svg>",
-    "claude-desktop": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><path d='M30,27 L70,27 L70,42 L80,42 L80,57 L70,57 L70,73 L64,73 L64,57 L60,57 L60,73 L54,73 L54,57 L46,57 L46,73 L40,73 L40,57 L36,57 L36,73 L30,73 L30,57 L20,57 L20,42 L30,42 Z' fill='%23D9775A'/><rect x='36' y='36' width='6' height='10' fill='url(%23bg)'/><rect x='58' y='36' width='6' height='10' fill='url(%23bg)'/></svg>",
-    "codex": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><text x='50' y='60' font-size='28' font-family='Menlo,Monaco,monospace' font-weight='700' text-anchor='middle' fill='%23F5F5F7'>CX</text></svg>",
-    "kimi": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><g transform='translate(24 24) scale(2.16667)' fill='%23F5F5F7' fill-rule='evenodd'><path d='M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z' fill='%231783FF'/><path d='M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z'/></g></svg>",
-    "agnes": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%232A2C31'/><stop offset='100%25' stop-color='%231B1C20'/></linearGradient><linearGradient id='ag' x1='20' y1='18' x2='80' y2='82' gradientUnits='userSpaceOnUse'><stop offset='0%25' stop-color='%2338BDF8'/><stop offset='55%25' stop-color='%23A78BFA'/><stop offset='100%25' stop-color='%23F472B6'/></linearGradient></defs><rect x='2' y='2' width='96' height='96' rx='22' fill='url(%23bg)' stroke='%232F3238' stroke-width='2'/><rect x='4' y='4' width='92' height='92' rx='20' fill='none' stroke='%23FFFFFF' stroke-opacity='0.06' stroke-width='1'/><circle cx='50' cy='50' r='30' fill='none' stroke='url(%23ag)' stroke-width='4'/><text x='50' y='60' font-size='30' font-family='Menlo,Monaco,monospace' font-weight='700' text-anchor='middle' fill='%23F8FAFC'>Ag</text></svg>",
+import base64
+from pathlib import Path
+
+
+_ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+
+_MIME_BY_SUFFIX = {
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
 }
+
+_AGENT_ICON_FILES = {
+    "openclaw": "agent.openclaw.webp",
+    "local": "agent.local.webp",
+    "hermes": "agent.hermes.webp",
+    "claude": "agent.claude.svg",
+    "claude-desktop": "agent.claude-desktop.svg",
+    "codex": "agent.codex.webp",
+    "kimi": "agent.kimi.svg",
+    "opencode": "agent.opencode.svg",
+    "cursor": "agent.cursor.svg",
+    "agnes": "agent.agnes.svg",
+    "deepseek": "agent.deepseek.svg",
+    "minimax": "agent.minimax.svg",
+}
+
+
+def _asset_data_url(filename: str) -> str:
+    path = _ICON_DIR / filename
+    mime = _MIME_BY_SUFFIX.get(path.suffix)
+    if mime is None:
+        raise ValueError(f"Unsupported icon type: {filename}")
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{data}"
+
+
+AGENT_ICONS = {agent_id: _asset_data_url(filename) for agent_id, filename in _AGENT_ICON_FILES.items()}

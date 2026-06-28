@@ -85,11 +85,27 @@ struct AgentIconView: View {
 
     var body: some View {
         if let image = loadSVGImage(named: name) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
+            let visualSize = agentIconVisualSize(name, containerSize: size)
+            let visualCornerRadius = agentIconCornerRadius(name, visualSize: visualSize)
+            if isDirectTemplateAgentIcon(name) {
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundColor(colorScheme == .dark ? .white : .legacyTextLight)
+                    .frame(width: visualSize, height: visualSize)
+                    .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
+            } else {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: visualSize, height: visualSize)
+                    .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
+            }
         } else {
             Text(iconInitial)
                 .font(.system(size: size * 0.4, weight: .bold))

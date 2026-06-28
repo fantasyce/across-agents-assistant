@@ -197,6 +197,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.12` | Refreshes local Agent icon provenance and rendering: Codex, Hermes, OpenClaw, and the local fallback now use packaged upstream WebP-first assets with SVG fallbacks, consistent rounded-square clipping, and backend data URLs loaded from packaged assets. |
 | `0.9.11` | Adds Kimi Code as a local CLI agent with discovery, `kimi -p` dispatch, stream-json parsing, capability routing, bundled icon provenance, and packaged-app validation. |
 | `0.9.10` | Patch release that decouples release verification HTTP responses from in-memory reports by reading the latest local report into the fixed public DTO, closing the remaining CodeQL stack-trace exposure data flow. |
 | `0.9.9` | Patch release that narrows release verification and agent interop HTTP responses to fixed public DTOs, keeping detailed diagnostics in local reports/evidence while closing CodeQL stack-trace exposure alerts on the default branch. |
@@ -287,19 +288,19 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.11` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.12` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.11` release keeps the `0.9.6` frontier agent-team interoperability and
-release-gate evidence across the packaged macOS host, while adding Kimi Code as
-a first-class local CLI agent through lightweight discovery, `kimi -p`
-dispatch, stream-json parsing, capability profiles, and bundled icon
-provenance. It revalidates the local socket APIs, Claude Desktop, Kimi Code,
-and Agnes catalog surfaces, Agent interop E2E, workbench readiness, release
-evaluation, and all three managed plugins under
-`~/.across`. The release pairs with Across Autopilot `v0.2.6`, Across
-Orchestrator `v0.7.6`, and Across Context `v0.8.6`; all three managed plugins
-are installed under `~/.across` and can also be consumed by Codex, Claude Code,
-Claude Desktop, and other CLI/MCP-capable hosts.
+The `0.9.12` release keeps the `0.9.6` frontier agent-team interoperability and
+release-gate evidence across the packaged macOS host, while polishing the local
+Agent icon system introduced by the recent Kimi Code and broader local-agent
+work. Codex, Hermes, OpenClaw, and the local fallback now use packaged
+upstream WebP-first assets with SVG fallbacks, auditable source metadata,
+consistent rounded-square clipping, and backend data URLs loaded from packaged
+assets instead of handwritten placeholders. The release keeps the managed
+plugin pins at Across Autopilot `v0.2.6`, Across Orchestrator `v0.7.6`, and
+Across Context `v0.8.6`; all three managed plugins are installed under
+`~/.across` and can also be consumed by Codex, Claude Code, Claude Desktop,
+and other CLI/MCP-capable hosts.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse

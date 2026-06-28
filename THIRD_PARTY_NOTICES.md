@@ -66,12 +66,16 @@ and cloud LLM names, are used descriptively. They remain the property of their
 respective owners.
 
 Agent and provider icons under `macOS-Client/Sources/Assets/icons/agent.*`
-have mixed provenance. Project-created artwork, including OpenClaw and Hermes,
-is treated as bundled project assets. Selected third-party provider marks are
-sourced from LobeHub Icons and are used only as descriptive identifiers for
-compatible integrations, not as Across Agents Assistant branding. The app wraps
-those glyphs in project-owned dark/light neutral tile backgrounds to normalize
-UI presentation and preserve clear space; the glyph geometry is not redrawn.
+and the lightweight backend fallback copies under
+`backend/src/across_agents_assistant/assets/icons/agent.*` have mixed
+provenance. Project-created artwork is treated as bundled project assets.
+Selected third-party provider marks are sourced from LobeHub Icons and are used
+only as descriptive identifiers for compatible integrations, not as Across
+Agents Assistant branding. When the reviewed LobeHub SVG has a visible
+rendering defect, the app uses the matching LobeHub WebP export as the primary
+asset and keeps the SVG as fallback. Some glyph-only marks still use
+project-owned dark/light neutral tile backgrounds to normalize UI presentation
+and preserve clear space; the glyph geometry is not redrawn.
 LobeHub Icons is distributed under the MIT license, but brand trademarks remain
 the property of their respective owners.
 
@@ -80,9 +84,11 @@ Reviewed LobeHub Icons entries currently bundled from
 
 | App asset | LobeHub source icon | Usage |
 | --- | --- | --- |
-| `agent.claude.svg` | `claude-color.svg` | Claude Code local agent |
-| `agent.claude-desktop.svg` | `claude-color.svg` from `@lobehub/icons-static-svg@1.73.0` | Claude Desktop local agent bundled fallback; installed Claude.app or Claude Code URL Handler icon is read at runtime when present |
-| `agent.codex.svg` | `openai.svg` | Codex local agent fallback; installed OpenAI-signed Codex.app icon is read at runtime when present |
+| `agent.openclaw.webp` | `openclaw-color.webp` from the LobeHub icon page, with `openclaw-color.svg` fallback from `@lobehub/icons-static-svg@1.91.0` | OpenClaw local agent bundled primary icon, used directly without an Across tile wrapper |
+| `agent.hermes.webp` | `hermesagent.webp` from the LobeHub icon page, with `hermesagent.svg` fallback from `@lobehub/icons-static-svg@1.91.0` | Hermes local agent bundled primary icon, used directly without an Across tile wrapper |
+| `agent.claude.svg` | `claudecode-color.svg` from `@lobehub/icons-static-svg@1.91.0` | Claude Code local agent bundled primary icon |
+| `agent.claude-desktop.svg` | `claude-color.svg` from `@lobehub/icons-static-svg@1.73.0` | Claude Desktop local agent bundled primary icon |
+| `agent.codex.webp` | `codex.webp` from the LobeHub icon page, with `codex.svg` fallback from `@lobehub/icons-static-svg@1.91.0` | Codex local agent bundled primary icon, used directly without an Across tile wrapper |
 | `agent.kimi.svg` | `kimi-color.svg` from `@lobehub/icons-static-svg@1.91.0` | Kimi Code local CLI agent |
 | `agent.cursor.svg` | `cursor.svg` | Cursor local agent |
 | `agent.openai.svg` | `openai.svg` | OpenAI cloud provider |
@@ -130,9 +136,23 @@ was found in the reviewed `@lobehub/icons-static-svg@1.91.0`, Simple Icons
 16.24.0, or lucide-static 1.21.0 packages.
 
 The macOS client may still display icons from locally installed applications at
-runtime as a fallback. Those local application icons are read from the user's
-machine, wrapped in the same neutral dark/light tile at runtime, and are not
-bundled in the public repository.
+runtime only as fallback when a bundled SVG tile is unavailable. Those local
+application icons are read from the user's machine and are not bundled in the
+public repository.
+
+Codex intentionally uses the dedicated LobeHub Codex visual mark instead of the
+generic OpenAI glyph. The LobeHub `codex.webp` export is used as the primary
+asset because the reviewed Codex color SVG has a visible path defect; the
+upstream `codex.svg` stays bundled only as fallback. Hermes and OpenClaw also
+use their LobeHub WebP exports as primary assets in both the Swift app bundle
+and the backend web/fallback assets, with upstream SVG fallbacks kept alongside
+them. The backend `agent.local.webp` alias is the same upstream
+`openclaw-color.webp` file. Hermes is an upstream black alpha-mask WebP, so the
+Swift UI renders it as a template icon and supplies the visible foreground color
+at runtime without changing the WebP file. Claude Code uses the dedicated
+LobeHub Claude Code glyph, while Claude Desktop uses the generic Claude glyph
+because no reviewed open-source package provides a Claude Desktop-specific
+glyph.
 
 ## Adding New Dependencies or Assets
 

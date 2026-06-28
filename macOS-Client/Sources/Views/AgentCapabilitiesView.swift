@@ -249,7 +249,7 @@ struct AgentCapabilitiesView: View {
             selectedAgentId = agent.id
         } label: {
             HStack(spacing: 10) {
-                agentIcon(agent.iconName)
+                agentIcon(agent.iconName, size: 32)
                     .frame(width: 32, height: 32)
                     .background((isSelected ? accentColor : Color.secondary).opacity(colorScheme == .dark ? 0.16 : 0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -496,7 +496,7 @@ struct AgentCapabilitiesView: View {
 
     private func profileHeader(agent: CapabilityAgentOption, profile: AgentCapabilityProfile) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            agentIcon(agent.iconName)
+            agentIcon(agent.iconName, size: 38)
                 .frame(width: 38, height: 38)
                 .background(accentColor.opacity(colorScheme == .dark ? 0.18 : 0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -1171,16 +1171,33 @@ struct AgentCapabilitiesView: View {
         }
     }
 
-    private func agentIcon(_ iconName: String) -> some View {
+    private func agentIcon(_ iconName: String, size: CGFloat) -> some View {
         Group {
             if let nsImage = loadAgentIconSync(name: iconName, colorScheme: colorScheme) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFit()
+                let visualSize = agentIconVisualSize(iconName, containerSize: size)
+                let visualCornerRadius = agentIconCornerRadius(iconName, visualSize: visualSize)
+                if isDirectTemplateAgentIcon(iconName) {
+                    Image(nsImage: nsImage)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundColor(colorScheme == .dark ? .white : .legacyTextLight)
+                        .frame(width: visualSize, height: visualSize)
+                        .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                        .frame(width: size, height: size)
+                } else {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: visualSize, height: visualSize)
+                        .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                        .frame(width: size, height: size)
+                }
             } else {
                 Image(systemName: "cpu")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(accentColor)
+                    .frame(width: size, height: size)
             }
         }
     }
