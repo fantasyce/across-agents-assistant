@@ -197,6 +197,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.7` | Patch release that keeps public API 500 handling stack-trace safe for CodeQL while preserving the `0.9.6` frontier agent-team interop release gate and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
 | `0.9.6` | Adds the frontier agent-team interop release gate: host workbench surfaces, agent interop E2E evidence, stricter RC verification, unified pre-release gate evidence, and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
 | `0.9.5` | Final 1.1 regression release: revalidates the packaged macOS host, `~/.across` managed plugin runtime, Context/Orchestrator/Autopilot smoke paths, official Claude Code/Claude Desktop naming, and pins Autopilot `v0.2.5`, Orchestrator `v0.7.5`, and Context `v0.8.5`. |
 | `0.9.4` | Adds workflow-first agent-readable product packaging, including `llms.txt`, `AGENTS.md`, a machine-readable product manifest, copyable agent task examples, and the open-source release handbook; managed pins move to Autopilot `v0.2.4`, Orchestrator `v0.7.4`, and Context `v0.8.4`. |
@@ -282,10 +283,11 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.6` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.7` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.6` release adds frontier agent-team interoperability and release-gate
-evidence across the packaged macOS host. It revalidates the local socket APIs,
+The `0.9.7` release keeps the `0.9.6` frontier agent-team interoperability and
+release-gate evidence across the packaged macOS host, while making public API
+500 handling stack-trace safe for CodeQL. It revalidates the local socket APIs,
 Claude Desktop and Agnes catalog surfaces, Agent interop E2E, workbench
 readiness, release evaluation, and all three managed plugins under
 `~/.across`. The release pairs with Across Autopilot `v0.2.6`, Across
