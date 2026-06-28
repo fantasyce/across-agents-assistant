@@ -7,16 +7,16 @@
   "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Kimi Code, Claude Code, Claude Desktop, AAA, and other MCP-capable hosts.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.9.11",
-      "published_at": "2026-06-28",
-      "tag": "v0.9.11",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.9.11"
+      "version": "v0.9.13",
+      "published_at": "2026-06-29",
+      "tag": "v0.9.13",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.9.13"
     },
     "across_autopilot": {
-      "version": "v0.2.6",
-      "published_at": "2026-06-28",
-      "tag": "v0.2.6",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.6"
+      "version": "v0.2.7",
+      "published_at": "2026-06-29",
+      "tag": "v0.2.7",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.7"
     },
     "across_orchestrator": {
       "version": "v0.7.6",
@@ -141,7 +141,6 @@
   ],
   "human_readable_entrypoints": [
     "README.md",
-    "LOOP_ENGINEERING_PRODUCT_PACKAGING.md",
     "OPEN_SOURCE_RELEASE_HANDBOOK.md",
     "examples/agent-tasks/repo-quality-copilot.md",
     "examples/agent-tasks/release-captain.md",

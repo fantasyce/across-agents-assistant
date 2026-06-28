@@ -64,8 +64,7 @@ def test_deferred_local_ide_integrations_leave_no_app_surface():
 
     app_surface_files = [
         ROOT / "README.md",
-        ROOT / "THIRD_PARTY_NOTICES.md",
-        ROOT / "AGENT_ICON_WORKFLOW.md",
+        ROOT / "legal/THIRD_PARTY_NOTICES.md",
         ROOT / "backend/src/across_agents_assistant/assets/web/index.html",
         ROOT / "backend/src/across_agents_assistant/local_agent/client.py",
         ROOT / "backend/src/across_agents_assistant/task_review/contract_acceptance.py",

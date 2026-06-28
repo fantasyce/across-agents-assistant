@@ -545,7 +545,6 @@ steps = [
         "required_files": [
             p("aaa", "loop-engineering-skills/loop-capability-audit/SKILL.md"),
             p("aaa", "scripts/loop_engineering_skill_tool_matrix.sh"),
-            p("aaa", "LOOP_ENGINEERING_REMAINING_WORK.md"),
         ],
         "next_step": "Keep capability ownership audits grounded in the machine-readable matrix.",
         "strict_required": True,
@@ -559,7 +558,6 @@ steps = [
         "required_files": [
             p("aaa", "loop-engineering-skills/e2e-failure-triage/SKILL.md"),
             p("aaa", "scripts/run_loop_engineering_solidified_e2e.sh"),
-            p("aaa", "LOOP_ENGINEERING_FINAL_TEST_REPORT.md"),
         ],
         "next_step": "Use this skill only after reading the failed summary JSON and log.",
         "strict_required": True,
@@ -585,8 +583,7 @@ steps = [
         "current_entrypoint": "separate Computer Use专项; no product UI change in this branch",
         "required_tool_packs": [],
         "required_files": [
-            p("aaa", "LOOP_ENGINEERING_REMAINING_WORK.md"),
-            p("aaa", "LOOP_ENGINEERING_FINAL_TEST_REPORT.md"),
+            p("aaa", "scripts/check_computer_use_attach_readiness.sh"),
         ],
         "next_step": "Resolve Computer Use window attach/click validation separately without changing the current product UI.",
         "strict_required": False,

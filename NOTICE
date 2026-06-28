@@ -7,5 +7,5 @@ Project names, logos, app icons, menu bar icons, and official release branding a
 
 Third-party agent and provider names are used only to describe compatibility. They remain the property of their respective owners.
 
-See THIRD_PARTY_NOTICES.md for tracked third-party dependency and asset notices.
-See IP_AND_LICENSE_POLICY.md for inbound contribution, dependency, and binary release policy.
+See legal/THIRD_PARTY_NOTICES.md for tracked third-party dependency and asset notices.
+See legal/IP_AND_LICENSE_POLICY.md for inbound contribution, dependency, and binary release policy.

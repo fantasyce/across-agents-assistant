@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.9.13 - 2026-06-29
+
+### Changed
+
+- Consolidated tracked Markdown entrypoints by removing stale root-level
+  planning and validation reports, moving legal notices under `legal/`, and
+  keeping agent-facing product context in `AGENTS.md`, `llms.txt`, and
+  `across.product.json`.
+- Updated the managed Across Autopilot pin to `v0.2.7`, which no longer depends
+  on AAA's removed `LOOP_ENGINEERING_*` planning documents.
+
 ## 0.9.12 - 2026-06-29
 
 ### Changed

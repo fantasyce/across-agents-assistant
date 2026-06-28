@@ -89,10 +89,11 @@ server, coding-agent plugin, or agent tool is safe enough for a team workflow.
 It turns the adoption decision into a workflow card, protocol-readiness matrix,
 trust receipt, evidence graph, pending memory, A2A delegation envelope, and
 OTel/OTLP-compatible trace export. See
-[Plugin Compatibility Lab v2](docs/plugin-compatibility-lab-v2.md).
+[Plugin Compatibility Lab](examples/agent-tasks/plugin-compatibility-lab.md).
 
-The product packaging, examples, and host-neutral install story are documented
-in [Across Loop Engineering Product Packaging](LOOP_ENGINEERING_PRODUCT_PACKAGING.md).
+The product packaging, examples, and host-neutral install story are kept in
+`README.md`, `llms.txt`, `across.product.json`, and the copyable tasks under
+`examples/agent-tasks/`.
 
 ## Across Product Boundaries
 
@@ -197,6 +198,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.13` | Consolidates tracked Markdown entrypoints, moves legal notices under `legal/`, removes stale planning and validation reports from the root, and pins Autopilot `v0.2.7` so AAA candidate workflows use public product entrypoints. |
 | `0.9.12` | Refreshes local Agent icon provenance and rendering: Codex, Hermes, OpenClaw, and the local fallback now use packaged upstream WebP-first assets with SVG fallbacks, consistent rounded-square clipping, and backend data URLs loaded from packaged assets. |
 | `0.9.11` | Adds Kimi Code as a local CLI agent with discovery, `kimi -p` dispatch, stream-json parsing, capability routing, bundled icon provenance, and packaged-app validation. |
 | `0.9.10` | Patch release that decouples release verification HTTP responses from in-memory reports by reading the latest local report into the fixed public DTO, closing the remaining CodeQL stack-trace exposure data flow. |
@@ -288,19 +290,17 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.12` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.13` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.12` release keeps the `0.9.6` frontier agent-team interoperability and
-release-gate evidence across the packaged macOS host, while polishing the local
-Agent icon system introduced by the recent Kimi Code and broader local-agent
-work. Codex, Hermes, OpenClaw, and the local fallback now use packaged
-upstream WebP-first assets with SVG fallbacks, auditable source metadata,
-consistent rounded-square clipping, and backend data URLs loaded from packaged
-assets instead of handwritten placeholders. The release keeps the managed
-plugin pins at Across Autopilot `v0.2.6`, Across Orchestrator `v0.7.6`, and
+The `0.9.13` release keeps the `0.9.12` local Agent icon polish and the `0.9.6`
+frontier agent-team interoperability release-gate evidence, while reducing the
+public documentation surface. Root Markdown now stays limited to public and
+agent entrypoints, legal notices live under `legal/`, and stale planning or
+validation reports are no longer advertised. The release keeps the managed
+plugin pins at Across Autopilot `v0.2.7`, Across Orchestrator `v0.7.6`, and
 Across Context `v0.8.6`; all three managed plugins are installed under
-`~/.across` and can also be consumed by Codex, Claude Code, Claude Desktop,
-and other CLI/MCP-capable hosts.
+`~/.across` and can also be consumed by Codex, Claude Code, Claude Desktop, and
+other CLI/MCP-capable hosts.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse
@@ -310,14 +310,13 @@ decisions outside the closed Agent Loop implementation scope.
 
 Operational references:
 
-- [Release Process](RELEASE_PROCESS.md) records the merge, validation, Live E2E,
-  release PR, tag, and post-release verification checklist.
-- [Architecture Overview](ARCHITECTURE.md) records the AAA, Orchestrator,
-  Context, and plugin-manifest boundaries.
-- [Agent Loop Completeness](AGENT_LOOP_COMPLETENESS.md) records the completed
-  host scope and the RFC-only follow-up areas.
-- [Autonomous Workflow](AUTONOMOUS_WORKFLOW.md) records the scheduled ecosystem
-  review workflow and automation guardrails.
+- [Open Source Release Handbook](OPEN_SOURCE_RELEASE_HANDBOOK.md) records the
+  producer-first release flow, validation gates, Live E2E, tagging, and
+  rollback path.
+- [AGENTS.md](AGENTS.md), `llms.txt`, and `across.product.json` are the
+  agent-readable product entrypoints.
+- `examples/agent-tasks/` contains the copyable workflow tasks for Repository
+  Quality Copilot, Release Captain, and Plugin Compatibility Lab.
 
 The `0.8.26` release hardens the pre-release verification workflow. It adds a
 reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift
@@ -691,7 +690,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.6
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.6
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.7
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.6
@@ -876,8 +875,8 @@ corresponding source when the license requires it, including for remote network
 interaction. Proprietary closed-source use requires a separate commercial
 license from the rights holder.
 
-See `IP_AND_LICENSE_POLICY.md`, `CONTRIBUTOR_CERTIFICATE.md`,
-`THIRD_PARTY_NOTICES.md`, and `CODE_OF_CONDUCT.md` for contribution
+See `legal/IP_AND_LICENSE_POLICY.md`, `legal/CONTRIBUTOR_CERTIFICATE.md`,
+`legal/THIRD_PARTY_NOTICES.md`, and `CODE_OF_CONDUCT.md` for contribution
 certification, dependency notices, release review policy, and community
 expectations.
 
@@ -897,6 +896,6 @@ Security reporting guidance is in [SECURITY.md](SECURITY.md).
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
-Project names, logos, app icons, and official release branding are governed by the [Trademark Policy](TRADEMARK_POLICY.md). Third-party agent and provider names are used only to describe compatibility.
+Project names, logos, app icons, and official release branding are governed by the [Trademark Policy](legal/TRADEMARK_POLICY.md). Third-party agent and provider names are used only to describe compatibility.
 
 See [NOTICE](NOTICE) for copyright and attribution notes.

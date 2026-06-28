@@ -72,7 +72,6 @@ Expected output:
 - `examples/agent-tasks/release-captain.md`: copyable release workflow task
 - `examples/agent-tasks/plugin-compatibility-lab.md`: copyable plugin
   evaluation task
-- `LOOP_ENGINEERING_PRODUCT_PACKAGING.md`: workflow-first packaging note
 - `OPEN_SOURCE_RELEASE_HANDBOOK.md`: release process for the four-product
   open-source ecosystem
 
