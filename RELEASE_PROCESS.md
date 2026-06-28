@@ -113,9 +113,14 @@ After the release PR CI passes:
 gh pr merge <release-pr-number> --merge --delete-branch
 git switch main
 git pull --ff-only origin main
-gh release create v<version> --target main --title "Across Agents Assistant v<version>" --notes-file <notes-file>
+MAIN_SHA="$(git rev-parse origin/main)"
+gh release create v<version> --target "$MAIN_SHA" --title "Across Agents Assistant v<version>" --notes-file <notes-file>
 git fetch --tags origin
 ```
+
+Always target the exact `origin/main` commit SHA. Do not target the release
+branch, and avoid relying on symbolic references when the GitHub Release API is
+validating the tag target.
 
 ## Post-Release Verification
 
@@ -124,17 +129,26 @@ Confirm:
 ```bash
 gh release list --limit 5
 gh release view v<version> --json name,tagName,url,targetCommitish,publishedAt,isDraft,isPrerelease
+git rev-parse origin/main v<version>^{}
 PYTHONPATH=backend/src backend/.venv/bin/python - <<'PY'
 import across_agents_assistant
 print(across_agents_assistant.__version__)
 PY
 git status --short --branch
 gh pr list --state open --json number,title,headRefName,isDraft
+gh issue list --state open --json number,title,url
+gh api repos/fantasyce/across-agents-assistant/code-scanning/alerts \
+  --paginate \
+  --jq '[.[] | select(.state=="open")] | length'
 ```
 
 Expected final state:
 
 - GitHub Latest is the new release.
 - Backend version prints the new version.
+- `origin/main` and `v<version>^{}` resolve to the same commit.
 - `main` is aligned with `origin/main`.
 - No release PR remains open.
+- No open issue remains unless it is intentionally deferred.
+- CodeQL open alert count is zero after the default-branch Security workflow
+  completes.
