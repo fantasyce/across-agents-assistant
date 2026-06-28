@@ -1257,6 +1257,20 @@ def public_release_verification_api_response(report: Any) -> Dict[str, Any]:
     }
 
 
+def public_release_verification_api_response_from_report_directory(
+    report_directory: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Read the latest local report and return the public API projection."""
+
+    report_dir = report_directory or app_subdir("release-reports")
+    try:
+        report_path = max(report_dir.glob("rc-verification-*.json"), key=lambda path: path.stat().st_mtime)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        report = {}
+    return public_release_verification_api_response(report)
+
+
 def _public_status_literal(value: Any, *, default: str = "unknown") -> str:
     normalized = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     if normalized == "ready":

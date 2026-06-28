@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.10 - 2026-06-28
+
+### Fixed
+
+- Decoupled the release verification HTTP response from the in-memory report object by writing the detailed report locally first and then reading the latest local report into the fixed public DTO, closing the remaining CodeQL stack-trace exposure data flow on the default branch.
+
 ## 0.9.9 - 2026-06-28
 
 ### Fixed
