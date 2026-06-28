@@ -281,7 +281,7 @@ from .release_verification import (
     _release_e2e_rows,
     _release_evaluation_row_from_task_payload,
     _upsert_release_evaluation_row,
-    public_release_verification_api_response,
+    public_release_verification_api_response_from_report_directory,
 )
 from .task_api_models import (
     AutoTaskRequest,
@@ -9196,7 +9196,8 @@ async def get_release_evaluation(limit: int = 100):
 async def run_release_verification():
     """Create a non-secret release-candidate verification report."""
     try:
-        report = _build_release_verification_report(
+        report_directory = app_subdir("release-reports")
+        _build_release_verification_report(
             write_report=True,
             task_state=_task_state,
             external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
@@ -9207,9 +9208,9 @@ async def run_release_verification():
             app_version=None,
             expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
             required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
-            write_report_directory=app_subdir("release-reports"),
+            write_report_directory=report_directory,
         )
-        return public_release_verification_api_response(report)
+        return public_release_verification_api_response_from_report_directory(report_directory)
     except Exception:
         raise _safe_http_500("Run release verification")
 
