@@ -25,28 +25,41 @@ func bundledAssetURL(named name: String, withExtension ext: String, subdirectory
     return Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
 }
 
-private let iconFileExtensions = ["png", "svg", "icns"]
+private let iconFileExtensions = ["webp", "png", "svg", "icns"]
 
 private let installedAppIconCandidates: [String: [String]] = [
-    "agent.codex": [
-        "/Applications/Codex.app",
-        "~/Applications/Codex.app",
-    ],
-    "agent.claude-desktop": [
-        "/Applications/Claude.app",
-        "~/Applications/Claude.app",
-        "~/Applications/Claude Code URL Handler.app",
-    ],
     "agent.cursor": [
         "/Applications/Cursor.app",
         "~/Applications/Cursor.app",
     ],
 ]
 
-private let runtimePreferredInstalledAppIconNames: Set<String> = [
-    "agent.codex",
-    "agent.claude-desktop",
+private let directTemplateAgentIconNames: Set<String> = [
+    "agent.hermes",
 ]
+
+private let directInsetAgentIconNames: Set<String> = [
+    "agent.codex",
+    "agent.hermes",
+    "agent.openclaw",
+    "agent.local",
+]
+
+func isDirectTemplateAgentIcon(_ name: String) -> Bool {
+    directTemplateAgentIconNames.contains(name)
+}
+
+func agentIconVisualScale(_ name: String) -> CGFloat {
+    directInsetAgentIconNames.contains(name) ? 0.78 : 1.0
+}
+
+func agentIconVisualSize(_ name: String, containerSize: CGFloat) -> CGFloat {
+    containerSize * agentIconVisualScale(name)
+}
+
+func agentIconCornerRadius(_ name: String, visualSize: CGFloat) -> CGFloat {
+    directInsetAgentIconNames.contains(name) ? visualSize * 0.22 : visualSize * 0.20
+}
 
 private func themedIconBaseNames(_ name: String, colorScheme: ColorScheme?) -> [String] {
     if colorScheme == .light {
@@ -93,65 +106,6 @@ private func loadUserIconOverride(named name: String, colorScheme: ColorScheme?)
     return nil
 }
 
-private func aspectFitRect(for imageSize: NSSize, in container: NSRect) -> NSRect {
-    guard imageSize.width > 0, imageSize.height > 0 else {
-        return container
-    }
-    let scale = min(container.width / imageSize.width, container.height / imageSize.height)
-    let width = imageSize.width * scale
-    let height = imageSize.height * scale
-    return NSRect(
-        x: container.midX - width / 2,
-        y: container.midY - height / 2,
-        width: width,
-        height: height
-    )
-}
-
-private func makeTiledAppIcon(_ appIcon: NSImage, colorScheme: ColorScheme?) -> NSImage {
-    let canvasSize = NSSize(width: 512, height: 512)
-    let image = NSImage(size: canvasSize)
-    let isLight = colorScheme == .light
-
-    image.lockFocus()
-
-    let tileRect = NSRect(x: 10, y: 10, width: 492, height: 492)
-    let tilePath = NSBezierPath(roundedRect: tileRect, xRadius: 112, yRadius: 112)
-    let bgColors = isLight
-        ? [
-            NSColor(calibratedRed: 1, green: 1, blue: 1, alpha: 1),
-            NSColor(calibratedRed: 244 / 255, green: 246 / 255, blue: 250 / 255, alpha: 1),
-        ]
-        : [
-            NSColor(calibratedRed: 42 / 255, green: 44 / 255, blue: 49 / 255, alpha: 1),
-            NSColor(calibratedRed: 27 / 255, green: 28 / 255, blue: 32 / 255, alpha: 1),
-        ]
-    NSGradient(colors: bgColors)?.draw(in: tilePath, angle: -90)
-
-    (isLight
-        ? NSColor(calibratedRed: 226 / 255, green: 232 / 255, blue: 240 / 255, alpha: 1)
-        : NSColor(calibratedRed: 47 / 255, green: 50 / 255, blue: 56 / 255, alpha: 1)
-    ).setStroke()
-    tilePath.lineWidth = 10
-    tilePath.stroke()
-
-    let innerPath = NSBezierPath(roundedRect: NSRect(x: 22, y: 22, width: 468, height: 468), xRadius: 102, yRadius: 102)
-    (isLight
-        ? NSColor(calibratedWhite: 0, alpha: 0.06)
-        : NSColor(calibratedWhite: 1, alpha: 0.06)
-    ).setStroke()
-    innerPath.lineWidth = 5
-    innerPath.stroke()
-
-    let iconContainer = NSRect(x: 56, y: 56, width: 400, height: 400)
-    let iconRect = aspectFitRect(for: appIcon.size, in: iconContainer)
-    appIcon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1)
-
-    image.unlockFocus()
-    image.size = canvasSize
-    return image
-}
-
 private func loadInstalledAppIcon(named name: String, colorScheme: ColorScheme?) -> NSImage? {
     guard let appPaths = installedAppIconCandidates[name] else {
         return nil
@@ -163,7 +117,7 @@ private func loadInstalledAppIcon(named name: String, colorScheme: ColorScheme?)
         }
         let image = NSWorkspace.shared.icon(forFile: expandedPath)
         image.size = NSSize(width: 512, height: 512)
-        return makeTiledAppIcon(image, colorScheme: colorScheme)
+        return image
     }
     return nil
 }
@@ -171,7 +125,7 @@ private func loadInstalledAppIcon(named name: String, colorScheme: ColorScheme?)
 private func loadBundledAgentIcon(named name: String, colorScheme: ColorScheme?) -> NSImage? {
     let baseNames = themedIconBaseNames(name, colorScheme: colorScheme)
     for baseName in baseNames {
-        for ext in ["png", "svg"] {
+        for ext in ["webp", "png", "svg"] {
             guard let url = bundledAssetURL(named: baseName, withExtension: ext, subdirectory: "Assets/icons") else {
                 continue
             }
@@ -189,24 +143,16 @@ func loadAgentIconSync(name: String, colorScheme: ColorScheme? = nil) -> NSImage
         return overrideImage
     }
 
-    if name.hasPrefix("agent."),
-       runtimePreferredInstalledAppIconNames.contains(name),
-       let installedAppImage = loadInstalledAppIcon(named: name, colorScheme: colorScheme) {
-        return installedAppImage
-    }
-
-    if name.hasPrefix("agent."),
-       let bundledIcon = loadBundledAgentIcon(named: name, colorScheme: colorScheme) {
+    if let bundledIcon = loadBundledAgentIcon(named: name, colorScheme: colorScheme) {
         return bundledIcon
     }
 
     if name.hasPrefix("agent."),
-       !runtimePreferredInstalledAppIconNames.contains(name),
        let installedAppImage = loadInstalledAppIcon(named: name, colorScheme: colorScheme) {
         return installedAppImage
     }
 
-    return loadBundledAgentIcon(named: name, colorScheme: colorScheme)
+    return nil
 }
 
 // Helper to create Color from hex
@@ -554,9 +500,23 @@ struct AgentSidebarIcon: View {
         Button(action: onTap) {
             Group {
                 if let img = loadIconImage(named: agent.iconName, type: agent.type) {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFit()
+                    let visualSize = agentIconVisualSize(agent.iconName, containerSize: 44)
+                    let visualCornerRadius = agentIconCornerRadius(agent.iconName, visualSize: visualSize)
+                    if isDirectTemplateAgentIcon(agent.iconName) {
+                        Image(nsImage: img)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundColor(colorScheme == .dark ? .white : .legacyTextLight)
+                            .frame(width: visualSize, height: visualSize)
+                            .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                    } else {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: visualSize, height: visualSize)
+                            .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius))
+                    }
                 } else {
                     Rectangle()
                         .fill(Color.gray)

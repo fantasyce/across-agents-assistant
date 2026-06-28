@@ -1,55 +1,59 @@
 {
   "version": 3,
   "policy": "Third-party marks are used only as descriptive identifiers for compatible agents and providers. They are not Across Agents Assistant branding.",
-  "visual_policy": "Official/library glyphs are not redrawn. Dark/light black-white backgrounds are project-owned UI containers used to normalize app presentation and preserve clear space.",
+  "visual_policy": "Official/library glyphs are not redrawn. Reviewed upstream SVGs from LobeHub remain as fallback assets. For Codex, Hermes, and OpenClaw, AAA prefers the LobeHub WebP exports because the reviewed Codex color SVG has a visible path defect. Runtime installed app icons are fallback-only and are not used for Codex or Claude Desktop when bundled open-source icons exist.",
   "local_override_directories": [
     "~/Library/Application Support/AcrossAgentsAssistant/Icons",
     "~/Library/Application Support/Across Agents Assistant/Icons"
   ],
   "runtime_app_icon_agents": {
-    "codex": [
-      "/Applications/Codex.app",
-      "~/Applications/Codex.app"
-    ],
-    "claude-desktop": [
-      "/Applications/Claude.app",
-      "~/Applications/Claude.app",
-      "~/Applications/Claude Code URL Handler.app"
-    ],
     "cursor": [
       "/Applications/Cursor.app",
       "~/Applications/Cursor.app"
     ]
   },
-  "runtime_preferred_app_icon_agents": [
-    "codex",
-    "claude-desktop"
-  ],
-  "runtime_app_icon_visual_treatment": "Installed local app icons are read from the user machine and are not bundled. Codex prefers the installed OpenAI-signed Codex.app icon when present, then falls back to the bundled OpenAI glyph tile. Claude Desktop prefers the installed Claude.app or Claude Code URL Handler icon when present, then falls back to the bundled Claude glyph tile. Cursor remains fallback-only so macOS app-icon shadows and halos do not leak into the sidebar.",
+  "runtime_preferred_app_icon_agents": [],
+  "runtime_app_icon_visual_treatment": "The local-agent icon loader is bundled-first after user overrides and prefers WebP, then PNG, then SVG. Codex uses the LobeHub codex WebP export as its primary bundled icon with SVG fallback, Claude Code uses the LobeHub claudecode-color glyph tile, Claude Desktop uses the generic Claude glyph tile because no reviewed open-source Claude Desktop-specific glyph was found, Hermes uses the hermesagent WebP export as its primary icon with SVG fallback, and OpenClaw uses the openclaw-color WebP export as its primary icon with SVG fallback. Direct WebP local-agent marks are inset at runtime to 78% of their container so they match the legacy neutral-tile visual weight without modifying the source image files. Installed local app icons are fallback-only and are not bundled.",
   "bundled_icons": [
     {
       "agent_id": "openclaw",
       "display_name": "OpenClaw",
       "asset_paths": [
+        "agent.openclaw.webp",
+        "agent.openclaw.light.webp",
         "agent.openclaw.svg",
-        "agent.openclaw.light.svg"
+        "agent.openclaw.light.svg",
+        "agent.local.webp",
+        "agent.local.light.webp",
+        "agent.local.svg",
+        "agent.local.light.svg"
       ],
-      "source_type": "project-original",
-      "license": "Across Agents Assistant project asset",
-      "visual_treatment": "Built-in dark/light neutral tile background",
-      "redistribution_status": "project-owned"
+      "source_type": "lobehub-webp-export",
+      "source_package": "LobeHub icon website export; SVG fallback from @lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "openclaw-color.webp",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "LobeHub OpenClaw color WebP export used as primary icon without an Across-owned tile wrapper; upstream SVG kept as fallback",
+      "redistribution_status": "descriptive-provider-mark"
     },
     {
       "agent_id": "hermes",
       "display_name": "Hermes",
       "asset_paths": [
+        "agent.hermes.webp",
+        "agent.hermes.light.webp",
         "agent.hermes.svg",
         "agent.hermes.light.svg"
       ],
-      "source_type": "project-original",
-      "license": "Across Agents Assistant project asset",
-      "visual_treatment": "Built-in dark/light neutral tile background",
-      "redistribution_status": "project-owned"
+      "source_type": "lobehub-webp-export",
+      "source_package": "LobeHub icon website export; SVG fallback from @lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "hermesagent.webp",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "LobeHub Hermes Agent WebP export used as primary icon without an Across-owned tile wrapper; upstream SVG kept as fallback. The WebP is an alpha-mask style asset, so Swift renders it as a template icon for light/dark contrast.",
+      "redistribution_status": "descriptive-provider-mark"
     },
     {
       "agent_id": "opencode",
@@ -76,13 +80,13 @@
       ],
       "source_type": "lobehub-icons-static-svg",
       "source_package": "@lobehub/icons-static-svg",
-      "source_package_version": "1.73.0",
-      "source_icon": "claude-color.svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "claudecode-color.svg",
       "source_url": "https://github.com/lobehub/lobe-icons",
       "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
-      "visual_treatment": "Official/library glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "visual_treatment": "Official/library Claude Code glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
       "redistribution_status": "descriptive-provider-mark",
-      "note": "Claude mark used for Claude Code local agent"
+      "note": "Dedicated Claude Code mark used so Claude Code and Claude Desktop do not share the same sidebar glyph"
     },
     {
       "agent_id": "claude-desktop",
@@ -99,24 +103,26 @@
       "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
       "visual_treatment": "Official/library Claude glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
       "redistribution_status": "descriptive-provider-mark",
-      "note": "Bundled fallback for Claude Desktop; installed Claude.app or Claude Code URL Handler icon is read at runtime when present"
+      "note": "Bundled primary icon for Claude Desktop. No Claude Desktop-specific open-source glyph was found in the reviewed LobeHub package, so this intentionally uses the generic Claude mark and not the Claude Code mark."
     },
     {
       "agent_id": "codex",
       "display_name": "Codex",
       "asset_paths": [
+        "agent.codex.webp",
+        "agent.codex.light.webp",
         "agent.codex.svg",
         "agent.codex.light.svg"
       ],
-      "source_type": "lobehub-icons-static-svg",
-      "source_package": "@lobehub/icons-static-svg",
-      "source_package_version": "1.73.0",
-      "source_icon": "openai.svg",
+      "source_type": "lobehub-webp-export",
+      "source_package": "LobeHub icon website export; SVG fallback from @lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "codex.webp",
       "source_url": "https://github.com/lobehub/lobe-icons",
       "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
-      "visual_treatment": "Fallback OpenAI/library glyph embedded inside an Across-owned dark/light neutral tile; runtime uses the installed OpenAI-signed Codex.app icon when present",
+      "visual_treatment": "LobeHub Codex WebP export used as primary icon without an Across-owned tile wrapper because the reviewed Codex color SVG has a visible path defect; upstream SVG kept as fallback; runtime installed Codex.app icons are not used when this bundled icon is available",
       "redistribution_status": "descriptive-provider-mark",
-      "note": "Bundled fallback intentionally matches OpenAI provider icon; Codex.app icon is read at runtime from the user's machine and is not bundled"
+      "note": "Dedicated Codex mark used so Codex and OpenAI do not share the same sidebar glyph"
     },
     {
       "agent_id": "kimi",

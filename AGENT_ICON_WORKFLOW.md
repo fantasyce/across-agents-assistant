@@ -7,7 +7,7 @@ brands.
 
 ## Final Preview
 
-The current icon set uses paired dark/light tiles:
+The current icon set uses paired dark/light assets:
 
 ![Agent icon preview](assets/agent-icons/agent-icon-preview.png)
 
@@ -39,18 +39,26 @@ and generates an embedded icon index for provider rendering.
 Across Agents Assistant uses a similar source strategy, but with explicit
 source tracking:
 
-- most provider glyphs, including Claude Desktop fallback, come from
+- most provider glyphs, including Claude Desktop, come from
   `@lobehub/icons-static-svg@1.73.0`
+- Codex, Hermes, and OpenClaw use LobeHub WebP exports as primary assets and
+  upstream `@lobehub/icons-static-svg@1.91.0` files as fallbacks. This avoids a
+  visible path defect in the reviewed Codex color SVG while still keeping the
+  icon source tied to LobeHub rather than project-drawn substitutes
+- Claude Code uses the dedicated `@lobehub/icons-static-svg@1.91.0` glyph so it
+  does not collide with Claude Desktop
 - OpenCode uses `@lobehub/icons-static-svg@1.91.0`
   because that version adds `opencode.svg`
 - Kimi Code uses `@lobehub/icons-static-svg@1.91.0`
   for the current `kimi-color.svg` glyph
-- OpenClaw and Hermes remain project-created assets
 - Agnes uses a project-created `Ag` compatibility tile because no reusable
   open-source Agnes brand glyph was found in `@lobehub/icons-static-svg@1.91.0`,
   Simple Icons 16.24.0, or lucide-static 1.21.0
-- Cursor uses a bundled neutral SVG tile first and can fall back to the
-  installed local app icon at runtime
+- bundled source icons are preferred over installed app icons so compact
+  sidebar icons do not inherit macOS app-icon shadows, halos, or transparent
+  outer edges
+- installed local app icons are fallback-only for agents without a usable
+  bundled SVG tile
 - all bundled icon provenance is recorded in
   `macOS-Client/Sources/Assets/icons/agent-icon-sources.json`
 - third-party notices are recorded in `THIRD_PARTY_NOTICES.md`
@@ -61,16 +69,24 @@ Bundled SVG tile pairs live under:
 
 `macOS-Client/Sources/Assets/icons/agent.*.svg`
 
+The lightweight backend web/fallback UI keeps its own icon copies under:
+
+`backend/src/across_agents_assistant/assets/icons/agent.*.svg`
+
+When a local-agent icon is used in both places, both copies must be kept on the
+same upstream source file. The `local` backend alias uses the same WebP and SVG
+fallback as OpenClaw.
+
 Current bundled coverage:
 
 | Agent/provider | Asset base | Source |
 | --- | --- | --- |
-| OpenClaw | `agent.openclaw` | Project-original |
-| Hermes | `agent.hermes` | Project-original |
+| OpenClaw | `agent.openclaw` | LobeHub `openclaw-color.webp`, with `openclaw-color.svg` fallback from `@lobehub/icons-static-svg@1.91.0` |
+| Hermes | `agent.hermes` | LobeHub `hermesagent.webp`, with `hermesagent.svg` fallback from `@lobehub/icons-static-svg@1.91.0` |
 | OpenCode | `agent.opencode` | LobeHub `opencode.svg` |
-| Claude Code | `agent.claude` | LobeHub `claude-color.svg` |
-| Claude Desktop | `agent.claude-desktop` | Runtime `/Applications/Claude.app` icon; bundled fallback is LobeHub `claude-color.svg` |
-| Codex | `agent.codex` | Runtime `/Applications/Codex.app` icon; bundled fallback is LobeHub `openai.svg` |
+| Claude Code | `agent.claude` | LobeHub `claudecode-color.svg` from `@lobehub/icons-static-svg@1.91.0` |
+| Claude Desktop | `agent.claude-desktop` | LobeHub `claude-color.svg` |
+| Codex | `agent.codex` | LobeHub `codex.webp`, with `codex.svg` fallback from `@lobehub/icons-static-svg@1.91.0` |
 | Kimi Code | `agent.kimi` | LobeHub `kimi-color.svg` from `@lobehub/icons-static-svg@1.91.0` |
 | Cursor | `agent.cursor` | LobeHub `cursor.svg` |
 | OpenAI | `agent.openai` | LobeHub `openai.svg` |
@@ -96,30 +112,26 @@ tile SVG so it has both dark and light variants.
 
 ## Runtime Local App Icons
 
-Some local-agent brands are better handled at runtime rather than bundled:
+Installed app icons are treated as fallback-only because macOS `.icns` assets
+often include app-icon shadows, edge glow, or outer transparency that create
+visible halos when rendered in the compact sidebar.
 
 | Agent | Runtime app icon candidates |
 | --- | --- |
-| Codex | `/Applications/Codex.app`, `~/Applications/Codex.app` |
-| Claude Desktop | `/Applications/Claude.app`, `~/Applications/Claude.app`, `~/Applications/Claude Code URL Handler.app` |
 | Cursor | `/Applications/Cursor.app`, `~/Applications/Cursor.app` |
 
-The app only reads these icons from the user's machine with `NSWorkspace`.
-Codex and Claude Desktop are runtime-preferred so installed vendor app icons
-provide the primary icon, while the bundled glyph tiles remain fallbacks. Cursor
-remains bundled-first because many macOS `.icns` assets include app-icon
-shadows, edge glow, or outer transparency that create visible halos when
-rendered in the compact sidebar.
+The app only reads fallback icons from the user's machine with `NSWorkspace`.
+Codex and Claude Desktop intentionally stay bundled-first to match Kimi Code,
+OpenCode, and Cursor visual treatment.
 
 ## Loading Order
 
 The Swift icon loader uses this order:
 
 1. user override from Application Support
-2. runtime-preferred installed local app icon for Codex or Claude Desktop
-3. bundled SVG/light SVG asset
-4. installed local app icon fallback for Cursor
-5. fallback initials/system icon
+2. bundled SVG/light SVG asset
+3. installed local app icon fallback for agents without a bundled tile
+4. fallback initials/system icon
 
 User override directories:
 
@@ -128,6 +140,7 @@ User override directories:
 
 Supported override extensions:
 
+- `.webp`
 - `.png`
 - `.svg`
 - `.icns`
@@ -146,9 +159,22 @@ tile transform matches the other monochrome provider glyphs:
 translate(24 24) scale(2.16667)
 ```
 
-Claude Desktop uses the LobeHub `claude-color.svg` mark with a `24x24`
-view box and the same tile transform. The installed local Claude app icon is
-preferred at runtime when available; the bundled tile is the fallback.
+Codex uses the LobeHub `codex.webp` export instead of the generic OpenAI mark
+because the reviewed Codex color SVG has a visible path defect. Hermes uses
+`hermesagent.webp`, and OpenClaw uses `openclaw-color.webp`. These files are
+copied without wrapping them in an Across-owned tile. The backend web/fallback
+copies for Hermes, OpenClaw, Codex, and the `local` alias use the same WebP
+assets. The upstream LobeHub SVG files remain in the bundle as fallback assets.
+Hermes is a black alpha-mask WebP, so the Swift UI renders it as a template icon
+and supplies the visible foreground color at runtime. Claude Code uses
+`claudecode-color.svg` instead of the generic Claude mark. Claude Desktop keeps
+the generic `claude-color.svg` mark because no reviewed open-source package
+currently provides a Claude Desktop-specific glyph.
+
+Codex, Hermes, OpenClaw, and the `local` alias are direct WebP marks rather than
+Across-owned neutral tiles. The Swift UI keeps the source files unchanged, but
+renders these marks inset at 78% of their container so their visual weight
+matches the original tile-based icons.
 
 Agnes uses a project-original `Ag` compatibility tile. It is intentionally not
 an official Agnes logo or brand glyph.
