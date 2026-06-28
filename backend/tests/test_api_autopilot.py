@@ -1281,7 +1281,7 @@ def test_autopilot_research_decision_preserves_autonomous_catalog_metadata(monke
                             "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
                             "backend/tests/test_autopilot_tool_pack_policy.py",
                         ],
-                        "context_files": ["LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md"],
+                        "context_files": ["AGENTS.md"],
                         "validation_commands": [
                             {
                                 "repo": "across-agents-assistant",
@@ -1317,7 +1317,7 @@ def test_autopilot_research_decision_preserves_autonomous_catalog_metadata(monke
                     "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
                     "backend/tests/test_autopilot_tool_pack_policy.py",
                 ],
-                "context_files": ["LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md"],
+                "context_files": ["AGENTS.md"],
                 "validation_commands": [
                     {
                         "repo": "across-agents-assistant",

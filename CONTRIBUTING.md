@@ -92,7 +92,7 @@ git commit -s
 
 The sign-off certifies that you have the right to submit the contribution and
 that it may be distributed under the project license. See
-`CONTRIBUTOR_CERTIFICATE.md` and `IP_AND_LICENSE_POLICY.md`.
+`legal/CONTRIBUTOR_CERTIFICATE.md` and `legal/IP_AND_LICENSE_POLICY.md`.
 
 ## Secrets and Local Data
 
@@ -116,7 +116,7 @@ New visual assets must be one of:
 
 Do not commit extracted icons, brand marks, or screenshots from other products unless their license and attribution requirements are already reviewed and documented.
 
-Project branding is handled separately from the code license. See `TRADEMARK_POLICY.md` before reusing the official app name, logo, app icon, or release branding in a fork or modified build.
+Project branding is handled separately from the code license. See `legal/TRADEMARK_POLICY.md` before reusing the official app name, logo, app icon, or release branding in a fork or modified build.
 
 ## Dependency and License Policy
 
@@ -125,14 +125,14 @@ bundled asset:
 
 1. Confirm that its license permits redistribution in this repository.
 2. Confirm that its license is compatible with the AGPL project license.
-3. Update `THIRD_PARTY_NOTICES.md` with the dependency or asset source,
+3. Update `legal/THIRD_PARTY_NOTICES.md` with the dependency or asset source,
    distribution mode, and notice requirements.
 4. Do not vendor package-manager caches, model binaries, private screenshots, or
    proprietary provider assets into the repository.
 
 ## Documentation
 
-Keep public documentation in root-level files such as `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `NOTICE`, and `TRADEMARK_POLICY.md`.
+Keep root-level public documentation limited to `README.md`, `CHANGELOG.md`, `AGENTS.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and `OPEN_SOURCE_RELEASE_HANDBOOK.md`. Keep legal notices under `legal/`.
 
 Maintainer notes, design drafts, validation reports, and release checklists are private local files and should stay out of Git unless the project explicitly decides to publish a cleaned version. If a private note becomes public documentation, rewrite it as a current-state guide and remove personal paths, raw logs, task scratch directories, private project names, and maintainer-only process details.
 
