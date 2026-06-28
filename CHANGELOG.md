@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.8 - 2026-06-28
+
+### Fixed
+
+- Strengthened public API payload sanitization so traceback-shaped strings are redacted regardless of field name, and routed release verification responses through the shared public sanitizer to close CodeQL stack-trace exposure alerts.
+
 ## 0.9.7 - 2026-06-28
 
 ### Fixed

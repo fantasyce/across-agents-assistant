@@ -28,6 +28,16 @@ def assert_no_stack_trace(response) -> None:
     assert "See local backend logs for details" in encoded
 
 
+def test_public_payload_sanitizer_redacts_traceback_text_under_neutral_keys():
+    payload = api_server._sanitize_public_payload({"note": TRACEBACK_TEXT, "nested": [{"summary": TRACEBACK_TEXT}]})
+
+    encoded = json.dumps(payload)
+    assert "Traceback (most recent call last)" not in encoded
+    assert 'File "/Users/example/private/app.py"' not in encoded
+    assert "private internal path" not in encoded
+    assert "See local backend logs for details" in encoded
+
+
 def test_startup_diagnostics_endpoint_sanitizes_traceback_payload(monkeypatch):
     monkeypatch.setattr(
         api_server,
