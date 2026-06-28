@@ -43,9 +43,12 @@ source tracking:
   `@lobehub/icons-static-svg@1.73.0`
 - OpenCode uses `@lobehub/icons-static-svg@1.91.0`
   because that version adds `opencode.svg`
+- Kimi Code uses `@lobehub/icons-static-svg@1.91.0`
+  for the current `kimi-color.svg` glyph
 - OpenClaw and Hermes remain project-created assets
 - Agnes uses a project-created `Ag` compatibility tile because no reusable
-  open-source Agnes brand glyph was found in the reviewed icon package
+  open-source Agnes brand glyph was found in `@lobehub/icons-static-svg@1.91.0`,
+  Simple Icons 16.24.0, or lucide-static 1.21.0
 - Cursor uses a bundled neutral SVG tile first and can fall back to the
   installed local app icon at runtime
 - all bundled icon provenance is recorded in
@@ -68,12 +71,13 @@ Current bundled coverage:
 | Claude Code | `agent.claude` | LobeHub `claude-color.svg` |
 | Claude Desktop | `agent.claude-desktop` | Runtime `/Applications/Claude.app` icon; bundled fallback is LobeHub `claude-color.svg` |
 | Codex | `agent.codex` | Runtime `/Applications/Codex.app` icon; bundled fallback is LobeHub `openai.svg` |
+| Kimi Code | `agent.kimi` | LobeHub `kimi-color.svg` from `@lobehub/icons-static-svg@1.91.0` |
 | Cursor | `agent.cursor` | LobeHub `cursor.svg` |
 | OpenAI | `agent.openai` | LobeHub `openai.svg` |
 | Anthropic | `agent.anthropic` | LobeHub `anthropic.svg` |
 | DeepSeek | `agent.deepseek` | LobeHub `deepseek-color.svg` |
 | MiniMax | `agent.minimax` | LobeHub `minimax-color.svg` |
-| Agnes | `agent.agnes` | Project-original `Ag` compatibility tile |
+| Agnes | `agent.agnes` | Project-original `Ag` compatibility tile; no Agnes glyph in the reviewed open-source icon packages |
 | Alibaba Bailian / Qwen | `agent.bailian` | LobeHub `qwen-color.svg` |
 | Moonshot / Kimi | `agent.moonshot` | LobeHub `kimi-color.svg` |
 | Zhipu GLM | `agent.zhipu` | LobeHub `zhipu-color.svg` |

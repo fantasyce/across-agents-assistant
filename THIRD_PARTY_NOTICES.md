@@ -83,6 +83,7 @@ Reviewed LobeHub Icons entries currently bundled from
 | `agent.claude.svg` | `claude-color.svg` | Claude Code local agent |
 | `agent.claude-desktop.svg` | `claude-color.svg` from `@lobehub/icons-static-svg@1.73.0` | Claude Desktop local agent bundled fallback; installed Claude.app or Claude Code URL Handler icon is read at runtime when present |
 | `agent.codex.svg` | `openai.svg` | Codex local agent fallback; installed OpenAI-signed Codex.app icon is read at runtime when present |
+| `agent.kimi.svg` | `kimi-color.svg` from `@lobehub/icons-static-svg@1.91.0` | Kimi Code local CLI agent |
 | `agent.cursor.svg` | `cursor.svg` | Cursor local agent |
 | `agent.openai.svg` | `openai.svg` | OpenAI cloud provider |
 | `agent.anthropic.svg` | `anthropic.svg` | Anthropic cloud provider |
@@ -117,10 +118,16 @@ LobeHub Icons `claude-color.svg` source from
 Treat it as a third-party provider mark; the SVG asset source is MIT-licensed,
 and trademark rights remain with the brand owner.
 
+`agent.kimi.svg` and `agent.kimi.light.svg` use the LobeHub Icons
+`kimi-color.svg` source from `@lobehub/icons-static-svg@1.91.0` inside the same
+neutral tile treatment. Treat it as a third-party provider mark; the SVG asset
+source is MIT-licensed, and trademark rights remain with the brand owner.
+
 `agent.agnes.svg` and `agent.agnes.light.svg` are project-original compatibility
 tiles created for provider identification. They intentionally do not include an
 Agnes official logo or brand glyph because no reusable open-source Agnes icon
-was found in the reviewed icon package.
+was found in the reviewed `@lobehub/icons-static-svg@1.91.0`, Simple Icons
+16.24.0, or lucide-static 1.21.0 packages.
 
 The macOS client may still display icons from locally installed applications at
 runtime as a fallback. Those local application icons are read from the user's

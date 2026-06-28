@@ -193,6 +193,76 @@ def test_universal_agent_client_passes_configured_model_to_opencode(monkeypatch,
     assert observed["cwd"] == str(tmp_path)
 
 
+def test_universal_agent_client_passes_configured_model_to_kimi(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class KimiManager:
+        def get_active_agent(self):
+            return "kimi"
+
+        def get_agent_config(self, agent_id):
+            return {"output_format": "raw"}
+
+    monkeypatch.setattr(
+        client_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"),
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "resolve_local_agent_executable",
+        lambda agent_id: "/usr/local/bin/kimi",
+    )
+    monkeypatch.setattr(
+        local_agent_health,
+        "get_configured_agent_model",
+        lambda agent_id: "minimax/MiniMax-M3",
+    )
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return (
+                '{"role":"assistant","content":"kimi completed"}\n'
+                '{"role":"meta","type":"session.resume_hint","session_id":"kimi-session","content":"To resume this session"}\n',
+                "",
+            )
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        observed["cwd"] = kwargs.get("cwd")
+        observed["stdin"] = kwargs.get("stdin")
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+
+    client = UniversalAgentClient(KimiManager())
+    reply = client.send(
+        "repair the delivery",
+        target_agent="kimi",
+        project_dir=str(tmp_path),
+        timeout=23.0,
+    )
+
+    assert reply.text == "kimi completed"
+    assert observed["args"] == [
+        "/usr/local/bin/kimi",
+        "--model",
+        "minimax/MiniMax-M3",
+        "-p",
+        "repair the delivery",
+        "--output-format",
+        "stream-json",
+    ]
+    assert "resume" not in reply.text.lower()
+    assert observed["cwd"] == str(tmp_path)
+    assert observed["stdin"] is client_mod.subprocess.DEVNULL
+
+
 def test_universal_agent_client_runs_claude_code_desktop_as_claude_family(monkeypatch, tmp_path):
     observed = {}
 

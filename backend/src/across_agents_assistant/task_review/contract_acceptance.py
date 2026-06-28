@@ -2577,7 +2577,7 @@ function includesAll(text, terms) {
         return {
           buttonExists: !!button,
           changed: beforeInput !== afterInput || afterInput !== after,
-          hasSelectedAgent: lowered.includes('selected agent') || /(openclaw|hermes|claude code|claude desktop|codex|opencode|cursor agent|openai|anthropic|deepseek|minimax|agnes|bailian|moonshot|zhipu|volcengine|google|xai|mistral|groq|cohere|openrouter|together|fireworks)/.test(lowered),
+          hasSelectedAgent: lowered.includes('selected agent') || /(openclaw|hermes|claude code|claude desktop|codex|kimi code|opencode|cursor agent|openai|anthropic|deepseek|minimax|agnes|bailian|moonshot|zhipu|volcengine|google|xai|mistral|groq|cohere|openrouter|together|fireworks)/.test(lowered),
           hasMatched: lowered.includes('matched') || /\b(skill|capability|backend api|schema|research|review)\b/.test(lowered),
           hasMcpRisk: lowered.includes('mcp risk') || /\b(low|medium|high)\b/.test(lowered),
           hasReason: lowered.includes('reason') || /\b(primary|because|domain|quality|discovery|review|integration|specialist)\b/.test(lowered),

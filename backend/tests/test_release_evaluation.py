@@ -290,7 +290,7 @@ def _orchestrator_quality_task(task_id: str, *, updated_at: float, owner_agent: 
         "task_types": ["functional", "artifact"],
         "delivery_mode": "composite",
         "owner_agent": owner_agent,
-        "allowed_subtask_agents": ["claude", "claude-desktop", "codex", "cursor", "hermes", "openclaw", "opencode"],
+        "allowed_subtask_agents": ["claude", "claude-desktop", "codex", "cursor", "hermes", "kimi", "openclaw", "opencode"],
         "created_at": updated_at,
         "updated_at": updated_at,
         "last_owner_decision": {

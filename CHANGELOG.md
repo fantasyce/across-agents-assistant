@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.11 - 2026-06-28
+
+### Added
+
+- Added Kimi Code as a local CLI agent in AAA, including discovery,
+  lightweight health detection, command dispatch through `kimi -p`, capability
+  profiles, icons, and documentation.
+
 ## 0.9.10 - 2026-06-28
 
 ### Fixed

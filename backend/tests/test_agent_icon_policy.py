@@ -27,7 +27,7 @@ def test_bundled_agent_icon_loader_prefers_png_before_svg():
 def test_local_agent_sidebar_icons_have_bundled_clean_tiles():
     icon_dir = ROOT / "macOS-Client/Sources/Assets/icons"
 
-    for asset_base in ["agent.cursor", "agent.claude-desktop", "agent.agnes"]:
+    for asset_base in ["agent.cursor", "agent.claude-desktop", "agent.kimi", "agent.agnes"]:
         assert (icon_dir / f"{asset_base}.svg").exists()
         assert (icon_dir / f"{asset_base}.light.svg").exists()
 
@@ -41,12 +41,16 @@ def test_icon_source_manifest_tracks_local_runtime_icon_policy():
     assert bundled["cursor"]["note"].startswith("Bundled primary icon")
     assert bundled["codex"]["source_icon"] == "openai.svg"
     assert bundled["codex"]["source_package_version"] == "1.73.0"
+    assert bundled["kimi"]["source_icon"] == "kimi-color.svg"
+    assert bundled["kimi"]["source_package_version"] == "1.91.0"
     assert bundled["opencode"]["source_icon"] == "opencode.svg"
     assert bundled["opencode"]["source_package_version"] == "1.91.0"
     assert bundled["claude-desktop"]["source_icon"] == "claude-color.svg"
     assert bundled["claude-desktop"]["source_package_version"] == "1.73.0"
     assert bundled["agnes"]["source_type"] == "project-original"
     assert "not an official Agnes logo" in bundled["agnes"]["visual_treatment"]
+    assert "@lobehub/icons-static-svg@1.91.0" in bundled["agnes"]["note"]
+    assert "remains open" in bundled["agnes"]["note"]
     assert set(manifest["runtime_app_icon_agents"]) == {"codex", "claude-desktop", "cursor"}
     assert manifest["runtime_app_icon_agents"]["codex"] == [
         "/Applications/Codex.app",

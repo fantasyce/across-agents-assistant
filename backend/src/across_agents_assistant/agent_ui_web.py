@@ -419,6 +419,7 @@ HTML_CONTENT = """
             'claude': 'Claude Code',
             'claude-desktop': 'Claude Desktop',
             'codex': 'Codex',
+            'kimi': 'Kimi Code',
             'opencode': 'OpenCode',
             'cursor': 'Cursor Agent',
             'agnes': 'Agnes'

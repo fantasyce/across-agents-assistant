@@ -119,6 +119,23 @@
       "note": "Bundled fallback intentionally matches OpenAI provider icon; Codex.app icon is read at runtime from the user's machine and is not bundled"
     },
     {
+      "agent_id": "kimi",
+      "display_name": "Kimi Code",
+      "asset_paths": [
+        "agent.kimi.svg",
+        "agent.kimi.light.svg"
+      ],
+      "source_type": "lobehub-icons-static-svg",
+      "source_package": "@lobehub/icons-static-svg",
+      "source_package_version": "1.91.0",
+      "source_icon": "kimi-color.svg",
+      "source_url": "https://github.com/lobehub/lobe-icons",
+      "license": "LobeHub Icons package MIT; trademark rights remain with brand owner",
+      "visual_treatment": "Official/library Kimi glyph embedded inside an Across-owned dark/light neutral tile; glyph geometry is not redrawn",
+      "redistribution_status": "descriptive-provider-mark",
+      "note": "Kimi mark used for Kimi Code local CLI agent"
+    },
+    {
       "agent_id": "cursor",
       "display_name": "Cursor Agent",
       "asset_paths": [
@@ -214,7 +231,7 @@
       "license": "Across Agents Assistant project asset",
       "visual_treatment": "Project-owned neutral Ag compatibility tile; not an official Agnes logo or brand mark",
       "redistribution_status": "project-owned",
-      "note": "No Agnes brand glyph was found in the reviewed LobeHub Icons package; this is an original descriptive tile"
+      "note": "No Agnes brand glyph was found in @lobehub/icons-static-svg@1.91.0, Simple Icons 16.24.0, or lucide-static 1.21.0; the upstream LobeHub Agnes request remains open, so this remains an original descriptive tile"
     },
     {
       "agent_id": "bailian",

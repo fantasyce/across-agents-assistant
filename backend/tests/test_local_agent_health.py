@@ -115,6 +115,7 @@ def test_detect_agents_marks_installed_but_unresponsive_agent_unavailable(monkey
     assert detected["openclaw"]["status"] == "unavailable"
     assert detected["hermes"]["available"] is True
     assert detected["claude"]["available"] is True
+    assert detected["kimi"]["available"] is True
 
 
 def test_local_agent_detection_uses_gateway_status_probe(monkeypatch):
@@ -311,10 +312,13 @@ def test_new_local_agent_detection_is_lightweight(monkeypatch):
     assert detected["claude-desktop"]["available"] is True
     assert detected["opencode"]["available"] is True
     assert detected["cursor"]["available"] is True
+    assert detected["kimi"]["available"] is True
     assert ["/usr/local/bin/claude-desktop", "--version"] in calls
+    assert ["/usr/local/bin/kimi", "--version"] in calls
     assert ["/usr/local/bin/opencode", "--version"] in calls
     assert ["/usr/local/bin/cursor-agent", "--version"] in calls
     assert not any(cmd and cmd[0] == "/usr/local/bin/claude-desktop" and "-p" in cmd for cmd in calls)
+    assert not any(cmd and cmd[0] == "/usr/local/bin/kimi" and "-p" in cmd for cmd in calls)
     assert not any(cmd[:2] == ["/usr/local/bin/opencode", "run"] for cmd in calls)
     assert not any(cmd and cmd[0] == "/usr/local/bin/cursor-agent" and "-p" in cmd for cmd in calls)
 

@@ -56,6 +56,7 @@ class UniversalAgentClient:
                 "/opt/homebrew/bin",
                 "/usr/local/bin",
                 os.path.expanduser("~/.local/bin"),
+                os.path.expanduser("~/.kimi-code/bin"),
                 os.path.expanduser("~/.cargo/bin"),
             ]
             for extra in extras:
@@ -97,6 +98,8 @@ class UniversalAgentClient:
             return "Claude Desktop"
         if agent_id == "claude":
             return "Claude Code"
+        if agent_id == "kimi":
+            return "Kimi Code"
         return agent_id
 
     @staticmethod
@@ -165,6 +168,8 @@ class UniversalAgentClient:
                     "--skip-git-repo-check",
                     "{message}",
                 ]
+            elif agent_id == "kimi":
+                args_template = ["-p", "{message}", "--output-format", "stream-json"]
             elif agent_id == "opencode":
                 args_template = ["run", "{message}"]
             elif agent_id == "cursor":
@@ -194,6 +199,8 @@ class UniversalAgentClient:
                 chat_index = args.index("chat")
                 args[chat_index + 1:chat_index + 1] = ["--model", configured_model]
             elif self._is_claude_family(agent_id):
+                args[1:1] = ["--model", configured_model]
+            elif agent_id == "kimi":
                 args[1:1] = ["--model", configured_model]
             elif agent_id == "opencode" and "run" in args:
                 run_index = args.index("run")
@@ -408,6 +415,33 @@ class UniversalAgentClient:
 
         if (not clean or not clean.strip()) and clean_err:
             clean = clean_err
+
+        if agent_id == "kimi":
+            reply_parts = []
+            returned_session = session_id
+            for line in clean.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("role") == "assistant":
+                    content = event.get("content")
+                    if isinstance(content, str) and content.strip():
+                        reply_parts.append(content.strip())
+                    elif isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict):
+                                text = item.get("text") or item.get("content")
+                                if isinstance(text, str) and text.strip():
+                                    reply_parts.append(text.strip())
+                elif event.get("role") == "meta" and event.get("session_id") and session_id:
+                    returned_session = session_id
+            if reply_parts:
+                return LocalAgentReply(text="\n".join(reply_parts), session_id=returned_session, elapsed_sec=elapsed)
+            return LocalAgentReply(text=clean.strip() or "抱歉，大脑没有返回任何内容。", session_id=session_id, elapsed_sec=elapsed)
 
         if output_format == "json" or agent_id == LOCAL_AGENT_ID or self._is_claude_family(agent_id):
             start_idx = clean.find("{")

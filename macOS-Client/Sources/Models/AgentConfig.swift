@@ -3,6 +3,7 @@ import Foundation
 enum AgentIDs {
     static let openclaw = "openclaw"
     static let claudeDesktop = "claude-desktop"
+    static let kimi = "kimi"
     static let opencode = "opencode"
     static let cursor = "cursor"
 
@@ -97,6 +98,15 @@ struct AgentConfig: Identifiable, Codable {
         status: .notInstalled,
         selectedModel: "gpt-5.5",
         availableModels: ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"]
+    )
+
+    static let kimi = AgentConfig(
+        id: AgentIDs.kimi,
+        name: "Kimi Code",
+        executablePath: nil,
+        version: nil,
+        status: .notInstalled,
+        availableModels: ["minimax/MiniMax-M3"]
     )
 
     static let opencode = AgentConfig(

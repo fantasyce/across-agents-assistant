@@ -4,13 +4,13 @@
   "name": "Across",
   "category": "supervised engineering loops",
   "tagline": "Evidence-backed workflows for coding agents.",
-  "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Claude Code, Claude Desktop, AAA, and other MCP-capable hosts.",
+  "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Kimi Code, Claude Code, Claude Desktop, AAA, and other MCP-capable hosts.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.9.10",
+      "version": "v0.9.11",
       "published_at": "2026-06-28",
-      "tag": "v0.9.10",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.9.10"
+      "tag": "v0.9.11",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.9.11"
     },
     "across_autopilot": {
       "version": "v0.2.6",
@@ -65,6 +65,7 @@
   ],
   "hosts": [
     "Codex",
+    "Kimi Code",
     "Claude Code",
     "Claude Desktop",
     "Across Agents Assistant",
