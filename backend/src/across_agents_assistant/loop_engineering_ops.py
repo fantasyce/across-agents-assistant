@@ -12,6 +12,7 @@ OPS_DASHBOARD_SCHEMA_VERSION = "across-aaa-loop-engineering-ops-dashboard/1.0"
 def build_loop_engineering_ops_dashboard(
     *,
     telemetry: Mapping[str, Any] | None = None,
+    runs: Mapping[str, Any] | None = None,
     trigger_registry: Mapping[str, Any] | None = None,
     trigger_scheduler: Mapping[str, Any] | None = None,
     capability_pack: Mapping[str, Any] | None = None,
@@ -21,15 +22,21 @@ def build_loop_engineering_ops_dashboard(
     """Build a bounded operations dashboard payload for Loop Engineering."""
 
     telemetry = dict(telemetry or {})
+    runs = dict(runs or {})
     trigger_scheduler = dict(trigger_scheduler or {})
     capability_pack = dict(capability_pack or {})
     registry_health = dict(registry_health or {})
     self_iteration_plan = dict(self_iteration_plan or {})
     trigger_summary = build_trigger_registry_summary(dict(trigger_registry or {}))
+    recent_runs = _list(runs.get("runs"))
+    latest_runs = _latest_runs_by_spec(recent_runs)
     run_count = int(telemetry.get("run_count") or _nested(telemetry, "runs", "total") or 0)
     completed = int(_nested(telemetry, "by_status", "completed") or _nested(telemetry, "runs", "completed") or 0)
-    failed = int(_nested(telemetry, "by_status", "failed") or _nested(telemetry, "runs", "failed") or 0)
-    gate_failures = _mapping_size(telemetry.get("gate_failures"))
+    historical_failed = int(_nested(telemetry, "by_status", "failed") or _nested(telemetry, "runs", "failed") or 0)
+    current_failed = _count_status(latest_runs.values(), "failed") if latest_runs else historical_failed
+    failed = current_failed
+    historical_gate_failures = _mapping_size(telemetry.get("gate_failures"))
+    gate_failures = historical_gate_failures if failed else 0
     adapter_failures = _mapping_size(telemetry.get("adapter_failures"))
     capability_ready = int(capability_pack.get("ready_count") or 0)
     registry_ok = registry_health.get("status") in {None, "passed"}
@@ -45,6 +52,8 @@ def build_loop_engineering_ops_dashboard(
             "run_count": run_count,
             "completed": completed,
             "failed": failed,
+            "historical_failed": historical_failed,
+            "current_failed": current_failed,
             "completion_rate": round(completed / run_count, 4) if run_count else None,
             "capability_ready_count": capability_ready,
             "trigger_count": trigger_summary["total"],
@@ -56,6 +65,7 @@ def build_loop_engineering_ops_dashboard(
         "signals": {
             "adapter_failure_count": adapter_failures,
             "gate_failure_count": gate_failures,
+            "historical_gate_failure_count": historical_gate_failures,
             "approval_requests": _mapping_size(telemetry.get("approval_requests")),
             "unresolved_risks": _mapping_size(telemetry.get("unresolved_risks")),
             "promotion_ready_count": _mapping_size(telemetry.get("promotion_ready_by_spec")),
@@ -117,6 +127,26 @@ def _next_actions(
 
 def _mapping_size(value: Any) -> int:
     return len(value) if isinstance(value, Mapping) else 0
+
+
+def _list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
+    latest: dict[str, Mapping[str, Any]] = {}
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        spec_id = str(run.get("spec_id") or run.get("spec") or run.get("run_id") or "").strip()
+        if not spec_id or spec_id in latest:
+            continue
+        latest[spec_id] = run
+    return latest
+
+
+def _count_status(runs: Any, status: str) -> int:
+    return sum(1 for run in runs if isinstance(run, Mapping) and str(run.get("status") or run.get("state") or "") == status)
 
 
 def _nested(value: Mapping[str, Any], *path: str) -> Any:

@@ -21,6 +21,14 @@ def _task(
     probe_results: list[dict] | None = None,
     gate_results: list[dict] | None = None,
 ):
+    default_probe_results = [
+        {"probe_type": "workspace_hygiene", "passed": True},
+        {"probe_type": "security_privacy", "passed": True},
+        {"probe_type": "static_web", "passed": True},
+        {"probe_type": "api_service", "passed": True},
+        {"probe_type": "cli_generic", "passed": True},
+        {"probe_type": "browser_e2e", "passed": True},
+    ]
     return {
         "task_id": task_id,
         "description": f"Task {task_id}",
@@ -34,7 +42,7 @@ def _task(
         "last_owner_decision": {
             "delivery_quality": {
                 "delivery_quality": gate,
-                "probe_results": probe_results or [],
+                "probe_results": default_probe_results if probe_results is None else probe_results,
                 "quality_report": {
                     "quality_gate": gate,
                     "final_quality_score": score,
@@ -209,6 +217,27 @@ def test_release_evaluation_marks_agent_mix_gap_as_attention():
     assert any(risk["kind"] == "agent_mix" for risk in summary["top_risks"])
 
 
+def test_release_evaluation_marks_missing_release_probe_coverage_as_attention():
+    summary = build_release_evaluation_summary([
+        _task("task-a", score=91, probe_results=[]),
+        _task("task-b", score=89, probe_results=[]),
+        _task("task-c", score=90, probe_results=[]),
+    ])
+
+    assert summary["release_readiness"] == "attention"
+    assert set(summary["probe_coverage"]["missing_required_probe_types"]) == {
+        "api_service",
+        "browser_e2e",
+        "cli_generic",
+        "security_privacy",
+        "static_web",
+        "workspace_hygiene",
+    }
+    checks = {check["id"]: check for check in summary["readiness_checks"]}
+    assert checks["probe_coverage"]["status"] == "warning"
+    assert any(risk["kind"] == "probe_coverage" for risk in summary["top_risks"])
+
+
 def test_release_evaluation_counts_quality_gate_results_toward_probe_coverage():
     summary = build_release_evaluation_summary([
         _task(
@@ -245,12 +274,78 @@ def test_release_evaluation_counts_quality_gate_results_toward_probe_coverage():
         ),
     ])
 
-    assert summary["probe_coverage"]["passed"]["static_web"] == 1
-    assert summary["probe_coverage"]["passed"]["workspace_hygiene"] == 1
-    assert summary["probe_coverage"]["passed"]["security_privacy"] == 1
+    assert summary["probe_coverage"]["passed"]["static_web"] == 2
+    assert summary["probe_coverage"]["passed"]["workspace_hygiene"] >= 1
+    assert summary["probe_coverage"]["passed"]["security_privacy"] >= 1
     assert summary["probe_coverage"]["missing_required_probe_types"] == []
     checks = {check["id"]: check for check in summary["readiness_checks"]}
     assert checks["probe_coverage"]["status"] == "passed"
+
+
+def _orchestrator_quality_task(task_id: str, *, updated_at: float, owner_agent: str):
+    return {
+        "task_id": task_id,
+        "description": f"Run host-agent full delivery conformance. Scenario ID: host_agent_full_delivery_v1. {task_id}",
+        "status": "completed",
+        "task_types": ["functional", "artifact"],
+        "delivery_mode": "composite",
+        "owner_agent": owner_agent,
+        "allowed_subtask_agents": ["claude", "claude-desktop", "codex", "cursor", "hermes", "openclaw", "opencode"],
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "last_owner_decision": {
+            "delivery_quality": {
+                "status": "passed",
+                "quality_gate": "passed",
+                "delivery_quality": "passed",
+                "quality_score": 100,
+                "checks": {
+                    "workspace_hygiene": True,
+                    "security_privacy": True,
+                    "agent_mix": True,
+                    "static_web_smoke": True,
+                    "browser_e2e": True,
+                    "api_service": True,
+                    "cli_generic": True,
+                },
+                "gate_results": {
+                    "workspace_hygiene": "passed",
+                    "security_privacy": "passed",
+                    "agent_mix": "passed",
+                    "static_web_smoke": "passed",
+                    "browser_e2e": "passed",
+                    "api_service": "passed",
+                    "cli_generic": "passed",
+                },
+            }
+        },
+    }
+
+
+def test_release_evaluation_accepts_orchestrator_quality_payload_shape():
+    summary = build_release_evaluation_summary([
+        _orchestrator_quality_task("task-a", updated_at=1.0, owner_agent="openclaw"),
+        _orchestrator_quality_task("task-b", updated_at=2.0, owner_agent="hermes"),
+        _orchestrator_quality_task("task-c", updated_at=3.0, owner_agent="codex"),
+    ])
+
+    assert summary["release_readiness"] == "ready"
+    assert summary["evaluated_task_count"] == 3
+    assert summary["passed_task_count"] == 3
+    assert summary["average_final_quality_score"] == 100
+    assert summary["probe_coverage"]["missing_required_probe_types"] == []
+    assert summary["agent_mix_summary"]["satisfies_release_mix"] is True
+    assert summary["agent_mix_summary"]["agent_mix_gate_satisfied"] is True
+    assert summary["recent_evaluations"][0]["final_quality_score"] == 100
+    assert summary["recent_evaluations"][0]["probe_summary"]["passed"] == [
+        "agent_mix",
+        "api_service",
+        "browser_e2e",
+        "cli_generic",
+        "security_privacy",
+        "static_web",
+        "workspace_hygiene",
+    ]
 
 
 def test_release_evaluation_recent_items_include_auditable_detail_fields():

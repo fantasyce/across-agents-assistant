@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 
@@ -60,10 +61,20 @@ def build_agent_plugin_runtime_status(
     statuses = [section["status"] for section in sections.values()]
     failed = [status for status in statuses if status == "failed"]
     attention = [status for status in statuses if status in {"attention", "unavailable", "unknown"}]
+    external_agent_count = _first_int(orchestrator_section["summary"].get("agent_count"))
+    healthy_external_agent_count = _first_int(orchestrator_section["summary"].get("healthy_agent_count"))
+    autopilot_agent_plugin_count = _first_int(autopilot_section["summary"].get("agent_plugin_count"))
+    ready_autopilot_agent_plugin_count = _first_int(autopilot_section["summary"].get("ready_agent_plugin_count"))
+    context_agent_plugin_count = _first_int(context_section["summary"].get("agent_plugin_count"))
     agent_plugin_count = max(
+        external_agent_count,
         _first_int(orchestrator_section["summary"].get("agent_count")),
-        _first_int(autopilot_section["summary"].get("agent_plugin_count")),
-        _first_int(context_section["summary"].get("agent_plugin_count")),
+        autopilot_agent_plugin_count,
+        context_agent_plugin_count,
+    )
+    ready_agent_plugin_count = max(
+        healthy_external_agent_count,
+        ready_autopilot_agent_plugin_count,
     )
     return {
         "schema_version": AGENT_PLUGIN_RUNTIME_SCHEMA_VERSION,
@@ -73,9 +84,9 @@ def build_agent_plugin_runtime_status(
             "downstream_count": len(sections),
             "downstream_ready_count": sum(1 for status in statuses if status == "passed"),
             "agent_plugin_count": agent_plugin_count,
-            "external_agent_count": _first_int(orchestrator_section["summary"].get("agent_count")),
-            "healthy_external_agent_count": _first_int(orchestrator_section["summary"].get("healthy_agent_count")),
-            "ready_agent_plugin_count": _first_int(autopilot_section["summary"].get("ready_agent_plugin_count")),
+            "external_agent_count": external_agent_count,
+            "healthy_external_agent_count": healthy_external_agent_count,
+            "ready_agent_plugin_count": ready_agent_plugin_count,
             "context_pack_count": _first_int(context_section["summary"].get("context_pack_count")),
             "context_memory_count": _first_int(context_section["summary"].get("memory_count")),
         },
@@ -92,7 +103,12 @@ def _orchestrator_section(result: Mapping[str, Any]) -> dict[str, Any]:
     payload = _dict(result.get("payload")) if "payload" in result else result
     summary = _dict(payload.get("summary"))
     agents = _list(payload.get("agents"))
-    status = _status_from_probe(result, payload.get("status") or ("passed" if agents else "unavailable"))
+    status = _inventory_status_from_probe(
+        result,
+        payload.get("status") or "passed",
+        total_count=_first_int(summary.get("agent_count"), len(agents)),
+        ready_count=_first_int(summary.get("healthy_agent_count"), len(agents)),
+    )
     return {
         "id": "orchestrator_external_agents",
         "title": "Orchestrator External Agent Registry",
@@ -120,13 +136,19 @@ def _autopilot_section(result: Mapping[str, Any]) -> dict[str, Any]:
     payload = _dict(result.get("payload")) if "payload" in result else result
     section = _dict(_dict(payload.get("sections")).get("agent_plugin_runtime"))
     summary = _dict(section.get("summary"))
-    status = _status_from_probe(result, section.get("status") or payload.get("status") or "unavailable")
+    agent_plugin_count = _first_int(summary.get("agent_plugin_count"))
+    status = _inventory_status_from_probe(
+        result,
+        section.get("status") or payload.get("status") or "passed",
+        total_count=agent_plugin_count,
+        ready_count=_first_int(summary.get("ready_agent_plugin_count")),
+    )
     return {
         "id": "autopilot_agent_plugin_runtime",
         "title": "Autopilot Generic Agent Plugin Runtime",
         "status": status,
         "summary": {
-            "agent_plugin_count": _first_int(summary.get("agent_plugin_count")),
+            "agent_plugin_count": agent_plugin_count,
             "ready_agent_plugin_count": _first_int(summary.get("ready_agent_plugin_count")),
             "dry_run_only": bool(summary.get("dry_run_only", True)),
             "generic_schema": summary.get("generic_schema") or "across-agent-plugin/1.0",
@@ -139,7 +161,11 @@ def _context_section(result: Mapping[str, Any]) -> dict[str, Any]:
     payload = _dict(result.get("payload")) if "payload" in result else result
     summary = _dict(payload.get("summary"))
     packs = _list(payload.get("packs"))
-    status = _status_from_probe(result, payload.get("status") or ("passed" if packs else "unavailable"))
+    status = _inventory_status_from_probe(
+        result,
+        payload.get("status") or "passed",
+        total_count=_first_int(summary.get("agent_plugin_count")),
+    )
     return {
         "id": "context_agent_packs",
         "title": "Context Agent Plugin Packs",
@@ -186,8 +212,18 @@ def _effective_commands(commands: Mapping[str, list[str]] | None, env: Mapping[s
             result[name] = list(commands[name])
             continue
         env_value = str(env.get(COMMAND_ENV_KEYS[name]) or "").strip()
-        result[name] = shlex.split(env_value) if env_value else list(default)
+        result[name] = shlex.split(env_value) if env_value else _managed_default_command(default, env)
     return result
+
+
+def _managed_default_command(default: list[str], env: Mapping[str, str]) -> list[str]:
+    if not default:
+        return []
+    across_home = Path(str(env.get("ACROSS_HOME") or "~/.across")).expanduser()
+    managed_binary = across_home / "bin" / default[0]
+    if managed_binary.is_file() and os.access(managed_binary, os.X_OK):
+        return [str(managed_binary), *default[1:]]
+    return list(default)
 
 
 def _status_from_probe(result: Mapping[str, Any], payload_status: Any) -> str:
@@ -196,6 +232,25 @@ def _status_from_probe(result: Mapping[str, Any], payload_status: Any) -> str:
         return probe_status
     status = str(payload_status or "unknown").strip()
     return status if status in {"passed", "attention", "failed", "unavailable", "unknown"} else "unknown"
+
+
+def _inventory_status_from_probe(
+    result: Mapping[str, Any],
+    payload_status: Any,
+    *,
+    total_count: int,
+    ready_count: int | None = None,
+) -> str:
+    status = _status_from_probe(result, payload_status)
+    if status == "failed":
+        return "failed"
+    if str(result.get("status") or "").strip() in {"failed", "unavailable"}:
+        return status
+    if total_count == 0 and status in {"attention", "unavailable", "unknown"}:
+        return "passed"
+    if ready_count is not None and total_count > 0 and ready_count < total_count:
+        return "attention"
+    return status if status in {"passed", "attention", "failed"} else "passed"
 
 
 def _public_payload(value: Any) -> Any:

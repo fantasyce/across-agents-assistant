@@ -15,6 +15,8 @@ REQUIRED_APP_GRADE_GATES = [
 ]
 
 DEFAULT_RELEASE_REQUIRED_PROBES = [
+    "workspace_hygiene",
+    "security_privacy",
     "static_web_smoke",
     "browser_e2e",
     "api_service",

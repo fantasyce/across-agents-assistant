@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.9.6 - 2026-06-28
+
+### Added
+
+- Added Agent interop E2E evidence across Autopilot workflow packs, Context
+  evidence memory, Orchestrator evidence graphs, sandbox policy checks, remote
+  MCP/A2A metadata, and OTel/GenAI-style span export.
+- Added workbench and release-center surfaces for interop status, plugin
+  context-pack readiness, evidence coverage, and release-gate summaries.
+- Added reusable pre-release gate evidence writers and a local gate runner that
+  record commit, duration, runner, orchestrator command, and dirty-workspace
+  state under `~/.across`.
+
+### Changed
+
+- Updated managed plugin pins to Across Orchestrator `v0.7.6`, Across Context
+  `v0.8.6`, and Across Autopilot `v0.2.6`.
+- Updated the GitHub Live E2E workflow to install Across Orchestrator
+  `v0.7.6` from the main-derived release tag.
+- Tightened RC verification so release evaluation readiness, required probe
+  coverage, recent Release E2E evidence, and attached pre-release gate evidence
+  must agree before a release can be considered ready.
+
+### Fixed
+
+- Preserved `workspace_dirty`, runner, and orchestrator command metadata when
+  pre-release gate evidence is normalized and exposed through the packaged app.
+- Kept packaged runtime release checks from treating unavailable source checkout
+  paths as missing product gates.
+
 ## 0.9.5 - 2026-06-26
 
 ### Changed

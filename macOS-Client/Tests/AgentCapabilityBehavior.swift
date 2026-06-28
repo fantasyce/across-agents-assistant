@@ -374,6 +374,9 @@ func testReleaseEvaluationSummaryDecodesBackendPayload() throws {
     {
       "release_readiness": "attention",
       "generated_at": 1710000000,
+      "release_evidence_count": 3,
+      "passed_evidence_count": 2,
+      "agent_interop_e2e_status": "passed",
       "evaluated_task_count": 2,
       "terminal_task_count": 3,
       "passed_task_count": 1,
@@ -400,6 +403,23 @@ func testReleaseEvaluationSummaryDecodesBackendPayload() throws {
       },
       "stack_coverage": {"web": 2, "api": 1},
       "agent_coverage": {"hermes": 2, "deepseek": 1},
+      "readiness_checks": [
+        {"id": "agent_interop_e2e", "status": "passed", "label": "Agent interop E2E", "message": "Agent interop E2E passed.", "severity": "info"}
+      ],
+      "supplemental_evidence": [
+        {
+          "id": "agent_interop_e2e",
+          "kind": "host_interop_e2e",
+          "status": "passed",
+          "quality_gate": "passed",
+          "passed_count": 10,
+          "failed_count": 0,
+          "host_target_count": 3,
+          "mcp_server_count": 3,
+          "protocol_readiness_score": 100,
+          "endpoint": "/api/agent-interop/e2e"
+        }
+      ],
       "recent_evaluations": [
         {
           "task_id": "task-release",
@@ -419,6 +439,9 @@ func testReleaseEvaluationSummaryDecodesBackendPayload() throws {
     let summary = try JSONDecoder().decode(ReleaseEvaluationSummary.self, from: json)
 
     assert(summary.releaseReadiness == "attention", "Release readiness should decode from snake case")
+    assert(summary.releaseEvidenceCount == 3, "Release evidence count should decode")
+    assert(summary.passedEvidenceCount == 2, "Passed evidence count should decode")
+    assert(summary.agentInteropE2EStatus == "passed", "Agent interop status should decode")
     assert(summary.evaluatedTaskCount == 2, "Evaluated count should decode")
     assert(summary.topRisks.first?.kind == "manual_or_skipped_gate", "Top risks should decode")
     assert(summary.recentEvaluations.first?.taskId == "task-release", "Recent evaluations should decode")
@@ -428,6 +451,9 @@ func testReleaseEvaluationSummaryDecodesBackendPayload() throws {
     assert(summary.probeCoverage?.missingRequiredProbeTypes == ["api_service", "cli_generic"], "Missing release probes should decode")
     assert(summary.stackCoverage["web"] == 2, "Stack coverage should decode")
     assert(summary.agentCoverage["hermes"] == 2, "Agent coverage should decode")
+    assert(summary.readinessChecks.first?.label == "Agent interop E2E", "Readiness check label should decode")
+    assert(summary.supplementalEvidence.first?.kind == "host_interop_e2e", "Supplemental evidence should decode")
+    assert(summary.supplementalEvidence.first?.protocolReadinessScore == 100, "Interop protocol readiness should decode")
     assert(summary.recentEvaluations.first?.auditTrace?.passedProbeCount == 4, "Recent audit trace should decode")
 }
 

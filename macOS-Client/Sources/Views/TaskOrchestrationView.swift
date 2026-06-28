@@ -540,16 +540,42 @@ struct ReleaseEvidenceCenterView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 8)], alignment: .leading, spacing: 8) {
                 releaseCenterMetric(
                     appPreferences.text("tasks.releaseEvaluation.readiness"),
                     localizedReadiness(summary.releaseReadiness),
                     summary.releaseReadiness
                 )
-                releaseCenterMetric(appPreferences.text("tasks.releaseEvaluation.passRate"), "\(summary.passRatePercent)%", summary.passRate >= 1 ? "passed" : "partial")
-                releaseCenterMetric(appPreferences.text("tasks.releaseEvaluation.score"), summary.averageFinalQualityScore.map(String.init) ?? "-", (summary.averageFinalQualityScore ?? 0) >= 80 ? "passed" : "partial")
-                releaseCenterMetric(appPreferences.text("tasks.releaseEvaluation.trend"), localizedTrend(summary.qualityTrend?.direction ?? "no_data"), summary.qualityTrend?.direction == "regressing" ? "failed" : "passed")
-                releaseCenterMetric(appPreferences.text("tasks.releaseCenter.repairs"), "\(summary.totalRemediationCount)", summary.totalRemediationCount == 0 ? "passed" : "partial")
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseCenter.evidence"),
+                    "\(summary.passedEvidenceCount)/\(summary.releaseEvidenceCount)",
+                    summary.releaseEvidenceCount == summary.passedEvidenceCount && summary.releaseEvidenceCount > 0 ? "passed" : "partial"
+                )
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseCenter.interop"),
+                    localizedStatus(summary.agentInteropE2EStatus ?? "unknown"),
+                    summary.agentInteropE2EStatus ?? "unknown"
+                )
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseEvaluation.passRate"),
+                    "\(summary.passRatePercent)%",
+                    summary.passRate >= 1 ? "passed" : "partial"
+                )
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseEvaluation.score"),
+                    summary.averageFinalQualityScore.map(String.init) ?? "-",
+                    (summary.averageFinalQualityScore ?? 0) >= 80 ? "passed" : "partial"
+                )
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseEvaluation.trend"),
+                    localizedTrend(summary.qualityTrend?.direction ?? "no_data"),
+                    summary.qualityTrend?.direction == "regressing" ? "failed" : "passed"
+                )
+                releaseCenterMetric(
+                    appPreferences.text("tasks.releaseCenter.repairs"),
+                    "\(summary.totalRemediationCount)",
+                    summary.totalRemediationCount == 0 ? "passed" : "partial"
+                )
             }
 
             if let recommendation = summary.recommendation, !recommendation.isEmpty {
@@ -782,6 +808,10 @@ struct ReleaseEvidenceCenterView: View {
 
     private func localizedReadiness(_ readiness: String) -> String {
         appPreferences.text("tasks.releaseEvaluation.readiness.\(readiness)")
+    }
+
+    private func localizedStatus(_ status: String) -> String {
+        appPreferences.text("workbench.status.\(status)")
     }
 
     private func localizedTrend(_ trend: String) -> String {

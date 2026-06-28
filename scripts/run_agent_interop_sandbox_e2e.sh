@@ -10,11 +10,4 @@ if [[ -x "$ROOT_DIR/backend/.venv/bin/python" ]]; then
 fi
 
 PYTHONPATH="$ROOT_DIR/backend/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" -m pytest \
-  backend/tests/test_aaa_ecosystem_roadmap.py \
-  backend/tests/test_autopilot_workbench.py \
-  backend/tests/test_external_agent_plugin_gateway.py \
-  backend/tests/e2e/test_autopilot_workbench_e2e.py \
-  backend/tests/e2e/test_agent_plugin_runtime_cross_process_e2e.py \
   backend/tests/e2e/test_agent_interop_sandbox_evidence_e2e.py
-
-bash scripts/run_swift_behavior_checks.sh

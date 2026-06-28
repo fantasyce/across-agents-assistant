@@ -29,6 +29,7 @@ struct AutopilotWorkbenchSnapshot: Decodable, Equatable {
             || summary.promotionReadyCount > 0
             || !summary.schedulerRunning
             || summary.selfIterationStatus != "active"
+            || summary.agentInteropE2EStatus != "passed"
     }
 }
 
@@ -53,6 +54,7 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
     let agentPluginCount: Int
     let readyAgentPluginCount: Int
     let agentPluginContextPackCount: Int
+    let agentInteropE2EStatus: String
 
     enum CodingKeys: String, CodingKey {
         case runCount = "run_count"
@@ -75,6 +77,7 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
         case agentPluginCount = "agent_plugin_count"
         case readyAgentPluginCount = "ready_agent_plugin_count"
         case agentPluginContextPackCount = "agent_plugin_context_pack_count"
+        case agentInteropE2EStatus = "agent_interop_e2e_status"
     }
 
     init(from decoder: Decoder) throws {
@@ -99,6 +102,7 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
         agentPluginCount = try container.decodeIfPresent(Int.self, forKey: .agentPluginCount) ?? 0
         readyAgentPluginCount = try container.decodeIfPresent(Int.self, forKey: .readyAgentPluginCount) ?? 0
         agentPluginContextPackCount = try container.decodeIfPresent(Int.self, forKey: .agentPluginContextPackCount) ?? 0
+        agentInteropE2EStatus = try container.decodeIfPresent(String.self, forKey: .agentInteropE2EStatus) ?? "not_run"
     }
 }
 

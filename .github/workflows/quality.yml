@@ -43,3 +43,20 @@ jobs:
 
       - name: Swift behavior checks
         run: bash scripts/run_swift_behavior_checks.sh
+
+      - name: Write Quality CI evidence
+        if: success()
+        env:
+          ACROSS_AGENTS_PRE_RELEASE_GATE_EVIDENCE_PATH: ${{ runner.temp }}/quality_ci-gate-evidence.json
+          ACROSS_AGENTS_PRE_RELEASE_GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACROSS_AGENTS_PRE_RELEASE_GATE_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          bash scripts/write_pre_release_gate_evidence.sh quality_ci passed github_actions "Quality CI passed."
+
+      - name: Upload Quality CI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-ci-gate-evidence
+          path: ${{ runner.temp }}/quality_ci-gate-evidence.json
+          if-no-files-found: warn

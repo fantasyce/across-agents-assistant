@@ -32,7 +32,8 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
         "healthy_external_agent_count": 1,
         "agent_plugin_count": 1,
         "ready_agent_plugin_count": 1,
-        "agent_plugin_context_pack_count": 1
+        "agent_plugin_context_pack_count": 1,
+        "agent_interop_e2e_status": "passed"
       },
       "status_reasons": ["registered triggers exist but scheduler is stopped"],
       "sections": {
@@ -59,6 +60,24 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
           "summary": {"adapter_count": 6, "ready_adapter_count": 6},
           "items": [{"id": "agent_cards", "status": "passed"}],
           "endpoint": "/api/ecosystem/protocol-gateway"
+        },
+        "agent_interop_e2e": {
+          "id": "agent_interop_e2e",
+          "title": "Agent Interop E2E Lab",
+          "status": "passed",
+          "summary": {
+            "passed_count": 11,
+            "failed_count": 0,
+            "protocol_readiness_score": 81,
+            "frontier_interop_status": "passed",
+            "remote_mcp_template_status": "passed",
+            "a2a_delegation_status": "passed",
+            "otel_span_count": 21,
+            "otlp_resource_span_count": 1,
+            "eval_case_count": 5
+          },
+          "items": [{"id": "three_plugin_mcp_load", "status": "passed"}],
+          "endpoint": "/api/autopilot/agent-interop-e2e"
         }
       },
       "actions": [
@@ -88,8 +107,13 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
     assert(snapshot.summary.ecosystemReadyRouteCount == 5, "Ecosystem ready route count should decode")
     assert(snapshot.summary.agentPluginCount == 1, "Agent plugin count should decode")
     assert(snapshot.summary.readyAgentPluginCount == 1, "Ready agent plugin count should decode")
+    assert(snapshot.summary.agentInteropE2EStatus == "passed", "Agent interop E2E status should decode")
     assert(snapshot.sections["promotion"]?.items.first?.objectValue?["run_id"]?.description == "run-ui", "Section item objects should decode")
     assert(snapshot.sections["protocol_gateway"]?.endpoint == "/api/ecosystem/protocol-gateway", "Protocol gateway section should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["passed_count"]?.description == "11", "Agent interop E2E section should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["frontier_interop_status"]?.description == "passed", "Agent interop frontier status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["otel_span_count"]?.description == "21", "Agent interop OTel span count should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["otlp_resource_span_count"]?.description == "1", "Agent interop OTLP resource span count should decode")
     assert(snapshot.actions.first?.id == "open_promotion_review", "Actions should decode")
     assert(snapshot.endpoints["refresh"] == "/api/autopilot/workbench/refresh", "Endpoint map should decode")
 }
@@ -116,7 +140,8 @@ func testAutopilotWorkbenchSnapshotDecodesHealthyContract() throws {
         "ecosystem_route_count": 7,
         "ecosystem_ready_route_count": 7,
         "agent_plugin_count": 1,
-        "ready_agent_plugin_count": 1
+        "ready_agent_plugin_count": 1,
+        "agent_interop_e2e_status": "passed"
       },
       "status_reasons": [],
       "sections": {},

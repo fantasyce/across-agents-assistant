@@ -68,6 +68,12 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
         }
     }
 
+    func runAgentInteropE2E() async {
+        await runAction(message: "Agent interop E2E passed") {
+            try await request(path: "/api/autopilot/agent-interop-e2e", method: "POST")
+        }
+    }
+
     private func runAction(message successMessage: String, _ action: () async throws -> Data) async {
         isWorking = true
         message = nil

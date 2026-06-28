@@ -22,6 +22,7 @@ struct AutopilotWorkbenchView: View {
         "capabilities",
         "memory",
         "agent_plugins",
+        "agent_interop_e2e",
         "protocols",
         "plugins",
         "protocol_gateway",
@@ -98,6 +99,9 @@ struct AutopilotWorkbenchView: View {
                 iconButton("stop.circle", help: appPreferences.text("workbench.scheduler.stop")) {
                     Task { await viewModel.stopScheduler() }
                 }
+                iconButton("point.3.connected.trianglepath.dotted", help: appPreferences.text("workbench.interopE2E.run")) {
+                    Task { await viewModel.runAgentInteropE2E() }
+                }
             }
         }
     }
@@ -136,6 +140,7 @@ struct AutopilotWorkbenchView: View {
             summaryTile(appPreferences.text("workbench.scheduler"), value: snapshot.summary.schedulerRunning ? appPreferences.text("workbench.running") : appPreferences.text("workbench.stopped"), systemName: snapshot.summary.schedulerRunning ? "play.fill" : "stop.fill", color: statusColor(snapshot.summary.schedulerRunning ? "passed" : "attention"))
             summaryTile(appPreferences.text("workbench.ecosystem"), value: "\(snapshot.summary.ecosystemReadyRouteCount)/\(snapshot.summary.ecosystemRouteCount)", systemName: "point.3.connected.trianglepath.dotted", color: statusColor(snapshot.summary.ecosystemRouteCount == snapshot.summary.ecosystemReadyRouteCount ? "passed" : "attention"))
             summaryTile(appPreferences.text("workbench.agentPlugins"), value: "\(snapshot.summary.readyAgentPluginCount)/\(snapshot.summary.agentPluginCount)", systemName: "puzzlepiece.extension", color: statusColor(snapshot.summary.agentPluginCount == snapshot.summary.readyAgentPluginCount && snapshot.summary.agentPluginCount > 0 ? "passed" : "attention"))
+            summaryTile(appPreferences.text("workbench.interopE2E"), value: localizedStatus(snapshot.summary.agentInteropE2EStatus), systemName: "point.3.connected.trianglepath.dotted", color: statusColor(snapshot.summary.agentInteropE2EStatus))
         }
     }
 
@@ -220,12 +225,12 @@ struct AutopilotWorkbenchView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(section.summary.sorted(by: { $0.key < $1.key }).prefix(5), id: \.key) { pair in
+                ForEach(summaryPairs(for: section), id: \.key) { pair in
                     HStack(alignment: .top, spacing: 8) {
                         Text(displayKey(pair.key))
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
-                            .frame(width: 104, alignment: .leading)
+                            .frame(width: section.id == "agent_interop_e2e" ? 126 : 104, alignment: .leading)
                             .lineLimit(1)
                         Text(pair.value.description)
                             .font(.system(size: 11, weight: .semibold))
@@ -263,6 +268,35 @@ struct AutopilotWorkbenchView: View {
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
+    }
+
+    private func summaryPairs(for section: AutopilotWorkbenchSection) -> [(key: String, value: AutopilotWorkbenchJSONValue)] {
+        if section.id == "agent_interop_e2e" {
+            let priority = [
+                "status",
+                "protocol_readiness_score",
+                "frontier_interop_status",
+                "remote_mcp_template_status",
+                "a2a_delegation_status",
+                "otel_span_count",
+                "otlp_resource_span_count",
+                "eval_case_count"
+            ]
+            let prioritized = priority.compactMap { key -> (key: String, value: AutopilotWorkbenchJSONValue)? in
+                guard let value = section.summary[key] else { return nil }
+                return (key, value)
+            }
+            let remaining = section.summary
+                .filter { pair in !priority.contains(pair.key) }
+                .sorted { $0.key < $1.key }
+                .prefix(max(0, 7 - prioritized.count))
+                .map { (key: $0.key, value: $0.value) }
+            return Array((prioritized + remaining).prefix(7))
+        }
+        return section.summary
+            .sorted { $0.key < $1.key }
+            .prefix(5)
+            .map { (key: $0.key, value: $0.value) }
     }
 
     private func sectionHeader(_ title: String, subtitle: String?) -> some View {
@@ -346,7 +380,7 @@ struct AutopilotWorkbenchView: View {
         switch status {
         case "passed", "ready", "active":
             return Color(hex: "30d158")
-        case "attention", "unknown", "unavailable", "paused":
+        case "attention", "unknown", "unavailable", "paused", "not_run":
             return Color(hex: "ff9f0a")
         case "failed":
             return Color(hex: "ff453a")
@@ -361,7 +395,7 @@ struct AutopilotWorkbenchView: View {
             return "checkmark.circle.fill"
         case "failed":
             return "xmark.octagon.fill"
-        case "attention", "paused":
+        case "attention", "paused", "not_run":
             return "exclamationmark.triangle.fill"
         default:
             return "questionmark.circle.fill"

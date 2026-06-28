@@ -84,6 +84,13 @@ Start with concrete workflows:
 - **Autonomous Product Iteration:** let Across create a candidate workspace,
   validate the change, and stop with a human-review promotion package.
 
+Start with **Plugin Compatibility Lab v2** when you want to test whether an MCP
+server, coding-agent plugin, or agent tool is safe enough for a team workflow.
+It turns the adoption decision into a workflow card, protocol-readiness matrix,
+trust receipt, evidence graph, pending memory, A2A delegation envelope, and
+OTel/OTLP-compatible trace export. See
+[Plugin Compatibility Lab v2](docs/plugin-compatibility-lab-v2.md).
+
 The product packaging, examples, and host-neutral install story are documented
 in [Across Loop Engineering Product Packaging](LOOP_ENGINEERING_PRODUCT_PACKAGING.md).
 
@@ -190,10 +197,11 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.6` | Adds the frontier agent-team interop release gate: host workbench surfaces, agent interop E2E evidence, stricter RC verification, unified pre-release gate evidence, and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
 | `0.9.5` | Final 1.1 regression release: revalidates the packaged macOS host, `~/.across` managed plugin runtime, Context/Orchestrator/Autopilot smoke paths, official Claude Code/Claude Desktop naming, and pins Autopilot `v0.2.5`, Orchestrator `v0.7.5`, and Context `v0.8.5`. |
 | `0.9.4` | Adds workflow-first agent-readable product packaging, including `llms.txt`, `AGENTS.md`, a machine-readable product manifest, copyable agent task examples, and the open-source release handbook; managed pins move to Autopilot `v0.2.4`, Orchestrator `v0.7.4`, and Context `v0.8.4`. |
 | `0.9.3` | Refreshes managed plugin pins to Autopilot `v0.2.3`, Orchestrator `v0.7.3`, and Context `v0.8.3`, incorporates release verification hardening and CodeQL quality fixes, and includes the latest Dependabot security/maintenance updates. |
-| `0.9.2` | Adds Claude Desktop as a local Agent and Agnes as a cloud provider, documents the three core plugins as generic Codex/Claude Code/Claude Desktop/AAA host plugins, and moves managed pins to Autopilot `v0.2.2`, Orchestrator `v0.7.2`, and Context `v0.8.2`. |
+| `0.9.2` | Adds Claude Desktop as a local Agent and Agnes as a cloud provider, documents the three core plugins as generic Codex, Claude Code, Claude Desktop, and AAA host plugins, and moves managed pins to Autopilot `v0.2.2`, Orchestrator `v0.7.2`, and Context `v0.8.2`. |
 | `0.9.1` | Hardens the generic agent-plugin path across AAA, Codex, Claude Desktop, and Claude Code with managed `~/.across` wrappers, Autopilot host-session supervision, Orchestrator protocol-gateway helpers, Context host-plugin context/search surfaces, and managed pins for Autopilot `v0.2.1`, Orchestrator `v0.7.1`, and Context `v0.8.1`. |
 | `0.9.0` | Ships the four-product Loop Engineering platform with Across Autopilot managed plugin support, A/B/C candidate workspaces, Candidate Model Capability Lease, distinct-model review, candidate app lifecycle validation, and managed pins for Autopilot `v0.2.0`, Orchestrator `v0.7.0`, and Context `v0.8.0`. |
 | `0.8.29` | Completes the Agent Loop host consumption surface with bounded telemetry, resume-aware timelines, budget indicators, routing alternatives, Across Context memory metrics, autonomous workflow guardrails, and managed pins for Orchestrator `v0.6.18` / Context `v0.7.8`. |
@@ -274,15 +282,16 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.5` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.6` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.5` release is the final 1.1 regression cleanup release. It revalidates
-the packaged macOS host, local socket APIs, Claude Desktop and Agnes catalog
-surfaces, and the three managed plugins under `~/.across`. The release pairs
-with Across Autopilot `v0.2.5`, Across Orchestrator `v0.7.5`, and Across
-Context `v0.8.5`; all three managed plugins are installed under `~/.across`
-and can also be consumed by Codex, Claude Code, Claude Desktop, and other
-CLI/MCP-capable hosts.
+The `0.9.6` release adds frontier agent-team interoperability and release-gate
+evidence across the packaged macOS host. It revalidates the local socket APIs,
+Claude Desktop and Agnes catalog surfaces, Agent interop E2E, workbench
+readiness, release evaluation, and all three managed plugins under
+`~/.across`. The release pairs with Across Autopilot `v0.2.6`, Across
+Orchestrator `v0.7.6`, and Across Context `v0.8.6`; all three managed plugins
+are installed under `~/.across` and can also be consumed by Codex, Claude Code,
+Claude Desktop, and other CLI/MCP-capable hosts.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse
@@ -672,11 +681,11 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.5
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.5
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.6
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.6
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.5
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.6
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -769,8 +778,27 @@ It writes a non-secret gate evidence JSON file to
 `ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH` to store it elsewhere. Remove
 `$HOME/.across/data/across-agents-assistant/release-reports/*-gate-evidence.json`
 to clear stale local gate evidence.
+Other pre-release gates use the same non-secret evidence contract. After a
+local gate passes, write evidence with:
+
+```bash
+bash scripts/write_pre_release_gate_evidence.sh open_source_check passed local_script
+bash scripts/write_pre_release_gate_evidence.sh backend_regression passed local_script
+bash scripts/write_pre_release_gate_evidence.sh swift_behavior_checks passed local_script
+bash scripts/write_pre_release_gate_evidence.sh swift_package_gate passed local_script
+```
+
+Or run all local pre-release gates and write evidence in one pass:
+
+```bash
+bash scripts/run_pre_release_local_gates.sh
+```
+
+The packaged app reads these files from
+`$HOME/.across/data/across-agents-assistant/release-reports/`. It does not need
+or use a development checkout path to verify attached release evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.7.5` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.7.6` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON

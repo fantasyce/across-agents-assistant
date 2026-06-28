@@ -163,6 +163,22 @@ def test_autopilot_workbench_api_e2e(monkeypatch, tmp_path):
             },
         },
     )
+    monkeypatch.setattr(
+        api_server,
+        "load_agent_interop_e2e_latest",
+        lambda: {
+            "schema_version": "across-aaa-agent-interop-e2e/1.0",
+            "status": "passed",
+            "summary": {
+                "passed_count": 11,
+                "failed_count": 0,
+                "host_target_count": 5,
+                "mcp_server_count": 3,
+                "evidence_node_count": 21,
+            },
+            "checks": [{"id": "three_plugin_mcp_load", "status": "passed", "summary": "tool_count=42"}],
+        },
+    )
 
     async def fake_release_evaluation_payload(limit=100):
         return {"release_readiness": "ready", "evaluated_task_count": 3}
@@ -226,6 +242,7 @@ def test_autopilot_workbench_api_e2e(monkeypatch, tmp_path):
     assert payload["summary"]["self_iteration_status"] == "active"
     assert payload["summary"]["ecosystem_route_count"] == 7
     assert payload["summary"]["agent_plugin_count"] == 1
+    assert payload["summary"]["agent_interop_e2e_status"] == "passed"
     for section_id in [
         "protocol_gateway",
         "tool_pack_registry",
@@ -234,6 +251,7 @@ def test_autopilot_workbench_api_e2e(monkeypatch, tmp_path):
         "context_packs",
         "external_agents",
         "agent_plugin_runtime",
+        "agent_interop_e2e",
     ]:
         assert section_id in payload["sections"]
     assert payload["sections"]["agent_plugins"]["status"] == "passed"

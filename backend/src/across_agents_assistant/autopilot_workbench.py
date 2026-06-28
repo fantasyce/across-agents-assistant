@@ -38,6 +38,7 @@ WORKBENCH_ENDPOINTS: dict[str, str] = {
     "context_packs": "/api/ecosystem/context-packs",
     "external_agents": "/api/ecosystem/external-agents",
     "agent_plugin_runtime": "/api/ecosystem/agent-plugins",
+    "agent_interop_e2e": "/api/autopilot/agent-interop-e2e",
 }
 
 
@@ -58,6 +59,7 @@ def build_autopilot_workbench_snapshot(
     pending_memories: list[Mapping[str, Any]] | None = None,
     ecosystem_roadmap: Mapping[str, Any] | None = None,
     agent_plugin_runtime: Mapping[str, Any] | None = None,
+    agent_interop_e2e: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build the host-facing Autopilot Workbench snapshot.
@@ -81,10 +83,12 @@ def build_autopilot_workbench_snapshot(
     pending_memories_list = [_dict(item) for item in pending_memories or []]
     ecosystem_roadmap = _dict(ecosystem_roadmap)
     agent_plugin_runtime = _dict(agent_plugin_runtime)
+    agent_interop_e2e = _dict(agent_interop_e2e)
 
     trigger_summary = build_trigger_registry_summary(trigger_registry)
     queued_triggers = _list(trigger_queue.get("items"))
     recent_runs = _list(runs.get("runs"))[:8]
+    latest_runs = _latest_runs_by_spec(recent_runs)
     run_count = _first_int(
         runs.get("run_count"),
         telemetry.get("run_count"),
@@ -96,14 +100,20 @@ def build_autopilot_workbench_snapshot(
         _nested(telemetry, "runs", "completed"),
         _count_by_status(recent_runs, "completed"),
     )
-    failed_runs = _first_int(
+    historical_failed_runs = _first_int(
         _nested(telemetry, "by_status", "failed"),
         _nested(telemetry, "runs", "failed"),
         _count_by_status(recent_runs, "failed"),
     )
-    promotion_ready_count = _first_int(
+    failed_runs = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed_runs
+    historical_promotion_ready_count = _first_int(
         _mapping_size(telemetry.get("promotion_ready_by_spec")),
         sum(1 for item in recent_runs if _truthy(_dict(item).get("promotion_ready"))),
+    )
+    promotion_ready_count = (
+        sum(1 for item in latest_runs.values() if _truthy(_dict(item).get("promotion_ready")))
+        if latest_runs
+        else historical_promotion_ready_count
     )
     capability_ready_count = _first_int(
         _nested(ops_dashboard, "summary", "capability_ready_count"),
@@ -124,6 +134,7 @@ def build_autopilot_workbench_snapshot(
         "run_count": run_count,
         "completed_run_count": completed_runs,
         "failed_run_count": failed_runs,
+        "historical_failed_run_count": historical_failed_runs,
         "pending_trigger_count": len(queued_triggers),
         "registered_trigger_count": int(trigger_summary.get("total") or 0),
         "active_trigger_count": int(trigger_summary.get("enabled") or 0),
@@ -133,6 +144,7 @@ def build_autopilot_workbench_snapshot(
         "registry_health_status": registry_health_status,
         "pending_memory_count": pending_memory_count,
         "promotion_ready_count": promotion_ready_count,
+        "historical_promotion_ready_count": historical_promotion_ready_count,
         "autopilot_available": autopilot_available,
         "ecosystem_route_count": _nested(ecosystem_roadmap, "summary", "route_count") or 0,
         "ecosystem_ready_route_count": _nested(ecosystem_roadmap, "summary", "ready_route_count") or 0,
@@ -141,6 +153,7 @@ def build_autopilot_workbench_snapshot(
         "agent_plugin_count": _nested(agent_plugin_runtime, "summary", "agent_plugin_count") or 0,
         "ready_agent_plugin_count": _nested(agent_plugin_runtime, "summary", "ready_agent_plugin_count") or 0,
         "agent_plugin_context_pack_count": _nested(agent_plugin_runtime, "summary", "context_pack_count") or 0,
+        "agent_interop_e2e_status": str(agent_interop_e2e.get("status") or "not_run"),
     }
     status, reasons = _workbench_status(
         summary=summary,
@@ -182,6 +195,7 @@ def build_autopilot_workbench_snapshot(
                 "total": run_count,
                 "completed": completed_runs,
                 "failed": failed_runs,
+                "historical_failed": historical_failed_runs,
             },
             _bounded_run_items(recent_runs),
             WORKBENCH_ENDPOINTS["runs"],
@@ -192,6 +206,7 @@ def build_autopilot_workbench_snapshot(
             "attention" if promotion_ready_count else "passed",
             {
                 "ready_count": promotion_ready_count,
+                "historical_ready_count": historical_promotion_ready_count,
                 "human_approval_required": True,
                 "merge_release_blocked": True,
             },
@@ -260,6 +275,30 @@ def build_autopilot_workbench_snapshot(
             _agent_plugin_runtime_items(agent_plugin_runtime),
             WORKBENCH_ENDPOINTS["agent_plugin_runtime"],
         ),
+        "agent_interop_e2e": _section(
+            "agent_interop_e2e",
+            "Agent Interop E2E Lab",
+            "attention" if str(agent_interop_e2e.get("status") or "not_run") == "not_run" else str(agent_interop_e2e.get("status") or "unknown"),
+            {
+                "status": str(agent_interop_e2e.get("status") or "not_run"),
+                "passed_count": _nested(agent_interop_e2e, "summary", "passed_count") or 0,
+                "failed_count": _nested(agent_interop_e2e, "summary", "failed_count") or 0,
+                "host_target_count": _nested(agent_interop_e2e, "summary", "host_target_count") or 0,
+                "mcp_server_count": _nested(agent_interop_e2e, "summary", "mcp_server_count") or 0,
+                "evidence_node_count": _nested(agent_interop_e2e, "summary", "evidence_node_count") or 0,
+                "protocol_readiness_score": _nested(agent_interop_e2e, "summary", "protocol_readiness_score"),
+                "market_readiness_status": _nested(agent_interop_e2e, "summary", "market_readiness_status"),
+                "trust_receipt_status": _nested(agent_interop_e2e, "summary", "trust_receipt_status"),
+                "frontier_interop_status": _nested(agent_interop_e2e, "summary", "frontier_interop_status"),
+                "remote_mcp_template_status": _nested(agent_interop_e2e, "summary", "remote_mcp_template_status"),
+                "a2a_delegation_status": _nested(agent_interop_e2e, "summary", "a2a_delegation_status"),
+                "otel_span_count": _nested(agent_interop_e2e, "summary", "otel_span_count"),
+                "eval_case_count": _nested(agent_interop_e2e, "summary", "eval_case_count"),
+                "otlp_resource_span_count": _nested(agent_interop_e2e, "summary", "otlp_resource_span_count"),
+            },
+            _bounded_agent_interop_items(agent_interop_e2e),
+            WORKBENCH_ENDPOINTS["agent_interop_e2e"],
+        ),
     }
     sections.update(_ecosystem_sections(ecosystem_roadmap))
     return {
@@ -302,6 +341,8 @@ def _workbench_status(
         attention_reasons.append("recent Autopilot runs failed")
     if int(summary.get("pending_memory_count") or 0) > 0:
         attention_reasons.append("Context has pending memory review items")
+    if str(summary.get("agent_interop_e2e_status") or "") != "passed":
+        attention_reasons.append("Agent interop E2E has not passed")
     if str(summary.get("self_iteration_status") or "") != "active":
         attention_reasons.append("continuous self-iteration is not active")
     if int(summary.get("registered_trigger_count") or 0) > 0 and summary.get("scheduler_running") is not True:
@@ -339,6 +380,8 @@ def _actions(
         actions.append(_action("review_pending_memory", "medium", "Review pending Context memory", "Context memory candidates require approval or rejection.", WORKBENCH_ENDPOINTS["memory_pending"]))
     if int(summary.get("promotion_ready_count") or 0) > 0:
         actions.append(_action("open_promotion_review", "high", "Review promotion candidate", "Promotion-ready output must remain human-gated.", WORKBENCH_ENDPOINTS["promotion_review_template"]))
+    if str(summary.get("agent_interop_e2e_status") or "") != "passed":
+        actions.append(_action("run_agent_interop_e2e", "high", "Run agent interop E2E", "Verify Context, Orchestrator, and Autopilot load through generic agent hosts.", WORKBENCH_ENDPOINTS["agent_interop_e2e"]))
     for item in _list(ops_dashboard.get("next_actions")):
         item_dict = _dict(item)
         action_id = str(item_dict.get("action") or "").strip()
@@ -491,6 +534,20 @@ def _agent_plugin_runtime_items(agent_plugin_runtime: Mapping[str, Any]) -> list
     return items[:8]
 
 
+def _bounded_agent_interop_items(agent_interop_e2e: Mapping[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for check in _list(agent_interop_e2e.get("checks"))[:8]:
+        check_dict = _dict(check)
+        items.append(
+            {
+                "id": check_dict.get("id"),
+                "status": check_dict.get("status"),
+                "summary": check_dict.get("summary"),
+            }
+        )
+    return items
+
+
 def _bounded_memory_items(memories: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for memory in memories[:8]:
@@ -567,6 +624,17 @@ def _first_int(*values: Any) -> int:
 
 def _count_by_status(items: list[Any], status: str) -> int:
     return sum(1 for item in items if str(_dict(item).get("status") or "").lower() == status)
+
+
+def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
+    latest: dict[str, Mapping[str, Any]] = {}
+    for run in runs:
+        run_dict = _dict(run)
+        spec_id = str(run_dict.get("spec_id") or run_dict.get("spec") or run_dict.get("run_id") or "").strip()
+        if not spec_id or spec_id in latest:
+            continue
+        latest[spec_id] = run_dict
+    return latest
 
 
 def _count_ready_capabilities(registry: Mapping[str, Any]) -> int:
