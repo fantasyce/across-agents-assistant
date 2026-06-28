@@ -82,6 +82,17 @@ LOCAL_AGENT_SPECS = {
         "model_args": ["--model"],
         "default_models": ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"],
     },
+    "kimi": {
+        "display_name": "Kimi Code",
+        "executable": "kimi",
+        "version_args": ["--version"],
+        # Kimi Code -p starts a real agent run. Keep startup detection
+        # lightweight and let task execution validate provider/auth state.
+        "probe_args": None,
+        "candidate_dirs": ["~/.kimi-code/bin", "/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
+        "model_args": ["--model"],
+        "default_models": ["minimax/MiniMax-M3"],
+    },
     "opencode": {
         "display_name": "OpenCode",
         "executable": "opencode",

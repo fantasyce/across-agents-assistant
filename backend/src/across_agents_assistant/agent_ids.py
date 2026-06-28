@@ -1,5 +1,6 @@
 OPENCLAW_AGENT_ID = "openclaw"
 CLAUDE_DESKTOP_AGENT_ID = "claude-desktop"
+KIMI_AGENT_ID = "kimi"
 LOCAL_AGENT_ID = OPENCLAW_AGENT_ID
 LOCAL_CLI_AGENT_IDS = (
     OPENCLAW_AGENT_ID,
@@ -7,6 +8,7 @@ LOCAL_CLI_AGENT_IDS = (
     "claude",
     CLAUDE_DESKTOP_AGENT_ID,
     "codex",
+    KIMI_AGENT_ID,
     "opencode",
     "cursor",
 )

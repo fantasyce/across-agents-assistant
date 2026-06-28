@@ -75,6 +75,12 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "model": "gpt-5.5"
         },
+        "kimi": {
+            "type": "local_cli",
+            "base_url": "",
+            "api_key": "",
+            "model": ""
+        },
         "opencode": {
             "type": "local_cli",
             "base_url": "",

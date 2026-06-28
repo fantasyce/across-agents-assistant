@@ -17,7 +17,7 @@
 <p align="center">
   Turn repo audits, release checks, plugin evaluations, and candidate product
   iterations into repeatable AI workflows with local evidence, memory, and
-  human approval across Codex, Claude Code, Claude Desktop,
+  human approval across Codex, Kimi Code, Claude Code, Claude Desktop,
   AAA, and other MCP-capable hosts.
 </p>
 
@@ -197,6 +197,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.11` | Adds Kimi Code as a local CLI agent with discovery, `kimi -p` dispatch, stream-json parsing, capability routing, bundled icon provenance, and packaged-app validation. |
 | `0.9.10` | Patch release that decouples release verification HTTP responses from in-memory reports by reading the latest local report into the fixed public DTO, closing the remaining CodeQL stack-trace exposure data flow. |
 | `0.9.9` | Patch release that narrows release verification and agent interop HTTP responses to fixed public DTOs, keeping detailed diagnostics in local reports/evidence while closing CodeQL stack-trace exposure alerts on the default branch. |
 | `0.9.8` | Patch release that strengthens public API payload sanitization for traceback-shaped strings and keeps CodeQL stack-trace exposure alerts closed while preserving the `0.9.6` frontier agent-team interop release gate. |
@@ -261,7 +262,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 - Delivery quality gates for exact file contracts, workspace hygiene, runnable probes, and static web feature evidence when UI behavior is requested.
 - Release E2E gate in the AAA host that submits and inspects an app-grade scenario through the external orchestration runtime, covering exact artifact delivery, Web UI, Node API, CLI checks, browser verification, quality-gate evidence, and host-visible remediation.
 - Unified model surface for local agents such as OpenClaw, Hermes, Claude Code,
-  Claude Desktop, Codex, OpenCode, and Cursor Agent, plus cloud LLMs such as
+  Claude Desktop, Codex, Kimi Code, OpenCode, and Cursor Agent, plus cloud LLMs such as
   DeepSeek, MiniMax, and Agnes.
 - Project-scoped chat with a real directory tree, session history, file attachments, screenshots, and context-aware prompts.
 - Single-agent mode for sending a complex task to one chosen agent when collaboration is unnecessary.
@@ -286,16 +287,15 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.10` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.11` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.10` release keeps the `0.9.6` frontier agent-team interoperability and
-release-gate evidence across the packaged macOS host, while decoupling release
-verification HTTP responses from in-memory reports and keeping agent interop
-responses on fixed public DTOs. Detailed diagnostics remain available in local
-reports and evidence files instead of being returned through external API
-boundaries. It revalidates the local socket APIs,
-Claude Desktop and Agnes catalog surfaces, Agent interop E2E, workbench
-readiness, release evaluation, and all three managed plugins under
+The `0.9.11` release keeps the `0.9.6` frontier agent-team interoperability and
+release-gate evidence across the packaged macOS host, while adding Kimi Code as
+a first-class local CLI agent through lightweight discovery, `kimi -p`
+dispatch, stream-json parsing, capability profiles, and bundled icon
+provenance. It revalidates the local socket APIs, Claude Desktop, Kimi Code,
+and Agnes catalog surfaces, Agent interop E2E, workbench readiness, release
+evaluation, and all three managed plugins under
 `~/.across`. The release pairs with Across Autopilot `v0.2.6`, Across
 Orchestrator `v0.7.6`, and Across Context `v0.8.6`; all three managed plugins
 are installed under `~/.across` and can also be consumed by Codex, Claude Code,
@@ -533,7 +533,7 @@ The `0.4.1` catalog work focuses on making the main agent and model surface read
 
 - Local-agent and cloud-provider icons are bundled as dark/light neutral tiles with provenance recorded in `macOS-Client/Sources/Assets/icons/agent-icon-sources.json`.
 - Codex prefers the installed OpenAI-signed `Codex.app` icon at runtime when present, while falling back to the bundled OpenAI tile when it is not installed.
-- Claude Desktop prefers the installed Claude app icon at runtime when present, while falling back to the bundled LobeHub Claude tile; Agnes uses a project-original `Ag` compatibility tile, not an official Agnes logo.
+- Claude Desktop prefers the installed Claude app icon at runtime when present, while falling back to the bundled LobeHub Claude tile; Kimi Code uses the LobeHub Kimi mark inside the app-owned neutral tile; Agnes uses a project-original `Ag` compatibility tile, not an official Agnes logo.
 - OpenCode uses the LobeHub Icons `opencode.svg` source inside the app-owned tile instead of relying on a Marketplace image with unresolved redistribution terms.
 - Unsupported local IDE integrations are omitted from the shipped local-agent catalog until their CLI install and authentication flow can be supported reliably.
 - `scripts/open_source_check.sh` now blocks icon entries that still require release review.
@@ -596,7 +596,7 @@ On first launch:
 - Open Model Settings.
 - Configure at least one cloud LLM API key, or install/configure one local agent.
 - Supported local agent integrations currently include OpenClaw, Hermes, Claude
-  Code, Claude Desktop, Codex, OpenCode, and Cursor Agent.
+  Code, Claude Desktop, Codex, Kimi Code, OpenCode, and Cursor Agent.
 - Open Agent Capabilities to tune each agent's built-in/custom skills, install or inspect native local-agent skills, configure MCP plugins, set tool scope, and add task-specific operating notes.
 - Native skills that fail readiness checks are shown as unavailable with the missing requirement, and are excluded from automatic capability routing until repaired.
 - When creating a complex task, review Capability Preflight before submitting; it previews the recommended agent and matching skills.

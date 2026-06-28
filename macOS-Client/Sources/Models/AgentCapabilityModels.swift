@@ -790,6 +790,7 @@ enum AgentCapabilityCatalog {
         "claude": ["architecture_review", "code_review", "test_strategy"],
         "claude-desktop": ["architecture_review", "code_review", "test_strategy"],
         "codex": ["general_execution", "code_review", "test_authoring"],
+        "kimi": ["general_execution", "code_review", "test_authoring"],
         "opencode": ["general_execution", "code_review", "test_authoring"],
         "cursor": ["general_execution", "frontend_design", "code_review"],
         "openai": ["backend_api", "code_review"],

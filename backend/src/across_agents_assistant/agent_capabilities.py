@@ -21,6 +21,7 @@ AGENT_DISPLAY_NAMES: Dict[str, str] = {
     "claude": "Claude Code",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
+    "kimi": "Kimi Code",
     "deepseek": "DeepSeek",
     "minimax": "MiniMax",
 }
@@ -143,6 +144,7 @@ DEFAULT_SKILLS_BY_AGENT: Dict[str, List[str]] = {
     "claude": ["architecture_review", "code_review", "test_strategy"],
     "claude-desktop": ["architecture_review", "code_review", "test_strategy"],
     "codex": ["general_execution", "code_review", "test_authoring"],
+    "kimi": ["general_execution", "code_review", "test_authoring"],
     "deepseek": ["backend_api", "data_modeling", "code_review"],
     "minimax": ["devops_release", "integration_smoke", "test_strategy"],
 }

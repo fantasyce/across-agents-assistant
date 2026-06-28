@@ -2843,6 +2843,7 @@ struct AgentIdentityBadge: View {
         case "hermes": return "Hermes"
         case "claude": return "Claude Code"
         case "claude-desktop": return "Claude Desktop"
+        case "kimi": return "Kimi Code"
         case "deepseek": return "DeepSeek"
         case "minimax": return "MiniMax"
         case "agnes": return "Agnes"

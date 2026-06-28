@@ -176,6 +176,7 @@ final class SettingsViewModel: ObservableObject {
         .claude,
         .claudeDesktop,
         .codex,
+        .kimi,
         .opencode,
         .cursor
     ]

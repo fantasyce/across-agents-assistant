@@ -103,7 +103,7 @@ def build_release_e2e_subtasks(available_agent_ids: Optional[List[str]] = None) 
                 "Create api/server.mjs using only the Node.js built-in http module. "
                 "Implement GET /health, GET /api/agents, POST /api/route, and GET /api/report. "
                 "The server must listen on process.env.PORT when provided so probes can start it on a free port. "
-                "Return all five agents with kind and at least three capabilities per agent, "
+                "Return at least five agents with kind and at least three capabilities per agent, "
                 "deterministic routing rationale, readiness metrics, and gate results. "
                 "POST /api/route must return selectedAgent, matchedNativeSkill, mcpRisk, reason, and requiredGates. "
                 "GET /api/report must return readiness, required_failed_count, manual_required_count, "
@@ -927,7 +927,7 @@ API requirements:
 - api/server.mjs must listen on process.env.PORT when provided.
 - It must expose GET /health, GET /api/agents, POST /api/route, and GET /api/report.
 - /health must return JSON with status "ok".
-- /api/agents must return all five agents, their kind, and at least three capabilities per agent.
+- /api/agents must return at least five agents, their kind, and at least three capabilities per agent.
 - /api/route must accept a task description and return a deterministic assignment with selectedAgent, matchedNativeSkill, mcpRisk, reason, rationale, and required quality gates.
 - /api/report must return readiness, required_failed_count, manual_required_count, skipped_required_count, and gate results.
 
