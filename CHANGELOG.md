@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.19 - 2026-06-30
+
+### Changed
+
+- Consolidated dependency hygiene updates for the backend runtime: FastAPI
+  `>=0.138.2`, MCP `>=1.28.1`, OpenAI `>=2.44.0`, and Anthropic `>=0.113.0`.
+
 ## 0.9.18 - 2026-06-30
 
 ### Changed

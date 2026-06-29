@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.19` | Consolidates backend dependency hygiene updates for FastAPI, MCP, OpenAI, and Anthropic SDK lower bounds. |
 | `0.9.18` | Updates the managed Across Orchestrator pin to `v0.7.10`, keeping Autopilot at `v0.2.8` and Context at `v0.8.8`. |
 | `0.9.17` | Updates the managed Across Orchestrator pin to `v0.7.9`, keeping Autopilot at `v0.2.8` and Context at `v0.8.8`. |
 | `0.9.16` | Makes Workflows the task entry point: Repository Quality Copilot, Plugin Compatibility Lab, and Release Captain now create editable task drafts while the expert task form remains available. |
@@ -258,7 +259,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.18` and
+This project is under active development. The current release is `0.9.19` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
