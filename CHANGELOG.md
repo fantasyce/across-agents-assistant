@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.18 - 2026-06-30
+
+### Changed
+
+- Updated the managed Across Orchestrator pin to `v0.7.10`, the follow-up
+  CodeQL hygiene patch release. Autopilot remains `v0.2.8` and Context remains
+  `v0.8.8`.
+
 ## 0.9.17 - 2026-06-30
 
 ### Changed
