@@ -72,6 +72,8 @@ Expected output:
 - `examples/agent-tasks/release-captain.md`: copyable release workflow task
 - `examples/agent-tasks/plugin-compatibility-lab.md`: copyable plugin
   evaluation task
+- `examples/agent-tasks/computer-use-sandbox-eval.md`: optional Computer Use
+  and browser sandbox UI evidence task
 - `OPEN_SOURCE_RELEASE_HANDBOOK.md`: release process for the four-product
   open-source ecosystem
 

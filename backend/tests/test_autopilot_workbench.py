@@ -85,6 +85,13 @@ def _healthy_snapshot():
                 "frontier_interop_status": "passed",
                 "remote_mcp_template_status": "passed",
                 "a2a_delegation_status": "passed",
+                "projection_status": "passed",
+                "projection_count": 5,
+                "agui_projection_status": "passed",
+                "async_task_status": "passed",
+                "context_skills_bridge_status": "passed",
+                "computer_use_sandbox_status": "passed",
+                "local_agent_protocol_status": "passed",
                 "otel_span_count": 21,
                 "eval_case_count": 5,
                 "otlp_resource_span_count": 1,
@@ -115,6 +122,12 @@ def test_autopilot_workbench_snapshot_passed_contract():
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["protocol_readiness_score"] == 75
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["market_readiness_status"] == "passed"
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["frontier_interop_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["projection_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["agui_projection_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["async_task_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["context_skills_bridge_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["computer_use_sandbox_status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["summary"]["local_agent_protocol_status"] == "passed"
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["otel_span_count"] == 21
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["eval_case_count"] == 5
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["otlp_resource_span_count"] == 1
