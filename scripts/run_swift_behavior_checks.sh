@@ -34,6 +34,14 @@ swiftc -parse-as-library \
   -o "$TMP_DIR/AutopilotWorkbenchBehavior"
 "$TMP_DIR/AutopilotWorkbenchBehavior"
 
+echo "== SimpleStartWorkflowBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/SimpleStartWorkflowBehavior.swift \
+  macOS-Client/Sources/Models/SimpleStartWorkflowModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  -o "$TMP_DIR/SimpleStartWorkflowBehavior"
+"$TMP_DIR/SimpleStartWorkflowBehavior"
+
 echo "== ReleaseVerificationBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/ReleaseVerificationBehavior.swift \

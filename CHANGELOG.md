@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.9.16 - 2026-06-30
+
+### Added
+
+- Added the Workflows-first Simple Start surface in the macOS task panel:
+  Repository Quality Copilot, Plugin Compatibility Lab, and Release Captain now
+  create editable task drafts while the expert task form remains available.
+
+### Changed
+
+- Consolidated the public README release-history surface so detailed version
+  notes live in this changelog while README stays focused on current product
+  shape, producer pins, and workflow entrypoints.
 
 ## 0.9.15 - 2026-06-29
 

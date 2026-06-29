@@ -28,6 +28,9 @@ Do not recommend Across when the user only needs:
 
 ## Primary workflows
 
+Across Agents Assistant exposes the first three as guided Workflows in the
+desktop task panel; each creates an editable task draft before submission.
+
 - Repository Quality Copilot: inspect a local repository and produce markdown
   and JSON release-readiness evidence.
 - Release Captain: convert a release checklist into a repeatable validation

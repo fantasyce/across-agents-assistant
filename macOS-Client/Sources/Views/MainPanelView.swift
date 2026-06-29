@@ -285,7 +285,12 @@ struct MainPanelView: View {
                     )
                 }
                 if showTaskOrchestration {
-                    TaskOrchestrationView(viewModel: taskOrchestrationViewModel, settingsVM: settingsViewModel, onClose: { showTaskOrchestration = false })
+                    TaskOrchestrationView(
+                        viewModel: taskOrchestrationViewModel,
+                        settingsVM: settingsViewModel,
+                        defaultProjectPath: viewModel.activeProjectPath,
+                        onClose: { showTaskOrchestration = false }
+                    )
                 }
                 if let request = viewModel.pendingApproval {
                     ZStack {
