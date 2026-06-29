@@ -25,6 +25,7 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var isLoadingOrchestratorPlugin = false
     @Published var isInstallingOrchestratorPlugin = false
     @Published var orchestratorPluginError: String?
+    @Published var simpleStartDraft: SimpleStartWorkflowDraft?
     private let taskPageSize = 50
     private var taskListOffset = 0
 
@@ -633,6 +634,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 if (200...299).contains(httpResponse.statusCode) {
                     let decoder = JSONDecoder()
                     let result = try decoder.decode(AutoTaskSubmitResponse.self, from: data)
+                    simpleStartDraft = nil
 
                     if let newTaskId = result.taskId {
                         viewMode = .detail
@@ -808,14 +810,33 @@ class TaskOrchestrationViewModel: ObservableObject {
             viewMode = .empty
             return
         }
+        simpleStartDraft = nil
         viewMode = .createForm
         selectedTask = nil
         stopSSE()
     }
 
+    func startSimpleStartWorkflow(_ preset: SimpleStartWorkflowPreset, target: String = "", projectDirectory: String? = nil) {
+        guard !isOrchestratorPluginUnavailable else {
+            errorMessage = orchestratorPluginUnavailableMessage
+            viewMode = .empty
+            return
+        }
+        errorMessage = nil
+        simpleStartDraft = preset.makeDraft(target: target, projectDirectory: projectDirectory)
+        selectedTask = nil
+        viewMode = .createForm
+        stopSSE()
+    }
+
+    func clearSimpleStartDraft() {
+        simpleStartDraft = nil
+    }
+
     func cancelCreate() {
         errorMessage = nil
         isLoading = false
+        simpleStartDraft = nil
         if selectedTask != nil {
             viewMode = .detail
         } else {

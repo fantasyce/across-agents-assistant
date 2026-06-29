@@ -26,17 +26,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/readme/zh-dark-task-orchestration.png" alt="Across Agents Assistant dark task orchestration with release readiness, task list, and new task entry">
+  <img src="assets/readme/zh-dark-task-orchestration.png" alt="Across Agents Assistant dark workflows panel with release readiness, run list, and guided workflow entry">
 </p>
 
 <p align="center">
-  <img src="assets/readme/zh-dark-new-task.png" alt="Across Agents Assistant new complex task form with function and product delivery modes, owner agent, subtask agents, and strict dependency mode">
+  <img src="assets/readme/zh-dark-new-task.png" alt="Across Agents Assistant expert task form with function and product delivery modes, owner agent, subtask agents, and strict dependency mode">
 </p>
 
 ## Try This First
 
 Across should be evaluated through a concrete workflow before its internal
 modules. The recommended first run is Repository Quality Copilot:
+
+In the desktop app, open **Workflows** and choose **Repository Quality
+Copilot**. From a terminal, the same starting point is:
 
 ```bash
 across-autopilot loop run --spec repo-quality-copilot --json
@@ -62,10 +65,14 @@ Agent-readable entrypoints:
 
 Across Agents Assistant is built for developers who want more than a single chat
 box. It brings local agents, cloud LLMs, project chat, voice, MCP context, tool
-permissions, owner-led task orchestration, and Loop Engineering evidence into
-one macOS workbench.
+permissions, guided workflow starts, owner-led task orchestration, and Loop
+Engineering evidence into one macOS workbench.
 
-The core idea is cross-agent collaboration: pick an owner agent, keep local agents and cloud LLMs visible, break a complex request into waves, and inspect the final delivery. You can also choose a single agent for a focused complex task. Delivery quality is designed to be strong and reviewable, while still acknowledging that some generated artifacts may occasionally need small human refinements.
+The first screen is workflow-first: Repository Quality Copilot, Plugin
+Compatibility Lab, and Release Captain prepare the task contract and evidence
+targets before submission. Expert users can still open the full task form, pick
+an owner agent, keep local agents and cloud LLMs visible, break a complex
+request into waves, and inspect the final delivery.
 
 ## Loop Engineering Use Cases
 
@@ -134,16 +141,16 @@ not trigger macOS Documents permission prompts just because a plugin exists.
 ### Current Dark Theme
 
 The current product screenshots show the refreshed dark interface,
-agent/provider icon catalog, task orchestration, model settings, MCP plugins,
+agent/provider icon catalog, workflows, model settings, MCP plugins,
 tool permissions, and preferences.
 
-| Project chat | Task orchestration |
+| Project chat | Workflows and runs |
 | --- | --- |
-| <img src="assets/readme/zh-dark-main-chat.png" alt="Dark project chat with directory tree and refreshed agent sidebar icons"> | <img src="assets/readme/zh-dark-task-orchestration.png" alt="Dark task orchestration with release readiness and task list"> |
+| <img src="assets/readme/zh-dark-main-chat.png" alt="Dark project chat with directory tree and refreshed agent sidebar icons"> | <img src="assets/readme/zh-dark-task-orchestration.png" alt="Dark workflows panel with release readiness and run list"> |
 
-| Complex task creation |
+| Expert task creation |
 | --- |
-| <img src="assets/readme/zh-dark-new-task.png" alt="New complex task form with selectable delivery type, owner agent, subtask agents, and dependency blocking"> |
+| <img src="assets/readme/zh-dark-new-task.png" alt="Expert task form with selectable delivery type, owner agent, subtask agents, and dependency blocking"> |
 
 | Models | MCP plugins |
 | --- | --- |
@@ -168,9 +175,9 @@ bundled OpenAI tile when it is not installed.
 
 The app also includes a light Simplified Chinese interface.
 
-| 项目对话 | 任务编排 |
+| 项目对话 | 工作流和运行记录 |
 | --- | --- |
-| <img src="assets/readme/zh-light-main-chat.png" alt="浅色中文项目对话、目录树、本地 Agent 和云端 LLM"> | <img src="assets/readme/zh-light-task-orchestration.png" alt="浅色中文任务编排、Owner Agent、Wave 和子任务"> |
+| <img src="assets/readme/zh-light-main-chat.png" alt="浅色中文项目对话、目录树、本地 Agent 和云端 LLM"> | <img src="assets/readme/zh-light-task-orchestration.png" alt="浅色中文工作流、Owner Agent、Wave 和子任务"> |
 
 | 模型 | MCP 插件 |
 | --- | --- |
@@ -192,73 +199,30 @@ Recent releases added visible quality and readiness workflows directly inside th
 | --- | --- |
 | <img src="assets/readme/zh-dark-startup-diagnostics.png" alt="Dark startup diagnostics with backend, provider, path, and packaged app readiness checks"> | <img src="assets/readme/zh-dark-agent-capabilities.png" alt="Dark agent capability settings with local agents, cloud LLMs, native skills, MCP plugins, and tool scope"> |
 
-## What's New Since 0.2.0
+## Recent Product Highlights
 
-The screenshots above are still the primary entry points: project chat, task orchestration, complex task creation, model settings, MCP plugins, tool permissions, and preferences. The newer releases mainly make those workflows more inspectable, safer to route, and easier to validate before release.
+The screenshots above are still the primary entry points: project chat, task
+workflows, expert task creation, model settings, MCP plugins, tool
+permissions, and preferences. This README keeps the product shape current; the
+full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.16` | Makes Workflows the task entry point: Repository Quality Copilot, Plugin Compatibility Lab, and Release Captain now create editable task drafts while the expert task form remains available. |
 | `0.9.15` | Completes the P0-P3 frontier interop release gate with MCP Tasks projection, LF A2A v2, AG-UI task-card projection, Remote MCP/OAuth v1, OTel export, Skills bridge, optional sandbox evidence, memory backend projections, local agent protocol bridges, and managed pins for Autopilot `v0.2.8`, Orchestrator `v0.7.8`, and Context `v0.8.8`. |
-| `0.9.14` | Refreshes managed producer pins to Orchestrator `v0.7.7`, Context `v0.8.7`, and Autopilot `v0.2.7` after all three producer releases were verified against their current `origin/main` commits. |
-| `0.9.13` | Consolidates tracked Markdown entrypoints, moves legal notices under `legal/`, removes stale planning and validation reports from the root, and pins Autopilot `v0.2.7` so AAA candidate workflows use public product entrypoints. |
-| `0.9.12` | Refreshes local Agent icon provenance and rendering: Codex, Hermes, OpenClaw, and the local fallback now use packaged upstream WebP-first assets with SVG fallbacks, consistent rounded-square clipping, and backend data URLs loaded from packaged assets. |
-| `0.9.11` | Adds Kimi Code as a local CLI agent with discovery, `kimi -p` dispatch, stream-json parsing, capability routing, bundled icon provenance, and packaged-app validation. |
-| `0.9.10` | Patch release that decouples release verification HTTP responses from in-memory reports by reading the latest local report into the fixed public DTO, closing the remaining CodeQL stack-trace exposure data flow. |
-| `0.9.9` | Patch release that narrows release verification and agent interop HTTP responses to fixed public DTOs, keeping detailed diagnostics in local reports/evidence while closing CodeQL stack-trace exposure alerts on the default branch. |
-| `0.9.8` | Patch release that strengthens public API payload sanitization for traceback-shaped strings and keeps CodeQL stack-trace exposure alerts closed while preserving the `0.9.6` frontier agent-team interop release gate. |
-| `0.9.7` | Patch release that keeps public API 500 handling stack-trace safe for CodeQL while preserving the `0.9.6` frontier agent-team interop release gate and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
-| `0.9.6` | Adds the frontier agent-team interop release gate: host workbench surfaces, agent interop E2E evidence, stricter RC verification, unified pre-release gate evidence, and managed pins for Autopilot `v0.2.6`, Orchestrator `v0.7.6`, and Context `v0.8.6`. |
-| `0.9.5` | Final 1.1 regression release: revalidates the packaged macOS host, `~/.across` managed plugin runtime, Context/Orchestrator/Autopilot smoke paths, official Claude Code/Claude Desktop naming, and pins Autopilot `v0.2.5`, Orchestrator `v0.7.5`, and Context `v0.8.5`. |
-| `0.9.4` | Adds workflow-first agent-readable product packaging, including `llms.txt`, `AGENTS.md`, a machine-readable product manifest, copyable agent task examples, and the open-source release handbook; managed pins move to Autopilot `v0.2.4`, Orchestrator `v0.7.4`, and Context `v0.8.4`. |
-| `0.9.3` | Refreshes managed plugin pins to Autopilot `v0.2.3`, Orchestrator `v0.7.3`, and Context `v0.8.3`, incorporates release verification hardening and CodeQL quality fixes, and includes the latest Dependabot security/maintenance updates. |
-| `0.9.2` | Adds Claude Desktop as a local Agent and Agnes as a cloud provider, documents the three core plugins as generic Codex, Claude Code, Claude Desktop, and AAA host plugins, and moves managed pins to Autopilot `v0.2.2`, Orchestrator `v0.7.2`, and Context `v0.8.2`. |
-| `0.9.1` | Hardens the generic agent-plugin path across AAA, Codex, Claude Desktop, and Claude Code with managed `~/.across` wrappers, Autopilot host-session supervision, Orchestrator protocol-gateway helpers, Context host-plugin context/search surfaces, and managed pins for Autopilot `v0.2.1`, Orchestrator `v0.7.1`, and Context `v0.8.1`. |
-| `0.9.0` | Ships the four-product Loop Engineering platform with Across Autopilot managed plugin support, A/B/C candidate workspaces, Candidate Model Capability Lease, distinct-model review, candidate app lifecycle validation, and managed pins for Autopilot `v0.2.0`, Orchestrator `v0.7.0`, and Context `v0.8.0`. |
-| `0.8.29` | Completes the Agent Loop host consumption surface with bounded telemetry, resume-aware timelines, budget indicators, routing alternatives, Across Context memory metrics, autonomous workflow guardrails, and managed pins for Orchestrator `v0.6.18` / Context `v0.7.8`. |
-| `0.8.28` | Finalizes the Agent Loop host-side iteration with release evidence parse-error visibility, release process documentation, architecture boundaries, and Agent Loop completeness guidance. |
-| `0.8.27` | Closes the release gate evidence loop with consumed Live E2E evidence, machine-readable missing gate paths, and stricter manual/failed gate readiness states. |
-| `0.8.26` | Hardens pre-release verification with a reusable live E2E runner, manual Live E2E workflow, Swift behavior checks in Quality CI, and broader shell syntax checks. |
-| `0.8.25` | Documents Agent Loop SSE snapshot/live semantics, keeps timeline source localization covered, and improves live E2E Orchestrator runtime diagnostics. |
-| `0.8.24` | Adds Plugin Center Agent Loop Live/Snapshot timeline mode controls and documents nullable synthesized external acceptance timestamps. |
-| `0.8.23` | Folds detailed Agent Loop evidence inside Plugin Center health details, stabilizes external acceptance records, and moves managed Orchestrator pins to `v0.6.17`. |
-| `0.8.22` | Adds external Orchestrator task acceptance records so REST API and complex E2E views expose accepted delivery evidence consistently. |
-| `0.8.21` | Shows Orchestrator Agent Loop host release evidence in Plugin Center health details, displays routing evidence in task capability preflight, and moves managed Orchestrator pins to `v0.6.16`. |
-| `0.8.20` | Adds Orchestrator registry synchronization diagnostics in Agent Capabilities and refreshes backend dependency floors for pytest-asyncio, numpy, uvicorn, Anthropic, and OpenAI. |
-| `0.8.19` | Completes memory candidate UI consumption with loop candidate hints, shared-memory review focus, and shows the non-secret Orchestrator host capability registry in Agent Capabilities. |
-| `0.8.18` | Enriches external Agent Loop transition responses with compact health/evidence snapshots, refreshes terminal failed/cancelled task evidence, and shows recovery policy decisions plus recovered-step hints in Plugin Center health details. |
-| `0.8.17` | Fixes external task run responses so completed Release E2E tasks immediately show passed evidence-backed quality when the Orchestrator evidence bundle passes. |
-| `0.8.16` | Shows optional Agent Loop evidence summaries in Plugin Center health details and moves managed Orchestrator pins to `v0.6.15`. |
-| `0.8.15` | Streams Plugin Center Agent Loop timelines while probes are running and moves managed Orchestrator pins to `v0.6.14`. |
-| `0.8.14` | Adds Plugin Center Agent Loop health details, timeline sequence chips with audit identifiers, structured cancellation-category display, and moves managed Orchestrator pins to `v0.6.13`. |
-| `0.8.13` | Adds a non-secret host agent capability registry for Orchestrator capability-hint routing, shows Agent Loop event timelines in the Plugin Center, and moves managed pins to Orchestrator `v0.6.12` and Context `v0.7.7`. |
-| `0.8.12` | Adds read-only Agent Loop health inspection from Across Orchestrator `v0.6.11`, proxies health through the AAA backend, and surfaces current action, approval, and lease state in the Plugin Center loop probe. |
-| `0.8.11` | Removes the remaining host-side task-manager and legacy task-history compatibility packages, keeps host task history on the explicit `task_history` boundary, and moves the managed Orchestrator pin to `v0.6.10` for terminal task idempotency. |
-| `0.8.10` | Removes an unused shutdown cancellation helper and moves the managed Orchestrator pin to `v0.6.9`, keeping AAA aligned with the latest Agent Loop lease, cancellation, routing, and failure-type propagation hardening. |
-| `0.8.9` | Synchronizes external Orchestrator task terminal status with Agent Loop terminal states, keeps `stopped` as a loop detail while exposing AAA-compatible task statuses, and moves managed pins to Context `v0.7.6` and Orchestrator `v0.6.8`. |
-| `0.8.8` | Removes the retired in-app task runtime from product task APIs, keeps task orchestration on the external Across Orchestrator boundary, adds host-neutral declarative agent adapters, strengthens Agent Loop checkpoint/action-plan handling, and moves managed pins to Context `v0.7.5` and Orchestrator `v0.6.7`. |
-| `0.8.7` | Product-mode runtime boundary hardening across the packaged app, managed Context/Orchestrator discovery, Agent Loop reject/cancel/retry controls, and host artifact metadata for external Orchestrator tasks; managed pins move to Context `v0.7.4` and Orchestrator `v0.6.6`. |
-| `0.8.6` | Further backend boundary split for release verification, Orchestrator protocol/evidence handling, task API models, and task observability; Python runtime support is constrained to `>=3.10,<3.14`, and CI now checks Swift package lock consistency. |
-| `0.8.5` | Structural boundary split for external task planning, Swift task orchestration models, Swift state reducers, and Across Orchestrator strict-dependency planning helper; managed Orchestrator pin moves to `v0.6.5`. |
-| `0.8.4` | External task boundary metadata is preserved across Swift status updates, orphan recovery reuses existing dispatched jobs, and explicit strict-dependency plans are preserved through Across Orchestrator `v0.6.4`. |
-| `0.8.3` | Hardened managed Across Orchestrator runtime repair, stale editable-install detection, protected-path command override rejection, and pinned Context/Orchestrator installs to `v0.7.3` and `v0.6.3`. |
-| `0.8.2` | Fully external shared-memory and task-runtime boundaries, pinned managed plugin sources for Across Context `v0.7.2` and Across Orchestrator `v0.6.2`, and packaged UI task-form accessibility synchronization. |
-| `0.8.1` | Managed plugin runtime integrity repair, bounded Across Context upgrade/repair reinstalls, no automatic old hidden-directory migration, and built-in MCP defaults reset to managed `~/.across` paths to avoid macOS Documents prompts on fresh installs. |
-| `0.8.0` | Agent Loop v2 host integration, external approval proxy, Plugin Center v2 capability badges, Across Context memory-provider handoff, all-project pending memory review, and managed install sources routed through the Across plugin repositories. |
-| `0.7.1` | Toolbar icon sizing cleanup, Across-owned hollow Plugin Center icon polish, and managed install sources aligned to Across Context `v0.6.1` and Across Orchestrator `v0.5.1`. |
-| `0.7.0` | Agent Loop integration through the external Across Orchestrator plugin, Plugin Center loop probes, checkpoint capability badges, and managed install sources aligned to Across Context `v0.6.0` and Across Orchestrator `v0.5.0`. |
-| `0.6.0` | Plugin Center for Across plugin lifecycle management, external Across Context memory governance through the plugin CLI, and managed install sources aligned to Across Context `v0.5.0` and Across Orchestrator `v0.4.0`. |
-| `0.5.1` | Tool approval now preserves successful MCP/local tool results even if the automatic continuation hits a gateway fallback. |
-| `0.5.0` | Unified Across ecosystem runtime under `~/.across`, external Across Context MCP plugin data under `~/.across/data/across-context`, sidecar-first Across Orchestrator under `~/.across/plugins/across-orchestrator`, and AAA host discovery through `~/.across/bin`. |
-| `0.4.3` | Plugin-required Across Orchestrator slot with one-click managed install, external HTTP/CLI task lifecycle, app-grade Release E2E evidence, packaged-app installer fix, and no built-in task-orchestration fallback for new submissions. |
-| `0.4.2` | Plugin-first Across Context shared memory, external `across-context mcp` preference with built-in compatibility fallback, implementation status in API/UI, and packaged-app proof that standalone CLI and app share one vault. |
-| `0.4.1` | Expanded local-agent/cloud-provider icon catalog, OpenCode MIT-source icon treatment, runtime Codex.app icon support with OpenAI fallback, unsupported local IDE integration cleanup, and stricter icon release-status checks. |
-| `0.4.0` | Release Evidence Center, Startup Diagnostics, one-click RC Verification, local JSON/Markdown release reports, packaged-app health checks, exact seven-file Release E2E proof, and CI-backed open-source release checks. |
-| `0.3.1` | Evidence Bundle export for completed tasks, non-secret Agent Cards, richer release-evaluation audit traces, persisted task quality rechecks, and public repository guards for private docs, local data, signing files, README assets, and secret patterns. |
-| `0.3.0` | Release Evaluation summary, fixed high-complexity cross-agent Release E2E scenario, stronger delivery quality gates, capability preflight, native skill readiness, MCP safety signals, and targeted quality-remediation feedback. |
-| `0.2.0` | Delivery Quality Benchmark, exact deliverable contracts, project/workspace hygiene checks, static web and browser probes, quality score reporting, and benchmark APIs for comparing complex task delivery across versions. |
+| `0.9.13`-`0.9.14` | Consolidates public Markdown entrypoints, keeps removed planning docs out of agent-readable surfaces, and verifies producer-first source sync. |
+| `0.9.11`-`0.9.12` | Adds Kimi Code and refreshes local-agent icon provenance, packaged assets, and backend icon loading. |
+| `0.9.6` | Adds the frontier agent-team interop release gate, including workbench status, E2E evidence, stricter RC verification, and unified pre-release gate evidence. |
+| `0.9.0` | Ships the four-product Loop Engineering platform with managed Autopilot, candidate workspaces, model lease checks, distinct-model review, and human-review promotion packages. |
+| `0.8.0` | Moves Agent Loop execution into the external Orchestrator runtime while AAA stays the host UI, approval proxy, Plugin Center, and memory review surface. |
+| `0.5.0` | Standardizes Across-owned runtime paths under `~/.across`, including plugin wrappers, plugin runtime code, and durable product data. |
+| `0.4.0` | Adds Release Evidence Center, Startup Diagnostics, one-click RC Verification, local release reports, packaged-app checks, Release E2E proof, and open-source guards. |
+| `0.2.0` | Introduces delivery quality benchmarks, exact deliverable contracts, workspace hygiene checks, static web/browser probes, and quality score reporting. |
 
 ## Core Capabilities
 
+- Guided workflow start for Repository Quality Copilot, Plugin Compatibility
+  Lab, and Release Captain, with editable task drafts before submission.
 - Cross-agent task orchestration through the external Across Orchestrator plugin, with an owner agent, subtask agents, waves, status tracking, delivery health, and acceptance-oriented review.
 - Per-agent capability profiles for tuning built-in skills, custom skills, native local-agent skills, MCP plugin scope, tool scope, and execution instructions before tasks are decomposed.
 - Native skill management for local agents: create directory-based Claude Code skills, inspect installed OpenClaw/Hermes skills, and use each agent's own skill commands for install, update, and validation where supported.
@@ -292,23 +256,26 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.15` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. The current release is `0.9.16` and
+source-first: the repository is intended for local building and inspection, not
+notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
+release notes.
 
-The `0.9.15` release keeps the `0.9.14` producer-first source sync and adds the
-full frontier interop release gate: MCP Tasks projection, LF A2A v2 delegation,
-AG-UI task-card projection, Remote MCP/OAuth v1, OTel export, Skills bridge,
-optional Computer Use/browser sandbox evidence, memory backend projections, and
-local agent protocol bridges. The release pins the latest main-derived producer
-releases: Across Autopilot `v0.2.8`, Across Orchestrator `v0.7.8`, and Across
-Context `v0.8.8`; all three managed plugins are installed under `~/.across` and
-can also be consumed by Codex, Claude Code, Claude Desktop, and other
-CLI/MCP-capable hosts.
+Current managed producer pins:
 
-The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
-verification reports malformed pre-release gate evidence as structured parse
-errors in JSON, Markdown, and Diagnostics UI, while the release process and
-architecture boundary documents keep long-horizon automation and product
-decisions outside the closed Agent Loop implementation scope.
+- Across Autopilot `v0.2.8`
+- Across Orchestrator `v0.7.8`
+- Across Context `v0.8.8`
+
+The current release makes Workflows the task entry point: Repository Quality
+Copilot, Plugin Compatibility Lab, and Release Captain now create editable task
+drafts while the expert task form remains available. The managed plugins
+install under `~/.across` and can also be consumed by Codex, Claude Code,
+Claude Desktop, and other CLI/MCP-capable hosts.
+
+AAA remains the host UI and policy surface. It uses plugin manifests, wrappers,
+HTTP, CLI, MCP, or host APIs; product code must not import implementation files
+from Autopilot, Orchestrator, or Context development checkouts.
 
 Operational references:
 
@@ -319,243 +286,6 @@ Operational references:
   agent-readable product entrypoints.
 - `examples/agent-tasks/` contains the copyable workflow tasks for Repository
   Quality Copilot, Release Captain, and Plugin Compatibility Lab.
-
-The `0.8.26` release hardens the pre-release verification workflow. It adds a
-reusable live E2E runner, a manual GitHub Live E2E workflow, standalone Swift
-behavior checks in Quality CI, and broader shell syntax coverage for
-`build_app.sh` plus every script under `scripts/`.
-
-The `0.8.27` release closes the release gate evidence loop. RC verification
-consumes local and GitHub Live E2E gate evidence, reports machine-readable
-missing required gate paths, keeps required manual gates in attention until
-evidence is attached, and blocks release approval when required gate evidence
-fails.
-
-The `0.8.25` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
-Across Context `v0.7.7`. Plugin Center Agent Loop timelines now expose a
-Live/Snapshot mode control and distinguish live, snapshot, fallback, and
-unavailable timeline sources. The backend Agent Loop SSE endpoint returns a
-finite snapshot stream by default; pass `follow=true` when a client needs live
-timeline polling. Live E2E now reports missing external Orchestrator runtime
-configuration before task scenarios run.
-
-The `0.8.24` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
-Across Context `v0.7.7`. Plugin Center Agent Loop timelines expose a
-Live/Snapshot mode control and distinguish live, snapshot, fallback, and
-unavailable timeline sources.
-
-The `0.8.23` release keeps AAA aligned with Across Orchestrator `v0.6.17` and
-Across Context `v0.7.7`. Plugin Center loop health details keep release
-readiness visible while folding lower-level Agent Loop evidence into expandable
-details. External Orchestrator acceptance records also avoid nondeterministic
-fallback timestamps and de-duplicate root-cause artifact ids.
-For synthesized external acceptance records, `created_at` is `float | null`:
-AAA preserves upstream task timestamps when present and returns `null` instead
-of generating wall-clock time when upstream timestamps are absent.
-
-The `0.8.22` release keeps AAA aligned with Across Orchestrator `v0.6.16` and
-Across Context `v0.7.7`. External Orchestrator task details synthesize a
-task-level acceptance record from artifact and delivery-quality evidence so REST
-API and complex E2E task views expose accepted delivery evidence consistently.
-
-The `0.8.21` release keeps AAA aligned with Across Orchestrator `v0.6.16` and
-Across Context `v0.7.7`. Plugin Center loop health details now show
-Orchestrator host release evidence readiness, the first attention check, risk,
-and next action. Task capability preflight also displays backend routing
-evidence so platform-skill and native-skill matches are visible before
-submission.
-
-The `0.8.20` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
-Across Context `v0.7.7`. Agent Capabilities now diagnoses whether the
-non-secret Orchestrator host capability registry matches each local agent
-profile, including skills, plugins, tools, active native skills, and
-strict-scope state. Backend dependency floors were also refreshed for
-pytest-asyncio, numpy, uvicorn, Anthropic, and OpenAI after local regression
-checks and PR CI.
-
-The `0.8.19` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
-Across Context `v0.7.7`. Plugin Center can now show structured Agent Loop
-memory candidates, list them in Shared Memory Review, focus the Across Context
-review list on candidate status, and Agent Capabilities shows the non-secret
-Orchestrator host capability registry with exported descriptors and redaction
-state.
-
-The `0.8.18` release keeps AAA aligned with Across Orchestrator `v0.6.15` and
-Across Context `v0.7.7`. External Agent Loop run, approve, reject, cancel, and
-retry responses now include best-effort compact loop health and evidence
-snapshots; failed and cancelled terminal tasks also refresh sidecar evidence.
-Plugin Center health details also show recovery policy decisions and
-recovered-step hints from Orchestrator evidence summaries.
-
-The `0.8.17` release completed external task run responses by reading the
-sidecar evidence bundle before building host-visible task info, so Release E2E
-quality, produced-file inventory, and delivery report status are consistent
-immediately after a run.
-
-The `0.8.16` release aligned AAA with Across Orchestrator `v0.6.15` and Across
-Context `v0.7.7`. Plugin Center loop probes can now display compact Agent Loop
-evidence summaries for event audit coverage, routing, recovery, and memory
-candidate counts when the sidecar supports the read-only summary protocol.
-Health, timeline, summary, and event inspection remain best-effort, so
-successful Plugin Center probes are not marked failed if optional loop
-inspection data is temporarily unavailable.
-
-The `0.8.15` release added live Agent Loop timeline streaming while a probe is
-running, then merged the final durable event snapshot for compatibility with
-older sidecars.
-
-The `0.8.14` release added Agent Loop health detail popovers, timeline sequence
-chips with hover audit identifiers, and structured cancellation categories while
-continuing to tolerate future category strings from Orchestrator.
-
-The `0.8.13` release added a non-secret host agent capability registry for
-Orchestrator capability-hint routing and Agent Loop event timelines after
-Plugin Center loop probes.
-
-The `0.8.11` release removes the remaining host-side task-manager and legacy
-task-history compatibility packages from the backend, keeps host-visible task
-history on the explicit `task_history` boundary, and aligns AAA with Across
-Orchestrator `v0.6.10` and Across Context `v0.7.6`.
-
-The `0.8.9` release aligns AAA with Across Orchestrator `v0.6.8` and Across
-Context `v0.7.6`. External task runs now receive terminal task statuses from
-the Orchestrator Agent Loop lifecycle: cancelled loops surface as `cancelled`,
-and stopped loops such as approval rejection or max-turn exhaustion surface as
-`failed` while preserving the detailed loop status in metadata and events.
-
-The `0.8.8` release removes the retired in-app task runtime from product task
-API startup and diagnostics. Task orchestration stays on the external Across
-Orchestrator boundary, now using Orchestrator `v0.6.7` generic declarative agent
-adapters while preserving AAA's existing task UI and restore flow. Agent Loop
-checkpointing, host action-plan handoff, repeated action handling, and
-dispatch-to-quality ordering are strengthened, and managed plugin installs are
-pinned to Across Context `v0.7.5` and Across Orchestrator `v0.6.7`.
-
-The `0.8.7` release closes the product-mode runtime boundary across the
-packaged app, backend plugin discovery, managed plugin installers, and Swift
-local path selection. Protected checkout paths under user project folders are
-ignored unless developer mode is explicit, Agent Loop host controls now cover
-approve, reject, cancel, and retry paths, external Orchestrator artifact
-metadata includes host-readable file paths and sizes, and managed plugin
-installs are pinned to Across Context `v0.7.4` and Across Orchestrator
-`v0.6.6`.
-
-The `0.8.6` release continues the structural boundary cleanup by moving release
-verification, Orchestrator protocol/evidence helpers, task API models, and task
-observability helpers out of the FastAPI route module. It also constrains
-backend runtime support to Python `>=3.10,<3.14`, adds a local Python 3.11
-baseline, and checks Swift package lock consistency in CI.
-
-The `0.8.5` release moves external task planning out of the FastAPI route
-module, moves Swift task orchestration DTOs and state reducers into model
-boundaries, and pins managed Orchestrator installs to `v0.6.5` where strict
-dependency repair lives in a dedicated planning helper.
-
-The `0.8.4` release preserves external task boundary metadata through Swift
-state updates, prevents duplicate orphan redispatch, and pins managed
-Orchestrator installs to `v0.6.4` so explicit strict-dependency plans survive
-host submission through the plugin runtime.
-
-The `0.8.3` release hardens the managed Across Orchestrator runtime boundary.
-AAA now repairs stale editable installs and source-tree leftovers before
-reinstalling the plugin, rejects protected-path command overrides unless
-development mode explicitly allows them, and pins managed Context/Orchestrator
-installs to `v0.7.3` and `v0.6.3`.
-
-The `0.8.2` release completes the stricter product-boundary split for the
-current source-first line. Shared memory is resolved through the external Across
-Context plugin rather than an app-owned compatibility runtime, task
-orchestration remains routed through the external Across Orchestrator plugin,
-and managed plugin installs are pinned to Across Context `v0.7.2` and Across
-Orchestrator `v0.6.2`. The packaged task form also accepts accessibility value
-writes for the project-directory field, keeping UI-level E2E submission aligned
-with normal user interaction.
-
-The `0.8.1` release is a runtime hygiene patch for the Across plugin boundary.
-Managed plugin installs now reject stale wrappers, editable installs, and
-Python metadata that point back to protected user directories. Across Context
-repair and upgrade force a fresh managed install with an app-owned npm cache and
-bounded install timeout. Built-in local knowledge, SQLite, and filesystem MCP
-defaults use managed `~/.across` paths, and saved settings that still reference
-old Across hidden directories or the previous Documents defaults are reset to
-the managed namespace.
-
-The `0.8.0` release moves Agent Loop from a probe-level lifecycle into an
-adapter-backed external runtime path. Across Orchestrator owns dynamic loop
-planning, remediation dispatch, checkpoints, approval execution, and memory
-provider hooks. Across Agents Assistant starts the sidecar with
-`ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context`, proxies approval,
-rejection, cancellation, and retry actions, and surfaces Agent Loop v2 capability
-metadata without embedding orchestration logic in the app.
-Plugin Center memory review includes project-scoped pending summaries from
-Across Context, so Agent Loop write candidates can be approved from the host UI.
-
-The `0.7.1` release keeps the Agent Loop architecture intact while polishing
-the console surface: toolbar icons now share one sizing metric, the Plugin
-Center uses an Across-owned hollow puzzle-piece SVG, and managed plugin install
-sources point to Across Context `v0.6.1` and Across Orchestrator `v0.5.1`.
-
-The `0.7.0` Agent Loop work keeps AAA as the console and plugin host while
-moving the repeat-observe-act-checkpoint lifecycle into Across Orchestrator.
-The Plugin Center can inspect loop capabilities, start a loop probe through the
-external plugin, and show checkpoint/memory-hook support without reading plugin
-private data directly.
-
-The `0.6.0` plugin lifecycle work adds a Plugin Center for installing,
-repairing, probing, and uninstalling Across ecosystem plugins. Shared memory
-review now goes through the external Across Context CLI contract, so the host
-does not need to own the plugin's vault internals.
-
-The `0.5.0` ecosystem work standardizes every Across-owned runtime path under
-`~/.across`. Across Agents Assistant stores its own data in
-`~/.across/data/across-agents-assistant`, discovers plugin wrappers from
-`~/.across/bin`, and keeps plugin runtime code under `~/.across/plugins`.
-Fresh installs and managed plugins do not read or write older standalone
-hidden directories.
-
-Across Context remains a standalone shared-memory plugin. Across Agents
-Assistant runs it through the external `across-context mcp` server in product
-mode, reports the active implementation mode in MCP settings/API responses, and
-stores shared memory in `~/.across/data/across-context`.
-
-Across Orchestrator is also standalone. Across Agents Assistant installs it
-under `~/.across/plugins/across-orchestrator`, launches it as a local sidecar
-HTTP runtime by default, and keeps CLI/MCP as external protocol adapters. If
-the external plugin is not installed or connected, task orchestration is
-unavailable and the UI offers one-click installation; new task submission does
-not fall back to any in-app task runtime.
-
-Startup diagnostics discover Across-owned plugins by reading manifests and
-wrappers under `~/.across/plugins` and `~/.across/bin`. That discovery path is
-read-only and does not launch plugin processes, so startup should not require
-Documents access. Explicit refresh, install, task submission, and MCP actions
-may start the selected plugin when the user asks for that capability.
-
-The `0.4.1` catalog work focuses on making the main agent and model surface ready for public source inspection:
-
-- Local-agent and cloud-provider icons are bundled as dark/light neutral tiles with provenance recorded in `macOS-Client/Sources/Assets/icons/agent-icon-sources.json`.
-- Codex prefers the installed OpenAI-signed `Codex.app` icon at runtime when present, while falling back to the bundled OpenAI tile when it is not installed.
-- Claude Desktop prefers the installed Claude app icon at runtime when present, while falling back to the bundled LobeHub Claude tile; Kimi Code uses the LobeHub Kimi mark inside the app-owned neutral tile; Agnes uses a project-original `Ag` compatibility tile, not an official Agnes logo.
-- OpenCode uses the LobeHub Icons `opencode.svg` source inside the app-owned tile instead of relying on a Marketplace image with unresolved redistribution terms.
-- Unsupported local IDE integrations are omitted from the shipped local-agent catalog until their CLI install and authentication flow can be supported reliably.
-- `scripts/open_source_check.sh` now blocks icon entries that still require release review.
-
-The `0.4.0` quality work that this release builds on focuses on making complex agent deliveries easier to inspect and harder to overclaim:
-
-- Release Evaluation summarizes recent task evidence into a local readiness signal without rerunning expensive probes or restoring old tasks automatically.
-- Release Evaluation now includes a readiness checklist, recent score trend, required probe coverage, local/cloud agent-mix coverage, benchmark status, and per-task audit traces so release quality can be compared across versions instead of judged from one task row.
-- Release Evidence Center turns those backend audit signals into an in-app review surface with readiness checks, probe coverage, recent task evidence, per-task Evidence Bundle viewing, and local JSON export.
-- Startup Diagnostics adds a first-run and packaged-app health surface for backend status, provider readiness, app data paths, logs, socket, database, task persistence, and local evidence exports.
-- RC Verification adds a one-click release report in Settings -> Diagnostics. It combines startup diagnostics, the latest fixed Release E2E benchmark, release-evaluation context, and local JSON/Markdown report files under the app data directory.
-- Task details expose execution evidence, quality gates, remediation history, quality score, and local/cloud agent mix.
-- Agent Cards include native-skill health, tool-risk summaries, strict-scope warnings, and repair hints for unavailable native skills. A non-secret `/api/agent-cards` export provides an A2A-like internal capability card for each supported agent.
-- Complex Release E2E validates an exact multi-file Web/API/CLI delivery through static checks, API probes, CLI checks, browser evidence, workspace hygiene, security/privacy scans, and cross-agent coverage.
-- Complex Release E2E remediation now reports actual remediation subtask count and gives agents targeted patch plans for Route Evidence failures, reducing false benchmark failures and broad rewrite attempts.
-- Delivery quality benchmarks and evidence bundles support both live in-memory tasks and lazily loaded persisted task records, so historical task details can be rechecked from the packaged app without restoring or restarting the task.
-- Delivery contract extraction filters system temporary project-directory hints so local scratch directories do not become phantom deliverables.
-- Native skill readiness and MCP safety information now participate in task preflight so unavailable skills stay visible for repair but do not become strong routing signals.
-- GitHub Actions, CodeQL, Dependabot, secret scanning, and `scripts/open_source_check.sh` protect the public repository from private docs, local runtime data, signing artifacts, missing README assets, whitespace issues, dependency drift, and common secret patterns.
-- The packaged app defaults to a faster backend bundle layout and avoids reopening duplicate main windows on launch.
 
 ## Quick Start
 
@@ -594,14 +324,19 @@ open -n "/Applications/Across Agents Assistant.app"
 
 On first launch:
 
-- Open Settings -> Diagnostics to confirm backend health, local runtime paths, provider readiness, and task persistence before starting a complex task.
+- Open Settings -> Diagnostics to confirm backend health, local runtime paths,
+  provider readiness, and task persistence.
 - Open Model Settings.
 - Configure at least one cloud LLM API key, or install/configure one local agent.
 - Supported local agent integrations currently include OpenClaw, Hermes, Claude
   Code, Claude Desktop, Codex, Kimi Code, OpenCode, and Cursor Agent.
 - Open Agent Capabilities to tune each agent's built-in/custom skills, install or inspect native local-agent skills, configure MCP plugins, set tool scope, and add task-specific operating notes.
 - Native skills that fail readiness checks are shown as unavailable with the missing requirement, and are excluded from automatic capability routing until repaired.
-- When creating a complex task, review Capability Preflight before submitting; it previews the recommended agent and matching skills.
+- Open Workflows and start with Repository Quality Copilot, Plugin
+  Compatibility Lab, or Release Captain. The generated task draft stays editable
+  before submission.
+- For expert tasks, review Capability Preflight before submitting; it previews
+  the recommended agent and matching skills.
 - Grant macOS permissions only when you need the related feature, such as microphone, screen capture, Apple Events, or file access.
 
 Local runtime state is stored under `~/.across`. Build outputs, local credentials, logs, databases, certificates, and model files should stay outside Git.
