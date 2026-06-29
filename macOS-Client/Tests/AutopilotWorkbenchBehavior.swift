@@ -72,6 +72,12 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
             "frontier_interop_status": "passed",
             "remote_mcp_template_status": "passed",
             "a2a_delegation_status": "passed",
+            "projection_status": "passed",
+            "agui_projection_status": "passed",
+            "async_task_status": "passed",
+            "context_skills_bridge_status": "passed",
+            "computer_use_sandbox_status": "passed",
+            "local_agent_protocol_status": "passed",
             "otel_span_count": 21,
             "otlp_resource_span_count": 1,
             "eval_case_count": 5
@@ -112,6 +118,9 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
     assert(snapshot.sections["protocol_gateway"]?.endpoint == "/api/ecosystem/protocol-gateway", "Protocol gateway section should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["passed_count"]?.description == "11", "Agent interop E2E section should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["frontier_interop_status"]?.description == "passed", "Agent interop frontier status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["projection_status"]?.description == "passed", "Agent interop projection status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["agui_projection_status"]?.description == "passed", "Agent interop AG-UI status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["async_task_status"]?.description == "passed", "Agent interop async task status should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["otel_span_count"]?.description == "21", "Agent interop OTel span count should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["otlp_resource_span_count"]?.description == "1", "Agent interop OTLP resource span count should decode")
     assert(snapshot.actions.first?.id == "open_promotion_review", "Actions should decode")

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.9.15 - 2026-06-29
+
+### Added
+
+- Added the full frontier interop release gate for MCP Tasks projection, LF A2A
+  v2 delegation, AG-UI task-card projection, Remote MCP/OAuth v1, OTel GenAI
+  export, Skills bridge, optional Computer Use sandbox evidence, memory backend
+  projections, and local agent protocol bridges.
+
+### Changed
+
+- Updated managed producer pins to Across Orchestrator `v0.7.8`, Across
+  Context `v0.8.8`, and Across Autopilot `v0.2.8`.
+- Switched Plugin Compatibility Lab public entrypoints to
+  `plugin-compatibility-lab-v2`.
+
 ## 0.9.14 - 2026-06-29
 
 ### Changed

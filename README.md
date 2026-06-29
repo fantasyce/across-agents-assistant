@@ -198,6 +198,7 @@ The screenshots above are still the primary entry points: project chat, task orc
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.15` | Completes the P0-P3 frontier interop release gate with MCP Tasks projection, LF A2A v2, AG-UI task-card projection, Remote MCP/OAuth v1, OTel export, Skills bridge, optional sandbox evidence, memory backend projections, local agent protocol bridges, and managed pins for Autopilot `v0.2.8`, Orchestrator `v0.7.8`, and Context `v0.8.8`. |
 | `0.9.14` | Refreshes managed producer pins to Orchestrator `v0.7.7`, Context `v0.8.7`, and Autopilot `v0.2.7` after all three producer releases were verified against their current `origin/main` commits. |
 | `0.9.13` | Consolidates tracked Markdown entrypoints, moves legal notices under `legal/`, removes stale planning and validation reports from the root, and pins Autopilot `v0.2.7` so AAA candidate workflows use public product entrypoints. |
 | `0.9.12` | Refreshes local Agent icon provenance and rendering: Codex, Hermes, OpenClaw, and the local fallback now use packaged upstream WebP-first assets with SVG fallbacks, consistent rounded-square clipping, and backend data URLs loaded from packaged assets. |
@@ -291,15 +292,17 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.14` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
+This project is under active development. More local agents, more cloud LLMs, stronger delivery validation, richer tool integrations, and additional product workflows are planned. The current release is `0.9.15` and source-first: the repository is intended for local building and inspection, not notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for the release summary.
 
-The `0.9.14` release keeps the `0.9.13` documentation-surface cleanup, the
-`0.9.12` local Agent icon polish, and the `0.9.6` frontier agent-team
-interoperability release-gate evidence. The release pins the latest
-main-derived producer releases: Across Autopilot `v0.2.7`, Across Orchestrator
-`v0.7.7`, and Across Context `v0.8.7`; all three managed plugins are installed under
-`~/.across` and can also be consumed by Codex, Claude Code, Claude Desktop, and
-other CLI/MCP-capable hosts.
+The `0.9.15` release keeps the `0.9.14` producer-first source sync and adds the
+full frontier interop release gate: MCP Tasks projection, LF A2A v2 delegation,
+AG-UI task-card projection, Remote MCP/OAuth v1, OTel export, Skills bridge,
+optional Computer Use/browser sandbox evidence, memory backend projections, and
+local agent protocol bridges. The release pins the latest main-derived producer
+releases: Across Autopilot `v0.2.8`, Across Orchestrator `v0.7.8`, and Across
+Context `v0.8.8`; all three managed plugins are installed under `~/.across` and
+can also be consumed by Codex, Claude Code, Claude Desktop, and other
+CLI/MCP-capable hosts.
 
 The `0.8.28` release finalized the prior Agent Loop host-side iteration. RC
 verification reports malformed pre-release gate evidence as structured parse
@@ -688,11 +691,11 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.7
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.7
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.8
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.8
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
-ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.7
+ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8
 ACROSS_ORCHESTRATOR_MEMORY_PROVIDER=across-context
 ACROSS_CONTEXT_COMMAND="$HOME/.across/bin/across-context"
 ```
@@ -805,7 +808,7 @@ The packaged app reads these files from
 `$HOME/.across/data/across-agents-assistant/release-reports/`. It does not need
 or use a development checkout path to verify attached release evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.7.7` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.7.8` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON

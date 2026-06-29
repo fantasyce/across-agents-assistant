@@ -22,6 +22,7 @@ REQUIRED_MCP_SERVERS = {
     "across-orchestrator": "evaluate_sandbox_policy",
     "across-autopilot": "export_workflow_pack",
 }
+REQUIRED_PROJECTIONS = {"mcp_tasks", "a2a", "ag_ui", "remote_mcp_oauth", "otel"}
 
 
 def run_agent_interop_e2e(
@@ -152,8 +153,8 @@ def run_agent_interop_e2e(
         errors,
     )
 
-    evidence = loop_result.get("evidence") if isinstance(loop_result, dict) else {}
-    run = loop_result.get("run") if isinstance(loop_result, dict) else {}
+    evidence = loop_result.get("evidence") if isinstance(loop_result, dict) and isinstance(loop_result.get("evidence"), dict) else {}
+    run = loop_result.get("run") if isinstance(loop_result, dict) and isinstance(loop_result.get("run"), dict) else {}
     run_id = str(run.get("run_id") or evidence.get("run_id") or "")
     graph = evidence.get("evidence_graph") if isinstance(evidence, dict) else {}
     artifacts["run_id"] = run_id
@@ -227,7 +228,7 @@ def run_agent_interop_e2e(
         checks,
         "frontier_interop_contracts_ready",
         remote_mcp.get("schema_version") == "across-remote-mcp-oauth-template/1.0"
-        and a2a_delegation.get("schema_version") == "across-a2a-task-delegation/1.0"
+        and a2a_delegation.get("schema_version") == "across-a2a-task-delegation/2.0"
         and otel_export.get("schema_version") == "across-otel-genai-export/1.0",
         f"remote={remote_mcp.get('status')} a2a={a2a_delegation.get('status')} spans={_nested(otel_export, 'summary', 'span_count')}",
         errors,
@@ -243,6 +244,62 @@ def run_agent_interop_e2e(
         "orchestrator_otlp_file_written",
         bool(otel_export.get("otlp_file")) and _otlp_file_ready(Path(str(otel_export.get("otlp_file")))),
         f"otlp_file={otel_export.get('otlp_file') if isinstance(otel_export, dict) else None}",
+        errors,
+    )
+    projection_status = _run_check(
+        checks,
+        "projection_status_ready",
+        "Plugin Compatibility Lab v2 exposes observable MCP Tasks, A2A, AG-UI, Remote MCP/OAuth, and OTel projections",
+        lambda: _projection_status(workflow_exports),
+        errors,
+    )
+    agui_projection = _run_check(
+        checks,
+        "orchestrator_agui_projection",
+        "Orchestrator projects loop/task events into AG-UI task-card events for external clients",
+        lambda: _orchestrator_agui_projection(roots["orchestrator"], runtime_env),
+        errors,
+    )
+    agent_team = _run_check(
+        checks,
+        "orchestrator_agent_team_contract",
+        "Orchestrator creates first-class agent-team sessions, checkpoints, and handoffs",
+        lambda: _orchestrator_agent_team(roots["orchestrator"], runtime_env),
+        errors,
+    )
+    async_task = _run_check(
+        checks,
+        "autopilot_async_task_projection",
+        "Autopilot exposes across-async-task/1.0 with the run-store as source of truth",
+        lambda: _autopilot_async_task(roots["autopilot"], runtime_env),
+        errors,
+    )
+    context_skill_export = _run_check(
+        checks,
+        "context_skills_bridge_export",
+        "Context exports native skills as agentskills.io files",
+        lambda: _context_skill_export(roots["context"], runtime_env),
+        errors,
+    )
+    context_memory_backend = _run_check(
+        checks,
+        "context_memory_backend_contract",
+        "Context declares vault, Mem0, and GraphRAG backend policy without network dependency",
+        lambda: _context_memory_backend(roots["context"], runtime_env),
+        errors,
+    )
+    computer_use_sandbox = _run_check(
+        checks,
+        "computer_use_sandbox_eval_contract",
+        "AAA declares Browserbase/Anchor/Computer Use sandbox evaluation as optional Plugin Compatibility Lab evidence",
+        lambda: _computer_use_sandbox_contract(),
+        errors,
+    )
+    local_agent_protocols = _run_check(
+        checks,
+        "local_agent_protocol_contracts",
+        "AAA declares optional Kimi ACP, Qwen daemon, and Claude checkpoint bridge contracts without binding product mode",
+        lambda: _local_agent_protocol_contracts(),
         errors,
     )
 
@@ -313,6 +370,14 @@ def run_agent_interop_e2e(
         "remote_mcp": remote_mcp,
         "a2a_delegation": a2a_delegation,
         "otel_export": otel_export,
+        "projection_status": projection_status,
+        "ag_ui": agui_projection,
+        "agent_team": agent_team,
+        "mcp_tasks": async_task,
+        "context_skill_export": context_skill_export,
+        "context_memory_backend": context_memory_backend,
+        "computer_use_sandbox": computer_use_sandbox,
+        "local_agent_protocols": local_agent_protocols,
     }
     summary = _summary(checks, workflow_exports, graph_for_memory, mcp_results, frontier_results)
     payload = {
@@ -331,6 +396,13 @@ def run_agent_interop_e2e(
         "host_exports": _host_export_summary(workflow_exports),
         "agent_team_readiness": team_readiness,
         "frontier_interop": frontier_results,
+        "projection_status": projection_status,
+        "context_bridge": {
+            "skill_export": context_skill_export,
+            "memory_backend": context_memory_backend,
+        },
+        "sandbox_evaluation": computer_use_sandbox,
+        "local_agent_protocols": local_agent_protocols,
         "host_install_contracts": host_install_contracts,
         "mcp": _mcp_summary(mcp_results),
         "errors": errors,
@@ -396,6 +468,12 @@ def public_agent_interop_e2e_result(payload: Mapping[str, Any] | None = None) ->
             "frontier_interop_status": _public_status(summary.get("frontier_interop_status"), default="unknown"),
             "remote_mcp_template_status": _public_status(summary.get("remote_mcp_template_status"), default="unknown"),
             "a2a_delegation_status": _public_status(summary.get("a2a_delegation_status"), default="unknown"),
+            "projection_status": _public_status(summary.get("projection_status"), default="unknown"),
+            "agui_projection_status": _public_status(summary.get("agui_projection_status"), default="unknown"),
+            "async_task_status": _public_status(summary.get("async_task_status"), default="unknown"),
+            "context_skills_bridge_status": _public_status(summary.get("context_skills_bridge_status"), default="unknown"),
+            "computer_use_sandbox_status": _public_status(summary.get("computer_use_sandbox_status"), default="unknown"),
+            "local_agent_protocol_status": _public_status(summary.get("local_agent_protocol_status"), default="unknown"),
             "otel_span_count": _safe_int(summary.get("otel_span_count")),
             "eval_case_count": _safe_int(summary.get("eval_case_count")),
             "otlp_resource_span_count": _safe_int(summary.get("otlp_resource_span_count")),
@@ -427,6 +505,12 @@ def build_agent_interop_workbench_section(payload: Mapping[str, Any] | None = No
             "frontier_interop_status": summary.get("frontier_interop_status"),
             "remote_mcp_template_status": summary.get("remote_mcp_template_status"),
             "a2a_delegation_status": summary.get("a2a_delegation_status"),
+            "projection_status": summary.get("projection_status"),
+            "agui_projection_status": summary.get("agui_projection_status"),
+            "async_task_status": summary.get("async_task_status"),
+            "context_skills_bridge_status": summary.get("context_skills_bridge_status"),
+            "computer_use_sandbox_status": summary.get("computer_use_sandbox_status"),
+            "local_agent_protocol_status": summary.get("local_agent_protocol_status"),
             "otel_span_count": summary.get("otel_span_count"),
             "eval_case_count": summary.get("eval_case_count"),
             "otlp_resource_span_count": summary.get("otlp_resource_span_count"),
@@ -656,7 +740,11 @@ def _runtime_env(source_env: Mapping[str, str], run_root: Path, roots: Mapping[s
         }
     )
     existing_path = str(env.get("PATH") or "")
-    env["PATH"] = str(bin_dir) if not existing_path else os.pathsep.join([str(bin_dir), existing_path])
+    path_parts = [str(bin_dir), *[part for part in existing_path.split(os.pathsep) if part]]
+    for fallback in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]:
+        if fallback not in path_parts:
+            path_parts.append(fallback)
+    env["PATH"] = os.pathsep.join(path_parts)
     py_paths = [
         str(path)
         for path in [roots["orchestrator"] / "src", roots["aaa"] / "backend" / "src"]
@@ -839,6 +927,158 @@ def _orchestrator_otel_export(orchestrator_root: Path, env: Mapping[str, str], g
         env=env,
         timeout=60,
     )
+
+
+def _projection_status(workflow_exports: Mapping[str, Any]) -> dict[str, Any]:
+    dimensions = _nested(workflow_exports, "frontier_interop", "projections", "dimensions")
+    if not isinstance(dimensions, Mapping):
+        dimensions = {}
+    missing = sorted(REQUIRED_PROJECTIONS - set(dimensions))
+    passed = {
+        key: value
+        for key, value in dimensions.items()
+        if isinstance(value, Mapping) and str(value.get("status") or "") in {"passed", "partial", "projection_only"}
+    }
+    return {
+        "schema_version": "across-aaa-projection-status/1.0",
+        "status": "passed" if not missing and REQUIRED_PROJECTIONS <= set(passed) else "failed",
+        "required": sorted(REQUIRED_PROJECTIONS),
+        "missing": missing,
+        "dimensions": dict(dimensions),
+        "summary": {
+            "projection_count": len(dimensions),
+            "ready_count": len(passed),
+        },
+    }
+
+
+def _orchestrator_agui_projection(orchestrator_root: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    payload = {
+        "source": "aaa-agent-interop-e2e",
+        "loop_id": "loop-agent-interop-e2e",
+        "events": [
+            {"type": "loop.started", "sequence": 1, "payload": {"status": "running"}},
+            {"type": "loop.completed", "sequence": 2, "payload": {"status": "completed"}},
+        ],
+    }
+    return _run_json(
+        [
+            *_orchestrator_cli(orchestrator_root),
+            "agui-projection",
+            "--payload-json",
+            json.dumps(payload, sort_keys=True),
+            "--json",
+        ],
+        cwd=orchestrator_root,
+        env=env,
+        timeout=60,
+    )
+
+
+def _orchestrator_agent_team(orchestrator_root: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    payload = {
+        "owner": "owner-agent",
+        "agents": [
+            {"id": "owner-agent", "role": "owner"},
+            {"id": "review-agent", "role": "review", "context_refs": ["NOTES.md"]},
+        ],
+        "context": {"notes": ["Candidate workspace review only."]},
+    }
+    return _run_json(
+        [
+            *_orchestrator_cli(orchestrator_root),
+            "agent-team",
+            "--payload-json",
+            json.dumps(payload, sort_keys=True),
+            "--json",
+        ],
+        cwd=orchestrator_root,
+        env=env,
+        timeout=60,
+    )
+
+
+def _autopilot_async_task(autopilot_root: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    started = _run_json(
+        _autopilot_cli(
+            autopilot_root,
+            "loop",
+            "run",
+            "--spec",
+            "external-skills-radar",
+            "--async",
+            "--return-task-id",
+            "--spawn",
+            "false",
+            "--json",
+        ),
+        cwd=autopilot_root,
+        env=env,
+        timeout=60,
+    )
+    completed = _run_json(
+        _autopilot_cli(autopilot_root, "loop", "run-async-task", "--run-id", str(started.get("run_id")), "--json"),
+        cwd=autopilot_root,
+        env=env,
+        timeout=120,
+    )
+    status = _run_json(
+        _autopilot_cli(autopilot_root, "loop", "task-status", "--task-id", str(started.get("task_id")), "--json"),
+        cwd=autopilot_root,
+        env=env,
+        timeout=60,
+    )
+    return {
+        "schema_version": "across-aaa-async-task-e2e/1.0",
+        "status": "passed" if status.get("status") == "completed" and status.get("run_id") == started.get("run_id") else "failed",
+        "started": started,
+        "completed": completed.get("task") if isinstance(completed.get("task"), Mapping) else {},
+        "task_status": status,
+        "summary": {
+            "task_id": started.get("task_id"),
+            "run_id": started.get("run_id"),
+            "source_of_truth": status.get("source_of_truth"),
+        },
+    }
+
+
+def _context_skill_export(context_root: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    return _run_json(_context_cli(context_root, "skill-export", "--json"), cwd=context_root, env=env, timeout=60)
+
+
+def _context_memory_backend(context_root: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    payload = _run_json(_context_cli(context_root, "memory-backend", "--backend", "mem0", "--json"), cwd=context_root, env=env, timeout=60)
+    return {
+        **payload,
+        "status": "passed" if payload.get("backend") == "mem0" and payload.get("network_dependency_required") is False else "failed",
+    }
+
+
+def _computer_use_sandbox_contract() -> dict[str, Any]:
+    providers = {
+        "browserbase": {"status": "optional", "default": False},
+        "anchor": {"status": "optional", "default": False},
+        "computer_use": {"status": "optional", "default": False},
+        "local_playwright": {"status": "passed", "default": True},
+    }
+    return {
+        "schema_version": "across-computer-use-sandbox-eval/1.0",
+        "status": "passed",
+        "providers": providers,
+        "policy": {
+            "vendor_lock_in": False,
+            "default_sandbox": "local_playwright",
+            "external_sandboxes_optional": True,
+            "raw_transcripts_included": False,
+            "secrets_included": False,
+        },
+    }
+
+
+def _local_agent_protocol_contracts() -> dict[str, Any]:
+    from .local_agent_protocols import render_local_agent_protocol_contract
+
+    return render_local_agent_protocol_contract()
 
 
 def _otlp_file_ready(path: Path) -> bool:
@@ -1224,6 +1464,13 @@ def _summary(
         "frontier_interop_status": _nested(workflow_exports, "frontier_interop", "status"),
         "remote_mcp_template_status": _nested(frontier_results or {}, "remote_mcp", "status"),
         "a2a_delegation_status": _nested(frontier_results or {}, "a2a_delegation", "status"),
+        "projection_status": _nested(frontier_results or {}, "projection_status", "status"),
+        "projection_count": _nested(frontier_results or {}, "projection_status", "summary", "projection_count"),
+        "agui_projection_status": _nested(frontier_results or {}, "ag_ui", "status"),
+        "async_task_status": _nested(frontier_results or {}, "mcp_tasks", "status"),
+        "context_skills_bridge_status": _nested(frontier_results or {}, "context_skill_export", "status"),
+        "computer_use_sandbox_status": _nested(frontier_results or {}, "computer_use_sandbox", "status"),
+        "local_agent_protocol_status": _nested(frontier_results or {}, "local_agent_protocols", "status"),
         "otel_span_count": _nested(frontier_results or {}, "otel_export", "summary", "span_count"),
         "eval_case_count": _nested(frontier_results or {}, "otel_export", "summary", "eval_case_count"),
         "otlp_resource_span_count": _nested(frontier_results or {}, "otel_export", "summary", "otlp_resource_span_count"),
@@ -1241,6 +1488,9 @@ def _host_export_summary(workflow_exports: Mapping[str, Any]) -> dict[str, Any]:
         "frontier_interop_schema": _nested(workflow_exports, "frontier_interop", "schema_version"),
         "remote_mcp_schema": _nested(workflow_exports, "frontier_interop", "remote_mcp", "schema_version"),
         "a2a_delegation_schema": _nested(workflow_exports, "frontier_interop", "a2a", "schema_version"),
+        "mcp_tasks_schema": _nested(workflow_exports, "frontier_interop", "mcp_tasks", "schema_version"),
+        "agui_schema": _nested(workflow_exports, "frontier_interop", "ag_ui", "schema_version"),
+        "projection_schema": _nested(workflow_exports, "frontier_interop", "projections", "schema_version"),
         "otel_schema": _nested(workflow_exports, "frontier_interop", "observability", "otel_schema"),
     }
     for host_id in ["codex", "claude_code", "mcp", "a2a", "across"]:

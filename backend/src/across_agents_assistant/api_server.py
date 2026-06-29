@@ -6205,6 +6205,14 @@ async def get_agent_registry():
     return {"agents": list(list_local_agent_specs().values())}
 
 
+@app.get("/api/agents/protocols")
+async def get_local_agent_protocols():
+    """Return optional local-agent protocol bridges without running agents."""
+    from .local_agent_protocols import render_local_agent_protocol_contract
+
+    return render_local_agent_protocol_contract()
+
+
 @app.get("/api/agents/{agent_id}/detect")
 @app.post("/api/agents/{agent_id}/detect")
 async def detect_agent(agent_id: str):

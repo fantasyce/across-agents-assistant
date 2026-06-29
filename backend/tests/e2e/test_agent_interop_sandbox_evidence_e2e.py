@@ -60,6 +60,13 @@ def test_agent_interop_sandbox_evidence_e2e(tmp_path, monkeypatch):
     assert payload["summary"]["frontier_interop_status"] == "passed"
     assert payload["summary"]["remote_mcp_template_status"] == "passed"
     assert payload["summary"]["a2a_delegation_status"] == "passed"
+    assert payload["summary"]["projection_status"] == "passed"
+    assert payload["summary"]["projection_count"] >= 5
+    assert payload["summary"]["agui_projection_status"] == "passed"
+    assert payload["summary"]["async_task_status"] == "passed"
+    assert payload["summary"]["context_skills_bridge_status"] == "passed"
+    assert payload["summary"]["computer_use_sandbox_status"] == "passed"
+    assert payload["summary"]["local_agent_protocol_status"] == "passed"
     assert payload["summary"]["otel_span_count"] >= 10
     assert payload["summary"]["eval_case_count"] >= 1
     assert payload["summary"]["otlp_resource_span_count"] == 1
@@ -68,14 +75,32 @@ def test_agent_interop_sandbox_evidence_e2e(tmp_path, monkeypatch):
     assert payload["host_exports"]["trust_receipt_schema"] == "across-agent-team-trust-receipt/1.0"
     assert payload["host_exports"]["frontier_interop_schema"] == "across-workflow-pack-frontier-interop/1.0"
     assert payload["host_exports"]["remote_mcp_schema"] == "across-remote-mcp-oauth-template/1.0"
-    assert payload["host_exports"]["a2a_delegation_schema"] == "across-a2a-task-delegation/1.0"
+    assert payload["host_exports"]["a2a_delegation_schema"] == "across-a2a-task-delegation/2.0"
+    assert payload["host_exports"]["mcp_tasks_schema"] == "across-async-task/1.0"
+    assert payload["host_exports"]["agui_schema"] == "across-agui-projection/1.0"
+    assert payload["host_exports"]["projection_schema"] == "across-external-projection/1.0"
     assert payload["host_exports"]["otel_schema"] == "across-otel-genai-export/1.0"
     assert payload["agent_team_readiness"]["status"] == "passed"
     assert payload["frontier_interop"]["remote_mcp"]["status"] == "passed"
     assert payload["frontier_interop"]["a2a_delegation"]["status"] == "passed"
+    assert payload["frontier_interop"]["a2a_delegation"]["schema_version"] == "across-a2a-task-delegation/2.0"
+    assert payload["frontier_interop"]["projection_status"]["status"] == "passed"
+    assert payload["frontier_interop"]["ag_ui"]["schema_version"] == "across-agui-projection/1.0"
+    assert payload["frontier_interop"]["ag_ui"]["status"] == "passed"
+    assert payload["frontier_interop"]["mcp_tasks"]["schema_version"] == "across-aaa-async-task-e2e/1.0"
+    assert payload["frontier_interop"]["mcp_tasks"]["status"] == "passed"
     assert payload["frontier_interop"]["otel_export"]["schema_version"] == "across-otel-genai-export/1.0"
     assert payload["frontier_interop"]["otel_export"]["otlp"]["schema_version"] == "otlp-traces-json/1.0"
     assert payload["frontier_interop"]["otel_export"]["otlp_file"]
+    assert payload["projection_status"]["schema_version"] == "across-aaa-projection-status/1.0"
+    assert payload["context_bridge"]["skill_export"]["schema_version"] == "agentskills.io-export/1.0"
+    assert payload["context_bridge"]["skill_export"]["status"] == "passed"
+    assert payload["context_bridge"]["memory_backend"]["backend"] == "mem0"
+    assert payload["context_bridge"]["memory_backend"]["status"] == "passed"
+    assert payload["sandbox_evaluation"]["policy"]["vendor_lock_in"] is False
+    assert payload["sandbox_evaluation"]["policy"]["raw_transcripts_included"] is False
+    assert payload["local_agent_protocols"]["kimi_code"]["acp"] == "optional"
+    assert payload["local_agent_protocols"]["boundaries"]["product_paths_required"] == "~/.across"
     assert payload["host_install_contracts"]["status"] == "passed"
     assert set(payload["host_install_contracts"]["claude_desktop"]["server_ids"]) >= {
         "across-context",
@@ -106,6 +131,14 @@ def test_agent_interop_sandbox_evidence_e2e(tmp_path, monkeypatch):
         "orchestrator_otel_genai_export",
         "frontier_interop_contracts_ready",
         "orchestrator_otlp_file_written",
+        "projection_status_ready",
+        "orchestrator_agui_projection",
+        "orchestrator_agent_team_contract",
+        "autopilot_async_task_projection",
+        "context_skills_bridge_export",
+        "context_memory_backend_contract",
+        "computer_use_sandbox_eval_contract",
+        "local_agent_protocol_contracts",
         "context_evidence_memory",
         "context_evidence_recall",
         "context_evidence_recalled",
