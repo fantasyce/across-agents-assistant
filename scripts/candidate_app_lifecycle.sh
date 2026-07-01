@@ -195,7 +195,7 @@ PY
 prepare_app_bundle() {
   local source_app="$CANDIDATE_REPO/build/Across Agents Assistant.app"
   if [[ "${CANDIDATE_APP_REBUILD:-0}" == "1" || ! -d "$source_app" ]]; then
-    (cd "$CANDIDATE_REPO" && BACKEND_BUNDLE_MODE="${BACKEND_BUNDLE_MODE:-onedir}" SIGNING_IDENTITY="${SIGNING_IDENTITY:--}" ./build_app.sh)
+    (cd "$CANDIDATE_REPO" && /usr/bin/env -u PYTHONPATH -u PYTHONHOME BACKEND_BUNDLE_MODE="${BACKEND_BUNDLE_MODE:-onedir}" SIGNING_IDENTITY="${SIGNING_IDENTITY:--}" /bin/bash ./build_app.sh)
   fi
   if [[ ! -d "$source_app" ]]; then
     echo "Candidate app bundle was not produced: $source_app" >&2

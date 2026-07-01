@@ -62,6 +62,21 @@ def test_loop_engineering_e2e_can_verify_candidate_app_lifecycle():
     assert 'candidate_lease_status.get("raw_credentials_allowed") is False' in script
 
 
+def test_platform_self_repair_e2e_exercises_router_and_repair_loop():
+    script = _read("scripts/run_platform_self_repair_e2e.sh")
+
+    assert "aaa-platform-self-repair-router-case" in script
+    assert "runtime.platform_self_repair" in script
+    assert "auto_platform_self_repair" in script
+    assert "platform_self_repair_case" in script
+    assert 'assert "aaa-platform-self-repair" in built_in_ids' in script
+    assert 'diagnosis["eligible"] is True' in script
+    assert 'repair_trigger["spec_id"] == "aaa-platform-self-repair"' in script
+    assert "PLATFORM_SELF_REPAIR_E2E_RUN_REPAIR" in script
+    assert 'repair_dispatch["status"] == "completed"' in script
+    assert 'candidate["promotion_package"]["human_approval_required"] is True' in script
+
+
 def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate():
     script = _read("scripts/candidate_app_lifecycle.sh")
 
@@ -86,15 +101,33 @@ def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate
     assert "--env \"ACROSS_AGENTS_HOME=$APP_HOME\"" in script
     assert "candidate-model-lease.json" in script
     assert "--env \"ACROSS_AAA_CANDIDATE_MODEL_LEASE=$model_lease\"" in script
+    assert "/usr/bin/env -u PYTHONPATH -u PYTHONHOME" in script
+    assert "/bin/bash ./build_app.sh" in script
     assert "cleaned_up" in script
 
 
 def test_build_app_bundles_candidate_app_lifecycle_helper():
     script = _read("build_app.sh")
 
+    assert 'REQUIREMENTS_FILE="$PROJECT_ROOT/backend/requirements.txt"' in script
+    assert "Installing critical backend runtime dependencies" in script
+    assert "Verifying critical backend runtime modules" in script
+    assert 'PYTHONPATH= "$PYTHON_BIN"' in script
+    assert '"uvicorn"' in script
+    assert '"anyio"' in script
     assert "Contents/Resources/scripts" in script
     assert "scripts/candidate_app_lifecycle.sh" in script
     assert "chmod +x \"$APP_DIR/Contents/Resources/scripts/candidate_app_lifecycle.sh\"" in script
+
+
+def test_packaged_backend_dispatches_autopilot_review_cli():
+    main = _read("backend/main.py")
+
+    assert 'sys.argv[1] == "autopilot-research-decision"' in main
+    assert 'sys.argv[1] == "autopilot-code-iteration"' in main
+    assert 'sys.argv[1] == "autopilot-review-decision"' in main
+    assert "autopilot_review_decision_cli" in main
+    assert "review_decision_main(sys.argv[2:])" in main
 
 
 def test_candidate_app_lifecycle_extracts_health_json_from_noisy_output():

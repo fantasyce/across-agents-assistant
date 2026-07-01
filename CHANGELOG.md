@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.20 - 2026-07-01
+
+### Added
+
+- Added supervised loop-engineering self-repair for AAA: platform-classified
+  failures now enqueue `aaa-platform-self-repair`, run an isolated B candidate
+  repair, validate replay evidence, and stop at human-review promotion.
+- Added a real-provider self-repair E2E script that proves trigger routing,
+  candidate repair, validation, self-hosting evidence, and promotion readiness.
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.9`.
+- Hardened candidate app lifecycle and backend packaging checks so self-repair
+  candidates validate packaged runtime dependencies without host Python leakage.
+
 ## 0.9.19 - 2026-06-30
 
 ### Changed

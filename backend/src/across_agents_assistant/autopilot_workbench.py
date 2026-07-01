@@ -125,6 +125,7 @@ def build_autopilot_workbench_snapshot(
     )
     registry_health_status = str(registry_health.get("status") or _nested(ops_dashboard, "summary", "registry_health_status") or "unknown")
     self_iteration_status = str(self_iteration_plan.get("status") or _nested(ops_dashboard, "self_iteration_plan", "status") or "unknown")
+    platform_self_repair = _dict(self_iteration_plan.get("platform_self_repair"))
     scheduler_running = bool(trigger_scheduler.get("running") or _nested(ops_dashboard, "trigger_scheduler", "running"))
     autopilot_plugin = _plugin_by_id(plugins_list, "across-autopilot")
     autopilot_available = autopilot_plugin.get("available") is True if autopilot_plugin else bool(registry)
@@ -140,6 +141,7 @@ def build_autopilot_workbench_snapshot(
         "active_trigger_count": int(trigger_summary.get("enabled") or 0),
         "scheduler_running": scheduler_running,
         "self_iteration_status": self_iteration_status,
+        "platform_self_repair_queued_count": _first_int(platform_self_repair.get("queued_count"), 0),
         "capability_ready_count": capability_ready_count,
         "registry_health_status": registry_health_status,
         "pending_memory_count": pending_memory_count,
@@ -170,6 +172,13 @@ def build_autopilot_workbench_snapshot(
                 "ready": bool(self_iteration_plan.get("ready")),
                 "spec": self_iteration_plan.get("spec"),
                 "default_trigger_id": self_iteration_plan.get("default_trigger_id"),
+                "platform_self_repair": {
+                    "enabled": bool(platform_self_repair.get("enabled")),
+                    "spec": platform_self_repair.get("spec"),
+                    "queued_count": _first_int(platform_self_repair.get("queued_count"), 0),
+                    "latest_trigger": platform_self_repair.get("latest_trigger"),
+                    "promotion_review_required": platform_self_repair.get("promotion_review_required"),
+                },
             },
             _list(self_iteration_plan.get("readiness")),
             WORKBENCH_ENDPOINTS["self_iteration_plan"],

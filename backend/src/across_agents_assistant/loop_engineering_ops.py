@@ -27,6 +27,7 @@ def build_loop_engineering_ops_dashboard(
     capability_pack = dict(capability_pack or {})
     registry_health = dict(registry_health or {})
     self_iteration_plan = dict(self_iteration_plan or {})
+    platform_self_repair = _dict(self_iteration_plan.get("platform_self_repair"))
     trigger_summary = build_trigger_registry_summary(dict(trigger_registry or {}))
     recent_runs = _list(runs.get("runs"))
     latest_runs = _latest_runs_by_spec(recent_runs)
@@ -61,6 +62,7 @@ def build_loop_engineering_ops_dashboard(
             "trigger_scheduler_running": bool(trigger_scheduler.get("running")),
             "registry_health_status": registry_health.get("status") or "unknown",
             "self_iteration_status": self_iteration_plan.get("status") or "unknown",
+            "platform_self_repair_queued_count": int(platform_self_repair.get("queued_count") or 0),
         },
         "signals": {
             "adapter_failure_count": adapter_failures,
@@ -77,6 +79,7 @@ def build_loop_engineering_ops_dashboard(
             "ready": bool(self_iteration_plan.get("ready")),
             "default_trigger_id": self_iteration_plan.get("default_trigger_id"),
             "spec": self_iteration_plan.get("spec"),
+            "platform_self_repair": platform_self_repair,
         },
         "capability_pack": {
             "ready_count": capability_ready,
@@ -131,6 +134,10 @@ def _mapping_size(value: Any) -> int:
 
 def _list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
