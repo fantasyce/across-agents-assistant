@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.25 - 2026-07-02
+
+### Changed
+
+- Keeps Workbench trigger actions focused on actionable queued triggers instead
+  of obsolete, failed, completed, or skipped queue history.
+- Adds `historical_trigger_queue_count` and `terminal_trigger_queue_count`
+  summary fields so old trigger evidence remains auditable without producing
+  false "run queued trigger" actions.
+
 ## 0.9.24 - 2026-07-02
 
 ### Changed
