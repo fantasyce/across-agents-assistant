@@ -44,7 +44,7 @@ Run Live E2E only when an external Across Orchestrator command is available:
 
 ```bash
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=/path/to/across-orchestrator \
-ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e.XXXXXX.json)" \
+ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e.XXXXXX)" \
   bash scripts/run_live_e2e.sh all
 ```
 

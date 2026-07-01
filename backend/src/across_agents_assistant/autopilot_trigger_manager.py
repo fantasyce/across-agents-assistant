@@ -391,18 +391,32 @@ class AutopilotTriggerRegistry:
 class AutopilotTriggerScheduler:
     """Small local scheduler loop for AAA-hosted Autopilot trigger configs."""
 
-    def __init__(self, registry: AutopilotTriggerRegistry, client_factory: Any, *, default_interval_seconds: float = 60.0):
+    def __init__(
+        self,
+        registry: AutopilotTriggerRegistry,
+        client_factory: Any,
+        *,
+        default_interval_seconds: float = 60.0,
+        run_queued_triggers: bool = True,
+        max_runs_per_tick: int = 1,
+    ):
         self.registry = registry
         self.client_factory = client_factory
         self.default_interval_seconds = max(5.0, float(default_interval_seconds))
+        self.default_run_queued_triggers = bool(run_queued_triggers)
+        self.default_max_runs_per_tick = max(1, int(max_runs_per_tick or 1))
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._interval_seconds = self.default_interval_seconds
+        self._run_queued_triggers = self.default_run_queued_triggers
+        self._max_runs_per_tick = self.default_max_runs_per_tick
         self._started_at: str | None = None
         self._last_tick_at: str | None = None
         self._last_tick_status: str | None = None
         self._last_error: str | None = None
+        self._last_dispatch_count = 0
+        self._last_dispatch_status: str | None = None
         self._tick_count = 0
 
     def status(self) -> dict[str, Any]:
@@ -412,18 +426,36 @@ class AutopilotTriggerScheduler:
                 "schema_version": "across-aaa-autopilot-trigger-scheduler/1.0",
                 "running": running,
                 "interval_seconds": self._interval_seconds,
+                "run_queued_triggers": self._run_queued_triggers,
+                "max_runs_per_tick": self._max_runs_per_tick,
                 "started_at": self._started_at,
                 "last_tick_at": self._last_tick_at,
                 "last_tick_status": self._last_tick_status,
+                "last_dispatch_count": self._last_dispatch_count,
+                "last_dispatch_status": self._last_dispatch_status,
                 "last_error": self._last_error,
                 "tick_count": self._tick_count,
             }
 
-    def start(self, *, interval_seconds: float | None = None) -> dict[str, Any]:
+    def start(
+        self,
+        *,
+        interval_seconds: float | None = None,
+        run_queued_triggers: bool | None = None,
+        max_runs_per_tick: int | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
+                if interval_seconds is not None:
+                    self._interval_seconds = max(5.0, float(interval_seconds))
+                if run_queued_triggers is not None:
+                    self._run_queued_triggers = bool(run_queued_triggers)
+                if max_runs_per_tick is not None:
+                    self._max_runs_per_tick = max(1, int(max_runs_per_tick or 1))
                 return self.status()
             self._interval_seconds = max(5.0, float(interval_seconds or self.default_interval_seconds))
+            self._run_queued_triggers = self.default_run_queued_triggers if run_queued_triggers is None else bool(run_queued_triggers)
+            self._max_runs_per_tick = max(1, int(max_runs_per_tick or self.default_max_runs_per_tick))
             self._stop_event.clear()
             self._started_at = _now()
             self._last_error = None
@@ -452,11 +484,23 @@ class AutopilotTriggerScheduler:
 
     def _tick(self) -> dict[str, Any]:
         try:
-            result = self.registry.tick(self.client_factory())
+            client = self.client_factory()
+            result = self.registry.tick(client)
+            dispatch = (
+                _dispatch_queued_triggers(client, limit=self._max_runs_per_tick)
+                if self._run_queued_triggers
+                else {"status": "disabled", "items": []}
+            )
+            if dispatch["items"]:
+                result = {**result, "status": "dispatched", "dispatch": dispatch}
+            else:
+                result = {**result, "dispatch": dispatch}
             with self._lock:
                 self._tick_count += 1
                 self._last_tick_at = _now()
                 self._last_tick_status = str(result.get("status") or "unknown")
+                self._last_dispatch_count = len(dispatch["items"])
+                self._last_dispatch_status = str(dispatch.get("status") or "unknown")
                 self._last_error = None
             return result
         except Exception as exc:  # pragma: no cover - defensive runtime telemetry
@@ -464,12 +508,60 @@ class AutopilotTriggerScheduler:
                 self._tick_count += 1
                 self._last_tick_at = _now()
                 self._last_tick_status = "failed"
+                self._last_dispatch_count = 0
+                self._last_dispatch_status = "failed"
                 self._last_error = str(exc)[:500]
             return {
                 "schema_version": "across-aaa-autopilot-trigger-tick/1.0",
                 "status": "failed",
                 "error": str(exc)[:500],
             }
+
+
+def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
+    queue = client.trigger_queue()
+    pending = [
+        item
+        for item in queue.get("items", []) or []
+        if isinstance(item, Mapping)
+        and item.get("status") == "pending"
+        and _not_before_due(item.get("not_before"))
+        and item.get("trigger_id")
+    ][: max(1, int(limit or 1))]
+    dispatched: list[dict[str, Any]] = []
+    for item in pending:
+        trigger_id = str(item["trigger_id"])
+        try:
+            result = client.run_trigger(trigger_id)
+            dispatched.append(
+                {
+                    "trigger_id": trigger_id,
+                    "spec_id": item.get("spec_id"),
+                    "status": result.get("status") or "unknown",
+                    "run_id": (result.get("run") or {}).get("run_id") or result.get("run_id"),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - scheduler must stay alive after one failed dispatch
+            dispatched.append(
+                {
+                    "trigger_id": trigger_id,
+                    "spec_id": item.get("spec_id"),
+                    "status": "failed",
+                    "error": str(exc)[:500],
+                }
+            )
+    return {
+        "schema_version": "across-aaa-autopilot-trigger-dispatch-tick/1.0",
+        "status": "dispatched" if dispatched else "idle",
+        "items": dispatched,
+    }
+
+
+def _not_before_due(value: Any) -> bool:
+    if not value:
+        return True
+    parsed = _parse_iso(value)
+    return parsed is None or parsed <= time.time()
 
 
 def build_trigger_registry_summary(registry: Mapping[str, Any]) -> dict[str, Any]:
