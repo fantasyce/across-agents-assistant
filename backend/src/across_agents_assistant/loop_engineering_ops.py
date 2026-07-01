@@ -34,7 +34,9 @@ def build_loop_engineering_ops_dashboard(
     run_count = int(telemetry.get("run_count") or _nested(telemetry, "runs", "total") or 0)
     completed = int(_nested(telemetry, "by_status", "completed") or _nested(telemetry, "runs", "completed") or 0)
     historical_failed = int(_nested(telemetry, "by_status", "failed") or _nested(telemetry, "runs", "failed") or 0)
-    current_failed = _count_status(latest_runs.values(), "failed") if latest_runs else historical_failed
+    latest_failed = _count_status(latest_runs.values(), "failed") if latest_runs else historical_failed
+    resolved_failed = _count_resolved_failed_runs(latest_runs.values(), self_iteration_plan=self_iteration_plan)
+    current_failed = max(latest_failed - resolved_failed, 0)
     failed = current_failed
     historical_gate_failures = _mapping_size(telemetry.get("gate_failures"))
     gate_failures = historical_gate_failures if failed else 0
@@ -54,6 +56,9 @@ def build_loop_engineering_ops_dashboard(
             "completed": completed,
             "failed": failed,
             "historical_failed": historical_failed,
+            "latest_failed": latest_failed,
+            "resolved_failed": resolved_failed,
+            "unresolved_failed": current_failed,
             "current_failed": current_failed,
             "completion_rate": round(completed / run_count, 4) if run_count else None,
             "capability_ready_count": capability_ready,
@@ -68,6 +73,9 @@ def build_loop_engineering_ops_dashboard(
             "adapter_failure_count": adapter_failures,
             "gate_failure_count": gate_failures,
             "historical_gate_failure_count": historical_gate_failures,
+            "latest_failed_count": latest_failed,
+            "resolved_failed_count": resolved_failed,
+            "unresolved_failed_count": current_failed,
             "approval_requests": _mapping_size(telemetry.get("approval_requests")),
             "unresolved_risks": _mapping_size(telemetry.get("unresolved_risks")),
             "promotion_ready_count": _mapping_size(telemetry.get("promotion_ready_by_spec")),
@@ -142,7 +150,8 @@ def _dict(value: Any) -> dict[str, Any]:
 
 def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
     latest: dict[str, Mapping[str, Any]] = {}
-    for run in runs:
+    ordered_runs = sorted(runs, key=_run_sort_key, reverse=True) if any(_run_sort_key(run) for run in runs) else runs
+    for run in ordered_runs:
         if not isinstance(run, Mapping):
             continue
         spec_id = str(run.get("spec_id") or run.get("spec") or run.get("run_id") or "").strip()
@@ -154,6 +163,34 @@ def _latest_runs_by_spec(runs: list[Any]) -> dict[str, Mapping[str, Any]]:
 
 def _count_status(runs: Any, status: str) -> int:
     return sum(1 for run in runs if isinstance(run, Mapping) and str(run.get("status") or run.get("state") or "") == status)
+
+
+def _count_resolved_failed_runs(runs: Any, *, self_iteration_plan: Mapping[str, Any]) -> int:
+    return sum(1 for run in runs if _failed_run_is_resolved(run, self_iteration_plan=self_iteration_plan))
+
+
+def _failed_run_is_resolved(run: Any, *, self_iteration_plan: Mapping[str, Any]) -> bool:
+    if not isinstance(run, Mapping):
+        return False
+    status = str(run.get("status") or run.get("state") or "").lower()
+    if status != "failed":
+        return False
+    spec_id = str(run.get("spec_id") or run.get("spec") or "").strip()
+    platform_self_repair = _dict(self_iteration_plan.get("platform_self_repair"))
+    repair_spec = str(platform_self_repair.get("spec") or "").strip()
+    if spec_id and spec_id == repair_spec:
+        latest_trigger = _dict(platform_self_repair.get("latest_trigger"))
+        latest_trigger_status = str(latest_trigger.get("status") or "").lower()
+        queued_count = int(platform_self_repair.get("queued_count") or 0)
+        if queued_count == 0 and latest_trigger_status in {"completed", "obsolete", "cancelled", "skipped"}:
+            return True
+    return False
+
+
+def _run_sort_key(run: Any) -> str:
+    if not isinstance(run, Mapping):
+        return ""
+    return str(run.get("completed_at") or run.get("updated_at") or run.get("started_at") or run.get("created_at") or "")
 
 
 def _nested(value: Mapping[str, Any], *path: str) -> Any:

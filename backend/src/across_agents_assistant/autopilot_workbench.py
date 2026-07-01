@@ -89,6 +89,7 @@ def build_autopilot_workbench_snapshot(
     queued_triggers = _list(trigger_queue.get("items"))
     recent_runs = _list(runs.get("runs"))[:8]
     latest_runs = _latest_runs_by_spec(recent_runs)
+    ops_summary = _dict(ops_dashboard.get("summary"))
     run_count = _first_int(
         runs.get("run_count"),
         telemetry.get("run_count"),
@@ -105,7 +106,9 @@ def build_autopilot_workbench_snapshot(
         _nested(telemetry, "runs", "failed"),
         _count_by_status(recent_runs, "failed"),
     )
-    failed_runs = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed_runs
+    latest_failed_runs = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed_runs
+    failed_runs = _first_int(ops_summary.get("current_failed"), ops_summary.get("failed"), latest_failed_runs)
+    resolved_failed_runs = _first_int(ops_summary.get("resolved_failed"), max(latest_failed_runs - failed_runs, 0))
     historical_promotion_ready_count = _first_int(
         _mapping_size(telemetry.get("promotion_ready_by_spec")),
         sum(1 for item in recent_runs if _truthy(_dict(item).get("promotion_ready"))),
@@ -136,6 +139,8 @@ def build_autopilot_workbench_snapshot(
         "completed_run_count": completed_runs,
         "failed_run_count": failed_runs,
         "historical_failed_run_count": historical_failed_runs,
+        "latest_failed_run_count": latest_failed_runs,
+        "resolved_failed_run_count": resolved_failed_runs,
         "pending_trigger_count": len(queued_triggers),
         "registered_trigger_count": int(trigger_summary.get("total") or 0),
         "active_trigger_count": int(trigger_summary.get("enabled") or 0),
@@ -205,6 +210,8 @@ def build_autopilot_workbench_snapshot(
                 "completed": completed_runs,
                 "failed": failed_runs,
                 "historical_failed": historical_failed_runs,
+                "latest_failed": latest_failed_runs,
+                "resolved_failed": resolved_failed_runs,
             },
             _bounded_run_items(recent_runs),
             WORKBENCH_ENDPOINTS["runs"],
