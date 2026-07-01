@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.21 - 2026-07-01
+
+### Changed
+
+- Hardened candidate app lifecycle plugin installation so self-iteration
+  validation installs Context and Autopilot only inside the candidate runtime
+  home instead of inheriting the controller's global managed plugin paths.
+- Updated the managed Across Autopilot pin to `v0.2.10`, which keeps runtime
+  version reporting aligned with the package manifest.
+
 ## 0.9.20 - 2026-07-01
 
 ### Added
