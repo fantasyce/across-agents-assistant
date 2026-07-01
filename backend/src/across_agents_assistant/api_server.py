@@ -1832,6 +1832,8 @@ class AutopilotSelfIterationPlanRequest(BaseModel):
 
 class AutopilotTriggerSchedulerRequest(BaseModel):
     interval_seconds: float = 60.0
+    run_queued_triggers: bool = True
+    max_runs_per_tick: int = 1
 
 
 class AutopilotModelDecisionRequest(BaseModel):
@@ -2148,6 +2150,15 @@ def _normalize_model_decision_patches(
         mode = str(raw_patch.get("mode") or "overwrite").strip()
         if mode not in {"overwrite", "append", "upsert_between_markers"}:
             raise ValueError(f"Unsupported model patch mode: {mode}")
+        marker_start = raw_patch.get("marker_start")
+        marker_end = raw_patch.get("marker_end")
+        if mode == "upsert_between_markers" and (not marker_start or not marker_end):
+            if _can_append_markerless_upsert(rel):
+                mode = "append"
+            else:
+                raise ValueError(
+                    f"Model patch {rel} uses upsert_between_markers without marker_start and marker_end"
+                )
         content = _model_patch_content(raw_patch)
         if not content.strip():
             raise ValueError(f"Model patch content is empty for {rel}")
@@ -2158,16 +2169,24 @@ def _normalize_model_decision_patches(
             "mode": mode,
             "content": content,
         }
-        marker_start = raw_patch.get("marker_start")
-        marker_end = raw_patch.get("marker_end")
-        if marker_start:
+        if mode == "upsert_between_markers" and marker_start:
             patch["marker_start"] = str(marker_start)
-        if marker_end:
+        if mode == "upsert_between_markers" and marker_end:
             patch["marker_end"] = str(marker_end)
         patches.append(patch)
     if not patches:
         raise ValueError("Model decision did not include any valid patches")
     return patches
+
+
+def _can_append_markerless_upsert(rel: str) -> bool:
+    normalized = rel.replace("\\", "/").lower()
+    name = Path(normalized).name
+    return (
+        normalized.startswith("docs/")
+        or name in {"readme.md", "changelog.md", "llms.txt"}
+        or normalized.endswith(".md")
+    )
 
 
 def _validate_autopilot_generated_patch_policy(patches: List[Dict[str, Any]]) -> None:
@@ -3225,6 +3244,7 @@ def _autopilot_code_iteration_system_prompt(*, direct_patches: bool = False) -> 
         "'from across_agents_assistant.autopilot_feature import helper'; never use flat imports like "
         "'from autopilot_feature import helper'. "
         "For existing README, CHANGELOG, or docs files, preserve existing content. Use append or upsert_between_markers for small additions; "
+        "if you use upsert_between_markers you must include marker_start and marker_end. "
         "do not rewrite or delete large documentation sections unless the goal explicitly requires a documentation rewrite."
         )
     return (
@@ -3286,6 +3306,7 @@ def _autopilot_code_iteration_repair_prompt(req: AutopilotCodeIterationRequest, 
         "Candidate test files must be standard-library only; do not import/use pytest, pytest.raises, tmp_path, monkeypatch, or other pytest fixtures. "
         "Candidate test files must import AAA product modules through across_agents_assistant.<module>, not through flat autopilot_* imports. "
         "Preserve existing documentation; use append or upsert_between_markers for docs instead of destructive overwrite. "
+        "If you use upsert_between_markers, include marker_start and marker_end. "
         "Use this shape: {\"summary\": string, \"risk\": \"low|medium|high\", "
         "\"patches\": [{\"path\": string, \"mode\": \"overwrite|append|upsert_between_markers\", \"content_lines\": [string]}], "
         "\"validation_commands\": [{\"command\": string, \"args\": [string]}]}.\n\n"
@@ -4074,6 +4095,7 @@ def _fallback_direct_code_iteration_decision(
     *,
     allowed_patch_paths: List[str],
     allow_host_fallback: bool = False,
+    source_repository: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     if not allow_host_fallback:
         raise ValueError(
@@ -4135,6 +4157,619 @@ def _fallback_direct_code_iteration_decision(
         "backend/src/across_agents_assistant/autopilot_loop_backlog.py",
         "backend/tests/test_autopilot_loop_backlog.py",
     }
+    target_backlog_expected = {
+        "backend/src/across_agents_assistant/autopilot_target_backlog.py",
+        "backend/tests/test_autopilot_target_backlog.py",
+    }
+    target_backlog_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    target_backlog_api = "backend/src/across_agents_assistant/api_server.py"
+    target_backlog_capability_pack = "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    target_backlog_swift_view = "macOS-Client/Sources/AutopilotTargetBacklogView.swift"
+    if target_backlog_expected.issubset(allowed):
+        optional_paths = {
+            path for path in (
+                target_backlog_workbench,
+                target_backlog_api,
+                target_backlog_capability_pack,
+                target_backlog_swift_view,
+            )
+            if path in allowed
+        }
+        decision = {
+            "summary": "Add validation-stable autonomous target backlog helpers.",
+            "risk": "low",
+            "patch_paths": sorted(target_backlog_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_target_backlog.py",
+                        "backend/tests/test_autopilot_target_backlog.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_target_backlog.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_target_backlog.py",
+                "mode": "overwrite",
+                "content": _render_target_backlog_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_target_backlog.py",
+                "mode": "overwrite",
+                "content": _render_target_backlog_test(),
+            },
+        ]
+        if target_backlog_workbench in allowed:
+            patches.append(
+                {
+                    "path": target_backlog_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TARGET BACKLOG WORKBENCH START",
+                    "marker_end": "# ACROSS TARGET BACKLOG WORKBENCH END",
+                    "content": _render_target_backlog_workbench_block(),
+                }
+            )
+        if target_backlog_api in allowed:
+            patches.append(
+                {
+                    "path": target_backlog_api,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TARGET BACKLOG API START",
+                    "marker_end": "# ACROSS TARGET BACKLOG API END",
+                    "content": _render_target_backlog_api_block(),
+                }
+            )
+        if target_backlog_capability_pack in allowed:
+            patches.append(
+                {
+                    "path": target_backlog_capability_pack,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TARGET BACKLOG CAPABILITY PACK START",
+                    "marker_end": "# ACROSS TARGET BACKLOG CAPABILITY PACK END",
+                    "content": _render_target_backlog_capability_pack_block(),
+                }
+            )
+        if target_backlog_swift_view in allowed:
+            patches.append(
+                {
+                    "path": target_backlog_swift_view,
+                    "mode": "overwrite",
+                    "content": _render_target_backlog_swift_view(),
+                }
+            )
+        return decision, patches
+    iteration_telemetry_expected = {
+        "backend/src/across_agents_assistant/autopilot_iteration_telemetry.py",
+        "backend/tests/test_autopilot_iteration_telemetry.py",
+    }
+    iteration_telemetry_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    mcp_tool_manifest_expected = {
+        "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+        "backend/tests/test_autopilot_mcp_tool_manifest.py",
+    }
+    mcp_tool_manifest_api = "backend/src/across_agents_assistant/api_server.py"
+    if mcp_tool_manifest_expected.issubset(allowed):
+        optional_paths = {mcp_tool_manifest_api} if mcp_tool_manifest_api in allowed else set()
+        decision = {
+            "summary": "Add validation-stable MCP tool manifest helpers.",
+            "risk": "low",
+            "patch_paths": sorted(mcp_tool_manifest_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+                        "backend/tests/test_autopilot_mcp_tool_manifest.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_mcp_tool_manifest.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+                "mode": "overwrite",
+                "content": _render_mcp_tool_manifest_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_mcp_tool_manifest.py",
+                "mode": "overwrite",
+                "content": _render_mcp_tool_manifest_test(),
+            },
+        ]
+        if mcp_tool_manifest_api in allowed:
+            patches.append(
+                {
+                    "path": mcp_tool_manifest_api,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP TOOL MANIFEST REGISTRATION START",
+                    "marker_end": "# ACROSS MCP TOOL MANIFEST REGISTRATION END",
+                    "content": _render_mcp_tool_manifest_api_block(),
+                }
+            )
+        return decision, patches
+    mcp_tool_registry_expected = {
+        "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+        "backend/tests/test_autopilot_mcp_tool_registry.py",
+    }
+    mcp_tool_registry_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    mcp_tool_registry_api = "backend/src/across_agents_assistant/api_server.py"
+    mcp_tool_registry_capability_pack = "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    if mcp_tool_registry_expected.issubset(allowed):
+        optional_paths = {
+            path for path in (
+                mcp_tool_registry_workbench,
+                mcp_tool_registry_api,
+                mcp_tool_registry_capability_pack,
+            )
+            if path in allowed
+        }
+        decision = {
+            "summary": "Add validation-stable MCP tool registry helpers.",
+            "risk": "low",
+            "patch_paths": sorted(mcp_tool_registry_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+                        "backend/tests/test_autopilot_mcp_tool_registry.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_mcp_tool_registry.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+                "mode": "overwrite",
+                "content": _render_mcp_tool_registry_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_mcp_tool_registry.py",
+                "mode": "overwrite",
+                "content": _render_mcp_tool_registry_test(),
+            },
+        ]
+        if mcp_tool_registry_workbench in allowed:
+            patches.append(
+                {
+                    "path": mcp_tool_registry_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP TOOL REGISTRY WORKBENCH START",
+                    "marker_end": "# ACROSS MCP TOOL REGISTRY WORKBENCH END",
+                    "content": _render_mcp_tool_registry_workbench_block(),
+                }
+            )
+        if mcp_tool_registry_api in allowed:
+            patches.append(
+                {
+                    "path": mcp_tool_registry_api,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP TOOL REGISTRY API START",
+                    "marker_end": "# ACROSS MCP TOOL REGISTRY API END",
+                    "content": _render_mcp_tool_registry_api_block(),
+                }
+            )
+        if mcp_tool_registry_capability_pack in allowed:
+            patches.append(
+                {
+                    "path": mcp_tool_registry_capability_pack,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK START",
+                    "marker_end": "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK END",
+                    "content": _render_mcp_tool_registry_capability_pack_block(),
+                }
+            )
+        return decision, patches
+    capability_classifier_expected = {
+        "backend/src/across_agents_assistant/autopilot_capability_classifier.py",
+        "backend/tests/test_autopilot_capability_classifier.py",
+    }
+    capability_classifier_api = "backend/src/across_agents_assistant/api_server.py"
+    if capability_classifier_expected.issubset(allowed):
+        optional_paths = {capability_classifier_api} if capability_classifier_api in allowed else set()
+        decision = {
+            "summary": "Add validation-stable capability classifier helpers.",
+            "risk": "low",
+            "patch_paths": sorted(capability_classifier_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_capability_classifier.py",
+                        "backend/tests/test_autopilot_capability_classifier.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_capability_classifier.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_capability_classifier.py",
+                "mode": "overwrite",
+                "content": _render_capability_classifier_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_capability_classifier.py",
+                "mode": "overwrite",
+                "content": _render_capability_classifier_test(),
+            },
+        ]
+        if capability_classifier_api in allowed:
+            patches.append(
+                {
+                    "path": capability_classifier_api,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS CAPABILITY CLASSIFIER API START",
+                    "marker_end": "# ACROSS CAPABILITY CLASSIFIER API END",
+                    "content": _render_capability_classifier_api_block(),
+                }
+            )
+        return decision, patches
+    tool_pack_registry_expected = {
+        "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+        "backend/tests/test_autopilot_tool_pack_registry.py",
+    }
+    tool_pack_registry_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    tool_pack_registry_capability_pack = "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    if tool_pack_registry_expected.issubset(allowed):
+        optional_paths = {
+            path for path in (tool_pack_registry_workbench, tool_pack_registry_capability_pack)
+            if path in allowed
+        }
+        decision = {
+            "summary": "Add validation-stable Tool Pack registry helpers.",
+            "risk": "low",
+            "patch_paths": sorted(tool_pack_registry_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+                        "backend/tests/test_autopilot_tool_pack_registry.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_tool_pack_registry.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+                "mode": "overwrite",
+                "content": _render_tool_pack_registry_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_tool_pack_registry.py",
+                "mode": "overwrite",
+                "content": _render_tool_pack_registry_test(),
+            },
+        ]
+        if tool_pack_registry_workbench in allowed:
+            patches.append(
+                {
+                    "path": tool_pack_registry_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TOOL PACK REGISTRY WORKBENCH START",
+                    "marker_end": "# ACROSS TOOL PACK REGISTRY WORKBENCH END",
+                    "content": _render_tool_pack_registry_workbench_block(),
+                }
+            )
+        if tool_pack_registry_capability_pack in allowed:
+            patches.append(
+                {
+                    "path": tool_pack_registry_capability_pack,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK START",
+                    "marker_end": "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK END",
+                    "content": _render_tool_pack_registry_capability_pack_block(),
+                }
+            )
+        return decision, patches
+    mcp_descriptors_expected = {
+        "backend/src/across_agents_assistant/autopilot_mcp_descriptors.py",
+        "backend/tests/test_autopilot_mcp_descriptors.py",
+    }
+    mcp_descriptors_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    mcp_descriptors_capability_pack = "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    if mcp_descriptors_expected.issubset(allowed):
+        optional_paths = {
+            path for path in (mcp_descriptors_workbench, mcp_descriptors_capability_pack)
+            if path in allowed
+        }
+        decision = {
+            "summary": "Add validation-stable MCP descriptor registry helpers.",
+            "risk": "low",
+            "patch_paths": sorted(mcp_descriptors_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_mcp_descriptors.py",
+                        "backend/tests/test_autopilot_mcp_descriptors.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_autopilot_mcp_descriptors.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_mcp_descriptors.py",
+                "mode": "overwrite",
+                "content": _render_mcp_descriptors_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_mcp_descriptors.py",
+                "mode": "overwrite",
+                "content": _render_mcp_descriptors_test(),
+            },
+        ]
+        if mcp_descriptors_workbench in allowed:
+            patches.append(
+                {
+                    "path": mcp_descriptors_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP DESCRIPTORS WORKBENCH START",
+                    "marker_end": "# ACROSS MCP DESCRIPTORS WORKBENCH END",
+                    "content": _render_mcp_descriptor_workbench_block(),
+                }
+            )
+        if mcp_descriptors_capability_pack in allowed:
+            patches.append(
+                {
+                    "path": mcp_descriptors_capability_pack,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS MCP DESCRIPTORS CAPABILITY PACK START",
+                    "marker_end": "# ACROSS MCP DESCRIPTORS CAPABILITY PACK END",
+                    "content": _render_mcp_descriptor_capability_pack_block(),
+                }
+                )
+        return decision, patches
+    tool_registry_manifest_expected = {
+        "backend/src/across_agents_assistant/tool_registry_manifest.py",
+        "backend/tests/test_tool_registry_manifest.py",
+    }
+    tool_registry_manifest_api = "backend/src/across_agents_assistant/api_server.py"
+    if tool_registry_manifest_expected.issubset(allowed):
+        optional_paths = {tool_registry_manifest_api} if tool_registry_manifest_api in allowed else set()
+        decision = {
+            "summary": "Add validation-stable capability manifest route helper.",
+            "risk": "low",
+            "patch_paths": sorted(tool_registry_manifest_expected | optional_paths),
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/tool_registry_manifest.py",
+                        "backend/tests/test_tool_registry_manifest.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import sys, runpy; sys.path.insert(0,'backend/src'); "
+                        "ns=runpy.run_path('backend/tests/test_tool_registry_manifest.py'); "
+                        "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
+                        "assert tests; [test() for test in tests]; print('tests-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/tool_registry_manifest.py",
+                "mode": "overwrite",
+                "content": _render_tool_registry_manifest_module(decision),
+            },
+            {
+                "path": "backend/tests/test_tool_registry_manifest.py",
+                "mode": "overwrite",
+                "content": _render_tool_registry_manifest_test(),
+            },
+        ]
+        if tool_registry_manifest_api in allowed:
+            patches.append(
+                {
+                    "path": tool_registry_manifest_api,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS TOOL REGISTRY MANIFEST ROUTE START",
+                    "marker_end": "# ACROSS TOOL REGISTRY MANIFEST ROUTE END",
+                    "content": _render_tool_registry_manifest_api_block(),
+                }
+            )
+        return decision, patches
+    capability_gap_expected = {
+        "backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py",
+        "backend/tests/test_autopilot_capability_gap_manifest.py",
+    }
+    capability_gap_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
+    if capability_gap_expected.issubset(allowed):
+        patch_paths = sorted(capability_gap_expected | ({capability_gap_workbench} if capability_gap_workbench in allowed else set()))
+        decision = {
+            "summary": "Add validation-stable capability-gap manifest helper.",
+            "risk": "low",
+            "patch_paths": patch_paths,
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py",
+                        "backend/tests/test_autopilot_capability_gap_manifest.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import json,sys; sys.path.insert(0,'backend/src'); "
+                        "from across_agents_assistant.autopilot_capability_gap_manifest import compute_gap_manifest; "
+                        "signals={'signals':[{'id':'loop-engineering-architecture-signal','status':'passed','adapter':'manual_input','excerpt':'tool packs','keywords':['tool']}], 'spec_id':'aaa'}; "
+                        "selected={'candidate_targets':[{'id':'target','source_refs':['loop-engineering-architecture-signal'],'semantic_review':{'require_model_backed': True}}]}; "
+                        "out=compute_gap_manifest(signals, selected); json.dumps(out); "
+                        "assert out['manifest_version']=='across-autopilot-capability-gap/1.0'; "
+                        "assert out['entries'][0]['source_id']=='loop-engineering-architecture-signal'; "
+                        "assert out['entries'][0]['evidence_strength']=='weak'; print('schema-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py",
+                "mode": "overwrite",
+                "content": _render_capability_gap_manifest_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_capability_gap_manifest.py",
+                "mode": "overwrite",
+                "content": _render_capability_gap_manifest_test(),
+            },
+        ]
+        if capability_gap_workbench in allowed:
+            patches.append(
+                {
+                    "path": capability_gap_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS CAPABILITY GAP MANIFEST START",
+                    "marker_end": "# ACROSS CAPABILITY GAP MANIFEST END",
+                    "content": _render_capability_gap_workbench_block(),
+                }
+            )
+        return decision, patches
+    if iteration_telemetry_expected.issubset(allowed):
+        patch_paths = sorted(iteration_telemetry_expected | ({iteration_telemetry_workbench} if iteration_telemetry_workbench in allowed else set()))
+        decision = {
+            "summary": "Add validation-stable autonomous iteration telemetry helper.",
+            "risk": "low",
+            "patch_paths": patch_paths,
+            "validation_commands": [
+                {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "py_compile",
+                        "backend/src/across_agents_assistant/autopilot_iteration_telemetry.py",
+                        "backend/tests/test_autopilot_iteration_telemetry.py",
+                    ],
+                },
+                {
+                    "command": "python3",
+                    "args": [
+                        "-c",
+                        "import json,sys; sys.path.insert(0,'backend/src'); "
+                        "from across_agents_assistant.autopilot_iteration_telemetry import IterationTelemetryRecord; "
+                        "r=IterationTelemetryRecord(run_id='run-fallback', packs=['trigger_ingestion'], sources=['source-a']); "
+                        "d=r.to_dict(); json.dumps(d); assert d['run_id']; assert isinstance(d['sources'], list); print('schema-ok')",
+                    ],
+                },
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        patches = [
+            {
+                "path": "backend/src/across_agents_assistant/autopilot_iteration_telemetry.py",
+                "mode": "overwrite",
+                "content": _render_iteration_telemetry_module(decision),
+            },
+            {
+                "path": "backend/tests/test_autopilot_iteration_telemetry.py",
+                "mode": "overwrite",
+                "content": _render_iteration_telemetry_test(),
+            },
+        ]
+        if iteration_telemetry_workbench in allowed:
+            patches.append(
+                {
+                    "path": iteration_telemetry_workbench,
+                    "mode": "upsert_between_markers",
+                    "marker_start": "# ACROSS ITERATION TELEMETRY START",
+                    "marker_end": "# ACROSS ITERATION TELEMETRY END",
+                    "content": _render_iteration_telemetry_workbench_block(),
+                }
+            )
+        return decision, patches
     if loop_backlog_expected.issubset(allowed):
         decision = {
             "summary": "Add deterministic Loop Contract backlog selector.",
@@ -4367,6 +5002,1848 @@ def _fallback_direct_code_iteration_decision(
     return decision, patches
 
 
+def _with_iteration_telemetry_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS ITERATION TELEMETRY START"
+    marker_end = "# ACROSS ITERATION TELEMETRY END"
+    block = f"{marker_start}\n{_render_iteration_telemetry_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_capability_gap_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS CAPABILITY GAP MANIFEST START"
+    marker_end = "# ACROSS CAPABILITY GAP MANIFEST END"
+    block = f"{marker_start}\n{_render_capability_gap_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_descriptor_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP DESCRIPTORS WORKBENCH START"
+    marker_end = "# ACROSS MCP DESCRIPTORS WORKBENCH END"
+    block = f"{marker_start}\n{_render_mcp_descriptor_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_descriptor_capability_pack_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP DESCRIPTORS CAPABILITY PACK START"
+    marker_end = "# ACROSS MCP DESCRIPTORS CAPABILITY PACK END"
+    block = f"{marker_start}\n{_render_mcp_descriptor_capability_pack_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_tool_registry_manifest_api_block(source_content: str) -> str:
+    marker_start = "# ACROSS TOOL REGISTRY MANIFEST ROUTE START"
+    marker_end = "# ACROSS TOOL REGISTRY MANIFEST ROUTE END"
+    block = f"{marker_start}\n{_render_tool_registry_manifest_api_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_tool_manifest_api_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP TOOL MANIFEST REGISTRATION START"
+    marker_end = "# ACROSS MCP TOOL MANIFEST REGISTRATION END"
+    block = f"{marker_start}\n{_render_mcp_tool_manifest_api_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_target_backlog_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS TARGET BACKLOG WORKBENCH START"
+    marker_end = "# ACROSS TARGET BACKLOG WORKBENCH END"
+    block = f"{marker_start}\n{_render_target_backlog_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_target_backlog_api_block(source_content: str) -> str:
+    marker_start = "# ACROSS TARGET BACKLOG API START"
+    marker_end = "# ACROSS TARGET BACKLOG API END"
+    block = f"{marker_start}\n{_render_target_backlog_api_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_target_backlog_capability_pack_block(source_content: str) -> str:
+    marker_start = "# ACROSS TARGET BACKLOG CAPABILITY PACK START"
+    marker_end = "# ACROSS TARGET BACKLOG CAPABILITY PACK END"
+    block = f"{marker_start}\n{_render_target_backlog_capability_pack_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_tool_registry_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP TOOL REGISTRY WORKBENCH START"
+    marker_end = "# ACROSS MCP TOOL REGISTRY WORKBENCH END"
+    block = f"{marker_start}\n{_render_mcp_tool_registry_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_tool_registry_api_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP TOOL REGISTRY API START"
+    marker_end = "# ACROSS MCP TOOL REGISTRY API END"
+    block = f"{marker_start}\n{_render_mcp_tool_registry_api_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_mcp_tool_registry_capability_pack_block(source_content: str) -> str:
+    marker_start = "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK START"
+    marker_end = "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK END"
+    block = f"{marker_start}\n{_render_mcp_tool_registry_capability_pack_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_capability_classifier_api_block(source_content: str) -> str:
+    marker_start = "# ACROSS CAPABILITY CLASSIFIER API START"
+    marker_end = "# ACROSS CAPABILITY CLASSIFIER API END"
+    block = f"{marker_start}\n{_render_capability_classifier_api_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_tool_pack_registry_workbench_block(source_content: str) -> str:
+    marker_start = "# ACROSS TOOL PACK REGISTRY WORKBENCH START"
+    marker_end = "# ACROSS TOOL PACK REGISTRY WORKBENCH END"
+    block = f"{marker_start}\n{_render_tool_pack_registry_workbench_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _with_tool_pack_registry_capability_pack_block(source_content: str) -> str:
+    marker_start = "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK START"
+    marker_end = "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK END"
+    block = f"{marker_start}\n{_render_tool_pack_registry_capability_pack_block().rstrip()}\n{marker_end}\n"
+    if marker_start in source_content and marker_end in source_content:
+        start = source_content.index(marker_start)
+        end = source_content.index(marker_end, start) + len(marker_end)
+        return source_content[:start] + block + source_content[end:].lstrip("\n")
+    return f"{source_content.rstrip()}\n\n{block}"
+
+
+def _render_capability_gap_workbench_block() -> str:
+    return (
+        "def build_capability_gap_manifest_snapshot(source_signals, selected_iteration):\n"
+        "    from .autopilot_capability_gap_manifest import compute_gap_manifest\n\n"
+        "    return compute_gap_manifest(source_signals, selected_iteration)\n"
+    )
+
+
+def _render_tool_registry_manifest_api_block() -> str:
+    return (
+        "@app.get('/api/autopilot/capabilities/manifest')\n"
+        "async def get_autopilot_capabilities_manifest():\n"
+        "    from .tool_registry_manifest import build_manifest\n\n"
+        "    return build_manifest(app)\n"
+    )
+
+
+def _render_mcp_tool_manifest_api_block() -> str:
+    return (
+        "from .autopilot_mcp_tool_manifest import (\n"
+        "    TOOL_DESCRIPTORS as _ACROSS_MCP_TOOL_DESCRIPTORS,\n"
+        "    validate_tool_manifests as _across_validate_mcp_tool_manifests,\n"
+        ")\n\n"
+        "ACROSS_MCP_TOOL_DESCRIPTORS = _across_validate_mcp_tool_manifests(_ACROSS_MCP_TOOL_DESCRIPTORS)\n"
+    )
+
+
+def _render_target_backlog_workbench_block() -> str:
+    return (
+        "def summarize_target_backlog(source_signals=None, selected_iteration=None) -> dict:\n"
+        "    from .autopilot_target_backlog import summarize_target_backlog as _summarize\n\n"
+        "    return _summarize(source_signals=source_signals, selected_iteration=selected_iteration)\n\n\n"
+        "def target_backlog_snapshot(source_signals=None, selected_iteration=None) -> dict:\n"
+        "    from .autopilot_target_backlog import target_backlog_snapshot as _snapshot\n\n"
+        "    return _snapshot(source_signals=source_signals, selected_iteration=selected_iteration)\n"
+    )
+
+
+def _render_target_backlog_api_block() -> str:
+    return (
+        "def autopilot_target_backlog_snapshot() -> dict:\n"
+        "    from .autopilot_target_backlog import target_backlog_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "@app.get('/api/autopilot/target-backlog')\n"
+        "async def get_autopilot_target_backlog():\n"
+        "    return autopilot_target_backlog_snapshot()\n"
+    )
+
+
+def _render_target_backlog_capability_pack_block() -> str:
+    return (
+        "def target_backlog_capability_metadata() -> dict:\n"
+        "    from .autopilot_target_backlog import target_backlog_snapshot\n\n"
+        "    snapshot = target_backlog_snapshot()\n"
+        "    return {\n"
+        "        'id': 'autopilot_target_backlog',\n"
+        "        'status': 'ready',\n"
+        "        'target_count': snapshot.get('summary', {}).get('target_count', 0),\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def target_backlog_capability_entries() -> list:\n"
+        "    from .autopilot_target_backlog import target_backlog_snapshot\n\n"
+        "    return list(target_backlog_snapshot().get('targets', []))\n"
+    )
+
+
+def _render_mcp_tool_registry_workbench_block() -> str:
+    return (
+        "def mcp_tool_registry_snapshot() -> dict:\n"
+        "    from .autopilot_mcp_tool_registry import mcp_tool_registry_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "def get_mcp_tool_registry():\n"
+        "    from .autopilot_mcp_tool_registry import DEFAULT_REGISTRY\n\n"
+        "    return DEFAULT_REGISTRY\n"
+    )
+
+
+def _render_mcp_tool_registry_api_block() -> str:
+    return (
+        "def autopilot_mcp_tool_registry_snapshot() -> dict:\n"
+        "    from .autopilot_mcp_tool_registry import mcp_tool_registry_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "@app.get('/api/autopilot/mcp-tool-registry')\n"
+        "async def get_autopilot_mcp_tool_registry():\n"
+        "    return autopilot_mcp_tool_registry_snapshot()\n"
+    )
+
+
+def _render_mcp_tool_registry_capability_pack_block() -> str:
+    return (
+        "def mcp_tool_registry_capability_entries() -> list:\n"
+        "    from .autopilot_mcp_tool_registry import mcp_tool_registry_snapshot\n\n"
+        "    snapshot = mcp_tool_registry_snapshot()\n"
+        "    return list(snapshot.get('tools', []))\n\n\n"
+        "def describe_mcp_tool_registry_capability() -> dict:\n"
+        "    from .autopilot_mcp_tool_registry import mcp_tool_registry_snapshot\n\n"
+        "    return mcp_tool_registry_snapshot()\n"
+    )
+
+
+def _render_capability_classifier_api_block() -> str:
+    return (
+        "from .autopilot_capability_classifier import (\n"
+        "    classify_goal as _across_classify_goal,\n"
+        "    list_capability_buckets as _across_list_capability_buckets,\n"
+        ")\n\n\n"
+        "def autopilot_capability_buckets() -> list:\n"
+        "    return list(_across_list_capability_buckets())\n\n\n"
+        "def autopilot_classify_capability(goal: str) -> str:\n"
+        "    return str(_across_classify_goal(goal).get('primary') or '')\n\n\n"
+        "def autopilot_classify_capability_detail(goal: str) -> dict:\n"
+        "    return _across_classify_goal(goal)\n\n\n"
+        "@app.get('/api/autopilot/capabilities/classify')\n"
+        "async def get_autopilot_capability_classification(goal: str = ''):\n"
+        "    return autopilot_classify_capability_detail(goal)\n"
+    )
+
+
+def _render_tool_pack_registry_workbench_block() -> str:
+    return (
+        "def tool_pack_registry_snapshot() -> dict:\n"
+        "    from .autopilot_tool_pack_registry import tool_pack_registry_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "def advise_tool_pack_registry(goal: str, evidence=None) -> dict:\n"
+        "    from .autopilot_tool_pack_registry import advise_tool_packs\n\n"
+        "    return advise_tool_packs(goal, evidence=evidence)\n"
+    )
+
+
+def _render_tool_pack_registry_capability_pack_block() -> str:
+    return (
+        "def advise_with_capability(goal: str, evidence=None) -> dict:\n"
+        "    from .autopilot_tool_pack_registry import advise_tool_packs\n\n"
+        "    return advise_tool_packs(goal, evidence=evidence)\n"
+    )
+
+
+def _render_mcp_descriptor_workbench_block() -> str:
+    return (
+        "def mcp_surface_snapshot() -> dict:\n"
+        "    from .autopilot_mcp_descriptors import mcp_surface_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "def mcp_descriptor_surface() -> dict:\n"
+        "    return mcp_surface_snapshot()\n"
+    )
+
+
+def _render_mcp_descriptor_capability_pack_block() -> str:
+    return (
+        "def mcp_surface_snapshot() -> dict:\n"
+        "    from .autopilot_mcp_descriptors import mcp_surface_snapshot as _snapshot\n\n"
+        "    return _snapshot()\n\n\n"
+        "def mcp_capability_entries() -> list:\n"
+        "    snapshot = mcp_surface_snapshot()\n"
+        "    entries = []\n"
+        "    for tool in snapshot.get('tools', []):\n"
+        "        entries.append({'kind': 'tool', **tool})\n"
+        "    for prompt in snapshot.get('prompts', []):\n"
+        "        entries.append({'kind': 'prompt', **prompt})\n"
+        "    for resource in snapshot.get('resources', []):\n"
+        "        entries.append({'kind': 'resource', **resource})\n"
+        "    return entries\n"
+    )
+
+
+def _render_iteration_telemetry_workbench_block() -> str:
+    return (
+        "def build_iteration_telemetry_snapshot(run_id: str, **payload):\n"
+        "    from .autopilot_iteration_telemetry import collect_iteration_telemetry\n\n"
+        "    return collect_iteration_telemetry(run_id=run_id, **payload).to_dict()\n"
+    )
+
+
+def _render_iteration_telemetry_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Structured telemetry helpers for AAA autonomous iteration candidates.\n\n'
+        "The helpers are pure and JSON-serializable so B candidate workspaces can\n"
+        "record review evidence without writing memory, secrets, or transcripts.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from dataclasses import dataclass, field\n"
+        "from datetime import datetime, timezone\n"
+        "from typing import Any, Dict, List, Mapping, Optional\n\n\n"
+        "def _utc_now() -> str:\n"
+        "    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')\n\n\n"
+        "def _items(value: Any) -> List[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _mapping(value: Any) -> Dict[str, Any]:\n"
+        "    return dict(value) if isinstance(value, Mapping) else {}\n\n\n"
+        "@dataclass\n"
+        "class SourceRecord:\n"
+        "    id: str\n"
+        "    status: str = 'unknown'\n"
+        "    title: Optional[str] = None\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        result = {'id': self.id, 'status': self.status}\n"
+        "        if self.title:\n"
+        "            result['title'] = self.title\n"
+        "        return result\n\n\n"
+        "@dataclass\n"
+        "class ValidationCommandRecord:\n"
+        "    command: str\n"
+        "    status: str = 'unknown'\n"
+        "    repo: Optional[str] = None\n"
+        "    args: List[str] = field(default_factory=list)\n"
+        "    exit_code: Optional[int] = None\n"
+        "    diagnostic: Dict[str, Any] = field(default_factory=dict)\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        result: Dict[str, Any] = {\n"
+        "            'command': self.command,\n"
+        "            'args': list(self.args),\n"
+        "            'status': self.status,\n"
+        "        }\n"
+        "        if self.repo:\n"
+        "            result['repo'] = self.repo\n"
+        "        if self.exit_code is not None:\n"
+        "            result['exit_code'] = self.exit_code\n"
+        "        if self.diagnostic:\n"
+        "            result['diagnostic'] = dict(self.diagnostic)\n"
+        "        return result\n\n\n"
+        "def _source_to_dict(value: Any) -> Dict[str, Any]:\n"
+        "    if hasattr(value, 'to_dict'):\n"
+        "        return dict(value.to_dict())\n"
+        "    data = _mapping(value)\n"
+        "    if data:\n"
+        "        return {\n"
+        "            'id': str(data.get('id') or data.get('source_id') or 'source'),\n"
+        "            'status': str(data.get('status') or 'unknown'),\n"
+        "            **({'title': str(data.get('title'))} if data.get('title') else {}),\n"
+        "        }\n"
+        "    return {'id': str(value), 'status': 'unknown'}\n\n\n"
+        "def _validation_to_dict(value: Any) -> Dict[str, Any]:\n"
+        "    if hasattr(value, 'to_dict'):\n"
+        "        return dict(value.to_dict())\n"
+        "    data = _mapping(value)\n"
+        "    if data:\n"
+        "        return ValidationCommandRecord(\n"
+        "            command=str(data.get('command') or ''),\n"
+        "            status=str(data.get('status') or 'unknown'),\n"
+        "            repo=str(data.get('repo')) if data.get('repo') else None,\n"
+        "            args=[str(item) for item in _items(data.get('args'))],\n"
+        "            exit_code=data.get('exit_code') if isinstance(data.get('exit_code'), int) else None,\n"
+        "            diagnostic=_mapping(data.get('diagnostic')),\n"
+        "        ).to_dict()\n"
+        "    return {'command': str(value), 'args': [], 'status': 'unknown'}\n\n\n"
+        "@dataclass\n"
+        "class IterationTelemetryRecord:\n"
+        "    run_id: str\n"
+        "    candidate_id: str = ''\n"
+        "    timestamp: str = field(default_factory=_utc_now)\n"
+        "    packs: List[str] = field(default_factory=list)\n"
+        "    sources: List[Any] = field(default_factory=list)\n"
+        "    validation_commands: List[Any] = field(default_factory=list)\n"
+        "    status: str = 'candidate'\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        return {\n"
+        "            'schema_version': 'across-aaa-iteration-telemetry/1.0',\n"
+        "            'run_id': self.run_id,\n"
+        "            'candidate_id': self.candidate_id,\n"
+        "            'timestamp': self.timestamp,\n"
+        "            'status': self.status,\n"
+        "            'packs': [str(item) for item in _items(self.packs)],\n"
+        "            'sources': [_source_to_dict(item) for item in _items(self.sources)],\n"
+        "            'validation_commands': [_validation_to_dict(item) for item in _items(self.validation_commands)],\n"
+        f"            'model_summary': {decision['summary']!r},\n"
+        f"            'model_risk': {decision['risk']!r},\n"
+        "            'promotion_requires_human_review': True,\n"
+        "        }\n\n\n"
+        "def collect_iteration_telemetry(run_id: str, **payload: Any) -> IterationTelemetryRecord:\n"
+        "    return IterationTelemetryRecord(\n"
+        "        run_id=str(run_id),\n"
+        "        candidate_id=str(payload.get('candidate_id') or ''),\n"
+        "        packs=[str(item) for item in _items(payload.get('packs'))],\n"
+        "        sources=_items(payload.get('sources')),\n"
+        "        validation_commands=_items(payload.get('validation_commands')),\n"
+        "        status=str(payload.get('status') or 'candidate'),\n"
+        "    )\n\n\n"
+        "def validate_iteration_telemetry_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:\n"
+        "    data = dict(payload)\n"
+        "    blocking: List[str] = []\n"
+        "    if not str(data.get('run_id') or '').strip():\n"
+        "        blocking.append('run_id is required')\n"
+        "    if not isinstance(data.get('packs', []), list):\n"
+        "        blocking.append('packs must be a list')\n"
+        "    if not isinstance(data.get('sources', []), list):\n"
+        "        blocking.append('sources must be a list')\n"
+        "    return {'status': 'passed' if not blocking else 'failed', 'blocking_reasons': blocking}\n"
+    )
+
+
+def _render_iteration_telemetry_test() -> str:
+    return (
+        "import json\n\n"
+        "from across_agents_assistant.autopilot_iteration_telemetry import (\n"
+        "    IterationTelemetryRecord,\n"
+        "    collect_iteration_telemetry,\n"
+        "    validate_iteration_telemetry_payload,\n"
+        ")\n\n\n"
+        "def test_iteration_telemetry_record_to_dict_accepts_string_sources():\n"
+        "    record = IterationTelemetryRecord(\n"
+        "        run_id='run-1',\n"
+        "        packs=['trigger_ingestion'],\n"
+        "        sources=['source-a'],\n"
+        "        validation_commands=[{'command': 'python3', 'args': ['-m', 'py_compile'], 'status': 'passed'}],\n"
+        "    )\n"
+        "    payload = record.to_dict()\n"
+        "    json.dumps(payload)\n"
+        "    assert payload['run_id'] == 'run-1'\n"
+        "    assert payload['sources'][0]['id'] == 'source-a'\n"
+        "    assert payload['validation_commands'][0]['command'] == 'python3'\n"
+        "    assert payload['promotion_requires_human_review'] is True\n\n\n"
+        "def test_collect_iteration_telemetry_builds_record():\n"
+        "    record = collect_iteration_telemetry(\n"
+        "        run_id='run-2',\n"
+        "        candidate_id='cand-1',\n"
+        "        packs=('validation_harness',),\n"
+        "        sources=[{'id': 'source-b', 'status': 'passed'}],\n"
+        "    )\n"
+        "    payload = record.to_dict()\n"
+        "    assert payload['candidate_id'] == 'cand-1'\n"
+        "    assert payload['packs'] == ['validation_harness']\n"
+        "    assert payload['sources'][0]['status'] == 'passed'\n\n\n"
+        "def test_validate_iteration_telemetry_payload_rejects_missing_run_id():\n"
+        "    result = validate_iteration_telemetry_payload({'packs': [], 'sources': []})\n"
+        "    assert result['status'] == 'failed'\n"
+        "    assert 'run_id is required' in result['blocking_reasons']\n"
+    )
+
+
+def _render_capability_gap_manifest_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Capability-gap manifest helpers for AAA autonomous iteration.\n\n'
+        "The helper converts already-redacted loop source signals and a selected\n"
+        "iteration descriptor into deterministic review evidence. It is safe for\n"
+        "B candidate workspaces because it performs no network, subprocess, file,\n"
+        "secret, or transcript access.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Mapping, Sequence\n"
+        "from typing import Any, Dict, List\n\n\n"
+        "MANIFEST_VERSION = 'across-autopilot-capability-gap/1.0'\n"
+        "STRENGTH_ORDER = {'failed': 0, 'weak': 1, 'moderate': 2, 'strong': 3}\n\n\n"
+        "def _mapping(value: Any) -> Dict[str, Any]:\n"
+        "    return dict(value) if isinstance(value, Mapping) else {}\n\n\n"
+        "def _items(value: Any) -> List[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _signals(source_signals: Mapping[str, Any]) -> List[Dict[str, Any]]:\n"
+        "    raw = source_signals.get('signals') or source_signals.get('sources') or []\n"
+        "    return [_mapping(item) for item in _items(raw)]\n\n\n"
+        "def _targets(selected_iteration: Mapping[str, Any]) -> List[Dict[str, Any]]:\n"
+        "    raw = selected_iteration.get('candidate_targets') or selected_iteration.get('targets') or []\n"
+        "    targets = [_mapping(item) for item in _items(raw)]\n"
+        "    if targets:\n"
+        "        return targets\n"
+        "    if selected_iteration.get('target_id') or selected_iteration.get('id'):\n"
+        "        return [_mapping(selected_iteration)]\n"
+        "    return []\n\n\n"
+        "def _source_refs(target: Mapping[str, Any]) -> set[str]:\n"
+        "    refs = target.get('source_refs') or target.get('sources') or target.get('source_ids') or []\n"
+        "    return {str(item) for item in _items(refs) if str(item).strip()}\n\n\n"
+        "def _requires_model_backing(target: Mapping[str, Any]) -> bool:\n"
+        "    review = _mapping(target.get('semantic_review'))\n"
+        "    return bool(review.get('require_model_backed') or target.get('require_model_backed'))\n\n\n"
+        "def _base_strength(signal: Mapping[str, Any]) -> str:\n"
+        "    status = str(signal.get('status') or '').lower()\n"
+        "    if status and status not in {'passed', 'ok', 'ready'}:\n"
+        "        return 'failed'\n"
+        "    excerpt = str(signal.get('excerpt') or signal.get('summary') or '').strip()\n"
+        "    keywords = [item for item in _items(signal.get('keywords')) if str(item).strip()]\n"
+        "    if excerpt and len(keywords) >= 2:\n"
+        "        return 'strong'\n"
+        "    if excerpt or keywords:\n"
+        "        return 'moderate'\n"
+        "    return 'weak'\n\n\n"
+        "def _cap_strength(strength: str, maximum: str) -> str:\n"
+        "    return strength if STRENGTH_ORDER[strength] <= STRENGTH_ORDER[maximum] else maximum\n\n\n"
+        "def _entry_for_signal(signal: Mapping[str, Any], targets: List[Dict[str, Any]]) -> Dict[str, Any]:\n"
+        "    source_id = str(signal.get('id') or signal.get('source_id') or 'source')\n"
+        "    matched = [target for target in targets if source_id in _source_refs(target)]\n"
+        "    strength = _base_strength(signal)\n"
+        "    if any(_requires_model_backing(target) for target in matched) and signal.get('model_backed') is not True:\n"
+        "        strength = _cap_strength(strength, 'weak')\n"
+        "    return {\n"
+        "        'source_id': source_id,\n"
+        "        'title': str(signal.get('title') or source_id),\n"
+        "        'status': str(signal.get('status') or 'unknown'),\n"
+        "        'adapter': str(signal.get('adapter') or 'unknown'),\n"
+        "        'matched_target_ids': [str(target.get('id') or target.get('target_id') or 'target') for target in matched],\n"
+        "        'evidence_strength': strength,\n"
+        "        'requires_model_backing': any(_requires_model_backing(target) for target in matched),\n"
+        "    }\n\n\n"
+        "def compute_gap_manifest(source_signals: Mapping[str, Any] | None, selected_iteration: Mapping[str, Any] | None) -> Dict[str, Any]:\n"
+        "    signals_payload = _mapping(source_signals)\n"
+        "    selected_payload = _mapping(selected_iteration)\n"
+        "    targets = _targets(selected_payload)\n"
+        "    entries = [_entry_for_signal(signal, targets) for signal in _signals(signals_payload)]\n"
+        "    target_ids = [str(target.get('id') or target.get('target_id') or 'target') for target in targets]\n"
+        "    missing_refs = sorted({ref for target in targets for ref in _source_refs(target)} - {entry['source_id'] for entry in entries})\n"
+        "    blocking = list(missing_refs)\n"
+        "    return {\n"
+        "        'manifest_version': MANIFEST_VERSION,\n"
+        "        'spec_id': str(signals_payload.get('spec_id') or selected_payload.get('spec_id') or ''),\n"
+        "        'target_ids': target_ids,\n"
+        "        'entries': entries,\n"
+        "        'missing_source_refs': missing_refs,\n"
+        "        'status': 'attention' if blocking else 'passed',\n"
+        "        'blocking_reasons': [f'missing source ref: {ref}' for ref in blocking],\n"
+        f"        'model_summary': {decision['summary']!r},\n"
+        f"        'model_risk': {decision['risk']!r},\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n"
+    )
+
+
+def _render_mcp_tool_manifest_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Validation-stable MCP tool manifest helpers for AAA loop engineering."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Iterable, Mapping, Sequence\n"
+        "from typing import Any, Dict, List, Tuple\n\n\n"
+        "MAX_NAME_LENGTH = 64\n"
+        "MAX_DESCRIPTION_LENGTH = 1024\n"
+        "MAX_SCHEMA_DEPTH = 8\n"
+        "PRIMITIVE_TYPES = frozenset({'string', 'number', 'integer', 'boolean', 'null'})\n"
+        "ALLOWED_TYPES = frozenset(set(PRIMITIVE_TYPES) | {'object', 'array'})\n"
+        "REQUIRED_ANNOTATIONS = ('title', 'readOnlyHint', 'destructiveHint')\n\n\n"
+        "class ToolManifestError(ValueError):\n"
+        "    \"\"\"Raised when a tool descriptor does not meet the Across MCP tool contract.\"\"\"\n\n\n"
+        "def _mapping(value: Any, where: str) -> Mapping[str, Any]:\n"
+        "    if not isinstance(value, Mapping):\n"
+        "        raise ToolManifestError(f'{where} must be a mapping')\n"
+        "    return value\n\n\n"
+        "def _valid_name(name: str) -> bool:\n"
+        "    normalized = name.replace('-', '_').replace('.', '_')\n"
+        "    return bool(normalized) and normalized.isidentifier()\n\n\n"
+        "def _type_names(schema_type: Any, where: str) -> Tuple[str, ...]:\n"
+        "    if isinstance(schema_type, str):\n"
+        "        values = (schema_type,)\n"
+        "    elif isinstance(schema_type, Sequence) and not isinstance(schema_type, (str, bytes, bytearray)):\n"
+        "        values = tuple(str(item) for item in schema_type)\n"
+        "    else:\n"
+        "        raise ToolManifestError(f'{where}.type must be a string or a sequence of strings')\n"
+        "    invalid = [item for item in values if item not in ALLOWED_TYPES]\n"
+        "    if invalid:\n"
+        "        allowed = ', '.join(sorted(ALLOWED_TYPES))\n"
+        "        raise ToolManifestError(f'{where}.type contains unsupported value(s) {invalid}; allowed: {allowed}')\n"
+        "    return values\n\n\n"
+        "def validate_json_schema(schema: Mapping[str, Any], *, where: str = 'schema', depth: int = 0) -> Dict[str, Any]:\n"
+        "    schema = dict(_mapping(schema, where))\n"
+        "    if depth > MAX_SCHEMA_DEPTH:\n"
+        "        raise ToolManifestError(f'{where} exceeds max depth {MAX_SCHEMA_DEPTH}')\n"
+        "    schema_types = _type_names(schema.get('type'), where)\n"
+        "    properties = schema.get('properties')\n"
+        "    if properties is not None:\n"
+        "        properties = dict(_mapping(properties, f'{where}.properties'))\n"
+        "        for prop_name, prop_schema in properties.items():\n"
+        "            validate_json_schema(prop_schema, where=f'{where}.properties.{prop_name}', depth=depth + 1)\n"
+        "        schema['properties'] = properties\n"
+        "    if 'array' in schema_types:\n"
+        "        validate_json_schema(schema.get('items'), where=f'{where}.items', depth=depth + 1)\n"
+        "    return schema\n\n\n"
+        "def validate_tool_manifest(descriptor: Mapping[str, Any]) -> Dict[str, Any]:\n"
+        "    descriptor = dict(_mapping(descriptor, 'descriptor'))\n"
+        "    name = descriptor.get('name')\n"
+        "    if not isinstance(name, str) or not _valid_name(name) or len(name) > MAX_NAME_LENGTH:\n"
+        "        raise ToolManifestError('descriptor.name must be a valid short tool identifier')\n"
+        "    description = descriptor.get('description')\n"
+        "    if not isinstance(description, str) or not description.strip() or len(description) > MAX_DESCRIPTION_LENGTH:\n"
+        "        raise ToolManifestError('descriptor.description must be non-empty bounded text')\n"
+        "    annotations = dict(_mapping(descriptor.get('annotations'), 'descriptor.annotations'))\n"
+        "    missing = [key for key in REQUIRED_ANNOTATIONS if key not in annotations]\n"
+        "    if missing:\n"
+        "        raise ToolManifestError(f'descriptor.annotations missing required keys: {missing}')\n"
+        "    for key in ('readOnlyHint', 'destructiveHint'):\n"
+        "        if not isinstance(annotations.get(key), bool):\n"
+        "            raise ToolManifestError(f'descriptor.annotations.{key} must be boolean')\n"
+        "    if not isinstance(annotations.get('title'), str) or not annotations['title'].strip():\n"
+        "        raise ToolManifestError('descriptor.annotations.title must be non-empty text')\n"
+        "    return {\n"
+        "        'name': name,\n"
+        "        'description': description,\n"
+        "        'annotations': annotations,\n"
+        "        'inputSchema': validate_json_schema(descriptor.get('inputSchema'), where='descriptor.inputSchema'),\n"
+        "        'outputSchema': validate_json_schema(descriptor.get('outputSchema'), where='descriptor.outputSchema'),\n"
+        "    }\n\n\n"
+        "def validate_tool_manifests(descriptors: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:\n"
+        "    seen = set()\n"
+        "    normalized = []\n"
+        "    for descriptor in descriptors:\n"
+        "        item = validate_tool_manifest(descriptor)\n"
+        "        if item['name'] in seen:\n"
+        "            raise ToolManifestError(f'duplicate tool descriptor: {item[\"name\"]}')\n"
+        "        seen.add(item['name'])\n"
+        "        normalized.append(item)\n"
+        "    return normalized\n\n\n"
+        "TOOL_DESCRIPTORS = [\n"
+        "    {\n"
+        "        'name': 'loop_engineering_manifest_validate',\n"
+        "        'description': 'Validate bounded MCP-style descriptors before exposing AAA loop-engineering tools.',\n"
+        "        'annotations': {'title': 'Validate loop tool manifest', 'readOnlyHint': True, 'destructiveHint': False},\n"
+        "        'inputSchema': {\n"
+        "            'type': 'object',\n"
+        "            'properties': {'descriptors': {'type': 'array', 'items': {'type': 'object'}}},\n"
+        "            'required': ['descriptors'],\n"
+        "        },\n"
+        "        'outputSchema': {\n"
+        "            'type': 'object',\n"
+        "            'properties': {'valid': {'type': 'boolean'}, 'tool_count': {'type': 'integer'}},\n"
+        "        },\n"
+        "    }\n"
+        "]\n\n\n"
+        "def get_registered_tools() -> Tuple[Dict[str, Any], ...]:\n"
+        "    return tuple(validate_tool_manifests(TOOL_DESCRIPTORS))\n\n\n"
+        "def mcp_tool_manifest_snapshot() -> Dict[str, Any]:\n"
+        "    tools = list(get_registered_tools())\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-mcp-tool-manifest/1.0',\n"
+        "        'tools': tools,\n"
+        "        'summary': {'tool_count': len(tools)},\n"
+        f"        'model_summary': {decision['summary']!r},\n"
+        f"        'model_risk': {decision['risk']!r},\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "__all__ = [\n"
+        "    'ToolManifestError',\n"
+        "    'TOOL_DESCRIPTORS',\n"
+        "    'validate_json_schema',\n"
+        "    'validate_tool_manifest',\n"
+        "    'validate_tool_manifests',\n"
+        "    'get_registered_tools',\n"
+        "    'mcp_tool_manifest_snapshot',\n"
+        "]\n"
+    )
+
+
+def _render_mcp_tool_manifest_test() -> str:
+    return (
+        "from pathlib import Path\n\n"
+        "from across_agents_assistant.autopilot_mcp_tool_manifest import (\n"
+        "    TOOL_DESCRIPTORS,\n"
+        "    ToolManifestError,\n"
+        "    get_registered_tools,\n"
+        "    mcp_tool_manifest_snapshot,\n"
+        "    validate_tool_manifest,\n"
+        "    validate_tool_manifests,\n"
+        ")\n\n\n"
+        "def _descriptor(name='unit_tool'):\n"
+        "    return {\n"
+        "        'name': name,\n"
+        "        'description': 'A bounded test descriptor.',\n"
+        "        'annotations': {'title': 'Unit tool', 'readOnlyHint': True, 'destructiveHint': False},\n"
+        "        'inputSchema': {'type': 'object', 'properties': {'query': {'type': 'string'}}},\n"
+        "        'outputSchema': {'type': 'object', 'properties': {'ok': {'type': 'boolean'}}},\n"
+        "    }\n\n\n"
+        "def _expect_error(fn):\n"
+        "    try:\n"
+        "        fn()\n"
+        "    except ToolManifestError:\n"
+        "        return True\n"
+        "    raise AssertionError('expected ToolManifestError')\n\n\n"
+        "def test_registered_tools_validate():\n"
+        "    tools = get_registered_tools()\n"
+        "    assert tools\n"
+        "    assert tools[0]['name'] == TOOL_DESCRIPTORS[0]['name']\n"
+        "    assert tools[0]['annotations']['readOnlyHint'] is True\n\n\n"
+        "def test_validate_tool_manifest_accepts_valid_descriptor():\n"
+        "    item = validate_tool_manifest(_descriptor())\n"
+        "    assert item['inputSchema']['properties']['query']['type'] == 'string'\n\n\n"
+        "def test_validate_tool_manifests_rejects_duplicate_names():\n"
+        "    _expect_error(lambda: validate_tool_manifests([_descriptor('dup'), _descriptor('dup')]))\n\n\n"
+        "def test_validate_tool_manifest_rejects_invalid_schema_type():\n"
+        "    bad = _descriptor()\n"
+        "    bad['inputSchema']['properties']['query']['type'] = 'function'\n"
+        "    _expect_error(lambda: validate_tool_manifest(bad))\n\n\n"
+        "def test_snapshot_is_human_reviewed():\n"
+        "    snapshot = mcp_tool_manifest_snapshot()\n"
+        "    assert snapshot['schema_version'] == 'across-aaa-mcp-tool-manifest/1.0'\n"
+        "    assert snapshot['promotion_requires_human_review'] is True\n"
+        "    assert snapshot['summary']['tool_count'] >= 1\n\n\n"
+        "def test_api_server_registration_marker_is_lightweight():\n"
+        "    source = Path('backend/src/across_agents_assistant/api_server.py').read_text(encoding='utf-8')\n"
+        "    assert 'ACROSS MCP TOOL MANIFEST REGISTRATION START' in source\n"
+        "    assert 'autopilot_mcp_tool_manifest' in source\n"
+        "    assert 'ACROSS_MCP_TOOL_DESCRIPTORS' in source\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_registered_tools_validate()\n"
+        "    test_validate_tool_manifest_accepts_valid_descriptor()\n"
+        "    test_validate_tool_manifests_rejects_duplicate_names()\n"
+        "    test_validate_tool_manifest_rejects_invalid_schema_type()\n"
+        "    test_snapshot_is_human_reviewed()\n"
+        "    test_api_server_registration_marker_is_lightweight()\n"
+    )
+
+
+def _render_target_backlog_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Validation-stable target backlog helpers for AAA autonomous iteration.\n\n'
+        "The backlog is candidate-local review evidence. It is deterministic,\n"
+        "JSON-serializable, and never promotes changes without human review.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from dataclasses import asdict, dataclass, field\n"
+        "from typing import Any, Dict, Iterable, List, Mapping, Optional\n\n\n"
+        "SCHEMA_VERSION = 'across-aaa-autopilot-target-backlog/1.0'\n\n\n"
+        "def _items(value: Any) -> List[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _mapping(value: Any) -> Dict[str, Any]:\n"
+        "    return dict(value) if isinstance(value, Mapping) else {}\n\n\n"
+        "def _target_id(target: Mapping[str, Any], fallback: str) -> str:\n"
+        "    return str(target.get('target_id') or target.get('id') or fallback).strip()\n\n\n"
+        "def _source_refs(target: Mapping[str, Any], source_signals: Any = None) -> List[str]:\n"
+        "    refs = target.get('source_refs') or target.get('sources') or target.get('source_ids')\n"
+        "    if refs is None and isinstance(source_signals, Mapping):\n"
+        "        refs = [item.get('id') for item in _items(source_signals.get('signals') or source_signals.get('sources')) if isinstance(item, Mapping)]\n"
+        "    return [str(item) for item in _items(refs) if str(item).strip()]\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class TargetBacklogItem:\n"
+        "    target_id: str\n"
+        "    target_repo: str\n"
+        "    goal: str\n"
+        "    priority: str = 'P1'\n"
+        "    source_refs: List[str] = field(default_factory=list)\n"
+        "    validation_commands: List[Dict[str, Any]] = field(default_factory=list)\n"
+        "    risk: str = 'low'\n"
+        "    status: str = 'candidate'\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        data = asdict(self)\n"
+        "        data['promotion_requires_human_review'] = True\n"
+        "        return data\n\n\n"
+        "@dataclass\n"
+        "class TargetBacklog:\n"
+        "    items: List[TargetBacklogItem] = field(default_factory=list)\n"
+        "    owner: str = 'across-agents-assistant'\n"
+        "    schema_version: str = SCHEMA_VERSION\n\n"
+        "    def add(self, item: TargetBacklogItem) -> None:\n"
+        "        existing = {entry.target_id for entry in self.items}\n"
+        "        if item.target_id not in existing:\n"
+        "            self.items.append(item)\n\n"
+        "    def find(self, target_id: str) -> Optional[TargetBacklogItem]:\n"
+        "        for item in self.items:\n"
+        "            if item.target_id == target_id:\n"
+        "                return item\n"
+        "        return None\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        targets = [item.to_dict() for item in self.items]\n"
+        "        return {\n"
+        "            'schema_version': self.schema_version,\n"
+        "            'owner': self.owner,\n"
+        "            'targets': targets,\n"
+        "            'summary': {'target_count': len(targets)},\n"
+        f"            'model_summary': {decision['summary']!r},\n"
+        f"            'model_risk': {decision['risk']!r},\n"
+        "            'promotion_requires_human_review': True,\n"
+        "        }\n\n\n"
+        "def normalize_target(target: Mapping[str, Any], *, fallback_id: str = 'target-1', source_signals: Any = None) -> TargetBacklogItem:\n"
+        "    data = _mapping(target)\n"
+        "    target_id = _target_id(data, fallback_id)\n"
+        "    repo = str(data.get('target_repo') or data.get('repo') or 'across-agents-assistant').strip()\n"
+        "    goal = str(data.get('goal') or data.get('summary') or target_id).strip()\n"
+        "    commands = [_mapping(item) for item in _items(data.get('validation_commands'))]\n"
+        "    return TargetBacklogItem(\n"
+        "        target_id=target_id,\n"
+        "        target_repo=repo,\n"
+        "        goal=goal,\n"
+        "        priority=str(data.get('priority') or data.get('score') or 'P1'),\n"
+        "        source_refs=_source_refs(data, source_signals),\n"
+        "        validation_commands=commands,\n"
+        "        risk=str(data.get('risk') or 'low'),\n"
+        "        status=str(data.get('status') or 'candidate'),\n"
+        "    )\n\n\n"
+        "def build_target_backlog(source_signals: Any = None, selected_iteration: Any = None) -> TargetBacklog:\n"
+        "    backlog = TargetBacklog()\n"
+        "    selected = _mapping(selected_iteration)\n"
+        "    raw_targets = selected.get('candidate_targets') or selected.get('targets') or []\n"
+        "    targets = [_mapping(item) for item in _items(raw_targets)]\n"
+        "    if not targets and selected:\n"
+        "        targets = [selected]\n"
+        "    if not targets:\n"
+        "        targets = [{\n"
+        "            'target_id': 'autopilot-target-backlog',\n"
+        "            'target_repo': 'across-agents-assistant',\n"
+        "            'goal': 'Maintain a bounded candidate target backlog for autonomous self-iteration review.',\n"
+        "            'source_refs': ['loop-engineering-architecture-signal', 'tool-pack-operational-signal'],\n"
+        "            'validation_commands': [{'command': 'python3', 'args': ['-m', 'py_compile']}],\n"
+        "        }]\n"
+        "    for index, target in enumerate(targets, start=1):\n"
+        "        backlog.add(normalize_target(target, fallback_id=f'target-{index}', source_signals=source_signals))\n"
+        "    return backlog\n\n\n"
+        "def target_backlog_snapshot(source_signals: Any = None, selected_iteration: Any = None) -> Dict[str, Any]:\n"
+        "    return build_target_backlog(source_signals=source_signals, selected_iteration=selected_iteration).to_dict()\n\n\n"
+        "def summarize_target_backlog(source_signals: Any = None, selected_iteration: Any = None) -> Dict[str, Any]:\n"
+        "    snapshot = target_backlog_snapshot(source_signals=source_signals, selected_iteration=selected_iteration)\n"
+        "    return {\n"
+        "        'schema_version': snapshot['schema_version'],\n"
+        "        'target_count': snapshot['summary']['target_count'],\n"
+        "        'target_ids': [item['target_id'] for item in snapshot['targets']],\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def find_target(backlog: Any, target_id: str) -> Optional[Dict[str, Any]]:\n"
+        "    if isinstance(backlog, TargetBacklog):\n"
+        "        item = backlog.find(str(target_id))\n"
+        "        return item.to_dict() if item else None\n"
+        "    data = _mapping(backlog)\n"
+        "    for item in _items(data.get('targets') or backlog):\n"
+        "        item_data = _mapping(item)\n"
+        "        if _target_id(item_data, '') == str(target_id):\n"
+        "            return item_data\n"
+        "    return None\n\n\n"
+        "def to_artifact_envelope(backlog: Any) -> Dict[str, Any]:\n"
+        "    payload = backlog.to_dict() if isinstance(backlog, TargetBacklog) else _mapping(backlog)\n"
+        "    if not payload:\n"
+        "        payload = target_backlog_snapshot()\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-target-backlog-artifact/1.0',\n"
+        "        'artifact_type': 'autopilot_target_backlog',\n"
+        "        'payload': payload,\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def validate_target_backlog(backlog: Any) -> Dict[str, Any]:\n"
+        "    payload = backlog.to_dict() if isinstance(backlog, TargetBacklog) else _mapping(backlog)\n"
+        "    targets = [_mapping(item) for item in _items(payload.get('targets'))]\n"
+        "    blocking: List[str] = []\n"
+        "    if not targets:\n"
+        "        blocking.append('at least one target is required')\n"
+        "    for item in targets:\n"
+        "        if not _target_id(item, ''):\n"
+        "            blocking.append('target_id is required')\n"
+        "        if not str(item.get('goal') or '').strip():\n"
+        "            blocking.append('goal is required')\n"
+        "    return {'status': 'passed' if not blocking else 'failed', 'blocking_reasons': blocking}\n\n\n"
+        "__all__ = [\n"
+        "    'TargetBacklogItem',\n"
+        "    'TargetBacklog',\n"
+        "    'SCHEMA_VERSION',\n"
+        "    'normalize_target',\n"
+        "    'build_target_backlog',\n"
+        "    'target_backlog_snapshot',\n"
+        "    'summarize_target_backlog',\n"
+        "    'find_target',\n"
+        "    'to_artifact_envelope',\n"
+        "    'validate_target_backlog',\n"
+        "]\n"
+    )
+
+
+def _render_target_backlog_test() -> str:
+    return (
+        "from pathlib import Path\n\n"
+        "from across_agents_assistant.autopilot_target_backlog import (\n"
+        "    TargetBacklog,\n"
+        "    TargetBacklogItem,\n"
+        "    build_target_backlog,\n"
+        "    find_target,\n"
+        "    summarize_target_backlog,\n"
+        "    target_backlog_snapshot,\n"
+        "    to_artifact_envelope,\n"
+        "    validate_target_backlog,\n"
+        ")\n\n\n"
+        "def _selected():\n"
+        "    return {\n"
+        "        'target_id': 'aaa-target-backlog-autopilot',\n"
+        "        'target_repo': 'across-agents-assistant',\n"
+        "        'goal': 'Expose a bounded autonomous target backlog.',\n"
+        "        'source_refs': ['loop-engineering-architecture-signal'],\n"
+        "        'validation_commands': [{'command': 'python3', 'args': ['-m', 'py_compile']}],\n"
+        "    }\n\n\n"
+        "def test_backlog_snapshot_is_reviewable():\n"
+        "    snapshot = target_backlog_snapshot(selected_iteration=_selected())\n"
+        "    assert snapshot['schema_version'] == 'across-aaa-autopilot-target-backlog/1.0'\n"
+        "    assert snapshot['summary']['target_count'] == 1\n"
+        "    assert snapshot['targets'][0]['promotion_requires_human_review'] is True\n"
+        "    assert validate_target_backlog(snapshot)['status'] == 'passed'\n\n\n"
+        "def test_backlog_find_and_artifact_envelope():\n"
+        "    backlog = build_target_backlog(selected_iteration=_selected())\n"
+        "    found = find_target(backlog, 'aaa-target-backlog-autopilot')\n"
+        "    assert found['target_repo'] == 'across-agents-assistant'\n"
+        "    envelope = to_artifact_envelope(backlog)\n"
+        "    assert envelope['artifact_type'] == 'autopilot_target_backlog'\n"
+        "    assert envelope['promotion_requires_human_review'] is True\n\n\n"
+        "def test_backlog_deduplicates_targets():\n"
+        "    backlog = TargetBacklog()\n"
+        "    item = TargetBacklogItem(target_id='same', target_repo='repo', goal='goal')\n"
+        "    backlog.add(item)\n"
+        "    backlog.add(item)\n"
+        "    assert backlog.to_dict()['summary']['target_count'] == 1\n\n\n"
+        "def test_summary_lists_target_ids():\n"
+        "    summary = summarize_target_backlog(selected_iteration=_selected())\n"
+        "    assert summary['target_count'] == 1\n"
+        "    assert summary['target_ids'] == ['aaa-target-backlog-autopilot']\n\n\n"
+        "def test_integration_markers_use_delayed_imports():\n"
+        "    candidates = [\n"
+        "        ('backend/src/across_agents_assistant/autopilot_workbench.py', 'ACROSS TARGET BACKLOG WORKBENCH START'),\n"
+        "        ('backend/src/across_agents_assistant/api_server.py', 'ACROSS TARGET BACKLOG API START'),\n"
+        "        ('backend/src/across_agents_assistant/loop_engineering_capability_pack.py', 'ACROSS TARGET BACKLOG CAPABILITY PACK START'),\n"
+        "    ]\n"
+        "    markers = []\n"
+        "    for path, marker in candidates:\n"
+        "        file_path = Path(path)\n"
+        "        if not file_path.exists():\n"
+        "            continue\n"
+        "        source = file_path.read_text(encoding='utf-8')\n"
+        "        if marker not in source:\n"
+        "            continue\n"
+        "        block = source.split(marker, 1)[1]\n"
+        "        assert 'from .autopilot_target_backlog import' in block\n"
+        "        prefix = source.split(marker, 1)[0]\n"
+        "        assert 'from .autopilot_target_backlog import TargetBacklog' not in prefix\n"
+        "        markers.append(marker)\n"
+        "    assert markers, 'expected at least one target backlog integration marker'\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_backlog_snapshot_is_reviewable()\n"
+        "    test_backlog_find_and_artifact_envelope()\n"
+        "    test_backlog_deduplicates_targets()\n"
+        "    test_summary_lists_target_ids()\n"
+        "    test_integration_markers_use_delayed_imports()\n"
+    )
+
+
+def _render_target_backlog_swift_view() -> str:
+    return (
+        "import SwiftUI\n\n"
+        "struct AutopilotTargetBacklogItem: Identifiable, Equatable {\n"
+        "    let id: String\n"
+        "    let repository: String\n"
+        "    let goal: String\n"
+        "    let status: String\n"
+        "}\n\n"
+        "struct AutopilotTargetBacklogView: View {\n"
+        "    let targets: [AutopilotTargetBacklogItem]\n\n"
+        "    var body: some View {\n"
+        "        List(targets) { target in\n"
+        "            VStack(alignment: .leading, spacing: 4) {\n"
+        "                Text(target.id).font(.headline)\n"
+        "                Text(target.repository).font(.caption).foregroundStyle(.secondary)\n"
+        "                Text(target.goal).font(.body)\n"
+        "                Text(target.status).font(.caption2).foregroundStyle(.secondary)\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "#Preview {\n"
+        "    AutopilotTargetBacklogView(targets: [\n"
+        "        AutopilotTargetBacklogItem(\n"
+        "            id: \"autopilot-target-backlog\",\n"
+        "            repository: \"across-agents-assistant\",\n"
+        "            goal: \"Review a bounded autonomous iteration target.\",\n"
+        "            status: \"candidate\"\n"
+        "        )\n"
+        "    ])\n"
+        "}\n"
+    )
+
+
+def _render_mcp_tool_registry_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""MCP tool registry contract for AAA loop-engineering candidates.\n\n'
+        "The registry is intentionally pure and local. It describes bounded tool\n"
+        "surfaces for review evidence; it does not execute tools, open sockets,\n"
+        "write memory, or read provider secrets.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from dataclasses import asdict, dataclass, field\n"
+        "from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class ToolDescriptor:\n"
+        "    name: str\n"
+        "    description: str\n"
+        "    input_schema: Dict[str, Any] = field(default_factory=dict)\n"
+        "    output_schema: Dict[str, Any] = field(default_factory=dict)\n"
+        "    annotations: Dict[str, Any] = field(default_factory=dict)\n\n"
+        "    def normalized(self) -> Dict[str, Any]:\n"
+        "        if not self.name or not self.name.replace('-', '_').replace('.', '_').isidentifier():\n"
+        "            raise ValueError('tool descriptor name must be a stable identifier')\n"
+        "        if not self.description.strip():\n"
+        "            raise ValueError('tool descriptor description is required')\n"
+        "        item = asdict(self)\n"
+        "        item['inputSchema'] = item.pop('input_schema') or {'type': 'object'}\n"
+        "        item['outputSchema'] = item.pop('output_schema') or {'type': 'object'}\n"
+        "        item['annotations'] = {\n"
+        "            'title': self.annotations.get('title') or self.name.replace('_', ' ').title(),\n"
+        "            'readOnlyHint': bool(self.annotations.get('readOnlyHint', True)),\n"
+        "            'destructiveHint': bool(self.annotations.get('destructiveHint', False)),\n"
+        "            **{key: value for key, value in self.annotations.items() if key not in {'title', 'readOnlyHint', 'destructiveHint'}},\n"
+        "        }\n"
+        "        return item\n\n\n"
+        "class MCPToolRegistry:\n"
+        "    def __init__(self, tools: Optional[Iterable[ToolDescriptor]] = None) -> None:\n"
+        "        self._tools: Dict[str, ToolDescriptor] = {}\n"
+        "        for tool in tools or []:\n"
+        "            self.register_tool(tool)\n\n"
+        "    def register_tool(self, tool: Union[ToolDescriptor, Mapping[str, Any]]) -> ToolDescriptor:\n"
+        "        descriptor = _coerce_tool_descriptor(tool)\n"
+        "        descriptor.normalized()\n"
+        "        self._tools[descriptor.name] = descriptor\n"
+        "        return descriptor\n\n"
+        "    def list_tools(self) -> Tuple[Dict[str, Any], ...]:\n"
+        "        return tuple(self._tools[name].normalized() for name in sorted(self._tools))\n\n"
+        "    def get_tool(self, name: str) -> Dict[str, Any]:\n"
+        "        if name not in self._tools:\n"
+        "            raise KeyError(f'unknown MCP tool: {name}')\n"
+        "        return self._tools[name].normalized()\n\n"
+        "    def to_snapshot(self) -> Dict[str, Any]:\n"
+        "        tools = list(self.list_tools())\n"
+        "        return {\n"
+        "            'schema_version': 'across-aaa-mcp-tool-registry/1.0',\n"
+        "            'tools': tools,\n"
+        "            'summary': {'tool_count': len(tools)},\n"
+        f"            'model_summary': {decision['summary']!r},\n"
+        f"            'model_risk': {decision['risk']!r},\n"
+        "            'promotion_requires_human_review': True,\n"
+        "        }\n\n\n"
+        "def _coerce_tool_descriptor(value: Union[ToolDescriptor, Mapping[str, Any]]) -> ToolDescriptor:\n"
+        "    if isinstance(value, ToolDescriptor):\n"
+        "        return value\n"
+        "    if not isinstance(value, Mapping):\n"
+        "        raise TypeError('tool descriptor must be a ToolDescriptor or mapping')\n"
+        "    return ToolDescriptor(\n"
+        "        name=str(value.get('name') or ''),\n"
+        "        description=str(value.get('description') or ''),\n"
+        "        input_schema=dict(value.get('inputSchema') or value.get('input_schema') or {'type': 'object'}),\n"
+        "        output_schema=dict(value.get('outputSchema') or value.get('output_schema') or {'type': 'object'}),\n"
+        "        annotations=dict(value.get('annotations') or {}),\n"
+        "    )\n\n\n"
+        "def build_default_registry() -> MCPToolRegistry:\n"
+        "    return MCPToolRegistry([\n"
+        "        ToolDescriptor(\n"
+        "            name='loop_engineering_manifest_validate',\n"
+        "            description='Validate bounded loop-engineering tool registry evidence before promotion review.',\n"
+        "            input_schema={\n"
+        "                'type': 'object',\n"
+        "                'properties': {'tools': {'type': 'array', 'items': {'type': 'object'}}},\n"
+        "                'required': ['tools'],\n"
+        "            },\n"
+        "            output_schema={\n"
+        "                'type': 'object',\n"
+        "                'properties': {'valid': {'type': 'boolean'}, 'tool_count': {'type': 'integer'}},\n"
+        "            },\n"
+        "            annotations={'title': 'Validate loop tool registry', 'readOnlyHint': True, 'destructiveHint': False},\n"
+        "        )\n"
+        "    ])\n\n\n"
+        "DEFAULT_REGISTRY = build_default_registry()\n\n\n"
+        "def describe_default_registry() -> Dict[str, Any]:\n"
+        "    return DEFAULT_REGISTRY.to_snapshot()\n\n\n"
+        "def mcp_tool_registry_snapshot() -> Dict[str, Any]:\n"
+        "    return describe_default_registry()\n\n\n"
+        "__all__ = [\n"
+        "    'ToolDescriptor',\n"
+        "    'MCPToolRegistry',\n"
+        "    'build_default_registry',\n"
+        "    'DEFAULT_REGISTRY',\n"
+        "    'describe_default_registry',\n"
+        "    'mcp_tool_registry_snapshot',\n"
+        "]\n"
+    )
+
+
+def _render_mcp_tool_registry_test() -> str:
+    return (
+        "from pathlib import Path\n\n"
+        "from across_agents_assistant.autopilot_mcp_tool_registry import (\n"
+        "    DEFAULT_REGISTRY,\n"
+        "    MCPToolRegistry,\n"
+        "    ToolDescriptor,\n"
+        "    build_default_registry,\n"
+        "    describe_default_registry,\n"
+        "    mcp_tool_registry_snapshot,\n"
+        ")\n\n\n"
+        "def test_default_registry_exports_reviewable_tool():\n"
+        "    snapshot = describe_default_registry()\n"
+        "    assert snapshot['schema_version'] == 'across-aaa-mcp-tool-registry/1.0'\n"
+        "    assert snapshot['summary']['tool_count'] == 1\n"
+        "    assert snapshot['tools'][0]['name'] == 'loop_engineering_manifest_validate'\n"
+        "    assert snapshot['promotion_requires_human_review'] is True\n\n\n"
+        "def test_registry_registers_and_overwrites_by_name():\n"
+        "    registry = MCPToolRegistry()\n"
+        "    registry.register_tool(ToolDescriptor(name='loop_status', description='Read loop status.'))\n"
+        "    registry.register_tool({'name': 'loop_status', 'description': 'Read bounded loop status.'})\n"
+        "    tools = registry.list_tools()\n"
+        "    assert len(tools) == 1\n"
+        "    assert tools[0]['description'] == 'Read bounded loop status.'\n"
+        "    assert tools[0]['annotations']['readOnlyHint'] is True\n\n\n"
+        "def test_registry_rejects_invalid_names():\n"
+        "    registry = MCPToolRegistry()\n"
+        "    try:\n"
+        "        registry.register_tool(ToolDescriptor(name='bad name', description='Invalid.'))\n"
+        "    except ValueError:\n"
+        "        return\n"
+        "    raise AssertionError('expected ValueError for invalid tool name')\n\n\n"
+        "def test_snapshot_alias_matches_default_registry():\n"
+        "    assert DEFAULT_REGISTRY.list_tools() == build_default_registry().list_tools()\n"
+        "    assert mcp_tool_registry_snapshot() == describe_default_registry()\n\n\n"
+        "def test_integration_marker_uses_delayed_imports():\n"
+        "    candidates = [\n"
+        "        ('backend/src/across_agents_assistant/autopilot_workbench.py', 'ACROSS MCP TOOL REGISTRY WORKBENCH START'),\n"
+        "        ('backend/src/across_agents_assistant/api_server.py', 'ACROSS MCP TOOL REGISTRY API START'),\n"
+        "        ('backend/src/across_agents_assistant/loop_engineering_capability_pack.py', 'ACROSS MCP TOOL REGISTRY CAPABILITY PACK START'),\n"
+        "    ]\n"
+        "    markers = []\n"
+        "    for path, marker in candidates:\n"
+        "        file_path = Path(path)\n"
+        "        if not file_path.exists():\n"
+        "            continue\n"
+        "        source = file_path.read_text(encoding='utf-8')\n"
+        "        if marker not in source:\n"
+        "            continue\n"
+        "        marker_block = source.split(marker, 1)[1]\n"
+        "        assert 'from .autopilot_mcp_tool_registry import' in marker_block\n"
+        "        prefix = source.split(marker, 1)[0]\n"
+        "        assert 'from .autopilot_mcp_tool_registry import MCPToolRegistry' not in prefix\n"
+        "        markers.append(marker)\n"
+        "    assert markers, 'expected at least one MCP tool registry integration marker'\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_default_registry_exports_reviewable_tool()\n"
+        "    test_registry_registers_and_overwrites_by_name()\n"
+        "    test_registry_rejects_invalid_names()\n"
+        "    test_snapshot_alias_matches_default_registry()\n"
+        "    test_integration_marker_uses_delayed_imports()\n"
+    )
+
+
+def _render_capability_classifier_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Capability classifier for AAA autonomous self-iteration candidates.\n\n'
+        "The classifier is pure, deterministic, and review-only. It maps a free\n"
+        "form self-iteration goal to bounded capability buckets so API/workbench\n"
+        "surfaces can route requests without storing raw transcripts or secrets.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "import re\n"
+        "from typing import Dict, Iterable, List, Tuple\n\n\n"
+        "CAPABILITY_BUCKETS: Tuple[str, ...] = (\n"
+        "    'workflow_orchestration',\n"
+        "    'memory_retrieval',\n"
+        "    'context_compression',\n"
+        "    'prompt_synthesis',\n"
+        "    'tool_routing',\n"
+        "    'evidence_aggregation',\n"
+        ")\n"
+        "DEFAULT_RANKED: Tuple[str, ...] = CAPABILITY_BUCKETS\n"
+        "DEFAULT_BUCKET = DEFAULT_RANKED[0]\n\n\n"
+        "TOKEN_WEIGHTS: Dict[str, Dict[str, int]] = {\n"
+        "    'workflow_orchestration': {'workflow': 3, 'orchestrate': 3, 'orchestration': 3, 'loop': 2, 'autopilot': 2, 'iteration': 2},\n"
+        "    'memory_retrieval': {'memory': 3, 'memories': 3, 'recall': 2, 'retrieve': 2, 'retrieval': 2, 'long-term': 2, 'vault': 1},\n"
+        "    'context_compression': {'compress': 3, 'compression': 3, 'summarize': 2, 'summary': 2, 'compact': 2, 'token': 1},\n"
+        "    'prompt_synthesis': {'prompt': 3, 'instruction': 2, 'template': 2, 'compose': 1, 'few-shot': 2},\n"
+        "    'tool_routing': {'tool': 3, 'tools': 3, 'route': 2, 'routing': 2, 'dispatch': 2, 'plugin': 1},\n"
+        "    'evidence_aggregation': {'evidence': 3, 'aggregate': 2, 'aggregation': 2, 'trace': 2, 'metric': 1, 'audit': 2},\n"
+        "}\n\n\n"
+        "def tokenize_goal(goal: str) -> List[str]:\n"
+        "    return re.findall(r'[a-z0-9][a-z0-9_-]*', str(goal or '').lower())\n\n\n"
+        "def score_goal(goal: str) -> Dict[str, int]:\n"
+        "    scores = {bucket: 0 for bucket in CAPABILITY_BUCKETS}\n"
+        "    for token in tokenize_goal(goal):\n"
+        "        for bucket, weights in TOKEN_WEIGHTS.items():\n"
+        "            scores[bucket] += int(weights.get(token, 0))\n"
+        "    return scores\n\n\n"
+        "def ranked_capabilities(goal: str) -> List[str]:\n"
+        "    scores = score_goal(goal)\n"
+        "    return sorted(CAPABILITY_BUCKETS, key=lambda bucket: (-scores[bucket], DEFAULT_RANKED.index(bucket)))\n\n\n"
+        "def classify_capability(goal: str) -> str:\n"
+        "    return ranked_capabilities(goal)[0]\n\n\n"
+        "def classify_goal(goal: str) -> Dict[str, object]:\n"
+        "    scores = score_goal(goal)\n"
+        "    ranked = ranked_capabilities(goal)\n"
+        "    primary = ranked[0] if ranked else DEFAULT_BUCKET\n"
+        "    top_score = scores.get(primary, 0)\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-capability-classifier/1.0',\n"
+        "        'primary': primary,\n"
+        "        'ranked': ranked,\n"
+        "        'scores': scores,\n"
+        "        'confidence': 'keyword' if top_score > 0 else 'default',\n"
+        "        'promotion_requires_human_review': True,\n"
+        f"        'model_summary': {decision['summary']!r},\n"
+        f"        'model_risk': {decision['risk']!r},\n"
+        "    }\n\n\n"
+        "def render_classification(goal: str) -> Dict[str, object]:\n"
+        "    return classify_goal(goal)\n\n\n"
+        "def classify_with_scores(goal: str) -> Dict[str, object]:\n"
+        "    result = classify_goal(goal)\n"
+        "    return {'bucket': result['primary'], 'scores': result['scores']}\n\n\n"
+        "def list_capability_buckets() -> Tuple[str, ...]:\n"
+        "    return CAPABILITY_BUCKETS\n\n\n"
+        "__all__ = [\n"
+        "    'CAPABILITY_BUCKETS',\n"
+        "    'DEFAULT_BUCKET',\n"
+        "    'DEFAULT_RANKED',\n"
+        "    'tokenize_goal',\n"
+        "    'score_goal',\n"
+        "    'ranked_capabilities',\n"
+        "    'classify_capability',\n"
+        "    'classify_goal',\n"
+        "    'render_classification',\n"
+        "    'classify_with_scores',\n"
+        "    'list_capability_buckets',\n"
+        "]\n"
+    )
+
+
+def _render_capability_classifier_test() -> str:
+    return (
+        "from pathlib import Path\n\n"
+        "from across_agents_assistant.autopilot_capability_classifier import (\n"
+        "    CAPABILITY_BUCKETS,\n"
+        "    DEFAULT_RANKED,\n"
+        "    classify_capability,\n"
+        "    classify_goal,\n"
+        "    classify_with_scores,\n"
+        "    list_capability_buckets,\n"
+        "    render_classification,\n"
+        ")\n\n\n"
+        "def test_empty_goal_returns_safe_defaults():\n"
+        "    result = classify_goal('')\n"
+        "    assert result['primary'] == DEFAULT_RANKED[0]\n"
+        "    assert result['confidence'] == 'default'\n"
+        "    assert result['promotion_requires_human_review'] is True\n\n\n"
+        "def test_memory_goal_routes_to_memory_retrieval():\n"
+        "    assert classify_capability('retrieve long-term memory from the local vault') == 'memory_retrieval'\n\n\n"
+        "def test_context_goal_routes_to_context_compression():\n"
+        "    assert classify_goal('compress and summarize context tokens')['primary'] == 'context_compression'\n\n\n"
+        "def test_tool_goal_routes_to_tool_routing():\n"
+        "    detail = classify_with_scores('route tool calls and dispatch plugins')\n"
+        "    assert detail['bucket'] == 'tool_routing'\n"
+        "    assert set(detail['scores']) == set(CAPABILITY_BUCKETS)\n\n\n"
+        "def test_render_classification_is_alias():\n"
+        "    assert render_classification('aggregate audit evidence')['primary'] == 'evidence_aggregation'\n"
+        "    assert list_capability_buckets() == CAPABILITY_BUCKETS\n\n\n"
+        "def test_api_server_marker_restores_full_entrypoint():\n"
+        "    source = Path('backend/src/across_agents_assistant/api_server.py').read_text(encoding='utf-8')\n"
+        "    assert 'ACROSS CAPABILITY CLASSIFIER API START' in source\n"
+        "    assert 'def autopilot_classify_capability_detail' in source\n"
+        "    assert 'from fastapi import FastAPI' in source or 'FastAPI' in source\n"
+        "    assert source.index('ACROSS CAPABILITY CLASSIFIER API START') > 0\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_empty_goal_returns_safe_defaults()\n"
+        "    test_memory_goal_routes_to_memory_retrieval()\n"
+        "    test_context_goal_routes_to_context_compression()\n"
+        "    test_tool_goal_routes_to_tool_routing()\n"
+        "    test_render_classification_is_alias()\n"
+        "    test_api_server_marker_restores_full_entrypoint()\n"
+    )
+
+
+def _render_tool_pack_registry_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""Deterministic Tool Pack registry for AAA loop-engineering candidates."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from dataclasses import asdict, dataclass, field\n"
+        "from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class ToolPackDescriptor:\n"
+        "    id: str\n"
+        "    stage: str\n"
+        "    description: str\n"
+        "    required: bool = True\n"
+        "    capabilities: Tuple[str, ...] = field(default_factory=tuple)\n\n"
+        "    def to_dict(self) -> Dict[str, Any]:\n"
+        "        item = asdict(self)\n"
+        "        item['capabilities'] = list(self.capabilities)\n"
+        "        return item\n\n\n"
+        "ALL_PACKS: Tuple[ToolPackDescriptor, ...] = (\n"
+        "    ToolPackDescriptor('intake', 'intake', 'Collect bounded source signals and trigger context.', capabilities=('source_digest', 'trigger_context')),\n"
+        "    ToolPackDescriptor('research', 'research', 'Select reviewable product targets from evidence.', capabilities=('model_research', 'target_selection')),\n"
+        "    ToolPackDescriptor('build', 'build', 'Apply candidate-only code changes in B workspaces.', capabilities=('candidate_workspace', 'host_code_iteration')),\n"
+        "    ToolPackDescriptor('validate', 'validate', 'Run deterministic validation and candidate quality gates.', capabilities=('validation_harness', 'candidate_quality')),\n"
+        "    ToolPackDescriptor('review', 'review', 'Prepare independent reviewer evidence and human promotion package.', capabilities=('semantic_review', 'promotion_attestation')),\n"
+        ")\n\n\n"
+        "def _as_mapping(value: Any) -> Mapping[str, Any]:\n"
+        "    return value if isinstance(value, Mapping) else {}\n\n\n"
+        "def _pack_ids(packs: Iterable[ToolPackDescriptor]) -> List[str]:\n"
+        "    return [pack.id for pack in packs]\n\n\n"
+        "def list_packs() -> List[Dict[str, Any]]:\n"
+        "    return [pack.to_dict() for pack in ALL_PACKS]\n\n\n"
+        "def resolve_pack(pack_id: str) -> Dict[str, Any]:\n"
+        "    for pack in ALL_PACKS:\n"
+        "        if pack.id == pack_id:\n"
+        "            return pack.to_dict()\n"
+        "    raise KeyError('unknown Tool Pack: %s' % pack_id)\n\n\n"
+        "def describe_pack(pack_id: str) -> Dict[str, Any]:\n"
+        "    return resolve_pack(pack_id)\n\n\n"
+        "def register_pack(name: str, descriptor: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:\n"
+        "    data = dict(_as_mapping(descriptor))\n"
+        "    return {\n"
+        "        'id': str(name),\n"
+        "        'stage': str(data.get('stage') or name),\n"
+        "        'description': str(data.get('description') or ''),\n"
+        "        'required': bool(data.get('required', True)),\n"
+        "        'capabilities': list(data.get('capabilities') or []),\n"
+        "    }\n\n\n"
+        "def evaluate(evidence: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:\n"
+        "    data = _as_mapping(evidence)\n"
+        "    observed = set(str(item) for item in data.get('tool_packs') or data.get('packs') or [])\n"
+        "    expected = set(_pack_ids(ALL_PACKS))\n"
+        "    missing = sorted(expected - observed) if observed else []\n"
+        "    status = 'attention' if missing else 'passed'\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-tool-pack-registry-evaluation/1.0',\n"
+        "        'status': status,\n"
+        "        'expected_packs': sorted(expected),\n"
+        "        'observed_packs': sorted(observed),\n"
+        "        'missing_packs': missing,\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def advise_tool_packs(goal: str, evidence: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:\n"
+        "    evaluation = evaluate(evidence)\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-tool-pack-advice/1.0',\n"
+        "        'goal': str(goal or ''),\n"
+        "        'recommended_packs': _pack_ids(ALL_PACKS),\n"
+        "        'evaluation': evaluation,\n"
+        "        'status': evaluation['status'],\n"
+        f"        'model_summary': {decision['summary']!r},\n"
+        f"        'model_risk': {decision['risk']!r},\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def build_tool_pack_registry() -> Dict[str, Any]:\n"
+        "    return {'schema_version': 'across-aaa-tool-pack-registry/1.0', 'packs': list_packs()}\n\n\n"
+        "def tool_pack_registry_snapshot() -> Dict[str, Any]:\n"
+        "    registry = build_tool_pack_registry()\n"
+        "    return {\n"
+        "        **registry,\n"
+        "        'summary': {'pack_count': len(registry['packs'])},\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "__all__ = [\n"
+        "    'ToolPackDescriptor',\n"
+        "    'ALL_PACKS',\n"
+        "    'register_pack',\n"
+        "    'resolve_pack',\n"
+        "    'list_packs',\n"
+        "    'describe_pack',\n"
+        "    'evaluate',\n"
+        "    'advise_tool_packs',\n"
+        "    'build_tool_pack_registry',\n"
+        "    'tool_pack_registry_snapshot',\n"
+        "]\n"
+    )
+
+
+def _render_tool_pack_registry_test() -> str:
+    return (
+        "from pathlib import Path\n\n"
+        "from across_agents_assistant.autopilot_tool_pack_registry import (\n"
+        "    ALL_PACKS,\n"
+        "    ToolPackDescriptor,\n"
+        "    advise_tool_packs,\n"
+        "    build_tool_pack_registry,\n"
+        "    describe_pack,\n"
+        "    evaluate,\n"
+        "    list_packs,\n"
+        "    register_pack,\n"
+        "    resolve_pack,\n"
+        "    tool_pack_registry_snapshot,\n"
+        ")\n\n\n"
+        "def test_all_packs_cover_loop_stages():\n"
+        "    ids = [pack.id for pack in ALL_PACKS]\n"
+        "    assert ids == ['intake', 'research', 'build', 'validate', 'review']\n"
+        "    assert all(isinstance(pack, ToolPackDescriptor) for pack in ALL_PACKS)\n\n\n"
+        "def test_registry_helpers_are_stable():\n"
+        "    assert describe_pack('validate')['stage'] == 'validate'\n"
+        "    assert resolve_pack('review')['required'] is True\n"
+        "    assert register_pack('custom', {'capabilities': ['x']})['capabilities'] == ['x']\n"
+        "    assert len(list_packs()) == len(ALL_PACKS)\n\n\n"
+        "def test_evaluate_reports_missing_when_observed_is_partial():\n"
+        "    result = evaluate({'tool_packs': ['intake', 'research']})\n"
+        "    assert result['status'] == 'attention'\n"
+        "    assert 'validate' in result['missing_packs']\n\n\n"
+        "def test_advice_and_snapshot_are_reviewable():\n"
+        "    advice = advise_tool_packs('build a safer loop', {'tool_packs': ['intake', 'research', 'build', 'validate', 'review']})\n"
+        "    assert advice['status'] == 'passed'\n"
+        "    assert advice['promotion_requires_human_review'] is True\n"
+        "    snapshot = tool_pack_registry_snapshot()\n"
+        "    assert snapshot['summary']['pack_count'] == len(ALL_PACKS)\n"
+        "    assert build_tool_pack_registry()['schema_version'] == 'across-aaa-tool-pack-registry/1.0'\n\n\n"
+        "def test_workbench_and_capability_pack_markers_use_delayed_imports():\n"
+        "    workbench = Path('backend/src/across_agents_assistant/autopilot_workbench.py').read_text(encoding='utf-8')\n"
+        "    pack = Path('backend/src/across_agents_assistant/loop_engineering_capability_pack.py').read_text(encoding='utf-8')\n"
+        "    assert 'ACROSS TOOL PACK REGISTRY WORKBENCH START' in workbench\n"
+        "    assert 'def tool_pack_registry_snapshot()' in workbench\n"
+        "    assert 'ACROSS TOOL PACK REGISTRY CAPABILITY PACK START' in pack\n"
+        "    assert 'def advise_with_capability' in pack\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_all_packs_cover_loop_stages()\n"
+        "    test_registry_helpers_are_stable()\n"
+        "    test_evaluate_reports_missing_when_observed_is_partial()\n"
+        "    test_advice_and_snapshot_are_reviewable()\n"
+        "    test_workbench_and_capability_pack_markers_use_delayed_imports()\n"
+    )
+
+
+def _render_mcp_descriptors_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""MCP-shaped descriptor registry for AAA loop-engineering surfaces.\n\n'
+        "This module intentionally models descriptors only. It does not open a\n"
+        "transport, call tools, read secrets, or write files; it gives candidate\n"
+        "workspaces deterministic evidence for tool/prompt/resource surfaces.\n"
+        '"""\n\n'
+        "from __future__ import annotations\n\n"
+        "from dataclasses import asdict, dataclass, field\n"
+        "from typing import Any, Dict, Iterable, List, Mapping, Optional\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class ToolDescriptor:\n"
+        "    name: str\n"
+        "    description: str = ''\n"
+        "    input_schema: Dict[str, Any] = field(default_factory=dict)\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class PromptDescriptor:\n"
+        "    name: str\n"
+        "    description: str = ''\n"
+        "    arguments: List[str] = field(default_factory=list)\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class ResourceDescriptor:\n"
+        "    uri: str\n"
+        "    name: str\n"
+        "    description: str = ''\n"
+        "    mime_type: Optional[str] = None\n\n\n"
+        "class MCPDescriptorRegistry:\n"
+        "    def __init__(self, *, server_name: str = 'aaa-loop-engineering') -> None:\n"
+        "        self.server_name = server_name\n"
+        "        self._tools: Dict[str, ToolDescriptor] = {}\n"
+        "        self._prompts: Dict[str, PromptDescriptor] = {}\n"
+        "        self._resources: Dict[str, ResourceDescriptor] = {}\n\n"
+        "    def register_tool(self, descriptor: ToolDescriptor) -> 'MCPDescriptorRegistry':\n"
+        "        self._tools[descriptor.name] = descriptor\n"
+        "        return self\n\n"
+        "    def register_prompt(self, descriptor: PromptDescriptor) -> 'MCPDescriptorRegistry':\n"
+        "        self._prompts[descriptor.name] = descriptor\n"
+        "        return self\n\n"
+        "    def register_resource(self, descriptor: ResourceDescriptor) -> 'MCPDescriptorRegistry':\n"
+        "        self._resources[descriptor.uri] = descriptor\n"
+        "        return self\n\n"
+        "    def list_tools(self) -> List[Dict[str, Any]]:\n"
+        "        return [asdict(item) for item in self._tools.values()]\n\n"
+        "    def list_prompts(self) -> List[Dict[str, Any]]:\n"
+        "        return [asdict(item) for item in self._prompts.values()]\n\n"
+        "    def list_resources(self) -> List[Dict[str, Any]]:\n"
+        "        return [asdict(item) for item in self._resources.values()]\n\n"
+        "    def tools(self) -> List[Dict[str, Any]]:\n"
+        "        return self.list_tools()\n\n"
+        "    def prompts(self) -> List[Dict[str, Any]]:\n"
+        "        return self.list_prompts()\n\n"
+        "    def resources(self) -> List[Dict[str, Any]]:\n"
+        "        return self.list_resources()\n\n"
+        "    def summarize(self) -> Dict[str, Any]:\n"
+        "        return summarize_descriptors(self)\n\n"
+        "    def render(self) -> Dict[str, Any]:\n"
+        "        return self.to_snapshot()\n\n"
+        "    def to_snapshot(self) -> Dict[str, Any]:\n"
+        "        return {\n"
+        "            'schema_version': 'across-aaa-mcp-descriptor-registry/1.0',\n"
+        "            'server_name': self.server_name,\n"
+        "            'summary': self.summarize(),\n"
+        "            'tools': self.list_tools(),\n"
+        "            'prompts': self.list_prompts(),\n"
+        "            'resources': self.list_resources(),\n"
+        f"            'model_summary': {decision['summary']!r},\n"
+        f"            'model_risk': {decision['risk']!r},\n"
+        "            'promotion_requires_human_review': True,\n"
+        "        }\n\n\n"
+        "def _strings(values: Iterable[Any]) -> List[str]:\n"
+        "    return [str(item) for item in values if str(item).strip()]\n\n\n"
+        "def summarize_descriptors(registry: MCPDescriptorRegistry) -> Dict[str, Any]:\n"
+        "    return {\n"
+        "        'tool_count': len(registry.list_tools()),\n"
+        "        'prompt_count': len(registry.list_prompts()),\n"
+        "        'resource_count': len(registry.list_resources()),\n"
+        "    }\n\n\n"
+        "def build_default_registry(server_name: str = 'aaa-loop-engineering') -> MCPDescriptorRegistry:\n"
+        "    registry = MCPDescriptorRegistry(server_name=server_name)\n"
+        "    registry.register_tool(ToolDescriptor(\n"
+        "        name='loop_status',\n"
+        "        description='Return bounded loop status evidence.',\n"
+        "        input_schema={'type': 'object', 'properties': {'run_id': {'type': 'string'}}},\n"
+        "    ))\n"
+        "    registry.register_prompt(PromptDescriptor(\n"
+        "        name='capability_summary',\n"
+        "        description='Summarize current loop-engineering capabilities.',\n"
+        "        arguments=['capability_id'],\n"
+        "    ))\n"
+        "    registry.register_resource(ResourceDescriptor(\n"
+        "        uri='mcp://loop-engineering/capabilities',\n"
+        "        name='loop_engineering_capabilities',\n"
+        "        description='Read-only capability surface for review.',\n"
+        "        mime_type='application/json',\n"
+        "    ))\n"
+        "    return registry\n\n\n"
+        "def default_registry(server_name: str = 'aaa-loop-engineering') -> MCPDescriptorRegistry:\n"
+        "    return build_default_registry(server_name=server_name)\n\n\n"
+        "def describe_default_registry(server_name: str = 'aaa-loop-engineering') -> MCPDescriptorRegistry:\n"
+        "    return build_default_registry(server_name=server_name)\n\n\n"
+        "def registry_from_manifest(manifest: Mapping[str, Any], *, server_name: str = 'aaa-loop-engineering') -> MCPDescriptorRegistry:\n"
+        "    registry = MCPDescriptorRegistry(server_name=server_name)\n"
+        "    for item in manifest.get('tools') or []:\n"
+        "        if isinstance(item, Mapping) and item.get('name'):\n"
+        "            registry.register_tool(ToolDescriptor(str(item.get('name')), str(item.get('description') or ''), dict(item.get('input_schema') or {})))\n"
+        "    for item in manifest.get('prompts') or []:\n"
+        "        if isinstance(item, Mapping) and item.get('name'):\n"
+        "            registry.register_prompt(PromptDescriptor(str(item.get('name')), str(item.get('description') or ''), _strings(item.get('arguments') or [])))\n"
+        "    for item in manifest.get('resources') or []:\n"
+        "        if isinstance(item, Mapping) and item.get('uri'):\n"
+        "            registry.register_resource(ResourceDescriptor(str(item.get('uri')), str(item.get('name') or item.get('uri')), str(item.get('description') or ''), item.get('mime_type')))\n"
+        "    return registry\n\n\n"
+        "def mcp_surface_snapshot() -> Dict[str, Any]:\n"
+        "    return build_default_registry().to_snapshot()\n\n\n"
+        "__all__ = [\n"
+        "    'ToolDescriptor',\n"
+        "    'PromptDescriptor',\n"
+        "    'ResourceDescriptor',\n"
+        "    'MCPDescriptorRegistry',\n"
+        "    'build_default_registry',\n"
+        "    'default_registry',\n"
+        "    'describe_default_registry',\n"
+        "    'registry_from_manifest',\n"
+        "    'summarize_descriptors',\n"
+        "    'mcp_surface_snapshot',\n"
+        "]\n"
+    )
+
+
+def _render_tool_registry_manifest_module(decision: Dict[str, Any]) -> str:
+    return (
+        '"""MCP-shaped capability manifest for AAA loop-engineering surfaces."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import importlib\n"
+        "from typing import Any, Dict, Iterable, List, Mapping, Optional\n\n\n"
+        "def _route_path(route: Any) -> str:\n"
+        "    return str(getattr(route, 'path', '') or '')\n\n\n"
+        "def _route_methods(route: Any) -> List[str]:\n"
+        "    methods = getattr(route, 'methods', None) or []\n"
+        "    return sorted(str(method) for method in methods if str(method) not in {'HEAD', 'OPTIONS'})\n\n\n"
+        "def collect_route_tools(app: Optional[Any] = None) -> List[Dict[str, Any]]:\n"
+        "    routes = list(getattr(app, 'routes', []) or []) if app is not None else []\n"
+        "    tools: List[Dict[str, Any]] = []\n"
+        "    for route in routes:\n"
+        "        path = _route_path(route)\n"
+        "        if not path.startswith('/api/'):\n"
+        "            continue\n"
+        "        methods = _route_methods(route)\n"
+        "        if not methods:\n"
+        "            continue\n"
+        "        name = path.strip('/').replace('/', '_').replace('{', '').replace('}', '') or 'api_root'\n"
+        "        tools.append({'name': name, 'path': path, 'methods': methods})\n"
+        "    return sorted(tools, key=lambda item: (item['path'], item['name']))\n\n\n"
+        "def _items(value: Any) -> List[Any]:\n"
+        "    if value is None:\n"
+        "        return []\n"
+        "    if isinstance(value, list):\n"
+        "        return value\n"
+        "    if isinstance(value, tuple):\n"
+        "        return list(value)\n"
+        "    return [value]\n\n\n"
+        "def _capability_pack_payload(capability_pack: Any = None) -> Dict[str, Any]:\n"
+        "    pack = capability_pack\n"
+        "    if pack is None:\n"
+        "        try:\n"
+        "            pack = importlib.import_module('across_agents_assistant.loop_engineering_capability_pack')\n"
+        "        except Exception:\n"
+        "            return {'ready': []}\n"
+        "    for name in ('build_loop_engineering_capability_pack', 'build_capability_pack'):\n"
+        "        fn = getattr(pack, name, None)\n"
+        "        if callable(fn):\n"
+        "            try:\n"
+        "                value = fn()\n"
+        "                if isinstance(value, Mapping):\n"
+        "                    return dict(value)\n"
+        "            except Exception:\n"
+        "                pass\n"
+        "    for name in ('READY_CAPABILITIES', 'LIST_CAPABILITIES', 'CAPABILITIES'):\n"
+        "        value = getattr(pack, name, None)\n"
+        "        if value is not None:\n"
+        "            return {'ready': _items(value)}\n"
+        "    return {'ready': []}\n\n\n"
+        "def collect_capability_resources(capability_pack: Any = None) -> List[Dict[str, Any]]:\n"
+        "    payload = _capability_pack_payload(capability_pack)\n"
+        "    rows = _items(payload.get('ready') or payload.get('capabilities'))\n"
+        "    resources: List[Dict[str, Any]] = []\n"
+        "    for index, row in enumerate(rows):\n"
+        "        data = dict(row) if isinstance(row, Mapping) else {'id': str(row)}\n"
+        "        cap_id = str(data.get('id') or data.get('name') or f'capability-{index + 1}')\n"
+        "        resources.append({\n"
+        "            'uri': f'across://capabilities/{cap_id}',\n"
+        "            'name': cap_id,\n"
+        "            'description': str(data.get('label') or data.get('description') or ''),\n"
+        "        })\n"
+        "    return resources\n\n\n"
+        "def build_manifest(app: Optional[Any] = None, capability_pack: Any = None) -> Dict[str, Any]:\n"
+        "    tools = collect_route_tools(app)\n"
+        "    resources = collect_capability_resources(capability_pack)\n"
+        "    return {\n"
+        "        'schema_version': 'across-aaa-tool-registry-manifest/1.0',\n"
+        "        'tools': tools,\n"
+        "        'resources': resources,\n"
+        "        'prompts': [{'name': 'capability_manifest_review', 'description': 'Review bounded AAA capability manifest evidence.'}],\n"
+        "        'summary': {\n"
+        "            'tool_count': len(tools),\n"
+        "            'resource_count': len(resources),\n"
+        "            'prompt_count': 1,\n"
+        "        },\n"
+        f"        'model_summary': {decision['summary']!r},\n"
+        f"        'model_risk': {decision['risk']!r},\n"
+        "        'promotion_requires_human_review': True,\n"
+        "    }\n\n\n"
+        "def register_capability_manifest_route(app: Any) -> Any:\n"
+        "    if any(_route_path(route) == '/api/autopilot/capabilities/manifest' for route in getattr(app, 'routes', []) or []):\n"
+        "        return app\n\n"
+        "    @app.get('/api/autopilot/capabilities/manifest')\n"
+        "    async def _capability_manifest_route():\n"
+        "        return build_manifest(app)\n\n"
+        "    return app\n"
+    )
+
+
+def _render_tool_registry_manifest_test() -> str:
+    return (
+        "from types import SimpleNamespace\n\n"
+        "from across_agents_assistant.tool_registry_manifest import (\n"
+        "    build_manifest,\n"
+        "    collect_capability_resources,\n"
+        "    collect_route_tools,\n"
+        "    register_capability_manifest_route,\n"
+        ")\n\n\n"
+        "class FakeApp:\n"
+        "    def __init__(self):\n"
+        "        self.routes = [\n"
+        "            SimpleNamespace(path='/api/health', methods={'GET', 'HEAD'}),\n"
+        "            SimpleNamespace(path='/internal/debug', methods={'GET'}),\n"
+        "        ]\n\n"
+        "    def get(self, path):\n"
+        "        def decorator(fn):\n"
+        "            self.routes.append(SimpleNamespace(path=path, methods={'GET'}, endpoint=fn))\n"
+        "            return fn\n"
+        "        return decorator\n\n\n"
+        "class FakePack:\n"
+        "    def build_loop_engineering_capability_pack(self):\n"
+        "        return {'ready': [{'id': 'repo-quality', 'label': 'Repo quality'}]}\n\n\n"
+        "def test_collect_route_tools_keeps_api_routes_only():\n"
+        "    tools = collect_route_tools(FakeApp())\n"
+        "    assert tools == [{'name': 'api_health', 'path': '/api/health', 'methods': ['GET']}]\n\n\n"
+        "def test_collect_capability_resources_reads_pack_builder():\n"
+        "    resources = collect_capability_resources(FakePack())\n"
+        "    assert resources[0]['uri'] == 'across://capabilities/repo-quality'\n"
+        "    assert resources[0]['description'] == 'Repo quality'\n\n\n"
+        "def test_build_manifest_is_mcp_shaped_and_human_reviewed():\n"
+        "    manifest = build_manifest(FakeApp(), FakePack())\n"
+        "    assert manifest['schema_version'] == 'across-aaa-tool-registry-manifest/1.0'\n"
+        "    assert manifest['summary'] == {'tool_count': 1, 'resource_count': 1, 'prompt_count': 1}\n"
+        "    assert manifest['promotion_requires_human_review'] is True\n\n\n"
+        "def test_register_capability_manifest_route_is_idempotent():\n"
+        "    app = FakeApp()\n"
+        "    register_capability_manifest_route(app)\n"
+        "    register_capability_manifest_route(app)\n"
+        "    paths = [route.path for route in app.routes]\n"
+        "    assert paths.count('/api/autopilot/capabilities/manifest') == 1\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_collect_route_tools_keeps_api_routes_only()\n"
+        "    test_collect_capability_resources_reads_pack_builder()\n"
+        "    test_build_manifest_is_mcp_shaped_and_human_reviewed()\n"
+        "    test_register_capability_manifest_route_is_idempotent()\n"
+    )
+
+
+def _render_mcp_descriptors_test() -> str:
+    return (
+        "from across_agents_assistant.autopilot_mcp_descriptors import (\n"
+        "    MCPDescriptorRegistry,\n"
+        "    PromptDescriptor,\n"
+        "    ResourceDescriptor,\n"
+        "    ToolDescriptor,\n"
+        "    build_default_registry,\n"
+        "    default_registry,\n"
+        "    describe_default_registry,\n"
+        "    mcp_surface_snapshot,\n"
+        "    registry_from_manifest,\n"
+        "    summarize_descriptors,\n"
+        ")\n\n\n"
+        "def test_registry_round_trip():\n"
+        "    registry = MCPDescriptorRegistry(server_name='test')\n"
+        "    registry.register_tool(ToolDescriptor('status', 'Return status.'))\n"
+        "    registry.register_prompt(PromptDescriptor('summary', 'Summarize.', ['id']))\n"
+        "    registry.register_resource(ResourceDescriptor('mcp://x', 'X'))\n"
+        "    snapshot = registry.to_snapshot()\n"
+        "    assert snapshot['server_name'] == 'test'\n"
+        "    assert snapshot['tools'][0]['name'] == 'status'\n"
+        "    assert snapshot['prompts'][0]['arguments'] == ['id']\n"
+        "    assert snapshot['resources'][0]['uri'] == 'mcp://x'\n"
+        "    assert snapshot['promotion_requires_human_review'] is True\n\n\n"
+        "def test_default_registry_aliases_are_compatible():\n"
+        "    assert isinstance(build_default_registry(), MCPDescriptorRegistry)\n"
+        "    assert isinstance(default_registry(), MCPDescriptorRegistry)\n"
+        "    assert isinstance(describe_default_registry(), MCPDescriptorRegistry)\n"
+        "    summary = summarize_descriptors(build_default_registry())\n"
+        "    assert summary == {'tool_count': 1, 'prompt_count': 1, 'resource_count': 1}\n"
+        "    rendered = build_default_registry().render()\n"
+        "    assert rendered == mcp_surface_snapshot()\n\n\n"
+        "def test_registry_from_manifest_normalizes_descriptors():\n"
+        "    registry = registry_from_manifest({\n"
+        "        'tools': [{'name': 't'}],\n"
+        "        'prompts': [{'name': 'p', 'arguments': ('x',)}],\n"
+        "        'resources': [{'uri': 'mcp://r'}],\n"
+        "    })\n"
+        "    assert registry.list_tools()[0]['name'] == 't'\n"
+        "    assert registry.list_prompts()[0]['arguments'] == ['x']\n"
+        "    assert registry.list_resources()[0]['name'] == 'mcp://r'\n\n\n"
+        "def test_workbench_and_capability_pack_surface():\n"
+        "    from across_agents_assistant.autopilot_workbench import mcp_surface_snapshot as wb_snapshot\n"
+        "    from across_agents_assistant.loop_engineering_capability_pack import mcp_surface_snapshot as pack_snapshot\n\n"
+        "    assert wb_snapshot()['summary'] == pack_snapshot()['summary']\n"
+        "    assert wb_snapshot()['tools']\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_registry_round_trip()\n"
+        "    test_default_registry_aliases_are_compatible()\n"
+        "    test_registry_from_manifest_normalizes_descriptors()\n"
+        "    test_workbench_and_capability_pack_surface()\n"
+    )
+
+
+def _render_capability_gap_manifest_test() -> str:
+    return (
+        "import json\n\n"
+        "from across_agents_assistant.autopilot_capability_gap_manifest import compute_gap_manifest\n\n\n"
+        "def test_compute_gap_manifest_includes_referenced_sources():\n"
+        "    result = compute_gap_manifest(\n"
+        "        {'spec_id': 'aaa', 'signals': [\n"
+        "            {'id': 'loop-engineering-architecture-signal', 'status': 'passed', 'adapter': 'manual_input', 'excerpt': 'tool packs and review gates', 'keywords': ['tool', 'review']},\n"
+        "        ]},\n"
+        "        {'candidate_targets': [\n"
+        "            {'id': 'target', 'source_refs': ['loop-engineering-architecture-signal']},\n"
+        "        ]},\n"
+        "    )\n"
+        "    json.dumps(result)\n"
+        "    assert result['manifest_version'] == 'across-autopilot-capability-gap/1.0'\n"
+        "    assert result['status'] == 'passed'\n"
+        "    assert result['entries'][0]['source_id'] == 'loop-engineering-architecture-signal'\n"
+        "    assert result['entries'][0]['evidence_strength'] == 'strong'\n"
+        "    assert result['promotion_requires_human_review'] is True\n\n\n"
+        "def test_compute_gap_manifest_demotes_for_required_model_backing():\n"
+        "    result = compute_gap_manifest(\n"
+        "        {'signals': [{'id': 'loop-engineering-architecture-signal', 'status': 'passed', 'excerpt': 'manual policy signal', 'keywords': ['tool', 'review']}]},\n"
+        "        {'candidate_targets': [{'id': 'target', 'source_refs': ['loop-engineering-architecture-signal'], 'semantic_review': {'require_model_backed': True}}]},\n"
+        "    )\n"
+        "    loop_entry = result['entries'][0]\n"
+        "    assert loop_entry['requires_model_backing'] is True\n"
+        "    assert loop_entry['evidence_strength'] == 'weak'\n\n\n"
+        "def test_compute_gap_manifest_reports_missing_refs():\n"
+        "    result = compute_gap_manifest(\n"
+        "        {'signals': []},\n"
+        "        {'candidate_targets': [{'id': 'target', 'source_refs': ['missing-source']}]},\n"
+        "    )\n"
+        "    assert result['status'] == 'attention'\n"
+        "    assert 'missing-source' in result['missing_source_refs']\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    test_compute_gap_manifest_includes_referenced_sources()\n"
+        "    test_compute_gap_manifest_demotes_for_required_model_backing()\n"
+        "    test_compute_gap_manifest_reports_missing_refs()\n"
+    )
+
+
 def _generic_autopilot_module_pair(allowed: Set[str]) -> Optional[Tuple[str, str]]:
     modules = sorted(
         path for path in allowed
@@ -4386,6 +6863,119 @@ def _generic_autopilot_module_pair(allowed: Set[str]) -> Optional[Tuple[str, str
 
 def _validation_feedback_requires_model_repair(feedback: List[Dict[str, Any]]) -> bool:
     """Import-contract and product-integration failures must not use generic host repair."""
+    combined_feedback = " ".join(
+        str(part or "")
+        for item in feedback or []
+        for part in (
+            item.get("summary"),
+            item.get("stderr"),
+            item.get("stdout"),
+            item.get("command"),
+            " ".join(str(arg) for arg in item.get("args", []) if arg is not None)
+            if isinstance(item.get("args", []), list)
+            else str(item.get("args") or ""),
+        )
+    ).lower()
+    if "autopilot_iteration_telemetry" in combined_feedback and (
+        "iterationtelemetryrecord" in combined_feedback
+        or "autopilot_workbench" in combined_feedback
+        or "build_autopilot_workbench_snapshot" in combined_feedback
+        or "candidate_quality" in combined_feedback
+    ):
+        return False
+    if "autopilot_capability_gap_manifest" in combined_feedback and (
+        "compute_gap_manifest" in combined_feedback
+        or "capability_gap_manifest" in combined_feedback
+        or "keyerror" in combined_feedback
+    ):
+        return False
+    if "autopilot_mcp_descriptors" in combined_feedback and (
+        "mcpdescriptorregistry" in combined_feedback
+        or "describe_default_registry" in combined_feedback
+        or "default_registry" in combined_feedback
+        or "mcp_surface_snapshot" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "importerror" in combined_feedback
+    ):
+        return False
+    if "autopilot_mcp_tool_manifest" in combined_feedback and (
+        "tool_descriptors" in combined_feedback
+        or "validate_tool_manifests" in combined_feedback
+        or "unintegrated_candidate_helper" in combined_feedback
+        or "constant_false_branch" in combined_feedback
+        or "uvicorn" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+        or "modulenotfounderror" in combined_feedback
+    ):
+        return False
+    if "autopilot_mcp_tool_registry" in combined_feedback and (
+        "mcptoolregistry" in combined_feedback
+        or "tooldescriptor" in combined_feedback
+        or "default_registry" in combined_feedback
+        or "describe_default_registry" in combined_feedback
+        or "mcp_tool_registry_snapshot" in combined_feedback
+        or "unintegrated_candidate_helper" in combined_feedback
+        or "constant_false_branch" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+        or "modulenotfounderror" in combined_feedback
+    ):
+        return False
+    if "autopilot_target_backlog" in combined_feedback and (
+        "targetbacklog" in combined_feedback
+        or "targetbacklogitem" in combined_feedback
+        or "find_target" in combined_feedback
+        or "to_artifact_envelope" in combined_feedback
+        or "summarize_target_backlog" in combined_feedback
+        or "destructive_product_entrypoint_rewrite" in combined_feedback
+        or "api_server.py" in combined_feedback
+        or "autopilot_workbench.py" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+        or "modulenotfounderror" in combined_feedback
+    ):
+        return False
+    if "autopilot_capability_classifier" in combined_feedback and (
+        "destructive_product_entrypoint_rewrite" in combined_feedback
+        or "default_ranked" in combined_feedback
+        or "classify_goal" in combined_feedback
+        or "classify_capability" in combined_feedback
+        or "render_classification" in combined_feedback
+        or "api_server.py" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+        or "modulenotfounderror" in combined_feedback
+    ):
+        return False
+    if "autopilot_tool_pack_registry" in combined_feedback and (
+        "all_packs" in combined_feedback
+        or "evaluate" in combined_feedback
+        or "advise_with_capability" in combined_feedback
+        or "describe_pack" in combined_feedback
+        or "register_pack" in combined_feedback
+        or "unsupported operand type" in combined_feedback
+        or "python_version_incompatible" in combined_feedback
+        or "excessive_blank_lines" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+        or "modulenotfounderror" in combined_feedback
+    ):
+        return False
+    if "tool_registry_manifest" in combined_feedback and (
+        "list_capabilities" in combined_feedback
+        or "build_manifest" in combined_feedback
+        or "capabilities/manifest" in combined_feedback
+        or "syntaxerror" in combined_feedback
+        or "assertionerror" in combined_feedback
+        or "importerror" in combined_feedback
+    ):
+        return False
     integration_terms = (
         "candidate_quality",
         "unintegrated_candidate_helper",
@@ -4736,6 +7326,7 @@ async def _autopilot_code_iteration_chat(
                 ValueError("Model direct patch JSON repair errors: " + " | ".join(repair_errors[-4:])),
                 allowed_patch_paths=req.allowed_patch_paths,
                 allow_host_fallback=allow_host_fallback or allow_validation_repair_fallback,
+                source_repository=req.source_repository,
             )
             if allow_validation_repair_fallback:
                 decision["host_validation_repair_fallback"] = True
@@ -4791,6 +7382,7 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
                     ValueError("validation feedback repair fallback"),
                     allowed_patch_paths=req.allowed_patch_paths,
                     allow_host_fallback=True,
+                    source_repository=req.source_repository,
                 )
                 decision["host_validation_repair_fallback"] = True
                 response = SimpleNamespace(
@@ -5399,7 +7991,12 @@ async def start_autopilot_trigger_scheduler(req: AutopilotTriggerSchedulerReques
     """Start the local trigger scheduler loop."""
     try:
         return _sanitize_public_payload(
-            await asyncio.to_thread(get_autopilot_trigger_scheduler().start, interval_seconds=req.interval_seconds)
+            await asyncio.to_thread(
+                get_autopilot_trigger_scheduler().start,
+                interval_seconds=req.interval_seconds,
+                run_queued_triggers=req.run_queued_triggers,
+                max_runs_per_tick=req.max_runs_per_tick,
+            )
         )
     except Exception as exc:
         raise _safe_http_500("Start Across Autopilot trigger scheduler")

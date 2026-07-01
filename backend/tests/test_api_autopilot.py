@@ -6,9 +6,15 @@ import json
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
 from across_agents_assistant.autopilot_promotion_review import build_promotion_review_packet
-from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRegistry
+from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRegistry, AutopilotTriggerScheduler
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import PluginLifecycleError
+
+
+def _assert_marker_upsert(patch, marker_start, marker_end):
+    assert patch["mode"] == "upsert_between_markers"
+    assert patch["marker_start"] == marker_start
+    assert patch["marker_end"] == marker_end
 
 
 class FakeAutopilotClient:
@@ -155,6 +161,80 @@ class FakeAutopilotClient:
         return {"status": "completed", "trigger": {"trigger_id": trigger_id or "trg-api-1"}}
 
 
+class DispatchingFakeAutopilotClient:
+    def __init__(self):
+        self.items = []
+
+    def enqueue_trigger(
+        self,
+        spec,
+        *,
+        trigger_type="manual",
+        payload=None,
+        idempotency_key=None,
+        not_before=None,
+        source="aaa",
+        actor="user",
+    ):
+        item = {
+            "trigger_id": f"trg-dispatch-{len(self.items) + 1}",
+            "spec_id": spec,
+            "status": "pending",
+            "not_before": not_before,
+            "trigger_event": {
+                "type": trigger_type,
+                "payload": payload or {},
+                "source": source,
+                "actor": actor,
+                "idempotency_key": idempotency_key,
+            },
+        }
+        self.items.append(item)
+        return item
+
+    def trigger_queue(self):
+        return {"schema_version": "across-autopilot-trigger-queue/1.0", "items": list(self.items)}
+
+    def run_trigger(self, trigger_id=None):
+        for item in self.items:
+            if item["trigger_id"] == trigger_id:
+                item["status"] = "completed"
+                item["run_id"] = f"run-{trigger_id}"
+                return {"status": "completed", "trigger": {"trigger_id": trigger_id}, "run": {"run_id": item["run_id"]}}
+        return {"status": "idle", "trigger": {"trigger_id": trigger_id}}
+
+
+def test_autopilot_trigger_scheduler_dispatches_due_queue_items(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    registry.register(
+        spec="aaa-autonomous-self-iteration",
+        trigger_type="cron",
+        schedule={"interval_seconds": 60},
+        payload={"reason": "scheduler-dispatch"},
+        actor="pytest",
+        source="scheduler-test",
+        trigger_id="daily-self-iteration",
+    )
+    fake_client = DispatchingFakeAutopilotClient()
+    scheduler = AutopilotTriggerScheduler(
+        registry,
+        lambda: fake_client,
+        run_queued_triggers=True,
+        max_runs_per_tick=1,
+    )
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "dispatched"
+    assert tick["enqueued"][0]["trigger_id"] == "trg-dispatch-1"
+    assert tick["dispatch"]["items"][0]["trigger_id"] == "trg-dispatch-1"
+    assert tick["dispatch"]["items"][0]["run_id"] == "run-trg-dispatch-1"
+    assert fake_client.items[0]["status"] == "completed"
+    status = scheduler.status()
+    assert status["last_tick_status"] == "dispatched"
+    assert status["last_dispatch_count"] == 1
+
+
 def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "aaa-home"))
     monkeypatch.setattr(api_server, "get_autopilot_client", lambda: FakeAutopilotClient())
@@ -207,9 +287,22 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     scheduler_status = client.get("/api/autopilot/trigger-scheduler")
     assert scheduler_status.status_code == 200
     assert scheduler_status.json()["running"] is False
-    scheduler_started = client.post("/api/autopilot/trigger-scheduler/start", json={"interval_seconds": 5})
+    scheduler_started = client.post(
+        "/api/autopilot/trigger-scheduler/start",
+        json={"interval_seconds": 5, "run_queued_triggers": False, "max_runs_per_tick": 2},
+    )
     assert scheduler_started.status_code == 200
     assert scheduler_started.json()["running"] is True
+    assert scheduler_started.json()["run_queued_triggers"] is False
+    assert scheduler_started.json()["max_runs_per_tick"] == 2
+    scheduler_reconfigured = client.post(
+        "/api/autopilot/trigger-scheduler/start",
+        json={"run_queued_triggers": True, "max_runs_per_tick": 3},
+    )
+    assert scheduler_reconfigured.status_code == 200
+    assert scheduler_reconfigured.json()["running"] is True
+    assert scheduler_reconfigured.json()["run_queued_triggers"] is True
+    assert scheduler_reconfigured.json()["max_runs_per_tick"] == 3
     scheduler_stopped = client.post("/api/autopilot/trigger-scheduler/stop")
     assert scheduler_stopped.status_code == 200
     assert scheduler_stopped.json()["running"] is False
@@ -249,6 +342,7 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     assert self_plan.json()["ready"] is True
     assert self_plan.json()["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
     assert self_plan.json()["platform_self_repair"]["promotion_review_required"] is True
+    assert self_plan.json()["runtime_controls"]["scheduler_dispatch_mode"] == "enqueue_and_run_one_due_trigger_per_tick"
 
     run = client.post(
         "/api/autopilot/runs",
@@ -2113,6 +2207,123 @@ def test_autopilot_code_iteration_accepts_direct_product_patches(monkeypatch, tm
     assert body["validation_commands"][0]["args"][-1].endswith("autopilot_candidate_quality.py")
 
 
+def test_autopilot_code_iteration_downgrades_markerless_doc_upsert_to_append(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+
+    class DirectPatchGateway:
+        async def chat(self, **kwargs):
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Add capability card note",
+                    "risk": "low",
+                    "patches": [
+                        {
+                            "path": "docs/loop_engineering_capability_cards.md",
+                            "mode": "upsert_between_markers",
+                            "content_lines": ["## Capability Cards", "", "- Keep cards evidence-backed."],
+                        }
+                    ],
+                }),
+                provider="fake-provider",
+                model="fake-code-model",
+                finish_reason="stop",
+                usage={"total_tokens": 42},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: DirectPatchGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Add a small docs card.",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-doc-upsert",
+        "run_id": "run-doc-upsert",
+        "allowed_patch_paths": ["docs/loop_engineering_capability_cards.md"],
+        "context_files": ["README.md"],
+        "model_policy": {"required": True, "provider": "fake", "direct_patches": True},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["patches"][0]["path"] == "docs/loop_engineering_capability_cards.md"
+    assert body["patches"][0]["mode"] == "append"
+    assert "marker_start" not in body["patches"][0]
+    assert body["text_fallback"] is False
+
+
+def test_autopilot_code_iteration_repairs_markerless_code_upsert(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+
+    class MarkerRepairGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    text=json.dumps({
+                        "summary": "Bad markerless code upsert",
+                        "risk": "low",
+                        "patches": [
+                            {
+                                "path": "backend/src/across_agents_assistant/autopilot_code_marker.py",
+                                "mode": "upsert_between_markers",
+                                "content": "VALUE = 'bad'\n",
+                            }
+                        ],
+                    }),
+                    provider="fake-provider",
+                    model="fake-code-model",
+                    finish_reason="stop",
+                    usage={"total_tokens": 25},
+                )
+            assert "without marker_start and marker_end" in kwargs["message"]
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Repair markerless code upsert",
+                    "risk": "low",
+                    "patches": [
+                        {
+                            "path": "backend/src/across_agents_assistant/autopilot_code_marker.py",
+                            "mode": "overwrite",
+                            "content": "VALUE = 'fixed'\n",
+                        }
+                    ],
+                }),
+                provider="fake-provider",
+                model="fake-code-model",
+                finish_reason="stop",
+                usage={"total_tokens": 30},
+            )
+
+    gateway = MarkerRepairGateway()
+    monkeypatch.setattr(api_server, "get_gateway", lambda: gateway)
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Add a small code helper.",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-code-upsert",
+        "run_id": "run-code-upsert",
+        "allowed_patch_paths": ["backend/src/across_agents_assistant/autopilot_code_marker.py"],
+        "context_files": ["README.md"],
+        "model_policy": {
+            "required": True,
+            "provider": "fake",
+            "direct_patches": True,
+            "direct_patch_repair_attempts": 1,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert gateway.calls == 2
+    assert body["repaired_json"] is True
+    assert body["patches"][0]["mode"] == "overwrite"
+    assert body["patches"][0]["content"] == "VALUE = 'fixed'\n"
+
+
 def test_autopilot_code_iteration_repairs_pytest_imports(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -2628,6 +2839,808 @@ def test_autopilot_code_iteration_explicit_validation_fallback_handles_generic_a
     assert "pytest" not in test_patch["content"]
 
 
+def test_autopilot_code_iteration_validation_fallback_repairs_iteration_telemetry_integration(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    workbench_path.parent.mkdir(parents=True)
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot(*, registry=None):\n"
+        "    return {'status': 'source', 'registry': registry}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("iteration telemetry validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair autonomous iteration telemetry integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-telemetry-fallback",
+        "run_id": "run-telemetry-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/autopilot_iteration_telemetry.py",
+            "backend/tests/test_autopilot_iteration_telemetry.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/autopilot_workbench.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "from across_agents_assistant.autopilot_iteration_telemetry import IterationTelemetryRecord"],
+                "status": "failed",
+                "stderr": "AttributeError: 'str' object has no attribute 'to_dict'",
+                "diagnostic": {"failure_kind": "candidate_exception"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "AAA backend API import contract smoke"],
+                "status": "failed",
+                "stderr": "ImportError: missing internal API import(s): across_agents_assistant.autopilot_workbench.build_autopilot_workbench_snapshot",
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/autopilot_iteration_telemetry.py",
+        "backend/tests/test_autopilot_iteration_telemetry.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_iteration_telemetry.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    assert "class IterationTelemetryRecord" in module["content"]
+    assert "sources=['source-a']" in test_patch["content"]
+    assert "pytest" not in test_patch["content"]
+    assert "build_iteration_telemetry_snapshot" in workbench["content"]
+    _assert_marker_upsert(workbench, "# ACROSS ITERATION TELEMETRY START", "# ACROSS ITERATION TELEMETRY END")
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_capability_gap_manifest(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    workbench_path.parent.mkdir(parents=True)
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot(*, registry=None):\n"
+        "    return {'status': 'source', 'registry': registry}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("capability-gap validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair capability-gap manifest helper",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-capability-gap-fallback",
+        "run_id": "run-capability-gap-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py",
+            "backend/tests/test_autopilot_capability_gap_manifest.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/autopilot_workbench.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": [
+                    "-c",
+                    "mod=runpy.run_path('backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py'); "
+                    "compute=mod['compute_gap_manifest']",
+                ],
+                "status": "failed",
+                "stderr": "KeyError: 'compute_gap_manifest'",
+                "diagnostic": {"failure_kind": "candidate_exception"},
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/autopilot_capability_gap_manifest.py",
+        "backend/tests/test_autopilot_capability_gap_manifest.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_capability_gap_manifest.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    manifest = namespace["compute_gap_manifest"](
+        {"signals": [{"id": "loop-engineering-architecture-signal", "status": "passed", "excerpt": "manual", "keywords": ["tool", "review"]}]},
+        {"candidate_targets": [{"id": "target", "source_refs": ["loop-engineering-architecture-signal"], "semantic_review": {"require_model_backed": True}}]},
+    )
+    assert manifest["entries"][0]["evidence_strength"] == "weak"
+    assert "compute_gap_manifest" in module["content"]
+    assert "test_compute_gap_manifest_demotes_for_required_model_backing" in test_patch["content"]
+    assert "build_capability_gap_manifest_snapshot" in workbench["content"]
+    _assert_marker_upsert(workbench, "# ACROSS CAPABILITY GAP MANIFEST START", "# ACROSS CAPABILITY GAP MANIFEST END")
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_mcp_descriptors(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    pack_path = source / "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    workbench_path.parent.mkdir(parents=True, exist_ok=True)
+    pack_path.parent.mkdir(parents=True, exist_ok=True)
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot(*, registry=None):\n"
+        "    return {'status': 'source', 'registry': registry}\n",
+        encoding="utf-8",
+    )
+    pack_path.write_text(
+        "def build_loop_engineering_capability_pack():\n"
+        "    return {'ready': []}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("mcp descriptor validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair MCP descriptor registry integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-mcp-descriptor-fallback",
+        "run_id": "run-mcp-descriptor-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/src/across_agents_assistant/autopilot_mcp_descriptors.py",
+            "backend/tests/test_autopilot_mcp_descriptors.py",
+        ],
+        "context_files": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        ],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "runpy.run_path('backend/tests/test_autopilot_mcp_descriptors.py')"],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: cannot import name 'describe_default_registry' "
+                    "from 'across_agents_assistant.autopilot_mcp_descriptors'"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        "backend/src/across_agents_assistant/autopilot_mcp_descriptors.py",
+        "backend/tests/test_autopilot_mcp_descriptors.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_mcp_descriptors.py"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    pack = next(patch for patch in body["patches"] if patch["path"].endswith("loop_engineering_capability_pack.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    registry = namespace["describe_default_registry"]()
+    assert registry.render()["summary"] == {"tool_count": 1, "prompt_count": 1, "resource_count": 1}
+    assert namespace["default_registry"]().list_tools()[0]["name"] == "loop_status"
+    _assert_marker_upsert(workbench, "# ACROSS MCP DESCRIPTORS WORKBENCH START", "# ACROSS MCP DESCRIPTORS WORKBENCH END")
+    _assert_marker_upsert(pack, "# ACROSS MCP DESCRIPTORS CAPABILITY PACK START", "# ACROSS MCP DESCRIPTORS CAPABILITY PACK END")
+    assert "test_workbench_and_capability_pack_surface" in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_mcp_tool_manifest(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("mcp tool manifest validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair MCP tool manifest validator integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-mcp-tool-manifest-fallback",
+        "run_id": "run-mcp-tool-manifest-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+            "backend/tests/test_autopilot_mcp_tool_manifest.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/api_server.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_quality",
+                "args": [],
+                "status": "failed",
+                "stderr": "unintegrated_candidate_helper: autopilot_mcp_tool_manifest.py adds isolated helper",
+                "diagnostic": {"failure_kind": "candidate_quality_failure"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "runpy.run_path('backend/tests/test_autopilot_mcp_tool_manifest.py')"],
+                "status": "failed",
+                "stderr": "ModuleNotFoundError: No module named 'uvicorn'",
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "AAA backend API import contract smoke"],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: missing internal API import(s): "
+                    "across_agents_assistant.autopilot_mcp_tool_manifest.TOOL_DESCRIPTORS, "
+                    "across_agents_assistant.autopilot_mcp_tool_manifest.validate_tool_manifests"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+        "backend/tests/test_autopilot_mcp_tool_manifest.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_mcp_tool_manifest.py"))
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    tools = namespace["get_registered_tools"]()
+    assert tools[0]["name"] == "loop_engineering_manifest_validate"
+    assert namespace["mcp_tool_manifest_snapshot"]()["promotion_requires_human_review"] is True
+    _assert_marker_upsert(api_patch, "# ACROSS MCP TOOL MANIFEST REGISTRATION START", "# ACROSS MCP TOOL MANIFEST REGISTRATION END")
+    assert "ACROSS_MCP_TOOL_DESCRIPTORS" in api_patch["content"]
+    assert "test_api_server_registration_marker_is_lightweight" in test_patch["content"]
+    assert "import_module(\"across_agents_assistant.api_server\")" not in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_mcp_tool_registry(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    workbench_path.parent.mkdir(parents=True, exist_ok=True)
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot(*, registry=None):\n"
+        "    return {'status': 'source', 'registry': registry}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("mcp tool registry validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair MCP tool registry integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-mcp-tool-registry-fallback",
+        "run_id": "run-mcp-tool-registry-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+            "backend/tests/test_autopilot_mcp_tool_registry.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/autopilot_workbench.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_app_lifecycle",
+                "args": [],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: cannot import name 'MCPToolRegistry' from "
+                    "'across_agents_assistant.autopilot_mcp_tool_registry'"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+        "backend/tests/test_autopilot_mcp_tool_registry.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_mcp_tool_registry.py"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    snapshot = namespace["describe_default_registry"]()
+    assert snapshot["schema_version"] == "across-aaa-mcp-tool-registry/1.0"
+    assert snapshot["summary"]["tool_count"] == 1
+    assert namespace["DEFAULT_REGISTRY"].get_tool("loop_engineering_manifest_validate")["annotations"]["readOnlyHint"] is True
+    _assert_marker_upsert(workbench, "# ACROSS MCP TOOL REGISTRY WORKBENCH START", "# ACROSS MCP TOOL REGISTRY WORKBENCH END")
+    assert "def get_mcp_tool_registry()" in workbench["content"]
+    assert "from .autopilot_mcp_tool_registry import DEFAULT_REGISTRY" in workbench["content"]
+    assert "test_integration_marker_uses_delayed_imports" in test_patch["content"]
+    assert "import across_agents_assistant.api_server" not in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_mcp_tool_registry_api_capability_pack(
+    monkeypatch, tmp_path
+):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    capability_path = source / "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n\n\n"
+        "def start_api_server():\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    capability_path.write_text(
+        "def loop_engineering_capability_pack():\n"
+        "    return {'status': 'source'}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("mcp tool registry validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair MCP tool descriptor registry integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-mcp-tool-registry-api-capability-fallback",
+        "run_id": "run-mcp-tool-registry-api-capability-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+            "backend/tests/test_autopilot_mcp_tool_registry.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/loop_engineering_capability_pack.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "runpy.run_path('backend/tests/test_autopilot_mcp_tool_registry.py')"],
+                "status": "failed",
+                "stderr": (
+                    "AssertionError: expected ACROSS MCP TOOL REGISTRY integration marker "
+                    "for across_agents_assistant.autopilot_mcp_tool_registry"
+                ),
+                "diagnostic": {"failure_kind": "candidate_test_assertion"},
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/autopilot_mcp_tool_registry.py",
+        "backend/tests/test_autopilot_mcp_tool_registry.py",
+    }
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    capability_patch = next(
+        patch for patch in body["patches"] if patch["path"].endswith("loop_engineering_capability_pack.py")
+    )
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_mcp_tool_registry.py"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    assert "Union[ToolDescriptor, Mapping[str, Any]]" in module["content"]
+    assert "|" not in module["content"].split("def _coerce_tool_descriptor", 1)[0]
+    _assert_marker_upsert(api_patch, "# ACROSS MCP TOOL REGISTRY API START", "# ACROSS MCP TOOL REGISTRY API END")
+    assert "def autopilot_mcp_tool_registry_snapshot()" in api_patch["content"]
+    _assert_marker_upsert(
+        capability_patch,
+        "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK START",
+        "# ACROSS MCP TOOL REGISTRY CAPABILITY PACK END",
+    )
+    assert "def describe_mcp_tool_registry_capability()" in capability_patch["content"]
+    assert "test_integration_marker_uses_delayed_imports" in test_patch["content"]
+    assert "ACROSS MCP TOOL REGISTRY WORKBENCH START' in source" not in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_target_backlog(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    capability_path = source / "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n\n\n"
+        "def start_api_server():\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot():\n"
+        "    return {'status': 'source'}\n",
+        encoding="utf-8",
+    )
+    capability_path.write_text(
+        "def loop_engineering_capability_pack():\n"
+        "    return {'status': 'source'}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("target backlog validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair target backlog integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-target-backlog-fallback",
+        "run_id": "run-target-backlog-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_target_backlog.py",
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/tests/test_autopilot_target_backlog.py",
+            "macOS-Client/Sources/AutopilotTargetBacklogView.swift",
+        ],
+        "context_files": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/src/across_agents_assistant/api_server.py",
+        ],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_quality",
+                "args": [],
+                "status": "failed",
+                "stderr": (
+                    "destructive_product_entrypoint_rewrite: backend/src/across_agents_assistant/api_server.py; "
+                    "ImportError: cannot import name 'TargetBacklog' from "
+                    "'across_agents_assistant.autopilot_target_backlog'; missing find_target and to_artifact_envelope"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/autopilot_target_backlog.py",
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/tests/test_autopilot_target_backlog.py",
+        "macOS-Client/Sources/AutopilotTargetBacklogView.swift",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_target_backlog.py"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    capability = next(patch for patch in body["patches"] if patch["path"].endswith("loop_engineering_capability_pack.py"))
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    swift_patch = next(patch for patch in body["patches"] if patch["path"].endswith("AutopilotTargetBacklogView.swift"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    snapshot = namespace["target_backlog_snapshot"](
+        selected_iteration={"target_id": "aaa-target-backlog-autopilot", "goal": "Expose backlog."}
+    )
+    assert snapshot["schema_version"] == "across-aaa-autopilot-target-backlog/1.0"
+    assert namespace["find_target"](snapshot, "aaa-target-backlog-autopilot")["goal"] == "Expose backlog."
+    assert namespace["to_artifact_envelope"](snapshot)["promotion_requires_human_review"] is True
+    _assert_marker_upsert(workbench, "# ACROSS TARGET BACKLOG WORKBENCH START", "# ACROSS TARGET BACKLOG WORKBENCH END")
+    _assert_marker_upsert(
+        capability,
+        "# ACROSS TARGET BACKLOG CAPABILITY PACK START",
+        "# ACROSS TARGET BACKLOG CAPABILITY PACK END",
+    )
+    _assert_marker_upsert(api_patch, "# ACROSS TARGET BACKLOG API START", "# ACROSS TARGET BACKLOG API END")
+    assert "test_integration_markers_use_delayed_imports" in test_patch["content"]
+    assert "from across_agents_assistant.api_server import" not in test_patch["content"]
+    assert "struct AutopilotTargetBacklogView" in swift_patch["content"]
+    assert "AutopilotTargetBacklogItem" in swift_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_capability_classifier_api(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    original_api = (
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n\n\n"
+        "@app.get('/api/health')\n"
+        "async def health():\n"
+        "    return {'status': 'ok'}\n"
+    )
+    api_path.write_text(original_api, encoding="utf-8")
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("capability classifier validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair capability classifier api integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-capability-classifier-fallback",
+        "run_id": "run-capability-classifier-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/autopilot_capability_classifier.py",
+            "backend/tests/test_autopilot_capability_classifier.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/api_server.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_quality",
+                "args": [],
+                "status": "failed",
+                "stderr": (
+                    "destructive_product_entrypoint_rewrite: backend/src/across_agents_assistant/api_server.py "
+                    "candidate rewrites a critical product entrypoint"
+                ),
+                "diagnostic": {"failure_kind": "candidate_quality_failure"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "AAA backend API import contract smoke"],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: missing internal API import(s): "
+                    "backend/src/across_agents_assistant/api_server.py: "
+                    "across_agents_assistant.autopilot_capability_classifier.DEFAULT_RANKED, "
+                    "across_agents_assistant.autopilot_capability_classifier.classify_goal, "
+                    "across_agents_assistant.autopilot_capability_classifier.render_classification"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/autopilot_capability_classifier.py",
+        "backend/tests/test_autopilot_capability_classifier.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_capability_classifier.py"))
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    assert namespace["classify_goal"]("")["primary"] == namespace["DEFAULT_RANKED"][0]
+    assert namespace["classify_capability"]("retrieve long-term memory") == "memory_retrieval"
+    assert namespace["render_classification"]("route tool calls")["primary"] == "tool_routing"
+    _assert_marker_upsert(api_patch, "# ACROSS CAPABILITY CLASSIFIER API START", "# ACROSS CAPABILITY CLASSIFIER API END")
+    assert "def autopilot_classify_capability_detail" in api_patch["content"]
+    assert "DEFAULT_RANKED" in module["content"]
+    assert "test_api_server_marker_restores_full_entrypoint" in test_patch["content"]
+    assert "from across_agents_assistant.api_server import" not in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_tool_registry_manifest(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n\n\n"
+        "@app.get('/api/health')\n"
+        "async def health():\n"
+        "    return {'status': 'ok'}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("tool registry manifest validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair AAA MCP tool registry manifest route",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-tool-registry-manifest-fallback",
+        "run_id": "run-tool-registry-manifest-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/tool_registry_manifest.py",
+            "backend/tests/test_tool_registry_manifest.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/api_server.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "from across_agents_assistant.tool_registry_manifest import build_manifest"],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: cannot import name 'LIST_CAPABILITIES' "
+                    "from 'across_agents_assistant.loop_engineering_capability_pack'"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["backend/tests/test_tool_registry_manifest.py"],
+                "status": "failed",
+                "stderr": "AssertionError: assert '/health' in endpoints",
+                "diagnostic": {"failure_kind": "candidate_quality"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/tool_registry_manifest.py",
+        "backend/tests/test_tool_registry_manifest.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("tool_registry_manifest.py"))
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+
+    class FakePack:
+        def build_loop_engineering_capability_pack(self):
+            return {"ready": [{"id": "repo-quality", "label": "Repo quality"}]}
+
+    fake_app = SimpleNamespace(routes=[SimpleNamespace(path="/api/health", methods={"GET", "HEAD"})])
+    manifest = namespace["build_manifest"](fake_app, FakePack())
+    assert manifest["schema_version"] == "across-aaa-tool-registry-manifest/1.0"
+    assert manifest["tools"] == [{"name": "api_health", "path": "/api/health", "methods": ["GET"]}]
+    assert manifest["resources"][0]["uri"] == "across://capabilities/repo-quality"
+    assert manifest["promotion_requires_human_review"] is True
+    _assert_marker_upsert(api_patch, "# ACROSS TOOL REGISTRY MANIFEST ROUTE START", "# ACROSS TOOL REGISTRY MANIFEST ROUTE END")
+    assert "get_autopilot_capabilities_manifest" in api_patch["content"]
+    assert "test_register_capability_manifest_route_is_idempotent" in test_patch["content"]
+
+
 def test_autopilot_code_iteration_repairs_validation_feedback_with_model(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -2727,11 +3740,11 @@ def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallbac
             assert "missing internal API import" in kwargs["message"]
             return SimpleNamespace(
                 text=json.dumps({
-                    "summary": "Repair API import contract by restoring exported registry functions",
+                    "summary": "Repair API import contract by restoring exported runtime functions",
                     "risk": "low",
                     "patches": [
                         {
-                            "path": "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+                            "path": "backend/src/across_agents_assistant/autopilot_tool_pack_runtime.py",
                             "mode": "overwrite",
                             "content": (
                                 "def register_pack(name, descriptor=None):\n"
@@ -2745,11 +3758,11 @@ def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallbac
                             ),
                         },
                         {
-                            "path": "backend/tests/test_autopilot_tool_pack_registry.py",
+                            "path": "backend/tests/test_autopilot_tool_pack_runtime.py",
                             "mode": "overwrite",
                             "content": (
-                                "from across_agents_assistant.autopilot_tool_pack_registry import register_pack, describe_pack\n\n\n"
-                                "def test_registry_exports_api_contract_symbols():\n"
+                                "from across_agents_assistant.autopilot_tool_pack_runtime import register_pack, describe_pack\n\n\n"
+                                "def test_runtime_exports_api_contract_symbols():\n"
                                 "    assert register_pack('validation')['name'] == 'validation'\n"
                                 "    assert describe_pack('validation')['name'] == 'validation'\n"
                             ),
@@ -2765,13 +3778,13 @@ def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallbac
     gateway = RepairGateway()
     monkeypatch.setattr(api_server, "get_gateway", lambda: gateway)
     response = TestClient(app).post("/api/autopilot/code-iteration", json={
-        "goal": "Repair API import contract for tool pack registry",
+        "goal": "Repair API import contract for tool pack runtime",
         "candidate_workspace": str(candidate),
         "candidate_id": "cand-import-contract",
         "run_id": "run-import-contract",
         "allowed_patch_paths": [
-            "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
-            "backend/tests/test_autopilot_tool_pack_registry.py",
+            "backend/src/across_agents_assistant/autopilot_tool_pack_runtime.py",
+            "backend/tests/test_autopilot_tool_pack_runtime.py",
         ],
         "context_files": ["README.md"],
         "validation_feedback": [
@@ -2783,7 +3796,7 @@ def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallbac
                 "status": "failed",
                 "stderr": (
                     "ImportError: missing internal API import(s): "
-                    "across_agents_assistant.autopilot_tool_pack_registry.describe_pack"
+                    "across_agents_assistant.autopilot_tool_pack_runtime.describe_pack"
                 ),
             }
         ],
@@ -2802,9 +3815,126 @@ def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallbac
     assert body["host_validation_repair_fallback"] is False
     assert body["text_fallback"] is False
     assert body["finish_reason"] == "stop"
-    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_tool_pack_registry.py"))
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_tool_pack_runtime.py"))
     assert "def describe_pack" in module["content"]
     assert "evaluate_candidate_signal" not in module["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_repairs_tool_pack_registry(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    workbench_path = source / "backend/src/across_agents_assistant/autopilot_workbench.py"
+    pack_path = source / "backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+    workbench_path.parent.mkdir(parents=True, exist_ok=True)
+    pack_path.parent.mkdir(parents=True, exist_ok=True)
+    workbench_path.write_text(
+        "def build_autopilot_workbench_snapshot(*, registry=None):\n"
+        "    return {'status': 'source', 'registry': registry}\n",
+        encoding="utf-8",
+    )
+    pack_path.write_text(
+        "def build_loop_engineering_capability_pack():\n"
+        "    return {'ready': []}\n",
+        encoding="utf-8",
+    )
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("tool-pack registry validation fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair Tool Pack registry integration",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-tool-pack-registry-fallback",
+        "run_id": "run-tool-pack-registry-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/tests/test_autopilot_tool_pack_registry.py",
+        ],
+        "context_files": [
+            "backend/src/across_agents_assistant/autopilot_workbench.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        ],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_quality",
+                "args": [],
+                "status": "failed",
+                "stderr": "excessive_blank_lines: backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+                "diagnostic": {"failure_kind": "candidate_quality_failure"},
+                "quality_findings": [
+                    {"id": "excessive_blank_lines", "severity": "error", "path": "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py"}
+                ],
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "runpy.run_path('backend/src/across_agents_assistant/autopilot_tool_pack_registry.py')"],
+                "status": "failed",
+                "stderr": "TypeError: unsupported operand type(s) for |: '_GenericAlias' and 'NoneType'",
+                "diagnostic": {"failure_kind": "python_version_incompatible"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "AAA backend API import contract smoke"],
+                "status": "failed",
+                "stderr": (
+                    "ImportError: missing internal API import(s): "
+                    "backend/src/across_agents_assistant/autopilot_workbench.py: "
+                    "across_agents_assistant.autopilot_tool_pack_registry.ALL_PACKS, "
+                    "backend/src/across_agents_assistant/autopilot_workbench.py: "
+                    "across_agents_assistant.autopilot_tool_pack_registry.evaluate, "
+                    "backend/src/across_agents_assistant/autopilot_workbench.py: "
+                    "across_agents_assistant.loop_engineering_capability_pack.advise_with_capability"
+                ),
+                "diagnostic": {"failure_kind": "candidate_import_failure"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    assert {patch["path"] for patch in body["patches"]} == {
+        "backend/src/across_agents_assistant/autopilot_workbench.py",
+        "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+        "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        "backend/tests/test_autopilot_tool_pack_registry.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_tool_pack_registry.py"))
+    workbench = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_workbench.py"))
+    pack = next(patch for patch in body["patches"] if patch["path"].endswith("loop_engineering_capability_pack.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    assert [item.id for item in namespace["ALL_PACKS"]] == ["intake", "research", "build", "validate", "review"]
+    assert namespace["evaluate"]({"tool_packs": ["intake"]})["status"] == "attention"
+    assert namespace["advise_tool_packs"]("validate loop", {"tool_packs": ["intake", "research", "build", "validate", "review"]})["status"] == "passed"
+    _assert_marker_upsert(workbench, "# ACROSS TOOL PACK REGISTRY WORKBENCH START", "# ACROSS TOOL PACK REGISTRY WORKBENCH END")
+    assert "def tool_pack_registry_snapshot()" in workbench["content"]
+    _assert_marker_upsert(
+        pack,
+        "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK START",
+        "# ACROSS TOOL PACK REGISTRY CAPABILITY PACK END",
+    )
+    assert "def advise_with_capability" in pack["content"]
+    assert "test_workbench_and_capability_pack_markers_use_delayed_imports" in test_patch["content"]
+    assert "Mapping[str, Any] | None" not in module["content"]
 
 
 def test_autopilot_code_iteration_integration_feedback_bypasses_host_fallback(monkeypatch, tmp_path):

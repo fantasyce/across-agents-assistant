@@ -183,7 +183,7 @@ bash scripts/verify_swift_package_lock.sh
 swift build --package-path macOS-Client --skip-update
 swift test --package-path macOS-Client --skip-update
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=/path/to/across-orchestrator \
-ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e-release.XXXXXX.json)" \
+ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e-release.XXXXXX)" \
   PYTHON=<python> bash scripts/run_live_e2e.sh all
 ```
 

@@ -57,6 +57,7 @@ def build_self_iteration_plan(
         },
         "platform_self_repair": _platform_self_repair_status(trigger_queue),
         "runtime_controls": {
+            "scheduler_dispatch_mode": "enqueue_and_run_one_due_trigger_per_tick",
             "ensure_endpoint": "/api/autopilot/self-iteration-plan/ensure",
             "tick_endpoint": "/api/autopilot/trigger-configs/tick",
             "scheduler_status_endpoint": "/api/autopilot/trigger-scheduler",
@@ -67,7 +68,7 @@ def build_self_iteration_plan(
         },
         "readiness": readiness,
         "ready": all(item["status"] == "passed" for item in readiness),
-        "today_start_policy": "ensure the default trigger, tick due schedules, run queued triggers, then use promotion review for human approval",
+        "today_start_policy": "ensure the default trigger, start the scheduler with queued-trigger dispatch enabled, then use promotion review for human approval",
         "updated_at": _now(),
     }
 

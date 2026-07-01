@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.23 - 2026-07-01
+
+### Changed
+
+- Enabled the self-iteration trigger scheduler to dispatch queued triggers by
+  default and expose bounded dispatch controls for product-mode loop
+  engineering.
+- Hardened host code iteration so marker-upsert patches require explicit
+  markers for code files, while documentation-only markerless upserts degrade
+  to append.
+- Expanded deterministic host repair fallbacks for loop-engineering capability
+  targets, including target backlog, MCP/tool registry, capability classifier,
+  tool pack registry, and platform self-repair replay fixtures.
+- Updated the managed Across Autopilot pin to `v0.2.12`, which adds
+  deterministic patch application, destructive entrypoint restore, richer
+  validation diagnostics, and stricter platform-vs-candidate failure routing.
+
 ## 0.9.22 - 2026-07-01
 
 ### Changed
