@@ -46,6 +46,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "autopilot-code-iteration":
 
     sys.exit(code_iteration_main(sys.argv[2:]))
 
+if len(sys.argv) > 1 and sys.argv[1] == "autopilot-review-decision":
+    from across_agents_assistant.autopilot_review_decision_cli import main as review_decision_main
+
+    sys.exit(review_decision_main(sys.argv[2:]))
+
 from across_agents_assistant.api_server import start_api_server
 from across_agents_assistant.paths import backend_socket_path
 

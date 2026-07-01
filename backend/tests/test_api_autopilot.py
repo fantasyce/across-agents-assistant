@@ -5,6 +5,8 @@ import json
 
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
+from across_agents_assistant.autopilot_promotion_review import build_promotion_review_packet
+from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRegistry
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import PluginLifecycleError
 
@@ -245,6 +247,8 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     assert self_plan.json()["status"] == "active"
     assert self_plan.json()["trigger"]["trigger_id"] == "aaa-continuous-self-iteration-daily"
     assert self_plan.json()["ready"] is True
+    assert self_plan.json()["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
+    assert self_plan.json()["platform_self_repair"]["promotion_review_required"] is True
 
     run = client.post(
         "/api/autopilot/runs",
@@ -303,6 +307,75 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     assert quarantined.json()["quarantined"] is True
     deleted = client.delete(f"/api/autopilot/trigger-configs/{trigger_id}")
     assert deleted.json()["deleted"] is True
+
+
+def test_promotion_review_marks_source_boundary_not_evaluable_without_package():
+    packet = build_promotion_review_packet(
+        {
+            "schema_version": "across-loop-evidence/1.0",
+            "run_id": "run-missing-package",
+            "spec_id": "aaa-autonomous-self-iteration",
+            "gates": [{"id": "candidate_app_lifecycle_passed", "status": "failed", "required": True}],
+            "candidate": {
+                "candidate_id": "candidate-missing-package",
+                "promotion_ready": False,
+                "changed_files": ["across-agents-assistant/backend/src/across_agents_assistant/example.py"],
+                "validation": {"status": "passed"},
+                "self_hosting_probe": {"required": True, "status": "skipped"},
+                "quality_findings": [],
+            },
+        }
+    )
+
+    checklist = {item["id"]: item for item in packet["checklist"]}
+    assert packet["status"] == "needs_attention"
+    assert checklist["promotion_package_present"]["status"] == "failed"
+    assert checklist["source_a_unchanged"]["status"] == "not_evaluable"
+    assert checklist["source_a_unchanged"]["details"]["reason"] == "not evaluated because no promotion package was generated"
+    assert checklist["source_refs_pinned"]["status"] == "not_evaluable"
+
+
+def test_trigger_registry_syncs_terminal_queue_status(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "registry.json")
+    record = registry.ensure(
+        spec="aaa-autonomous-self-iteration",
+        trigger_type="cron",
+        trigger_id="aaa-continuous-self-iteration-daily",
+        payload={"scenario": "self"},
+        schedule={"interval_seconds": 60},
+    )
+    state = registry._load()
+    state["triggers"][0]["last_trigger_id"] = "trg-terminal"
+    state["triggers"][0]["last_status"] = "pending"
+    registry._save(state)
+
+    synced = registry.list_synced(
+        {
+            "items": [
+                {
+                    "trigger_id": "trg-terminal",
+                    "status": "failed",
+                    "completed_at": "2026-06-30T18:24:12Z",
+                    "failure": {
+                        "adapter_id": "candidate_app_lifecycle",
+                        "code": 1,
+                        "message": "candidate app lifecycle failed",
+                        "private": "ignored",
+                    },
+                }
+            ]
+        }
+    )
+
+    trigger = synced["triggers"][0]
+    assert record["trigger_id"] == "aaa-continuous-self-iteration-daily"
+    assert trigger["last_status"] == "failed"
+    assert trigger["last_completed_at"] == "2026-06-30T18:24:12Z"
+    assert trigger["last_failure"] == {
+        "adapter_id": "candidate_app_lifecycle",
+        "code": 1,
+        "message": "candidate app lifecycle failed",
+    }
 
 
 def test_autopilot_client_prefers_source_mirrors(tmp_path, monkeypatch):
@@ -738,6 +811,57 @@ def test_autopilot_review_decision_uses_distinct_model(monkeypatch):
     assert body["decision_hash"]
 
 
+def test_autopilot_review_decision_allows_platform_replay_fixture_only(monkeypatch):
+    class ReviewGateway:
+        async def chat(self, **kwargs):
+            assert "allow_replay_fixture_only" in kwargs["message"]
+            return SimpleNamespace(
+                text=json.dumps({
+                    "status": "failed",
+                    "recommendation": "reject",
+                    "merge_recommendation": "repair_before_pr",
+                    "product_value_score": 88,
+                    "maintainability_score": 90,
+                    "risk_score": 18,
+                    "blocking_reasons": [
+                        "candidate has no product source change",
+                        "test-only change with no product source modification",
+                    ],
+                    "human_review_notes": ["Replay fixture covers the failed platform trigger."],
+                }),
+                provider="fake-provider",
+                model="fake-review-model",
+                finish_reason="stop",
+                usage={"total_tokens": 55},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: ReviewGateway())
+    response = TestClient(app).post("/api/autopilot/review-decision", json={
+        "goal": "Review platform self-repair replay fixture",
+        "selected_target_id": "autopilot-self-repair-replay-fixture",
+        "selected_iteration": {
+            "target_id": "autopilot-self-repair-replay-fixture",
+            "target_repo": "across-autopilot",
+            "semantic_review": {
+                "allow_replay_fixture_only": True,
+                "reject_test_only_change": False,
+            },
+        },
+        "changed_files": ["across-autopilot/tests/platform-self-repair.test.js"],
+        "validation": {"status": "passed", "command_count": 2},
+        "deterministic_review": {"blocking_reasons": [], "warnings": []},
+        "builder_model": {"provider": "fake-provider", "model": "fake-builder-model"},
+        "model_policy": {"required": True, "provider": "fake-provider", "model": "fake-review-model"},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "passed"
+    assert body["recommendation"] == "review"
+    assert body["merge_recommendation"] == "open_review_pr"
+    assert body["blocking_reasons"] == []
+
+
 def test_autopilot_review_decision_rejects_builder_model(monkeypatch):
     class UnusedGateway:
         async def chat(self, **kwargs):
@@ -827,6 +951,84 @@ def test_autopilot_research_decision_selects_catalog_target(monkeypatch, tmp_pat
         "backend/tests/test_autopilot_research_signal.py",
     ]
     assert body["decision_hash"]
+
+
+def test_autopilot_research_decision_prefers_trigger_target_id(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    class ResearchGateway:
+        async def chat(self, **kwargs):
+            assert "product_context.trigger_payload.target_id" in kwargs["system_prompt"]
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Repair host runtime path",
+                    "rationale": "The model drifted to a host target, but the trigger payload carries a stricter route.",
+                    "decision": "implement",
+                    "selected_target_id": "aaa-host-runtime-repair",
+                    "selected_iteration": {
+                        "target_id": "aaa-host-runtime-repair",
+                    "target_repo": "across-agents-assistant",
+                    "goal": "Repair host runtime",
+                    "allowed_patch_paths": ["backend/main.py"],
+                    "validation_commands": [
+                        {"repo": "across-agents-assistant", "command": "npm", "args": ["test", "--", "--runInBand"]}
+                    ],
+                },
+                }),
+                provider="fake-provider",
+                model="fake-research-model",
+                finish_reason="stop",
+                usage={"total_tokens": 88},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: ResearchGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose platform self-repair target",
+        "candidate_workspace": str(candidate),
+        "product_context": {
+            "trigger_payload": {
+                "target_id": "autopilot-self-repair-replay-fixture",
+                "target_repo": "across-autopilot",
+            }
+        },
+        "target_catalog": [
+            {
+                "id": "aaa-host-runtime-repair",
+                "target_repo": "across-agents-assistant",
+                "allowed_patch_paths": ["backend/main.py"],
+                "context_files": ["backend/main.py"],
+            },
+            {
+                "id": "autopilot-self-repair-replay-fixture",
+                "target_repo": "across-autopilot",
+                "allowed_patch_paths": [
+                    "tests/platform-self-repair.test.js",
+                ],
+                "context_files": ["src/platform-self-repair.js"],
+                "validation_commands": [
+                    {"repo": "across-autopilot", "command": "node", "args": ["--test", "tests/platform-self-repair.test.js"]},
+                    {"repo": "across-autopilot", "command": "node", "args": ["src/cli.js", "loop", "validate", "--spec", "aaa-platform-self-repair", "--json"]},
+                ],
+                "semantic_review": {"minimum_validation_commands": 2, "reject_test_only_change": False},
+            },
+        ],
+        "model_policy": {"required": True, "provider": "fake"},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selected_target_id"] == "autopilot-self-repair-replay-fixture"
+    assert body["selected_iteration"]["target_repo"] == "across-autopilot"
+    assert body["selected_iteration"]["allowed_patch_paths"] == [
+        "tests/platform-self-repair.test.js",
+    ]
+    rendered_commands = [
+        " ".join([command["command"], *(command.get("args") or [])])
+        for command in body["selected_iteration"]["validation_commands"]
+    ]
+    assert any("node --test tests/platform-self-repair.test.js" in command for command in rendered_commands)
+    assert all("npm test" not in command for command in rendered_commands)
 
 
 def test_autopilot_research_decision_generates_open_backlog(monkeypatch, tmp_path):
@@ -1026,6 +1228,87 @@ def test_autopilot_research_decision_accepts_readonly_across_home_context(monkey
     assert selected["semantic_review"]["independent_reviewer_required"] is True
     assert len(selected["validation_commands"]) >= 2
     assert selected["tool_packs"] == ["source_research_digest", "candidate_workspace", "validation_harness"]
+
+
+def test_autopilot_research_decision_moves_loop_state_context_out_of_patch_paths(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    across_home = tmp_path / ".across"
+    loop_root = across_home / "data" / "across-autopilot" / "loop-state"
+    contract_path = loop_root / "contracts" / "aaa-autonomous-self-iteration" / "contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
+
+    class ResearchGateway:
+        async def chat(self, **kwargs):
+            target = {
+                "id": "generated-contract-aware",
+                "target_repo": "across-agents-assistant",
+                "summary": "Add contract-aware target",
+                "goal": "Use loop-state contracts as read-only context.",
+                "allowed_patch_paths": [
+                    "backend/src/across_agents_assistant/api_server.py",
+                    "backend/src/across_agents_assistant/autopilot_contract_reader.py",
+                    "backend/tests/test_autopilot_contract_reader.py",
+                    str(contract_path),
+                ],
+                "validation_commands": [
+                    {"repo": "across-agents-assistant", "command": "python3", "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_contract_reader.py"]},
+                    {"repo": "across-agents-assistant", "command": "git", "args": ["diff", "--check"]},
+                ],
+                "semantic_review": {"minimum_validation_commands": 2},
+                "source_refs": ["architecture-signal"],
+                "tool_packs": ["candidate_workspace", "validation_harness"],
+                "generated_from": "model_generated",
+                "risk": "low",
+            }
+            fallback = {
+                **target,
+                "id": "generated-contract-fallback",
+                "summary": "Fallback",
+                "goal": "Fallback target.",
+                "allowed_patch_paths": [
+                    "backend/src/across_agents_assistant/api_server.py",
+                    "backend/src/across_agents_assistant/autopilot_contract_fallback.py",
+                    "backend/tests/test_autopilot_contract_fallback.py",
+                ],
+            }
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Move loop-state contract to context files",
+                    "rationale": "Contracts are read-only context, not writable patch targets.",
+                    "decision": "implement",
+                    "selected_target_id": target["id"],
+                    "candidate_targets": [target, fallback],
+                    "selected_iteration": {**target, "target_id": target["id"]},
+                }),
+                provider="fake-provider",
+                model="fake-research-model",
+                finish_reason="stop",
+                usage={"total_tokens": 101},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: ResearchGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose an open autonomous AAA iteration",
+        "candidate_workspace": str(candidate),
+        "sources": [{"id": "architecture-signal", "status": "passed", "result": {"excerpt": "read loop state contract"}}],
+        "product_context": {"autonomous_loop_state": {"root": str(loop_root)}},
+        "target_catalog": [],
+        "target_generation": {
+            "mode": "model_generated",
+            "allow_model_generated_targets": True,
+            "minimum_candidates": 2,
+        },
+        "model_policy": {"required": True, "provider": "fake"},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert str(contract_path) in body["selected_iteration"]["context_files"]
+    assert str(contract_path) not in body["selected_iteration"]["allowed_patch_paths"]
+    assert all(not path.startswith(str(across_home)) for path in body["selected_iteration"]["allowed_patch_paths"])
 
 
 def test_autopilot_research_decision_repairs_generated_minimum(monkeypatch, tmp_path):
@@ -1410,6 +1693,93 @@ def test_autopilot_research_decision_repairs_malformed_json(monkeypatch, tmp_pat
     assert body["repaired_json"] is True
     assert body["rationale"] == "Traceable agents need evaluation before promotion."
     assert body["selected_target_id"] == "research_signal_quality"
+
+
+def test_autopilot_research_decision_generated_selected_iteration_overrides_same_id(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    class GeneratedGateway:
+        async def chat(self, **kwargs):
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Wire trace capability into AAA",
+                    "rationale": "Selected iteration is the concrete bounded target.",
+                    "decision": "implement",
+                    "selected_target_id": "trace-capability",
+                    "candidate_targets": [
+                        {
+                            "id": "trace-capability",
+                            "target_repo": "across-agents-assistant",
+                            "summary": "Trace helper",
+                            "goal": "Add trace helper",
+                            "allowed_patch_paths": [
+                                "backend/src/across_agents_assistant/autopilot_trace_capability.py",
+                                "backend/tests/test_autopilot_trace_capability.py",
+                            ],
+                            "validation_commands": [
+                                {"repo": "across-agents-assistant", "command": "git", "args": ["diff", "--check"]},
+                                {"repo": "across-agents-assistant", "command": "python3", "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_trace_capability.py"]},
+                            ],
+                            "semantic_review": {"minimum_validation_commands": 2},
+                            "source_refs": ["mcp-tooling"],
+                            "tool_packs": ["validation_harness"],
+                            "generated_from": "model",
+                            "risk": "low",
+                        }
+                    ],
+                    "selected_iteration": {
+                        "target_id": "trace-capability",
+                        "target_repo": "across-agents-assistant",
+                        "goal": "Wire trace capability into an existing AAA API surface",
+                        "allowed_patch_paths": [
+                            "backend/src/across_agents_assistant/api_server.py",
+                            "backend/src/across_agents_assistant/autopilot_trace_capability.py",
+                            "backend/tests/test_autopilot_trace_capability.py",
+                        ],
+                        "validation_commands": [
+                            {"repo": "across-agents-assistant", "command": "git", "args": ["diff", "--check"]},
+                            {"repo": "across-agents-assistant", "command": "python3", "args": ["-m", "py_compile", "backend/src/across_agents_assistant/api_server.py"]},
+                        ],
+                        "semantic_review": {"minimum_validation_commands": 2},
+                        "source_refs": ["mcp-tooling"],
+                        "tool_packs": ["validation_harness"],
+                        "generated_from": "model",
+                        "risk": "low",
+                    },
+                }),
+                provider="minimax",
+                model="MiniMax-M3",
+                finish_reason="stop",
+                usage={"total_tokens": 100},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: GeneratedGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose generated AAA target",
+        "candidate_workspace": str(candidate),
+        "sources": [{"id": "mcp-tooling", "status": "passed", "result": {"excerpt": "tools"}}],
+        "target_catalog": [],
+        "target_generation": {"allow_model_generated_targets": True, "minimum_candidates": 1},
+        "model_policy": {"required": True, "provider": "minimax"},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selected_iteration"]["target_id"] == "trace-capability"
+    assert body["selected_iteration"]["allowed_patch_paths"] == [
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/autopilot_trace_capability.py",
+        "backend/tests/test_autopilot_trace_capability.py",
+    ]
+    assert body["candidate_targets"][0]["allowed_patch_paths"] == body["selected_iteration"]["allowed_patch_paths"]
+
+
+def test_autopilot_research_target_policy_allows_host_runtime_entrypoints():
+    assert api_server._autopilot_path_allowed_for_repo("across-agents-assistant", "backend/main.py") is True
+    assert api_server._autopilot_path_allowed_for_repo("across-agents-assistant", "build_app.sh") is True
+    assert api_server._autopilot_path_allowed_for_repo("across-agents-assistant", "scripts/run_platform_self_repair_e2e.sh") is True
+    assert api_server._autopilot_path_allowed_for_repo("across-agents-assistant", ".github/workflows/quality.yml") is False
 
 
 def test_autopilot_model_decision_repairs_malformed_model_json(monkeypatch, tmp_path):
@@ -2047,6 +2417,49 @@ def test_autopilot_code_iteration_validation_repair_can_use_whitelisted_host_fal
     assert "rank_backlog_candidates" in test_patch["content"]
 
 
+def test_autopilot_code_iteration_validation_repair_can_fallback_platform_self_repair_replay(tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair platform self-repair replay coverage",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-platform-repair",
+        "run_id": "run-platform-repair",
+        "target_repo": "across-autopilot",
+        "allowed_patch_paths": ["tests/platform-self-repair.test.js"],
+        "context_files": ["src/platform-self-repair.js"],
+        "validation_feedback": [
+            {
+                "repo": "across-autopilot",
+                "command": "node",
+                "args": ["--test", "tests/platform-self-repair.test.js"],
+                "status": "failed",
+                "stderr": "Unsupported schema_version: 1.0",
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+        "validation_commands": [
+            {"repo": "across-autopilot", "command": "node", "args": ["--test", "tests/platform-self-repair.test.js"]}
+        ],
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    assert body["text_fallback"] is True
+    assert body["patches"][0]["path"] == "tests/platform-self-repair.test.js"
+    assert body["decision"]["patch_paths"] == ["tests/platform-self-repair.test.js"]
+    assert "autopilot-self-repair-replay-fixture" in body["patches"][0]["content"]
+    assert "api_key: fakeKey" in body["patches"][0]["content"]
+
+
 def test_autopilot_code_iteration_validation_repair_can_fallback_loop_backlog(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -2298,6 +2711,190 @@ def test_autopilot_code_iteration_repairs_validation_feedback_with_model(monkeyp
     module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_research_signal.py"))
     assert "score_research_iteration_candidate" in module["content"]
     assert "recommendation" in module["content"]
+
+
+def test_autopilot_code_iteration_import_contract_feedback_bypasses_host_fallback(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+
+    class RepairGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            assert "missing internal API import" in kwargs["message"]
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Repair API import contract by restoring exported registry functions",
+                    "risk": "low",
+                    "patches": [
+                        {
+                            "path": "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+                            "mode": "overwrite",
+                            "content": (
+                                "def register_pack(name, descriptor=None):\n"
+                                "    return {'name': name, 'descriptor': descriptor or {}}\n\n"
+                                "def resolve_pack(name):\n"
+                                "    return {'name': name}\n\n"
+                                "def list_packs():\n"
+                                "    return []\n\n"
+                                "def describe_pack(name):\n"
+                                "    return {'name': name}\n"
+                            ),
+                        },
+                        {
+                            "path": "backend/tests/test_autopilot_tool_pack_registry.py",
+                            "mode": "overwrite",
+                            "content": (
+                                "from across_agents_assistant.autopilot_tool_pack_registry import register_pack, describe_pack\n\n\n"
+                                "def test_registry_exports_api_contract_symbols():\n"
+                                "    assert register_pack('validation')['name'] == 'validation'\n"
+                                "    assert describe_pack('validation')['name'] == 'validation'\n"
+                            ),
+                        },
+                    ],
+                }),
+                provider="minimax",
+                model="MiniMax-M3",
+                finish_reason="stop",
+                usage={"total_tokens": 120},
+            )
+
+    gateway = RepairGateway()
+    monkeypatch.setattr(api_server, "get_gateway", lambda: gateway)
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair API import contract for tool pack registry",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-import-contract",
+        "run_id": "run-import-contract",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py",
+            "backend/tests/test_autopilot_tool_pack_registry.py",
+        ],
+        "context_files": ["README.md"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-c", "api_server.py contract smoke"],
+                "summary": "AAA backend API import contract smoke",
+                "status": "failed",
+                "stderr": (
+                    "ImportError: missing internal API import(s): "
+                    "across_agents_assistant.autopilot_tool_pack_registry.describe_pack"
+                ),
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert gateway.calls == 1
+    assert body["host_validation_repair_fallback"] is False
+    assert body["text_fallback"] is False
+    assert body["finish_reason"] == "stop"
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_tool_pack_registry.py"))
+    assert "def describe_pack" in module["content"]
+    assert "evaluate_candidate_signal" not in module["content"]
+
+
+def test_autopilot_code_iteration_integration_feedback_bypasses_host_fallback(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+
+    class RepairGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            assert "loop_engineering_capability_pack" in kwargs["message"]
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Wire capability descriptor into the product pack entrypoint",
+                    "risk": "low",
+                    "patches": [
+                        {
+                            "path": "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+                            "mode": "overwrite",
+                            "content": (
+                                "def register_capability(descriptor):\n"
+                                "    return {'registered': descriptor}\n\n"
+                                "def list_capabilities():\n"
+                                "    return []\n"
+                            ),
+                        },
+                        {
+                            "path": "backend/tests/test_autopilot_capability_descriptor.py",
+                            "mode": "overwrite",
+                            "content": (
+                                "import across_agents_assistant.loop_engineering_capability_pack as lep\n\n\n"
+                                "def test_loop_engineering_pack_export():\n"
+                                "    assert hasattr(lep, 'register_capability')\n"
+                                "    assert hasattr(lep, 'list_capabilities')\n"
+                            ),
+                        },
+                    ],
+                }),
+                provider="minimax",
+                model="MiniMax-M3",
+                finish_reason="stop",
+                usage={"total_tokens": 80},
+            )
+
+    gateway = RepairGateway()
+    monkeypatch.setattr(api_server, "get_gateway", lambda: gateway)
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair capability descriptor integration",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-integration-contract",
+        "run_id": "run-integration-contract",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/tests/test_autopilot_capability_descriptor.py",
+        ],
+        "context_files": ["README.md"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": [
+                    "-c",
+                    "import across_agents_assistant.loop_engineering_capability_pack as p; "
+                    "assert hasattr(p,'register_capability') and hasattr(p,'list_capabilities')",
+                ],
+                "status": "failed",
+                "stderr": "AssertionError: loop_engineering_capability_pack missing register_capability/list_capabilities",
+            }
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert gateway.calls == 1
+    assert body["host_validation_repair_fallback"] is False
+    assert body["finish_reason"] == "stop"
+    assert {patch["path"] for patch in body["patches"]} == {
+        "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+        "backend/tests/test_autopilot_capability_descriptor.py",
+    }
 
 
 def test_autopilot_code_iteration_direct_mode_repairs_to_content_lines(monkeypatch, tmp_path):

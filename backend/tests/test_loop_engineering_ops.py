@@ -27,7 +27,16 @@ def test_ops_dashboard_latest_success_clears_historical_failure_attention():
         trigger_scheduler={"running": True},
         capability_pack={"ready_count": 42},
         registry_health={"status": "passed"},
-        self_iteration_plan={"status": "active", "ready": True},
+        self_iteration_plan={
+            "status": "active",
+            "ready": True,
+            "platform_self_repair": {
+                "enabled": True,
+                "spec": "aaa-platform-self-repair",
+                "queued_count": 1,
+                "promotion_review_required": True,
+            },
+        },
     )
 
     assert payload["status"] == "passed"
@@ -35,6 +44,8 @@ def test_ops_dashboard_latest_success_clears_historical_failure_attention():
     assert payload["summary"]["historical_failed"] == 1
     assert payload["signals"]["gate_failure_count"] == 0
     assert payload["signals"]["historical_gate_failure_count"] == 1
+    assert payload["summary"]["platform_self_repair_queued_count"] == 1
+    assert payload["self_iteration_plan"]["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
     assert payload["next_actions"][0]["action"] == "continue_scheduled_e2e"
 
 

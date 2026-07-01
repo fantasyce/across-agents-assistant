@@ -31,6 +31,12 @@ def _healthy_snapshot():
             "ready": True,
             "spec": "aaa-autonomous-self-iteration",
             "default_trigger_id": "aaa-continuous-self-iteration-daily",
+            "platform_self_repair": {
+                "enabled": True,
+                "spec": "aaa-platform-self-repair",
+                "queued_count": 0,
+                "promotion_review_required": True,
+            },
             "readiness": [{"id": "trigger_active", "status": "passed"}],
         },
         runs={"runs": [{"run_id": "run-1", "status": "completed", "quality_status": "passed"}]},
@@ -111,7 +117,9 @@ def test_autopilot_workbench_snapshot_passed_contract():
     assert snapshot["summary"]["registered_trigger_count"] == 1
     assert snapshot["summary"]["scheduler_running"] is True
     assert snapshot["summary"]["capability_ready_count"] == 42
+    assert snapshot["summary"]["platform_self_repair_queued_count"] == 0
     assert snapshot["sections"]["self_iteration"]["status"] == "passed"
+    assert snapshot["sections"]["self_iteration"]["summary"]["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
     assert snapshot["sections"]["protocols"]["summary"]["plugin_count"] == 3
     assert snapshot["summary"]["ecosystem_route_count"] == 7
     assert snapshot["summary"]["agent_plugin_count"] == 1

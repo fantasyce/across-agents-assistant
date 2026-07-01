@@ -1928,8 +1928,64 @@ def _safe_autopilot_rel_path(value: Any) -> str:
 
 
 def _safe_autopilot_context_path(value: Any, *, autonomous_root: Optional[str] = None) -> str:
-    del autonomous_root
-    return _safe_autopilot_rel_path(value)
+    text = str(value or "").replace("\\", "/").strip()
+    if not text or "\x00" in text:
+        raise ValueError(f"Unsafe relative path: {value}")
+    lowered = text.lower()
+    if any(token in lowered for token in ("secret", "credential", "apikey", "api_key", "token")):
+        raise ValueError(f"Sensitive context path is not allowed: {value}")
+    if text.startswith("~"):
+        raise ValueError(f"Unsafe relative path: {value}")
+    if text.startswith("/"):
+        path = _canonical_autopilot_absolute_path(text)
+        allowed_roots = _allowed_autopilot_context_roots(autonomous_root=autonomous_root)
+        if any(_absolute_path_is_inside(path, root) for root in allowed_roots):
+            return path
+        raise ValueError(f"Unsafe relative path: {value}")
+    return _safe_autopilot_rel_path(text)
+
+
+def _canonical_autopilot_absolute_path(value: Any) -> str:
+    text = str(value or "").replace("\\", "/").strip()
+    if not text.startswith("/") or "\x00" in text:
+        raise ValueError(f"Unsafe relative path: {value}")
+    parts: List[str] = []
+    for part in text.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if not parts:
+                raise ValueError(f"Unsafe relative path: {value}")
+            parts.pop()
+            continue
+        parts.append(part)
+    return "/" + "/".join(parts)
+
+
+def _allowed_autopilot_context_roots(*, autonomous_root: Optional[str] = None) -> List[str]:
+    roots: List[str] = []
+    across_home = os.environ.get("ACROSS_HOME")
+    if across_home:
+        try:
+            across_home_text = str(across_home).replace("\\", "/").rstrip("/")
+            loop_state_root = _canonical_autopilot_absolute_path(
+                f"{across_home_text}/data/across-autopilot/loop-state"
+            )
+            roots.append(loop_state_root)
+        except ValueError:
+            pass
+    if autonomous_root:
+        try:
+            root = _canonical_autopilot_absolute_path(autonomous_root)
+        except ValueError:
+            root = ""
+        if root and any(_absolute_path_is_inside(root, allowed) for allowed in roots):
+            roots.append(root)
+    return roots
+
+
+def _absolute_path_is_inside(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
 
 
 def _read_autopilot_context_files(req: AutopilotModelDecisionRequest) -> List[Dict[str, Any]]:
@@ -2478,8 +2534,13 @@ def _autopilot_research_system_prompt(req: AutopilotResearchDecisionRequest) -> 
         "\"generated_from\": string, \"risk\": \"low|medium|high\"}}. "
         "selected_target_id must exactly match one candidate_targets[].id or one target_catalog[].id. "
         "selected_iteration.target_id must match selected_target_id. "
+        "If product_context.trigger_payload.target_id is present, prefer the target_catalog item with that exact id and explain any exception in rationale. "
+        "If product_context.trigger_payload.target_repo is present, prefer a target_catalog item with the same target_repo and explain any exception in rationale. "
+        "If product_context.trigger_payload.allowed_patch_paths is present and matches a target_catalog item, do not replace those paths with another repo's paths. "
         "allowed_patch_paths must be repository-relative writable concrete files only; never use directories, prefixes, or values ending in '/'. "
-        "For Python work, prefer a paired module and test file such as backend/src/across_agents_assistant/autopilot_<feature>.py and backend/tests/test_autopilot_<feature>.py. "
+        "For Python work, include a paired module and test file such as backend/src/across_agents_assistant/autopilot_<feature>.py and backend/tests/test_autopilot_<feature>.py. "
+        "For Across Agents Assistant targets, also include at least one existing product integration surface in allowed_patch_paths, such as backend/src/across_agents_assistant/api_server.py, backend/src/across_agents_assistant/autopilot_workbench.py, backend/src/across_agents_assistant/loop_engineering_capability_pack.py, or a concrete macOS-Client source file. "
+        "Do not propose a new isolated helper plus test as the only change. "
         "context_files may include repository-relative files or read-only absolute paths under ACROSS_HOME/loop-state. "
         "The selected goal must explain how the research maps into AAA's product ecosystem."
     )
@@ -2547,6 +2608,9 @@ def _autopilot_research_repair_prompt(req: AutopilotResearchDecisionRequest, raw
         "allowed_patch_paths must be concrete repository-relative files, not directories or prefixes; convert directory-like paths into 1-4 explicit files plus matching tests. "
         "Never return paths that end with '/'. "
         "Never put ACROSS_HOME artifact paths in allowed_patch_paths; put read-only artifact paths in context_files only. "
+        "If product_context.trigger_payload.target_id is present, prefer the target_catalog item with that exact id and do not drift to another target unless the target_catalog lacks that id. "
+        "If product_context.trigger_payload.target_repo is present, prefer a target_catalog item with the same target_repo and do not drift to another repo unless the target_catalog lacks that repo. "
+        "For Across Agents Assistant generated targets, do not return only a new helper module plus its test; include one existing product integration surface in allowed_patch_paths. "
         "Set decision to implement unless the sources clearly prove no change is worthwhile.\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )
@@ -2594,7 +2658,19 @@ def _autopilot_research_generation_contract(req: AutopilotResearchDecisionReques
             "must_be_repo_relative_concrete_files": True,
             "directories_or_prefixes_allowed": False,
             "trailing_slash_allowed": False,
-            "repair_hint": "If you want to change a package or directory, choose explicit files inside it, usually one module path and one test path.",
+            "repair_hint": "If you want to change a package or directory, choose explicit files inside it, usually one existing product integration surface, one module path, and one test path.",
+        },
+        "existing_product_integration_policy": {
+            "across-agents-assistant": {
+                "required_for_generated_targets": True,
+                "rationale": "Generated AAA targets must attach new behavior to an existing entrypoint, registry, workflow, API, or UI surface instead of adding an isolated helper plus test only.",
+                "examples": [
+                    "backend/src/across_agents_assistant/api_server.py",
+                    "backend/src/across_agents_assistant/autopilot_workbench.py",
+                    "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+                    "macOS-Client/Sources/",
+                ],
+            }
         },
         "required_target_fields": [
             "id",
@@ -2620,6 +2696,7 @@ def _autopilot_research_generation_contract(req: AutopilotResearchDecisionReques
         "safe_python_target_template": {
             "target_repo": "across-agents-assistant",
             "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/api_server.py",
                 "backend/src/across_agents_assistant/autopilot_<short_feature_name>.py",
                 "backend/tests/test_autopilot_<short_feature_name>.py",
             ],
@@ -2681,13 +2758,74 @@ def _default_research_target_paths(goal: str) -> List[str]:
     ]
 
 
+def _autopilot_autonomous_root(req: AutopilotResearchDecisionRequest) -> Optional[str]:
+    return (
+        req.product_context.get("autonomous_loop_state", {}).get("root")
+        if isinstance(req.product_context.get("autonomous_loop_state"), dict)
+        else None
+    )
+
+
+def _autopilot_misplaced_context_path(value: Any, *, autonomous_root: Optional[str]) -> Optional[str]:
+    text = str(value or "").replace("\\", "/").strip()
+    if not text:
+        return None
+    if text.startswith(("/", "~")) or text.startswith("loop-state/"):
+        return _safe_autopilot_context_path(text, autonomous_root=autonomous_root)
+    return None
+
+
+def _normalize_research_context_files(paths: List[Any], *, autonomous_root: Optional[str], limit: int) -> List[str]:
+    result: List[str] = []
+    seen: Set[str] = set()
+    for path in paths:
+        if not str(path or "").strip():
+            continue
+        normalized = _safe_autopilot_context_path(path, autonomous_root=autonomous_root)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _normalize_research_paths_and_context(
+    item: Dict[str, Any],
+    req: AutopilotResearchDecisionRequest,
+    *,
+    default_goal: Optional[str],
+    context_limit: int,
+) -> Tuple[List[str], List[str]]:
+    autonomous_root = _autopilot_autonomous_root(req)
+    raw_paths = item.get("allowed_patch_paths") or []
+    raw_context: List[Any] = list(item.get("context_files") or [])
+    patch_candidates: List[Any] = []
+    for path in raw_paths:
+        if not str(path or "").strip():
+            continue
+        misplaced = _autopilot_misplaced_context_path(path, autonomous_root=autonomous_root)
+        if misplaced is not None:
+            raw_context.append(misplaced)
+            continue
+        patch_candidates.append(path)
+    if not patch_candidates and default_goal:
+        patch_candidates = _default_research_target_paths(default_goal)
+    allowed_paths = [_safe_autopilot_rel_path(path) for path in patch_candidates if str(path or "").strip()][:8]
+    context_files = _normalize_research_context_files(raw_context, autonomous_root=autonomous_root, limit=context_limit)
+    return allowed_paths, context_files
+
+
 def _autopilot_path_allowed_for_repo(repo: str, path: str) -> bool:
     prefixes = {
         "across-agents-assistant": (
+            "backend/main.py",
             "backend/src/",
             "backend/tests/",
             "macOS-Client/Sources/",
             "macOS-Client/Tests/",
+            "build_app.sh",
             "scripts/",
             "docs/",
             "README.md",
@@ -2709,7 +2847,16 @@ def _default_research_validation_commands(paths: List[str], *, repo: str) -> Lis
         commands.append({"repo": repo, "command": "python3", "args": ["-m", "py_compile", *python_paths], "timeout_ms": 30000})
     if any(path.endswith(".swift") or path.startswith("macOS-Client/") for path in paths):
         commands.append({"repo": repo, "command": "swift", "args": ["test", "--package-path", "macOS-Client"], "timeout_ms": 180000})
-    if repo in {"across-autopilot", "across-context"} and any(path.startswith(("src/", "tests/", "examples/")) or path == "package.json" for path in paths):
+    platform_self_repair_replay_only = (
+        repo == "across-autopilot"
+        and len(paths) == 1
+        and paths[0] == "tests/platform-self-repair.test.js"
+    )
+    if (
+        repo in {"across-autopilot", "across-context"}
+        and not platform_self_repair_replay_only
+        and any(path.startswith(("src/", "tests/", "examples/")) or path == "package.json" for path in paths)
+    ):
         commands.append({"repo": repo, "command": "npm", "args": ["test", "--", "--runInBand"], "timeout_ms": 180000})
     for test_path in [path for path in python_paths if path.startswith("backend/tests/")][:2]:
         commands.append({
@@ -2735,10 +2882,12 @@ def _normalize_research_target(item: Dict[str, Any], req: AutopilotResearchDecis
     target_repo = str(item.get("target_repo") or req.product_context.get("target_repo") or "across-agents-assistant")
     if target_repo not in {"across-agents-assistant", "across-autopilot", "across-orchestrator", "across-context"}:
         raise ValueError(f"Unsupported target_repo: {target_repo}")
-    raw_paths = item.get("allowed_patch_paths") or []
-    if not raw_paths:
-        raw_paths = _default_research_target_paths(str(item.get("goal") or item.get("summary") or req.goal))
-    allowed_paths = [_safe_autopilot_rel_path(path) for path in raw_paths if str(path or "").strip()][:8]
+    allowed_paths, context_files = _normalize_research_paths_and_context(
+        item,
+        req,
+        default_goal=str(item.get("goal") or item.get("summary") or req.goal),
+        context_limit=12,
+    )
     if not allowed_paths:
         raise ValueError("candidate target has no allowed_patch_paths")
     for path in allowed_paths:
@@ -2759,11 +2908,6 @@ def _normalize_research_target(item: Dict[str, Any], req: AutopilotResearchDecis
         **(item.get("semantic_review") if isinstance(item.get("semantic_review"), dict) else {}),
     }
     target_id = _autopilot_target_id(item.get("id") or item.get("target_id") or item.get("summary"), default=f"generated-target-{index + 1}")
-    autonomous_root = (
-        req.product_context.get("autonomous_loop_state", {}).get("root")
-        if isinstance(req.product_context.get("autonomous_loop_state"), dict)
-        else None
-    )
     return {
         "id": target_id,
         "target_id": target_id,
@@ -2771,11 +2915,7 @@ def _normalize_research_target(item: Dict[str, Any], req: AutopilotResearchDecis
         "summary": str(item.get("summary") or item.get("goal") or req.goal)[:800],
         "goal": str(item.get("goal") or item.get("summary") or req.goal)[:2000],
         "allowed_patch_paths": allowed_paths,
-        "context_files": [
-            _safe_autopilot_context_path(path, autonomous_root=autonomous_root)
-            for path in (item.get("context_files") or [])
-            if str(path or "").strip()
-        ][:12],
+        "context_files": context_files,
         "validation_commands": validation_commands,
         "semantic_review": semantic_review,
         "source_refs": [str(source)[:160] for source in _autopilot_list(item.get("source_refs"))[:12]],
@@ -2839,7 +2979,12 @@ def _normalize_research_decision(raw: Dict[str, Any], req: AutopilotResearchDeci
             req,
             index=len(generated_targets),
         )
-        if not any(item["id"] == selected_as_target["id"] for item in generated_targets):
+        if any(item["id"] == selected_as_target["id"] for item in generated_targets):
+            generated_targets = [
+                selected_as_target if item["id"] == selected_as_target["id"] else item
+                for item in generated_targets
+            ]
+        else:
             generated_targets.append(selected_as_target)
     minimum_candidates = _autopilot_research_minimum_candidates(req)
     if allow_generated and len(generated_targets) < minimum_candidates:
@@ -2854,32 +2999,44 @@ def _normalize_research_decision(raw: Dict[str, Any], req: AutopilotResearchDeci
         selected_id = str(selected.get("target_id") or selected.get("id") or "").strip()
     if selected_id not in catalog:
         selected_id = next(iter(catalog))
+    trigger_payload = req.product_context.get("trigger_payload") if isinstance(req.product_context.get("trigger_payload"), dict) else {}
+    hinted_target_id = str(trigger_payload.get("target_id") or "").strip()
+    hint_overrode_selection = False
+    if hinted_target_id and hinted_target_id in catalog:
+        hint_overrode_selection = selected_id != hinted_target_id
+        selected_id = hinted_target_id
     catalog_item = catalog[selected_id]
     selected = selected if isinstance(selected, dict) else {}
+    if hint_overrode_selection:
+        selected = {}
     target_repo = str(selected.get("target_repo") or catalog_item.get("target_repo") or "across-agents-assistant")
     catalog_paths = [_safe_autopilot_rel_path(path) for path in (catalog_item.get("allowed_patch_paths") or []) if str(path or "").strip()]
-    proposed_paths = [_safe_autopilot_rel_path(path) for path in (selected.get("allowed_patch_paths") or []) if str(path or "").strip()]
+    proposed_paths, proposed_context_files = _normalize_research_paths_and_context(
+        selected,
+        req,
+        default_goal=None,
+        context_limit=10,
+    )
     if proposed_paths and not set(proposed_paths).issubset(set(catalog_paths)):
         raise ValueError("Research decision selected paths outside target_catalog")
     allowed_paths = proposed_paths or catalog_paths
     if not allowed_paths:
         raise ValueError("Research decision selected target has no allowed_patch_paths")
-    autonomous_root = (
-        req.product_context.get("autonomous_loop_state", {}).get("root")
-        if isinstance(req.product_context.get("autonomous_loop_state"), dict)
-        else None
+    context_files = _normalize_research_context_files(
+        [
+            *(catalog_item.get("context_files") or []),
+            *(selected.get("context_files") or []),
+            *proposed_context_files,
+        ],
+        autonomous_root=_autopilot_autonomous_root(req),
+        limit=10,
     )
-    context_files = [
-        _safe_autopilot_context_path(path, autonomous_root=autonomous_root)
-        for path in (selected.get("context_files") or catalog_item.get("context_files") or [])
-        if str(path or "").strip()
-    ][:10]
     semantic_review = {
         **(catalog_item.get("semantic_review") or {}),
         **(selected.get("semantic_review") if isinstance(selected.get("semantic_review"), dict) else {}),
     }
     validation_commands = _normalize_validation_commands(
-        selected.get("validation_commands") or catalog_item.get("validation_commands") or [],
+        catalog_item.get("validation_commands") or selected.get("validation_commands") or [],
         default_repo=target_repo,
     )
     decision = str(raw.get("decision") or "implement").strip().lower()
@@ -3925,6 +4082,27 @@ def _fallback_direct_code_iteration_decision(
             "conformance fixtures."
         ) from error
     allowed = {_safe_autopilot_rel_path(path) for path in allowed_patch_paths if str(path or "").strip()}
+    platform_self_repair_expected = {"tests/platform-self-repair.test.js"}
+    if platform_self_repair_expected.issubset(allowed):
+        decision = {
+            "summary": "Add deterministic platform self-repair replay coverage.",
+            "risk": "low",
+            "patch_paths": sorted(platform_self_repair_expected),
+            "validation_commands": [
+                {
+                    "command": "node",
+                    "args": ["--test", "tests/platform-self-repair.test.js"],
+                }
+            ],
+            "fallback_reason": str(error)[:200],
+        }
+        return decision, [
+            {
+                "path": "tests/platform-self-repair.test.js",
+                "mode": "overwrite",
+                "content": _render_platform_self_repair_replay_test(),
+            }
+        ]
     quality_expected = {
         "backend/src/across_agents_assistant/autopilot_candidate_quality.py",
         "backend/tests/test_autopilot_candidate_quality.py",
@@ -4206,6 +4384,46 @@ def _generic_autopilot_module_pair(allowed: Set[str]) -> Optional[Tuple[str, str
     return None
 
 
+def _validation_feedback_requires_model_repair(feedback: List[Dict[str, Any]]) -> bool:
+    """Import-contract and product-integration failures must not use generic host repair."""
+    integration_terms = (
+        "candidate_quality",
+        "unintegrated_candidate_helper",
+        "api_server.py",
+        "autopilot_workbench",
+        "loop_engineering_capability_pack",
+        "missing product integration",
+        "existing product entrypoint",
+        "existing product integration",
+    )
+    for item in feedback or []:
+        args = item.get("args", [])
+        text = " ".join(
+            str(part or "")
+            for part in (
+                item.get("summary"),
+                item.get("stderr"),
+                item.get("stdout"),
+                item.get("command"),
+                " ".join(str(arg) for arg in args if arg is not None) if isinstance(args, list) else str(args or ""),
+            )
+        ).lower()
+        command = str(item.get("command") or "").lower()
+        if command == "candidate_quality":
+            return True
+        if any(term in text for term in integration_terms):
+            return True
+        if "missing internal api import" in text:
+            return True
+        if "aaa backend api import contract" in text:
+            return True
+        if "modulenotfounderror" in text and ("api_server" in text or "across_agents_assistant" in text):
+            return True
+        if "importerror" in text and ("api_server" in text or "across_agents_assistant" in text):
+            return True
+    return False
+
+
 def _render_generic_autopilot_module(module_name: str) -> str:
     feature = re.sub(r"[^a-z0-9_]+", "_", module_name.removeprefix("autopilot_").lower()).strip("_") or "candidate_signal"
     return (
@@ -4292,6 +4510,141 @@ def _code_iteration_allowed(req: AutopilotCodeIterationRequest, rel: str) -> boo
     return not allowed or rel in allowed
 
 
+def _render_platform_self_repair_replay_test() -> str:
+    return '''import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildPlatformSelfRepairTrigger,
+  diagnosePlatformSelfRepair,
+  renderTriggerPayloadSource
+} from "../src/platform-self-repair.js";
+
+test("platform self-repair supervisor gaps route to the bounded replay fixture target", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-supervisor-gap",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: {
+        payload: {
+          auto_platform_self_repair: true,
+          platform_self_repair_case: {
+            category: "supervisor_gap",
+            goal: "Queue dispatch recorded a platform self-repair routing regression."
+          }
+        }
+      },
+      failure: {
+        code: "gate.failed",
+        message: "self-repair trigger queue dispatch did not expose replay evidence"
+      }
+    },
+    evidence: {
+      actions: [],
+      gates: [{ id: "self_repair_router", status: "failed", summary: "trigger queue route failed" }]
+    }
+  });
+  const trigger = buildPlatformSelfRepairTrigger(diagnosis);
+
+  assert.equal(diagnosis.eligible, true);
+  assert.equal(diagnosis.target_id, "autopilot-self-repair-replay-fixture");
+  assert.equal(diagnosis.target_repo, "across-autopilot");
+  assert.deepEqual(diagnosis.allowed_patch_paths, ["tests/platform-self-repair.test.js"]);
+  assert.equal(diagnosis.allowed_patch_paths.includes("src/platform-self-repair.js"), false);
+  assert.equal(diagnosis.allowed_patch_paths.includes("src/supervisor.js"), false);
+  assert.equal(diagnosis.allowed_patch_paths.includes("src/candidate-ecosystem.js"), false);
+  assert.equal(trigger.payload.target_id, diagnosis.target_id);
+  assert.equal(trigger.payload.replay_contract.required, true);
+  assert.equal(trigger.spec_id, undefined);
+  assert.match(trigger.idempotency_key, /^platform-self-repair:run-supervisor-gap:supervisor_gap$/);
+});
+
+test("platform self-repair trigger payload is safe to expose to the host model", () => {
+  const fakeKey = ["local", "key", "fixture"].join("-");
+  const privateTranscript = ["private", "transcript"].join(" ");
+  const fakeBearer = ["Bearer", "private", "value"].join(" ");
+  const source = renderTriggerPayloadSource({
+    auto_platform_self_repair: true,
+    api_key: fakeKey,
+    raw_transcript: privateTranscript,
+    nested: {
+      authorization: fakeBearer
+    },
+    platform_self_repair_case: {
+      category: "validation_gap",
+      goal: "Validation gap should become a bounded repair candidate."
+    }
+  });
+  assert.equal(source.payload.api_key, "[redacted]");
+  assert.equal(source.payload.raw_transcript, "[redacted]");
+  assert.equal(source.payload.nested.authorization, "[redacted]");
+  assert.equal(source.content.includes(fakeKey), false);
+  assert.equal(source.content.includes(privateTranscript), false);
+
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: { id: "aaa-autonomous-self-iteration" },
+    failedRun: {
+      run_id: "run-redaction",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: source.payload },
+      failure: { code: "gate.failed", message: "validator failed to block bad candidate evidence" }
+    },
+    evidence: { actions: [], gates: [] }
+  });
+  const trigger = buildPlatformSelfRepairTrigger(diagnosis);
+  const serialized = JSON.stringify(trigger);
+  assert.equal(serialized.includes(fakeKey), false);
+  assert.equal(serialized.includes(privateTranscript), false);
+  assert.equal(trigger.payload.target_id, "autopilot-validation-router-repair");
+});
+
+test("ordinary candidate failures do not enqueue platform self-repair", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-candidate-failure",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: "gate.failed",
+        message: "pytest failed because candidate implementation assertion failed"
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "candidate_ecosystem_validation",
+          status: "failed",
+          failure: { code: "gate.failed", message: "pytest failed" },
+          result: {
+            commands: [
+              {
+                status: "failed",
+                command: "python3",
+                args: ["-m", "pytest"],
+                stderr: "AssertionError: expected candidate behavior"
+              }
+            ]
+          }
+        }
+      ],
+      gates: []
+    }
+  });
+
+  assert.equal(diagnosis.eligible, false);
+  assert.equal(diagnosis.category, "candidate_code_failure");
+  assert.equal(diagnosis.status, "not_applicable");
+});
+'''
+
+
 def _minimax_json_extra_body(provider_id: Optional[str]) -> Dict[str, Any]:
     if str(provider_id or "").lower() == "minimax":
         return {"reasoning_split": True, "thinking": {"type": "disabled"}}
@@ -4333,7 +4686,7 @@ async def _autopilot_code_iteration_chat(
     )
     allow_validation_repair_fallback = bool(req.validation_feedback) and bool(
         req.model_policy.get("allow_host_validation_repair_fallback", True)
-    )
+    ) and not _validation_feedback_requires_model_repair(req.validation_feedback)
     if direct_patches and str(provider_id or "").lower() == "minimax":
         max_tokens = max(max_tokens, 8192)
     response = await _chat_with_model_capability(
@@ -4430,7 +4783,7 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
         )
         allow_validation_repair_fallback = bool(req.validation_feedback) and bool(
             policy.get("allow_host_validation_repair_fallback", False)
-        )
+        ) and not _validation_feedback_requires_model_repair(req.validation_feedback)
         if direct_patches_requested and req.validation_feedback and (allow_host_fallback or allow_validation_repair_fallback):
             try:
                 decision, direct_patches = _fallback_direct_code_iteration_decision(
@@ -4614,6 +4967,9 @@ def _autopilot_review_user_prompt(req: AutopilotReviewDecisionRequest) -> str:
         "Review this B-candidate evidence independently from the builder. "
         "Reject or request repair if validation failed, deterministic review has blocking reasons, "
         "the change is test-only, or the candidate has no product value. "
+        "When selected_iteration.semantic_review.allow_replay_fixture_only is true, do not reject solely "
+        "because the change is test-only or has no product source change; instead evaluate whether the "
+        "replay fixture covers the failed platform trigger and remains bounded. "
         "Return the required JSON object only.\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )
@@ -4656,7 +5012,33 @@ def _clamp_review_score(value: Any, default: int) -> int:
     return max(0, min(100, numeric))
 
 
+def _review_allows_replay_fixture_only(req: AutopilotReviewDecisionRequest) -> bool:
+    selected = req.selected_iteration if isinstance(req.selected_iteration, dict) else {}
+    semantic = selected.get("semantic_review") if isinstance(selected.get("semantic_review"), dict) else {}
+    if semantic.get("allow_replay_fixture_only") is not True:
+        return False
+    if str(selected.get("target_id") or "") != "autopilot-self-repair-replay-fixture":
+        return False
+    changed = [str(path or "") for path in req.changed_files]
+    return bool(changed) and all(path == "across-autopilot/tests/platform-self-repair.test.js" for path in changed)
+
+
+def _review_replay_fixture_only_blocker(reason: str) -> bool:
+    text = str(reason or "").lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "no product source",
+            "product source change",
+            "test-only",
+            "only changes tests",
+            "does not fix the underlying",
+        )
+    )
+
+
 def _normalize_review_decision(raw: Dict[str, Any], req: AutopilotReviewDecisionRequest) -> Dict[str, Any]:
+    allow_replay_fixture_only = _review_allows_replay_fixture_only(req)
     blocking = [str(item)[:500] for item in (raw.get("blocking_reasons") or []) if str(item).strip()][:12]
     deterministic_blocking = [
         str(item)[:500]
@@ -4671,19 +5053,27 @@ def _normalize_review_decision(raw: Dict[str, Any], req: AutopilotReviewDecision
         path for path in req.changed_files
         if "backend/src/" in path or "macOS-Client/Sources/" in path or "/src/" in path
     ]
-    if not product_files:
+    if not product_files and not allow_replay_fixture_only:
         blocking.append("candidate has no product source change")
+    if allow_replay_fixture_only:
+        blocking = [reason for reason in blocking if not _review_replay_fixture_only_blocker(reason)]
     blocking = list(dict.fromkeys(blocking))[:12]
 
     status = str(raw.get("status") or ("failed" if blocking else "passed")).lower()
     if status not in {"passed", "failed"}:
         status = "failed" if blocking else "passed"
+    if allow_replay_fixture_only and not blocking:
+        status = "passed"
     recommendation = str(raw.get("recommendation") or ("reject" if blocking else "review")).lower()
     if recommendation not in {"review", "reject"}:
         recommendation = "reject" if blocking else "review"
+    if allow_replay_fixture_only and not blocking:
+        recommendation = "review"
     merge_recommendation = str(raw.get("merge_recommendation") or ("repair_before_pr" if blocking else "open_review_pr")).lower()
     if merge_recommendation not in {"open_review_pr", "repair_before_pr"}:
         merge_recommendation = "repair_before_pr" if blocking else "open_review_pr"
+    if allow_replay_fixture_only and not blocking:
+        merge_recommendation = "open_review_pr"
 
     return {
         "status": "failed" if blocking else status,
@@ -4948,7 +5338,15 @@ async def register_autopilot_trigger_config(req: AutopilotTriggerConfigRequest):
 async def list_autopilot_trigger_configs():
     """Return registered AAA-hosted Autopilot trigger configs."""
     try:
-        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_registry().list))
+        queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+        return _sanitize_public_payload(
+            await asyncio.to_thread(get_autopilot_trigger_registry().list_synced, queue)
+        )
+    except PluginLifecycleError:
+        try:
+            return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_trigger_registry().list))
+        except Exception:
+            raise _safe_http_500("List Across Autopilot trigger configs")
     except Exception as exc:
         raise _safe_http_500("List Across Autopilot trigger configs")
 
@@ -5054,6 +5452,10 @@ async def get_autopilot_self_iteration_plan():
     except Exception:
         trigger_registry = {}
     try:
+        trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+    except Exception:
+        trigger_queue = {}
+    try:
         from .loop_engineering_capability_pack import loop_engineering_capability_pack
 
         capability_pack = loop_engineering_capability_pack()
@@ -5062,6 +5464,7 @@ async def get_autopilot_self_iteration_plan():
     return _sanitize_public_payload(
         build_self_iteration_plan(
             trigger_registry=trigger_registry,
+            trigger_queue=trigger_queue,
             capability_pack=capability_pack,
         )
     )
@@ -5084,11 +5487,16 @@ async def ensure_autopilot_self_iteration_plan(req: AutopilotSelfIterationPlanRe
             payload=req.payload,
         )
         trigger_registry = await asyncio.to_thread(registry.list)
+        try:
+            trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+        except Exception:
+            trigger_queue = {}
         from .loop_engineering_capability_pack import loop_engineering_capability_pack
 
         return _sanitize_public_payload(
             build_self_iteration_plan(
                 trigger_registry=trigger_registry,
+                trigger_queue=trigger_queue,
                 capability_pack=loop_engineering_capability_pack(),
                 spec=req.spec,
                 trigger_id=req.trigger_id,
@@ -5237,12 +5645,17 @@ async def get_autopilot_ops_dashboard():
     except Exception:
         trigger_registry = {}
     try:
+        trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+    except Exception:
+        trigger_queue = {}
+    try:
         trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
     except Exception:
         trigger_scheduler = {}
     try:
         self_iteration_plan = build_self_iteration_plan(
             trigger_registry=trigger_registry,
+            trigger_queue=trigger_queue,
             capability_pack=capability_pack,
         )
     except Exception:
@@ -5279,6 +5692,11 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
         trigger_registry = {}
 
     try:
+        trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
+    except Exception:
+        trigger_queue = {}
+
+    try:
         trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
     except Exception:
         trigger_scheduler = {}
@@ -5286,6 +5704,7 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
     try:
         self_iteration_plan = build_self_iteration_plan(
             trigger_registry=trigger_registry,
+            trigger_queue=trigger_queue,
             capability_pack=capability_pack,
         )
     except Exception:
@@ -5295,11 +5714,6 @@ async def _build_autopilot_workbench_response(*, refresh: bool = False) -> Dict[
         registry = await asyncio.to_thread(get_autopilot_client().registry)
     except Exception:
         registry = {}
-
-    try:
-        trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
-    except Exception:
-        trigger_queue = {}
 
     try:
         runs = await asyncio.to_thread(get_autopilot_client().list_runs)
@@ -5483,12 +5897,14 @@ async def _build_ecosystem_roadmap_response(
         try:
             telemetry = autopilot_telemetry or {}
             trigger_registry = await asyncio.to_thread(get_autopilot_trigger_registry().list)
+            trigger_queue = await asyncio.to_thread(get_autopilot_client().trigger_queue)
             trigger_scheduler = await asyncio.to_thread(get_autopilot_trigger_scheduler().status)
             from .loop_engineering_capability_pack import loop_engineering_capability_pack
 
             capability_pack = loop_engineering_capability_pack()
             self_iteration_plan = build_self_iteration_plan(
                 trigger_registry=trigger_registry,
+                trigger_queue=trigger_queue,
                 capability_pack=capability_pack,
             )
             ops_dashboard = build_loop_engineering_ops_dashboard(

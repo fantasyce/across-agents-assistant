@@ -130,6 +130,22 @@ class AutopilotTriggerRegistry:
     def list(self) -> dict[str, Any]:
         return self._load()
 
+    def list_synced(self, queue: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Return trigger configs after syncing known queue terminal status.
+
+        The registry stores a schedule/config view, while Autopilot's trigger
+        queue is the source of truth for dispatch completion. Sync only the
+        queue item already referenced by ``last_trigger_id`` so a read cannot
+        mutate scheduling or claim new work.
+        """
+
+        state = self._load()
+        changed = self._sync_queue_status(state, queue or {})
+        if changed:
+            self._save(state)
+            return self._load()
+        return state
+
     def set_paused(self, trigger_id: str, paused: bool) -> dict[str, Any]:
         state = self._load()
         record = self._find(state, trigger_id)
@@ -306,6 +322,47 @@ class AutopilotTriggerRegistry:
             if record.get("trigger_id") == trigger_id:
                 return record
         raise KeyError(f"Unknown Autopilot trigger config: {trigger_id}")
+
+    def _sync_queue_status(self, state: dict[str, Any], queue: Mapping[str, Any]) -> bool:
+        items_by_id = {
+            str(item.get("trigger_id")): item
+            for item in queue.get("items", []) or []
+            if isinstance(item, Mapping) and item.get("trigger_id")
+        }
+        changed = False
+        for record in state["triggers"]:
+            record_changed = False
+            queue_id = str(record.get("last_trigger_id") or "")
+            if not queue_id:
+                continue
+            item = items_by_id.get(queue_id)
+            if not item:
+                continue
+            status = item.get("status")
+            if status and record.get("last_status") != status:
+                record["last_status"] = status
+                record_changed = True
+            completed_at = item.get("completed_at")
+            if completed_at and record.get("last_completed_at") != completed_at:
+                record["last_completed_at"] = completed_at
+                record_changed = True
+            failure = item.get("failure")
+            if isinstance(failure, Mapping):
+                public_failure = {
+                    key: failure.get(key)
+                    for key in ("adapter_id", "code", "failed_state", "message", "retryable")
+                    if failure.get(key) is not None
+                }
+                if record.get("last_failure") != public_failure:
+                    record["last_failure"] = public_failure
+                    record_changed = True
+            elif record.get("last_failure") is not None and status == "completed":
+                record.pop("last_failure", None)
+                record_changed = True
+            if record_changed:
+                record["updated_at"] = _now()
+                changed = True
+        return changed
 
     def _load(self) -> dict[str, Any]:
         try:

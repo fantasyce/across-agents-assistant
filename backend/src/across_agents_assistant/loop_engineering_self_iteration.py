@@ -11,11 +11,13 @@ SELF_ITERATION_PLAN_SCHEMA_VERSION = "across-aaa-self-iteration-plan/1.0"
 DEFAULT_SELF_ITERATION_SPEC = "aaa-autonomous-self-iteration"
 DEFAULT_SELF_ITERATION_TRIGGER_ID = "aaa-continuous-self-iteration-daily"
 DEFAULT_SELF_ITERATION_INTERVAL_SECONDS = 86_400
+DEFAULT_PLATFORM_SELF_REPAIR_SPEC = "aaa-platform-self-repair"
 
 
 def build_self_iteration_plan(
     *,
     trigger_registry: Mapping[str, Any] | None = None,
+    trigger_queue: Mapping[str, Any] | None = None,
     capability_pack: Mapping[str, Any] | None = None,
     spec: str = DEFAULT_SELF_ITERATION_SPEC,
     trigger_id: str = DEFAULT_SELF_ITERATION_TRIGGER_ID,
@@ -23,6 +25,7 @@ def build_self_iteration_plan(
     """Build the host-visible plan for continuous AAA self-iteration."""
 
     trigger_registry = dict(trigger_registry or {})
+    trigger_queue = dict(trigger_queue or {})
     capability_pack = dict(capability_pack or {})
     trigger = _find_trigger(trigger_registry, trigger_id)
     active = bool(trigger and trigger.get("enabled") is not False and trigger.get("paused") is not True)
@@ -52,6 +55,7 @@ def build_self_iteration_plan(
             "endpoint_template": "/api/autopilot/runs/{run_id}/promotion-review",
             "merge_release_signing_blocked": True,
         },
+        "platform_self_repair": _platform_self_repair_status(trigger_queue),
         "runtime_controls": {
             "ensure_endpoint": "/api/autopilot/self-iteration-plan/ensure",
             "tick_endpoint": "/api/autopilot/trigger-configs/tick",
@@ -115,6 +119,30 @@ def _find_trigger(trigger_registry: Mapping[str, Any], trigger_id: str) -> dict[
         if isinstance(item, Mapping) and item.get("trigger_id") == trigger_id:
             return dict(item)
     return None
+
+
+def _platform_self_repair_status(trigger_queue: Mapping[str, Any]) -> dict[str, Any]:
+    items = [
+        dict(item)
+        for item in trigger_queue.get("items", []) or []
+        if isinstance(item, Mapping) and item.get("spec_id") == DEFAULT_PLATFORM_SELF_REPAIR_SPEC
+    ]
+    pending = [item for item in items if item.get("status") in {"pending", "claimed", "running"}]
+    latest = items[0] if items else None
+    return {
+        "schema_version": "across-aaa-platform-self-repair-plan/1.0",
+        "enabled": True,
+        "spec": DEFAULT_PLATFORM_SELF_REPAIR_SPEC,
+        "triggered_by": "failed loop-engineering runs classified as validation/runtime/packaging/policy/supervisor platform gaps",
+        "promotion_review_required": True,
+        "merge_release_signing_blocked": True,
+        "queued_count": len(pending),
+        "latest_trigger": {
+            key: latest.get(key)
+            for key in ("trigger_id", "status", "run_id", "completed_at")
+            if latest and latest.get(key) is not None
+        } if latest else None,
+    }
 
 
 def _check(id_: str, passed: bool, label: str, details: Mapping[str, Any] | None = None) -> dict[str, Any]:

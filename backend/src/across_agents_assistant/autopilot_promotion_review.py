@@ -29,22 +29,35 @@ def build_promotion_review_packet(evidence: Mapping[str, Any]) -> dict[str, Any]
     ]
     model_separation = _dict(reviewer.get("model_separation"))
     attestation = build_promotion_attestation(evidence)
+    package_present = bool(package)
     checklist = [
-        _check("promotion_package_present", bool(package), "Promotion package is present."),
+        _check("promotion_package_present", package_present, "Promotion package is present."),
         _check(
             "source_a_unchanged",
-            package.get("source_a_unchanged") is True,
+            package.get("source_a_unchanged") is True if package_present else None,
             "Source A remained unchanged during candidate mutation.",
+            details=None
+            if package_present
+            else {"reason": "not evaluated because no promotion package was generated"},
         ),
         _check(
             "source_refs_pinned",
-            source_ref_pins.get("status") == "passed" and len(_list(source_ref_pins.get("repos"))) >= 4,
+            (
+                source_ref_pins.get("status") == "passed"
+                and len(_list(source_ref_pins.get("repos"))) >= 4
+            )
+            if package_present
+            else None,
             "Promotion package pins source refs for the Across repository set.",
-            details={
-                "missing_required_repos": _list(source_ref_pins.get("missing_required_repos")),
-                "missing_pins": _list(source_ref_pins.get("missing_pins")),
-                "changed_sources": _list(source_ref_pins.get("changed_sources")),
-            },
+            details=(
+                {
+                    "missing_required_repos": _list(source_ref_pins.get("missing_required_repos")),
+                    "missing_pins": _list(source_ref_pins.get("missing_pins")),
+                    "changed_sources": _list(source_ref_pins.get("changed_sources")),
+                }
+                if package_present
+                else {"reason": "not evaluated because no promotion package was generated"}
+            ),
         ),
         _check(
             "candidate_has_diff",
@@ -173,11 +186,11 @@ def build_promotion_attestation(evidence: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _check(id_: str, passed: bool, label: str, details: Any | None = None) -> dict[str, Any]:
+def _check(id_: str, passed: bool | None, label: str, details: Any | None = None) -> dict[str, Any]:
     item = {
         "id": id_,
         "label": label,
-        "status": "passed" if passed else "failed",
+        "status": "not_evaluable" if passed is None else "passed" if passed else "failed",
     }
     if details:
         item["details"] = details
