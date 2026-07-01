@@ -86,7 +86,8 @@ def build_autopilot_workbench_snapshot(
     agent_interop_e2e = _dict(agent_interop_e2e)
 
     trigger_summary = build_trigger_registry_summary(trigger_registry)
-    queued_triggers = _list(trigger_queue.get("items"))
+    queued_trigger_records = _list(trigger_queue.get("items"))
+    queued_triggers = [item for item in queued_trigger_records if _trigger_queue_item_actionable(item)]
     recent_runs = _list(runs.get("runs"))[:8]
     latest_runs = _latest_runs_by_spec(recent_runs)
     ops_summary = _dict(ops_dashboard.get("summary"))
@@ -142,6 +143,8 @@ def build_autopilot_workbench_snapshot(
         "latest_failed_run_count": latest_failed_runs,
         "resolved_failed_run_count": resolved_failed_runs,
         "pending_trigger_count": len(queued_triggers),
+        "historical_trigger_queue_count": len(queued_trigger_records),
+        "terminal_trigger_queue_count": max(len(queued_trigger_records) - len(queued_triggers), 0),
         "registered_trigger_count": int(trigger_summary.get("total") or 0),
         "active_trigger_count": int(trigger_summary.get("enabled") or 0),
         "scheduler_running": scheduler_running,
@@ -196,9 +199,11 @@ def build_autopilot_workbench_snapshot(
                 "registered": trigger_summary.get("total"),
                 "active": trigger_summary.get("enabled"),
                 "queued": len(queued_triggers),
+                "historical_queue": len(queued_trigger_records),
+                "terminal_queue": max(len(queued_trigger_records) - len(queued_triggers), 0),
                 "scheduler_running": scheduler_running,
             },
-            _bounded_trigger_items(trigger_registry, queued_triggers),
+            _bounded_trigger_items(trigger_registry, queued_trigger_records),
             WORKBENCH_ENDPOINTS["trigger_configs"],
         ),
         "runs": _section(
@@ -516,6 +521,12 @@ def _bounded_trigger_items(trigger_registry: Mapping[str, Any], queued_triggers:
             }
         )
     return items
+
+
+def _trigger_queue_item_actionable(item: Any) -> bool:
+    item_dict = _dict(item)
+    status = str(item_dict.get("status") or "").lower()
+    return status not in {"completed", "failed", "obsolete", "cancelled", "canceled", "skipped"}
 
 
 def _bounded_run_items(runs: list[Any]) -> list[dict[str, Any]]:

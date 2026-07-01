@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.25` | Keeps Workbench trigger actions focused on actionable queued triggers instead of terminal queue history. |
 | `0.9.24` | Keeps Loop Engineering ops health focused on unresolved current failures while preserving recovered and historical failure evidence for audit. |
 | `0.9.23` | Enables queued self-iteration dispatch by default, expands deterministic host repair fallbacks, and pins Autopilot `v0.2.12` for stricter candidate/platform failure routing. |
 | `0.9.22` | Updates the managed Autopilot pin to `v0.2.11`, keeping platform self-repair focused on platform gaps instead of ordinary candidate validation failures. |
@@ -264,7 +265,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.24` and
+This project is under active development. The current release is `0.9.25` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.

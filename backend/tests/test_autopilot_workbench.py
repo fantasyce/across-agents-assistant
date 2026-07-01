@@ -201,6 +201,49 @@ def test_autopilot_workbench_uses_ops_current_failed_count_for_recovered_failure
     assert snapshot["sections"]["runs"]["status"] == "passed"
 
 
+def test_autopilot_workbench_ignores_terminal_trigger_queue_items_for_actions():
+    snapshot = build_autopilot_workbench_snapshot(
+        plugins=[{"plugin_id": "across-autopilot", "available": True, "installed": True, "status": "installed"}],
+        registry={"built_in": [{"id": "aaa-autonomous-self-iteration"}]},
+        trigger_queue={
+            "items": [
+                {"trigger_id": "trg-obsolete", "spec": "aaa-platform-self-repair", "status": "obsolete"},
+                {"trigger_id": "trg-failed", "spec": "aaa-autonomous-self-iteration", "status": "failed"},
+            ]
+        },
+        trigger_registry={
+            "triggers": [
+                {
+                    "trigger_id": "aaa-continuous-self-iteration-daily",
+                    "spec": "aaa-autonomous-self-iteration",
+                    "type": "cron",
+                    "enabled": True,
+                    "paused": False,
+                }
+            ],
+        },
+        trigger_scheduler={"running": True},
+        self_iteration_plan={"status": "active", "ready": True, "spec": "aaa-autonomous-self-iteration"},
+        runs={"runs": [{"run_id": "run-new", "spec_id": "aaa-autonomous-self-iteration", "status": "completed"}]},
+        telemetry={"runs": {"total": 1, "completed": 1, "failed": 0}, "promotion_ready_by_spec": {}},
+        ops_dashboard={"status": "passed", "summary": {"capability_ready_count": 42}, "next_actions": []},
+        capability_registry={"capabilities": [{"id": f"cap-{i}", "available": True} for i in range(42)]},
+        registry_health={"status": "passed", "checks": [{"id": "registry", "status": "passed"}]},
+        agent_loop_memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0, "approved_count": 0}},
+        pending_memories=[],
+        ecosystem_roadmap={},
+        agent_plugin_runtime={"status": "passed", "summary": {}},
+        agent_interop_e2e={"status": "passed", "summary": {"failed_count": 0}, "checks": []},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    assert snapshot["summary"]["pending_trigger_count"] == 0
+    assert snapshot["summary"]["historical_trigger_queue_count"] == 2
+    assert snapshot["summary"]["terminal_trigger_queue_count"] == 2
+    assert snapshot["sections"]["triggers"]["status"] == "passed"
+    assert not any(action["id"] == "run_queued_trigger" for action in snapshot["actions"])
+
+
 def test_autopilot_workbench_uses_latest_run_state_for_release_attention():
     snapshot = build_autopilot_workbench_snapshot(
         plugins=[
