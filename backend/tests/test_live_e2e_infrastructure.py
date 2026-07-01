@@ -101,6 +101,10 @@ def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate
     assert "--env \"ACROSS_AGENTS_HOME=$APP_HOME\"" in script
     assert "candidate-model-lease.json" in script
     assert "--env \"ACROSS_AAA_CANDIDATE_MODEL_LEASE=$model_lease\"" in script
+    assert "local install_env=(" in script
+    assert "\"ACROSS_PLUGIN_HOME=$RUNTIME_HOME/plugins\"" in script
+    assert "\"ACROSS_BIN_HOME=$RUNTIME_HOME/bin\"" in script
+    assert '"${install_env[@]}" node "$AUTOPILOT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME"' in script
     assert "/usr/bin/env -u PYTHONPATH -u PYTHONHOME" in script
     assert "/bin/bash ./build_app.sh" in script
     assert "cleaned_up" in script

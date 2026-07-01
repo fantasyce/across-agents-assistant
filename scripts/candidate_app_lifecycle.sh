@@ -215,12 +215,21 @@ prepare_app_bundle() {
 
 install_candidate_plugins() {
   mkdir -p "$APP_HOME"
+  local install_env=(
+    /usr/bin/env
+    "ACROSS_HOME=$RUNTIME_HOME"
+    "ACROSS_AGENTS_HOME=$APP_HOME"
+    "ACROSS_BIN_HOME=$RUNTIME_HOME/bin"
+    "ACROSS_PLUGIN_HOME=$RUNTIME_HOME/plugins"
+    "ACROSS_CONTEXT_HOME=$RUNTIME_HOME/data/across-context"
+    "ACROSS_AUTOPILOT_HOME=$RUNTIME_HOME/data/across-autopilot"
+  )
   if [[ -d "$CONTEXT_ROOT" ]]; then
-    node "$CONTEXT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" --json >/dev/null || \
-      node "$CONTEXT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" >/dev/null
+    "${install_env[@]}" node "$CONTEXT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" --json >/dev/null || \
+      "${install_env[@]}" node "$CONTEXT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" >/dev/null
   fi
   if [[ -d "$AUTOPILOT_ROOT" ]]; then
-    node "$AUTOPILOT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" --json >/dev/null
+    "${install_env[@]}" node "$AUTOPILOT_ROOT/src/cli.js" install host-plugin --across-home "$RUNTIME_HOME" --json >/dev/null
   fi
 }
 

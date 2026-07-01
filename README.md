@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.21` | Hardens candidate app lifecycle isolation so self-iteration validation installs managed plugins only inside the candidate runtime home. |
 | `0.9.20` | Adds supervised loop-engineering self-repair: eligible platform failures enqueue an isolated B candidate repair, run validation and self-hosting evidence, and stop at human-review promotion. |
 | `0.9.19` | Consolidates backend dependency hygiene updates for FastAPI, MCP, OpenAI, and Anthropic SDK lower bounds. |
 | `0.9.18` | Updates the managed Across Orchestrator pin to `v0.7.10`, keeping Autopilot at `v0.2.8` and Context at `v0.8.8`. |
@@ -260,14 +261,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.20` and
+This project is under active development. The current release is `0.9.21` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.9`
+- Across Autopilot `v0.2.10`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
@@ -431,7 +432,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.9
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.10
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8
