@@ -144,6 +144,63 @@ def test_autopilot_workbench_snapshot_passed_contract():
     assert snapshot["endpoints"]["promotion_review_template"] == "/api/autopilot/runs/{run_id}/promotion-review"
 
 
+def test_autopilot_workbench_uses_ops_current_failed_count_for_recovered_failures():
+    snapshot = build_autopilot_workbench_snapshot(
+        plugins=[{"plugin_id": "across-autopilot", "available": True, "installed": True, "status": "installed"}],
+        registry={"built_in": [{"id": "aaa-autonomous-self-iteration"}]},
+        trigger_queue={"items": []},
+        trigger_registry={
+            "triggers": [
+                {
+                    "trigger_id": "aaa-continuous-self-iteration-daily",
+                    "spec": "aaa-autonomous-self-iteration",
+                    "type": "cron",
+                    "enabled": True,
+                    "paused": False,
+                }
+            ],
+        },
+        trigger_scheduler={"running": True},
+        self_iteration_plan={
+            "status": "active",
+            "ready": True,
+            "spec": "aaa-autonomous-self-iteration",
+            "platform_self_repair": {"enabled": True, "spec": "aaa-platform-self-repair", "queued_count": 0},
+        },
+        runs={
+            "runs": [
+                {"run_id": "run-new", "spec_id": "aaa-autonomous-self-iteration", "status": "completed"},
+                {"run_id": "run-old", "spec_id": "aaa-platform-self-repair", "status": "failed"},
+            ]
+        },
+        telemetry={"runs": {"total": 2, "completed": 1, "failed": 1}, "promotion_ready_by_spec": {}},
+        ops_dashboard={
+            "status": "passed",
+            "summary": {
+                "capability_ready_count": 42,
+                "current_failed": 0,
+                "latest_failed": 1,
+                "resolved_failed": 1,
+            },
+            "next_actions": [{"action": "continue_scheduled_e2e"}],
+        },
+        capability_registry={"capabilities": [{"id": f"cap-{i}", "available": True} for i in range(42)]},
+        registry_health={"status": "passed", "checks": [{"id": "registry", "status": "passed"}]},
+        agent_loop_memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0, "approved_count": 0}},
+        pending_memories=[],
+        ecosystem_roadmap={},
+        agent_plugin_runtime={"status": "passed", "summary": {}},
+        agent_interop_e2e={"status": "passed", "summary": {"failed_count": 0}, "checks": []},
+        generated_at="2026-07-01T00:00:00Z",
+    )
+
+    assert snapshot["status"] == "passed"
+    assert snapshot["summary"]["failed_run_count"] == 0
+    assert snapshot["summary"]["latest_failed_run_count"] == 1
+    assert snapshot["summary"]["resolved_failed_run_count"] == 1
+    assert snapshot["sections"]["runs"]["status"] == "passed"
+
+
 def test_autopilot_workbench_uses_latest_run_state_for_release_attention():
     snapshot = build_autopilot_workbench_snapshot(
         plugins=[

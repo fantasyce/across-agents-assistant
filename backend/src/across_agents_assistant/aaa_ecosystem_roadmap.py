@@ -264,7 +264,10 @@ def _evaluation_telemetry_section(
     recent_runs = _list(autopilot_runs.get("runs"))
     latest_runs = _latest_runs_by_spec(recent_runs)
     historical_failed = _first_int(_nested(autopilot_telemetry, "runs", "failed"), _nested(autopilot_telemetry, "by_status", "failed"))
-    failed = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed
+    latest_failed = _count_by_status(list(latest_runs.values()), "failed") if latest_runs else historical_failed
+    ops_summary = _dict(ops_dashboard.get("summary"))
+    failed = _first_int(ops_summary.get("current_failed"), ops_summary.get("failed"), latest_failed)
+    resolved_failed = _first_int(ops_summary.get("resolved_failed"), max(latest_failed - failed, 0))
     readiness = str(release_evaluation.get("release_readiness") or "unknown")
     ops_status = str(ops_dashboard.get("status") or "unknown")
     evaluated = _first_int(release_evaluation.get("evaluated_task_count"))
@@ -280,7 +283,7 @@ def _evaluation_telemetry_section(
         else "passed"
     )
     items = [
-        {"id": "autopilot_runs", "status": "passed" if failed == 0 else "attention", "run_count": run_count, "failed": failed, "historical_failed": historical_failed, "endpoint": ROUTE_ENDPOINTS["autopilot_telemetry"]},
+        {"id": "autopilot_runs", "status": "passed" if failed == 0 else "attention", "run_count": run_count, "failed": failed, "historical_failed": historical_failed, "latest_failed": latest_failed, "resolved_failed": resolved_failed, "endpoint": ROUTE_ENDPOINTS["autopilot_telemetry"]},
         {"id": "ops_dashboard", "status": ops_status, "endpoint": ROUTE_ENDPOINTS["autopilot_ops"]},
         {"id": "release_evaluation", "status": readiness, "evaluated_task_count": evaluated, "endpoint": ROUTE_ENDPOINTS["release_evaluation"]},
         {
@@ -298,6 +301,8 @@ def _evaluation_telemetry_section(
             "run_count": run_count,
             "failed_run_count": failed,
             "historical_failed_run_count": historical_failed,
+            "latest_failed_run_count": latest_failed,
+            "resolved_failed_run_count": resolved_failed,
             "ops_status": ops_status,
             "release_readiness": readiness,
             "evaluated_task_count": evaluated,

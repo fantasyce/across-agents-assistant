@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.24 - 2026-07-02
+
+### Changed
+
+- Keeps Loop Engineering ops health focused on unresolved current failures
+  instead of stale recovered failures.
+- Adds explicit `latest_failed`, `resolved_failed`, and `unresolved_failed`
+  counters to the ops dashboard for audit clarity.
+- Aligns Workbench and ecosystem telemetry with the same recovered-failure
+  accounting.
+
 ## 0.9.23 - 2026-07-01
 
 ### Changed
