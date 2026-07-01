@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.22 - 2026-07-01
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.11`, which tightens
+  platform self-repair routing so ordinary candidate validation tracebacks do
+  not get misclassified as host packaging gaps.
+
 ## 0.9.21 - 2026-07-01
 
 ### Changed
