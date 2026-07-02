@@ -96,6 +96,18 @@ def test_autopilot_workbench_api_e2e(monkeypatch, tmp_path):
     monkeypatch.setattr(api_server, "get_autopilot_client", lambda: fake)
     monkeypatch.setattr(
         api_server,
+        "get_source_mirror_status",
+        lambda: {
+            "schema_version": "across-source-mirror-status/1.0",
+            "status": "passed",
+            "root": str(tmp_path / "source-mirrors"),
+            "missing_repos": [],
+            "drifted_repos": [],
+            "repos": [],
+        },
+    )
+    monkeypatch.setattr(
+        api_server,
         "discover_across_plugins",
         lambda probe=False, plugin_ids=None, env=None: [
             {"plugin_id": "across-context", "display_name": "Across Context", "kind": "memory-provider", "available": True, "installed": True, "status": "installed"},

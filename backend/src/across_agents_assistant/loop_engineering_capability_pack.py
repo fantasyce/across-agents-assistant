@@ -86,9 +86,9 @@ READY_CAPABILITIES: tuple[dict[str, Any], ...] = (
     {
         "id": "source_mirror_preparation",
         "layer": "Memory and State",
-        "form": "fixed_script",
-        "entrypoint": "scripts/prepare_loop_engineering_sources.sh",
-        "reusable_by": ["e2e", "release_readiness"],
+        "form": "host_pre_run_gate",
+        "entrypoint": "across_agents_assistant.source_mirror_refresh.refresh_source_mirrors",
+        "reusable_by": ["continuous_self_iteration", "platform_self_repair", "e2e", "release_readiness"],
     },
     {
         "id": "git_repo_inspection",

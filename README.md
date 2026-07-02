@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.27` | Adds a pre-run source mirror refresh gate so autonomous B candidates start from a fresh, clean A baseline instead of a stale mirror. |
 | `0.9.26` | Adds bounded AI-Ready Context synthesis for loop source signals and pins Autopilot `v0.2.13` for stronger self-iteration validation. |
 | `0.9.25` | Keeps Workbench trigger actions focused on actionable queued triggers instead of terminal queue history. |
 | `0.9.24` | Keeps Loop Engineering ops health focused on unresolved current failures while preserving recovered and historical failure evidence for audit. |
@@ -266,7 +267,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.26` and
+This project is under active development. The current release is `0.9.27` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
@@ -282,6 +283,12 @@ bounded AI-Ready Context for source signals and pinning the managed Autopilot
 runtime with stronger self-iteration validation. The managed plugins install
 under `~/.across` and can also be consumed by Codex, Claude Code, Claude
 Desktop, and other CLI/MCP-capable hosts.
+
+Autonomous Product Iteration uses `~/.across` source mirrors as controlled
+snapshots, not as editable working copies. Before candidate B workspaces run,
+AAA refreshes those mirrors from clean A checkouts and exposes mirror freshness
+in the self-iteration plan; drifted mirrors block the loop before any candidate
+mutation starts.
 
 AAA remains the host UI and policy surface. It uses plugin manifests, wrappers,
 HTTP, CLI, MCP, or host APIs; product code must not import implementation files

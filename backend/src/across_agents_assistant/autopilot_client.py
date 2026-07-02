@@ -11,6 +11,7 @@ import time
 from .llm_gateway.provider_registry import get_default_provider_definitions
 from .paths import backend_socket_path, component_data_home
 from .plugin_runtime import PluginLifecycleError, run_autopilot_cli_json
+from .source_mirror_refresh import refresh_source_mirrors, source_mirror_refresh_required
 
 _SOURCE_MIRROR_ENV = {
     "across-agents-assistant": "ACROSS_AGENTS_ASSISTANT_SOURCE",
@@ -43,6 +44,7 @@ class AutopilotClient:
         trigger: str = "aaa-user",
         model_policy_overrides: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._refresh_source_mirrors_if_needed(spec)
         args = ["loop", "run", "--spec", _required(spec, "spec"), "--trigger", trigger, "--json"]
         if model_policy_overrides:
             args.extend(["--model-overrides-json", json.dumps(model_policy_overrides, sort_keys=True)])
@@ -84,6 +86,7 @@ class AutopilotClient:
         return self._dict(["loop", "trigger-queue", "--json"])
 
     def run_trigger(self, trigger_id: str | None = None) -> dict[str, Any]:
+        self._refresh_source_mirrors_for_trigger(trigger_id)
         args = ["loop", "run-trigger", "--json"]
         if trigger_id:
             args.extend(["--trigger-id", trigger_id])
@@ -116,6 +119,11 @@ class AutopilotClient:
         return self._dict(["loop", "cancel", "--run-id", _required(run_id, "run_id"), "--reason", reason, "--json"])
 
     def retry(self, run_id: str) -> dict[str, Any]:
+        try:
+            run = self.status(run_id)
+        except Exception:
+            run = {}
+        self._refresh_source_mirrors_if_needed(run.get("spec_id") or run.get("spec") or None)
         return self._dict(["loop", "retry", "--run-id", _required(run_id, "run_id"), "--json"], timeout=_long_run_timeout_seconds(self.env))
 
     def set_spec_paused(self, spec_id: str, paused: bool) -> dict[str, Any]:
@@ -145,6 +153,37 @@ class AutopilotClient:
 
     def _json(self, args: list[str], *, timeout: int = 60) -> Any:
         return run_autopilot_cli_json(args, env=self._runtime_env(), timeout=timeout)
+
+    def _refresh_source_mirrors_if_needed(self, spec: Any) -> dict[str, Any] | None:
+        if not source_mirror_refresh_required(spec, self.env):
+            return None
+        try:
+            return refresh_source_mirrors(self.env)
+        except Exception as exc:
+            if isinstance(exc, PluginLifecycleError):
+                raise
+            payload = getattr(exc, "payload", None)
+            detail = json.dumps(payload, sort_keys=True)[:1000] if payload else str(exc)
+            raise PluginLifecycleError(f"Across source mirror refresh failed: {detail}") from exc
+
+    def _refresh_source_mirrors_for_trigger(self, trigger_id: str | None) -> dict[str, Any] | None:
+        spec = self._queued_trigger_spec(trigger_id)
+        return self._refresh_source_mirrors_if_needed(spec)
+
+    def _queued_trigger_spec(self, trigger_id: str | None) -> Any:
+        try:
+            queue = self.trigger_queue()
+        except Exception:
+            return None
+        items = [item for item in queue.get("items", []) or [] if isinstance(item, Mapping)]
+        selected = None
+        if trigger_id:
+            selected = next((item for item in items if str(item.get("trigger_id") or "") == trigger_id), None)
+        else:
+            selected = next((item for item in items if item.get("status") in {None, "pending", "queued"}), None)
+        if not selected:
+            return None
+        return selected.get("spec_snapshot") or selected.get("spec_source") or selected.get("spec_id") or selected.get("spec")
 
     def _runtime_env(self) -> Mapping[str, str]:
         env = dict(os.environ)

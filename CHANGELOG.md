@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.27 - 2026-07-03
+
+### Added
+
+- Added a host-side source mirror refresh gate for autonomous self-iteration.
+  Candidate B workspaces now run only after AAA refreshes `~/.across` source
+  mirrors from clean A checkouts and records a manifest with source heads.
+- Added source mirror freshness status to the self-iteration plan so drifted or
+  missing mirrors are visible before the next scheduled loop runs.
+
+### Changed
+
+- Queue dispatch and direct Autopilot runs now refresh source mirrors at run
+  time for candidate-workspace LoopSpecs instead of relying on manually
+  prepared mirrors from a previous release or test run.
+
 ## 0.9.26 - 2026-07-02
 
 ### Added
