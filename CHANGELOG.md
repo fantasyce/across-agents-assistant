@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.26 - 2026-07-02
+
+### Added
+
+- Added a bounded AI-Ready Context synthesizer for Loop Engineering source
+  signals and exposed it through the formal capability pack.
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.13`, which adds implicit
+  AAA backend top-level name validation and explicit rejected-candidate
+  completion evidence for autonomous self-iteration.
+
 ## 0.9.25 - 2026-07-02
 
 ### Changed

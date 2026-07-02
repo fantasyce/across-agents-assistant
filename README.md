@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.26` | Adds bounded AI-Ready Context synthesis for loop source signals and pins Autopilot `v0.2.13` for stronger self-iteration validation. |
 | `0.9.25` | Keeps Workbench trigger actions focused on actionable queued triggers instead of terminal queue history. |
 | `0.9.24` | Keeps Loop Engineering ops health focused on unresolved current failures while preserving recovered and historical failure evidence for audit. |
 | `0.9.23` | Enables queued self-iteration dispatch by default, expands deterministic host repair fallbacks, and pins Autopilot `v0.2.12` for stricter candidate/platform failure routing. |
@@ -265,22 +266,22 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.25` and
+This project is under active development. The current release is `0.9.26` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.12`
+- Across Autopilot `v0.2.13`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
-The current release makes Workflows the task entry point: Repository Quality
-Copilot, Plugin Compatibility Lab, and Release Captain now create editable task
-drafts while the expert task form remains available. The managed plugins
-install under `~/.across` and can also be consumed by Codex, Claude Code,
-Claude Desktop, and other CLI/MCP-capable hosts.
+The current release keeps autonomous Loop Engineering reviewable by adding
+bounded AI-Ready Context for source signals and pinning the managed Autopilot
+runtime with stronger self-iteration validation. The managed plugins install
+under `~/.across` and can also be consumed by Codex, Claude Code, Claude
+Desktop, and other CLI/MCP-capable hosts.
 
 AAA remains the host UI and policy surface. It uses plugin manifests, wrappers,
 HTTP, CLI, MCP, or host APIs; product code must not import implementation files
@@ -436,7 +437,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.12
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.13
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8
