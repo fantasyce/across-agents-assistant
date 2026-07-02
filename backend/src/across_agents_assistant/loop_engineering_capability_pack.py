@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .autopilot_source_signal_synthesizer import attach_ai_ready_context
+
 
 READY_CAPABILITIES: tuple[dict[str, Any], ...] = (
     {
@@ -122,6 +124,13 @@ READY_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "form": "tool_pack",
         "entrypoint": "source_research_digest",
         "reusable_by": ["ecosystem_research", "news_digest", "technology_radar"],
+    },
+    {
+        "id": "source_signal_synthesizer",
+        "layer": "Memory and State",
+        "form": "bounded_ai_ready_context",
+        "entrypoint": "autopilot_source_signal_synthesizer.synthesize_ai_ready_context",
+        "reusable_by": ["loop_engineering", "candidate_selection", "human_review"],
     },
     {
         "id": "candidate_workspace",
@@ -326,8 +335,8 @@ VALIDATION_ONLY: tuple[dict[str, Any], ...] = (
 )
 
 
-def loop_engineering_capability_pack() -> dict[str, Any]:
-    return {
+def loop_engineering_capability_pack(source_signals: Any = None) -> dict[str, Any]:
+    pack = {
         "schema_version": "across-aaa-loop-engineering-capability-pack/1.0",
         "owner": "across-agents-assistant",
         "ready_count": len(READY_CAPABILITIES),
@@ -343,3 +352,5 @@ def loop_engineering_capability_pack() -> dict[str, Any]:
             "promotion": "commit, PR, merge, tag, release, signing, and publication require human approval",
         },
     }
+    attach_ai_ready_context(pack, source_signals)
+    return pack

@@ -591,6 +591,7 @@ def test_loop_engineering_capability_pack_endpoint():
     assert "license_policy_scan" in ids
     assert "repo_quality_inspection" in ids
     assert "source_research_digest" in ids
+    assert "source_signal_synthesizer" in ids
     assert "model_generated_fallback_plan" in ids
     assert "multi_candidate_comparison" in ids
     assert "distinct_model_acceptance" in ids
@@ -603,6 +604,8 @@ def test_loop_engineering_capability_pack_endpoint():
     assert body["skill_candidate_count"] == 0
     assert "fallback" in body["policy"]
     assert body["policy"]["promotion"].startswith("commit")
+    assert body["ai_ready_context"]["schema_version"] == "across-aaa-ai-ready-context/1.0"
+    assert body["ai_ready_context"]["policy"]["raw_secrets_excluded"] is True
 
 
 def test_agent_interop_e2e_endpoints(monkeypatch):
