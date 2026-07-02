@@ -37,8 +37,9 @@ desktop task panel; each creates an editable task draft before submission.
   loop.
 - Plugin Compatibility Lab: evaluate an external agent or MCP plugin before a
   team adopts it.
-- Autonomous Product Iteration: prototype a product change in a candidate
-  workspace and stop with human-review promotion evidence.
+- Autonomous Product Iteration: refresh source mirrors from a clean A baseline,
+  prototype a product change in a candidate B workspace, and stop with
+  human-review promotion evidence.
 
 ## Architecture summary
 

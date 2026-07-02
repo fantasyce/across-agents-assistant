@@ -238,6 +238,18 @@ def test_autopilot_trigger_scheduler_dispatches_due_queue_items(tmp_path):
 def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "aaa-home"))
     monkeypatch.setattr(api_server, "get_autopilot_client", lambda: FakeAutopilotClient())
+    monkeypatch.setattr(
+        api_server,
+        "get_source_mirror_status",
+        lambda: {
+            "schema_version": "across-source-mirror-status/1.0",
+            "status": "passed",
+            "root": str(tmp_path / "source-mirrors"),
+            "missing_repos": [],
+            "drifted_repos": [],
+            "repos": [],
+        },
+    )
     client = TestClient(app)
 
     registry = client.get("/api/autopilot/registry")
@@ -342,6 +354,7 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     assert self_plan.json()["ready"] is True
     assert self_plan.json()["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
     assert self_plan.json()["platform_self_repair"]["promotion_review_required"] is True
+    assert self_plan.json()["source_mirrors"]["status"] == "passed"
     assert self_plan.json()["runtime_controls"]["scheduler_dispatch_mode"] == "enqueue_and_run_one_due_trigger_per_tick"
 
     run = client.post(
@@ -522,6 +535,7 @@ def test_autopilot_client_passes_candidate_model_lease_without_raw_keys(monkeypa
 
 def test_autopilot_client_passes_model_overrides(monkeypatch):
     observed = {}
+    monkeypatch.setenv("ACROSS_AAA_SOURCE_MIRROR_REFRESH", "0")
 
     def fake_run_autopilot_cli_json(args, env=None, timeout=60):
         observed["args"] = args

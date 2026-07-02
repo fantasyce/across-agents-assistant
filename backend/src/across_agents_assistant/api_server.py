@@ -350,6 +350,7 @@ from .loop_engineering_self_iteration import (
     build_self_iteration_plan,
     ensure_self_iteration_plan,
 )
+from .source_mirror_refresh import source_mirror_status
 from .unified_capability_registry import (
     build_unified_capability_registry,
     evaluate_unified_capability_registry_health,
@@ -382,6 +383,18 @@ def get_autopilot_trigger_scheduler() -> AutopilotTriggerScheduler:
             get_autopilot_client,
         )
     return _autopilot_trigger_scheduler
+
+
+def get_source_mirror_status() -> dict[str, Any]:
+    try:
+        return source_mirror_status()
+    except Exception as exc:
+        return {
+            "schema_version": "across-source-mirror-status/1.0",
+            "status": "failed",
+            "reason": "status_probe_failed",
+            "error": _sanitize_public_error_text(exc),
+        }
 
 # Initialize persistence only. Task history is loaded lazily by task APIs.
 def _init_task_persistence():
@@ -8063,6 +8076,7 @@ async def get_autopilot_self_iteration_plan():
             trigger_registry=trigger_registry,
             trigger_queue=trigger_queue,
             capability_pack=capability_pack,
+            source_mirrors=get_source_mirror_status(),
         )
     )
 
@@ -8095,6 +8109,7 @@ async def ensure_autopilot_self_iteration_plan(req: AutopilotSelfIterationPlanRe
                 trigger_registry=trigger_registry,
                 trigger_queue=trigger_queue,
                 capability_pack=loop_engineering_capability_pack(),
+                source_mirrors=get_source_mirror_status(),
                 spec=req.spec,
                 trigger_id=req.trigger_id,
             )

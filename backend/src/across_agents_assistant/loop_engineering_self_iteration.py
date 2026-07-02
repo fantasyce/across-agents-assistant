@@ -19,6 +19,7 @@ def build_self_iteration_plan(
     trigger_registry: Mapping[str, Any] | None = None,
     trigger_queue: Mapping[str, Any] | None = None,
     capability_pack: Mapping[str, Any] | None = None,
+    source_mirrors: Mapping[str, Any] | None = None,
     spec: str = DEFAULT_SELF_ITERATION_SPEC,
     trigger_id: str = DEFAULT_SELF_ITERATION_TRIGGER_ID,
 ) -> dict[str, Any]:
@@ -27,6 +28,7 @@ def build_self_iteration_plan(
     trigger_registry = dict(trigger_registry or {})
     trigger_queue = dict(trigger_queue or {})
     capability_pack = dict(capability_pack or {})
+    source_mirrors = dict(source_mirrors or {})
     trigger = _find_trigger(trigger_registry, trigger_id)
     active = bool(trigger and trigger.get("enabled") is not False and trigger.get("paused") is not True)
     readiness = [
@@ -39,6 +41,22 @@ def build_self_iteration_plan(
             {"ready_count": capability_pack.get("ready_count")},
         ),
     ]
+    if source_mirrors:
+        readiness.append(
+            _check(
+                "source_mirrors_fresh",
+                source_mirrors.get("status") == "passed",
+                "Source mirrors are refreshed from the current A baseline before B candidate workspaces are created.",
+                {
+                    "root": source_mirrors.get("root"),
+                    "missing_repos": source_mirrors.get("missing_repos"),
+                    "dirty_repos": source_mirrors.get("dirty_repos"),
+                    "unaligned_repos": source_mirrors.get("unaligned_repos"),
+                    "drifted_repos": source_mirrors.get("drifted_repos"),
+                    "manifest_created_at": source_mirrors.get("manifest_created_at"),
+                },
+            )
+        )
     return {
         "schema_version": SELF_ITERATION_PLAN_SCHEMA_VERSION,
         "plan_id": "aaa-continuous-self-iteration",
@@ -56,6 +74,7 @@ def build_self_iteration_plan(
             "merge_release_signing_blocked": True,
         },
         "platform_self_repair": _platform_self_repair_status(trigger_queue),
+        "source_mirrors": source_mirrors,
         "runtime_controls": {
             "scheduler_dispatch_mode": "enqueue_and_run_one_due_trigger_per_tick",
             "ensure_endpoint": "/api/autopilot/self-iteration-plan/ensure",
