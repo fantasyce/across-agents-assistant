@@ -11,6 +11,8 @@ SELF_ITERATION_PLAN_SCHEMA_VERSION = "across-aaa-self-iteration-plan/1.0"
 DEFAULT_SELF_ITERATION_SPEC = "aaa-autonomous-self-iteration"
 DEFAULT_SELF_ITERATION_TRIGGER_ID = "aaa-continuous-self-iteration-daily"
 DEFAULT_SELF_ITERATION_INTERVAL_SECONDS = 86_400
+DEFAULT_SELF_ITERATION_DAILY_TIME = "10:00"
+DEFAULT_SELF_ITERATION_TIMEZONE = "Asia/Shanghai"
 DEFAULT_PLATFORM_SELF_REPAIR_SPEC = "aaa-platform-self-repair"
 
 
@@ -97,6 +99,8 @@ def ensure_self_iteration_plan(
     *,
     spec: str = DEFAULT_SELF_ITERATION_SPEC,
     interval_seconds: int = DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
+    daily_time: str = DEFAULT_SELF_ITERATION_DAILY_TIME,
+    timezone: str = DEFAULT_SELF_ITERATION_TIMEZONE,
     enabled: bool = True,
     actor: str = "aaa-self-iteration",
     source: str = "aaa-self-iteration-plan",
@@ -114,7 +118,11 @@ def ensure_self_iteration_plan(
             "topic": "research current LLM and agent architecture signals, compare them to AAA, and produce one bounded product improvement",
             **dict(payload or {}),
         },
-        schedule={"interval_seconds": interval},
+        schedule={
+            "interval_seconds": interval,
+            "daily_time": daily_time or DEFAULT_SELF_ITERATION_DAILY_TIME,
+            "timezone": timezone or DEFAULT_SELF_ITERATION_TIMEZONE,
+        },
         enabled=enabled,
         actor=actor or "aaa-self-iteration",
         source=source or "aaa-self-iteration-plan",
@@ -128,7 +136,11 @@ def _default_trigger_config(*, spec: str, trigger_id: str) -> dict[str, Any]:
         "spec": spec,
         "type": "cron",
         "enabled": True,
-        "schedule": {"interval_seconds": DEFAULT_SELF_ITERATION_INTERVAL_SECONDS},
+        "schedule": {
+            "interval_seconds": DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
+            "daily_time": DEFAULT_SELF_ITERATION_DAILY_TIME,
+            "timezone": DEFAULT_SELF_ITERATION_TIMEZONE,
+        },
         "actor": "aaa-self-iteration",
         "source": "aaa-self-iteration-plan",
     }

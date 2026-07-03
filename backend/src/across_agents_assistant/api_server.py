@@ -344,8 +344,10 @@ from .autopilot_promotion_review import build_promotion_review_packet
 from .autopilot_trigger_manager import AutopilotTriggerRegistry, AutopilotTriggerScheduler
 from .loop_engineering_ops import build_loop_engineering_ops_dashboard
 from .loop_engineering_self_iteration import (
+    DEFAULT_SELF_ITERATION_DAILY_TIME,
     DEFAULT_SELF_ITERATION_INTERVAL_SECONDS,
     DEFAULT_SELF_ITERATION_SPEC,
+    DEFAULT_SELF_ITERATION_TIMEZONE,
     DEFAULT_SELF_ITERATION_TRIGGER_ID,
     build_self_iteration_plan,
     ensure_self_iteration_plan,
@@ -395,6 +397,47 @@ def get_source_mirror_status() -> dict[str, Any]:
             "reason": "status_probe_failed",
             "error": _sanitize_public_error_text(exc),
         }
+
+
+def _self_iteration_scheduler_autostart_disabled() -> bool:
+    value = os.environ.get("ACROSS_AGENTS_DISABLE_SELF_ITERATION_SCHEDULER", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_self_iteration_trigger_exists(registry: AutopilotTriggerRegistry) -> bool:
+    try:
+        state = registry.list()
+    except Exception:
+        return False
+    return any(
+        isinstance(item, dict) and item.get("trigger_id") == DEFAULT_SELF_ITERATION_TRIGGER_ID
+        for item in state.get("triggers", []) or []
+    )
+
+
+def _restore_self_iteration_scheduler_on_startup() -> dict[str, Any]:
+    if _self_iteration_scheduler_autostart_disabled():
+        return {"status": "disabled"}
+    registry = get_autopilot_trigger_registry()
+    if not _default_self_iteration_trigger_exists(registry):
+        return {"status": "not_configured"}
+    ensure_self_iteration_plan(
+        registry,
+        daily_time=DEFAULT_SELF_ITERATION_DAILY_TIME,
+        timezone=DEFAULT_SELF_ITERATION_TIMEZONE,
+    )
+    return get_autopilot_trigger_scheduler().start(
+        interval_seconds=60,
+        run_queued_triggers=True,
+        max_runs_per_tick=1,
+    )
+
+
+def _stop_autopilot_trigger_scheduler_for_shutdown() -> None:
+    global _autopilot_trigger_scheduler
+    scheduler = _autopilot_trigger_scheduler
+    if scheduler is not None:
+        scheduler.stop()
 
 # Initialize persistence only. Task history is loaded lazily by task APIs.
 def _init_task_persistence():
@@ -743,7 +786,14 @@ def _augment_mcp_tool_args_for_session(
 async def _api_lifespan(app: FastAPI):
     """Make persistence available without starting or recovering historical tasks."""
     _init_task_persistence()
-    yield
+    try:
+        await asyncio.to_thread(_restore_self_iteration_scheduler_on_startup)
+    except Exception:
+        logger.warning("Failed to restore self-iteration scheduler on startup.", exc_info=True)
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(_stop_autopilot_trigger_scheduler_for_shutdown)
 
 
 app = FastAPI(title="Across Agents Assistant API", lifespan=_api_lifespan)
@@ -1836,6 +1886,8 @@ class AutopilotTriggerPauseRequest(BaseModel):
 class AutopilotSelfIterationPlanRequest(BaseModel):
     spec: str = DEFAULT_SELF_ITERATION_SPEC
     interval_seconds: int = DEFAULT_SELF_ITERATION_INTERVAL_SECONDS
+    daily_time: str = DEFAULT_SELF_ITERATION_DAILY_TIME
+    timezone: str = DEFAULT_SELF_ITERATION_TIMEZONE
     enabled: bool = True
     actor: str = "aaa-self-iteration"
     source: str = "aaa-self-iteration-plan"
@@ -8091,6 +8143,8 @@ async def ensure_autopilot_self_iteration_plan(req: AutopilotSelfIterationPlanRe
             registry,
             spec=req.spec,
             interval_seconds=req.interval_seconds,
+            daily_time=req.daily_time,
+            timezone=req.timezone,
             enabled=req.enabled,
             actor=req.actor,
             source=req.source,

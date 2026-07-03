@@ -7,8 +7,10 @@ import calendar
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from .paths import data_file
 
@@ -284,6 +286,9 @@ class AutopilotTriggerRegistry:
         if record.get("enabled") is False or record.get("paused") is True:
             return {"trigger_id": trigger_id, "type": record.get("type"), "status": "paused"}
         if record.get("type") == "cron":
+            daily = _daily_cron_due_decision(record, now)
+            if daily is not None:
+                return daily
             interval = max(0, int((record.get("schedule") or {}).get("interval_seconds") or 0))
             last = _parse_iso(record.get("last_enqueued_at"))
             if last is not None and (interval == 0 or now - last < interval):
@@ -562,6 +567,78 @@ def _not_before_due(value: Any) -> bool:
         return True
     parsed = _parse_iso(value)
     return parsed is None or parsed <= time.time()
+
+
+def _daily_cron_due_decision(record: Mapping[str, Any], now: float) -> dict[str, Any] | None:
+    schedule = record.get("schedule") or {}
+    parsed = _parse_daily_time(schedule.get("daily_time"))
+    if parsed is None:
+        return None
+    trigger_id = record.get("trigger_id")
+    try:
+        tz = ZoneInfo(str(schedule.get("timezone") or "UTC"))
+    except Exception:
+        return {
+            "trigger_id": trigger_id,
+            "type": "cron",
+            "status": "not_scheduled",
+            "reason": "invalid_timezone",
+        }
+    hour, minute = parsed
+    now_local = datetime.fromtimestamp(now, tz)
+    today_due = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now_local < today_due:
+        return {
+            "trigger_id": trigger_id,
+            "type": "cron",
+            "status": "not_due",
+            "next_due_at": _iso(today_due.timestamp()),
+            "daily_time": _format_daily_time(hour, minute),
+            "timezone": str(schedule.get("timezone") or "UTC"),
+        }
+    last = _parse_iso(record.get("last_enqueued_at"))
+    if last is not None and last >= today_due.timestamp():
+        next_due = today_due + timedelta(days=1)
+        return {
+            "trigger_id": trigger_id,
+            "type": "cron",
+            "status": "not_due",
+            "next_due_at": _iso(next_due.timestamp()),
+            "daily_time": _format_daily_time(hour, minute),
+            "timezone": str(schedule.get("timezone") or "UTC"),
+        }
+    schedule_key = today_due.strftime("%Y-%m-%dT%H:%M%z")
+    return {
+        "trigger_id": trigger_id,
+        "type": "cron",
+        "status": "due",
+        "idempotency_key": f"{trigger_id}:daily:{schedule_key}",
+        "not_before": _iso(today_due.timestamp()),
+        "daily_time": _format_daily_time(hour, minute),
+        "timezone": str(schedule.get("timezone") or "UTC"),
+        "scheduled_for": _iso(today_due.timestamp()),
+    }
+
+
+def _parse_daily_time(value: Any) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    parts = str(value).strip().split(":")
+    if len(parts) not in {2, 3}:
+        return None
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        second = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59 and second == 0):
+        return None
+    return hour, minute
+
+
+def _format_daily_time(hour: int, minute: int) -> str:
+    return f"{hour:02d}:{minute:02d}"
 
 
 def build_trigger_registry_summary(registry: Mapping[str, Any]) -> dict[str, Any]:
