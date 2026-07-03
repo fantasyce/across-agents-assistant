@@ -390,12 +390,13 @@ def get_autopilot_trigger_scheduler() -> AutopilotTriggerScheduler:
 def get_source_mirror_status() -> dict[str, Any]:
     try:
         return source_mirror_status()
-    except Exception as exc:
+    except Exception:
+        logger.warning("Source mirror status probe failed.", exc_info=True)
         return {
             "schema_version": "across-source-mirror-status/1.0",
             "status": "failed",
             "reason": "status_probe_failed",
-            "error": _sanitize_public_error_text(exc),
+            "error": _safe_error_message("Source mirror status probe"),
         }
 
 
