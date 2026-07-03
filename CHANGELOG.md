@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.29 - 2026-07-04
+
+### Fixed
+
+- Removed exception-object text from the public source-mirror status payload
+  used by self-iteration plans, resolving the release CodeQL
+  `py/stack-trace-exposure` alerts while preserving local backend diagnostics.
+
 ## 0.9.28 - 2026-07-04
 
 ### Added

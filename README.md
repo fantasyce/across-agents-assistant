@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.29` | Removes exception-object text from the public self-iteration source-mirror status payload while preserving local diagnostics. |
 | `0.9.28` | Adds true daily 10:00 local-time autonomous self-iteration scheduling and restores the scheduler after packaged-app restarts. |
 | `0.9.27` | Adds a pre-run source mirror refresh gate so autonomous B candidates start from a fresh, clean A baseline instead of a stale mirror. |
 | `0.9.26` | Adds bounded AI-Ready Context synthesis for loop source signals and pins Autopilot `v0.2.13` for stronger self-iteration validation. |
@@ -268,7 +269,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.28` and
+This project is under active development. The current release is `0.9.29` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
