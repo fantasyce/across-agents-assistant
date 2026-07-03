@@ -22,6 +22,7 @@ import os
 import tempfile
 
 os.environ["ACROSS_AGENTS_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ["ACROSS_AGENTS_HOME"] = os.path.join(tempfile.mkdtemp(), "app-home")
 
 from across_agents_assistant.task_history.state import TaskState
 
@@ -117,6 +118,7 @@ import tempfile
 from fastapi.testclient import TestClient
 
 os.environ["ACROSS_AGENTS_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ["ACROSS_AGENTS_HOME"] = os.path.join(tempfile.mkdtemp(), "app-home")
 os.environ["ACROSS_AGENTS_AUTO_RESUME_ORPHANS"] = "1"
 
 import across_agents_assistant.api_server as srv
@@ -141,6 +143,78 @@ print("STARTUP_COMPLETED=1")
     )
 
     assert "STARTUP_COMPLETED=1" in result.stdout
+
+
+def test_startup_restores_configured_self_iteration_scheduler():
+    repo_root = Path(__file__).resolve().parents[1]
+    src_dir = repo_root / "src"
+
+    script = """
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+app_home = Path(tempfile.mkdtemp()) / "app-home"
+app_home.mkdir(parents=True)
+os.environ["ACROSS_AGENTS_DB_PATH"] = str(app_home / "test.db")
+os.environ["ACROSS_AGENTS_HOME"] = str(app_home)
+
+(app_home / "autopilot-trigger-registry.json").write_text(json.dumps({
+    "schema_version": "across-aaa-autopilot-trigger-registry/1.0",
+    "triggers": [{
+        "schema_version": "across-aaa-autopilot-trigger-config/1.0",
+        "trigger_id": "aaa-continuous-self-iteration-daily",
+        "spec": "aaa-autonomous-self-iteration",
+        "type": "cron",
+        "enabled": True,
+        "paused": False,
+        "payload": {},
+        "schedule": {"interval_seconds": 86400},
+        "webhook": {},
+        "daemon": {},
+        "actor": "pytest",
+        "source": "pytest",
+        "created_at": "2026-07-03T00:00:00Z",
+        "updated_at": "2026-07-03T00:00:00Z",
+        "last_enqueued_at": None,
+        "last_trigger_id": None,
+        "last_status": None,
+        "last_daemon_signature": None,
+        "seen_deliveries": [],
+        "enqueue_count": 0
+    }]
+}), encoding="utf-8")
+
+import across_agents_assistant.api_server as srv
+
+with TestClient(srv.app):
+    status = srv.get_autopilot_trigger_scheduler().status()
+    trigger = srv.get_autopilot_trigger_registry().list()["triggers"][0]
+    print(f"SCHEDULER_RUNNING={status['running']}")
+    print(f"SCHEDULE_DAILY_TIME={trigger['schedule']['daily_time']}")
+    print(f"SCHEDULE_TIMEZONE={trigger['schedule']['timezone']}")
+
+print(f"SCHEDULER_STOPPED={srv.get_autopilot_trigger_scheduler().status()['running']}")
+"""
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "SCHEDULER_RUNNING=True" in result.stdout
+    assert "SCHEDULE_DAILY_TIME=10:00" in result.stdout
+    assert "SCHEDULE_TIMEZONE=Asia/Shanghai" in result.stdout
+    assert "SCHEDULER_STOPPED=False" in result.stdout
 
 
 def test_health_endpoint_reports_backend_socket_and_database(monkeypatch, tmp_path):

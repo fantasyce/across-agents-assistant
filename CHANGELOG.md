@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.28 - 2026-07-04
+
+### Added
+
+- Added true local-time daily scheduling for AAA autonomous self-iteration so
+  the default trigger runs at `10:00` in `Asia/Shanghai` instead of relying on a
+  drifting interval anchor.
+- Added backend startup restoration for an already configured self-iteration
+  scheduler, keeping the daily trigger active across packaged-app restarts.
+
+### Changed
+
+- Self-iteration plan creation now records the default daily time and timezone
+  alongside the existing interval fallback.
+
 ## 0.9.27 - 2026-07-03
 
 ### Added

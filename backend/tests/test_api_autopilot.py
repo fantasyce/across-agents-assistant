@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 
 import across_agents_assistant.api_server as api_server
@@ -235,6 +237,66 @@ def test_autopilot_trigger_scheduler_dispatches_due_queue_items(tmp_path):
     assert status["last_dispatch_count"] == 1
 
 
+def test_daily_cron_trigger_runs_at_configured_local_time(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    registry.register(
+        spec="aaa-autonomous-self-iteration",
+        trigger_type="cron",
+        schedule={"interval_seconds": 86400, "daily_time": "10:00", "timezone": "Asia/Shanghai"},
+        payload={"reason": "daily-self-iteration"},
+        actor="pytest",
+        source="scheduler-test",
+        trigger_id="daily-self-iteration",
+    )
+    fake_client = DispatchingFakeAutopilotClient()
+
+    before_due = registry.tick(fake_client, now=_local_ts(2026, 7, 4, 9, 59))
+
+    assert before_due["status"] == "idle"
+    assert before_due["inspected"][0]["status"] == "not_due"
+    assert before_due["inspected"][0]["next_due_at"] == "2026-07-04T02:00:00Z"
+    assert fake_client.items == []
+
+    due = registry.tick(fake_client, now=_local_ts(2026, 7, 4, 10, 0))
+
+    assert due["status"] == "enqueued"
+    assert due["inspected"][0]["status"] == "due"
+    assert due["inspected"][0]["scheduled_for"] == "2026-07-04T02:00:00Z"
+    assert fake_client.items[0]["trigger_event"]["idempotency_key"] == "daily-self-iteration:daily:2026-07-04T10:00+0800"
+    assert fake_client.items[0]["not_before"] == "2026-07-04T02:00:00Z"
+
+    same_day = registry.tick(fake_client, now=_local_ts(2026, 7, 4, 10, 1))
+
+    assert same_day["status"] == "idle"
+    assert same_day["inspected"][0]["status"] == "not_due"
+    assert same_day["inspected"][0]["next_due_at"] == "2026-07-05T02:00:00Z"
+    assert len(fake_client.items) == 1
+
+
+def test_daily_cron_trigger_catches_up_after_configured_time(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    registry.register(
+        spec="aaa-autonomous-self-iteration",
+        trigger_type="cron",
+        schedule={"interval_seconds": 86400, "daily_time": "10:00", "timezone": "Asia/Shanghai"},
+        payload={"reason": "daily-self-iteration"},
+        actor="pytest",
+        source="scheduler-test",
+        trigger_id="daily-self-iteration",
+    )
+    fake_client = DispatchingFakeAutopilotClient()
+
+    late = registry.tick(fake_client, now=_local_ts(2026, 7, 4, 11, 30))
+
+    assert late["status"] == "enqueued"
+    assert late["inspected"][0]["scheduled_for"] == "2026-07-04T02:00:00Z"
+    assert fake_client.items[0]["not_before"] == "2026-07-04T02:00:00Z"
+
+
+def _local_ts(year, month, day, hour, minute):
+    return datetime(year, month, day, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+
+
 def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "aaa-home"))
     monkeypatch.setattr(api_server, "get_autopilot_client", lambda: FakeAutopilotClient())
@@ -351,6 +413,9 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     assert self_plan.status_code == 200
     assert self_plan.json()["status"] == "active"
     assert self_plan.json()["trigger"]["trigger_id"] == "aaa-continuous-self-iteration-daily"
+    assert self_plan.json()["trigger"]["schedule"]["interval_seconds"] == 3600
+    assert self_plan.json()["trigger"]["schedule"]["daily_time"] == "10:00"
+    assert self_plan.json()["trigger"]["schedule"]["timezone"] == "Asia/Shanghai"
     assert self_plan.json()["ready"] is True
     assert self_plan.json()["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
     assert self_plan.json()["platform_self_repair"]["promotion_review_required"] is True
