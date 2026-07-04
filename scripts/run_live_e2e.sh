@@ -91,11 +91,13 @@ trap finish EXIT
 if [[ -z "$ORCHESTRATOR_COMMAND" ]]; then
   if command -v across-orchestrator >/dev/null 2>&1; then
     ORCHESTRATOR_COMMAND="$(command -v across-orchestrator)"
-  elif [[ -x "$ROOT_DIR/../across-orchestrator/.venv/bin/across-orchestrator" ]]; then
-    ORCHESTRATOR_COMMAND="$ROOT_DIR/../across-orchestrator/.venv/bin/across-orchestrator"
+  elif [[ -x "$HOME/.across/bin/across-orchestrator" ]]; then
+    ORCHESTRATOR_COMMAND="$HOME/.across/bin/across-orchestrator"
+  elif [[ -x "$HOME/.across/plugins/across-orchestrator/venv/bin/across-orchestrator" ]]; then
+    ORCHESTRATOR_COMMAND="$HOME/.across/plugins/across-orchestrator/venv/bin/across-orchestrator"
   else
     echo "External Across Orchestrator command is required for live E2E." >&2
-    echo "Set ACROSS_AGENTS_ORCHESTRATOR_COMMAND or install across-orchestrator on PATH." >&2
+    echo "Set ACROSS_AGENTS_ORCHESTRATOR_COMMAND or install across-orchestrator in ~/.across or on PATH." >&2
     exit 2
   fi
 fi

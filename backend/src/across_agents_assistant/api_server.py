@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set
 import asyncio
 import logging
@@ -1483,9 +1483,39 @@ async def _chat_with_model_capability(
     context: Dict[str, Any] | None = None,
     model: str | None = None,
     provider_id: str | None = None,
+    agent_id: str | None = None,
+    project_dir: str | None = None,
     scope: str = "model.chat",
     **kwargs: Any,
 ) -> LLMResponse:
+    normalized_agent_id = normalize_agent_id(agent_id) if agent_id else None
+    if normalized_agent_id in LOCAL_CLI_AGENT_IDS:
+        prompt_parts = []
+        if system_prompt:
+            prompt_parts.extend(["System instructions:", system_prompt.strip(), ""])
+        prompt_parts.append(message)
+        reply = await asyncio.to_thread(
+            get_local_agent_client().send,
+            "\n".join(prompt_parts),
+            target_agent=normalized_agent_id,
+            project_dir=project_dir,
+            timeout=float(kwargs.get("timeout", 600.0)),
+        )
+        if getattr(reply, "requires_approval", False):
+            raise RuntimeError(f"local agent {normalized_agent_id} requires interactive approval")
+        text = _normalize_local_agent_model_text(normalized_agent_id, str(getattr(reply, "text", "") or ""))
+        return LLMResponse(
+            text=text,
+            raw={
+                "agent_id": normalized_agent_id,
+                "scope": scope,
+                "elapsed_sec": getattr(reply, "elapsed_sec", None),
+            },
+            model=str(model or normalized_agent_id),
+            provider="local-agent",
+            finish_reason="stop",
+            usage=None,
+        )
     lease_status = _candidate_model_lease_status(scope)
     if lease_status.get("lease") is not None:
         if not lease_status["available"]:
@@ -1544,6 +1574,26 @@ async def _chat_with_model_capability(
         provider_id=provider_id,
         **kwargs,
     )
+
+
+def _normalize_local_agent_model_text(agent_id: str, text: str) -> str:
+    """Return only the assistant answer from local CLI transcript output."""
+    if agent_id != "codex":
+        return text
+    lines = str(text or "").splitlines()
+    answer_start = None
+    for index, line in enumerate(lines):
+        if line.strip() == "codex":
+            answer_start = index + 1
+    if answer_start is None:
+        return text
+    answer_lines: list[str] = []
+    for line in lines[answer_start:]:
+        if line.strip() == "tokens used":
+            break
+        answer_lines.append(line)
+    answer = "\n".join(answer_lines).strip()
+    return answer or text
 
 
 def _path_check(check_id: str, title: str, path: Path, *, expect_file: bool = False) -> Dict[str, Any]:
@@ -1917,6 +1967,11 @@ class AutopilotModelDecisionRequest(BaseModel):
     candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
     model_policy: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("candidate_model_lease", mode="before")
+    @classmethod
+    def _normalize_candidate_model_lease(cls, value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
 
 class AutopilotResearchDecisionRequest(BaseModel):
     schema_version: Optional[str] = "across-host-research-decision-request/1.0"
@@ -1934,6 +1989,11 @@ class AutopilotResearchDecisionRequest(BaseModel):
     candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
     model_policy: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("candidate_model_lease", mode="before")
+    @classmethod
+    def _normalize_candidate_model_lease(cls, value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
 
 class AutopilotCodeIterationRequest(BaseModel):
     schema_version: Optional[str] = "across-host-code-iteration-request/1.0"
@@ -1950,6 +2010,11 @@ class AutopilotCodeIterationRequest(BaseModel):
     candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
     model_policy: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("candidate_model_lease", mode="before")
+    @classmethod
+    def _normalize_candidate_model_lease(cls, value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
 
 class AutopilotReviewDecisionRequest(BaseModel):
     schema_version: Optional[str] = "across-host-review-decision-request/1.0"
@@ -1965,6 +2030,11 @@ class AutopilotReviewDecisionRequest(BaseModel):
     builder_model: Dict[str, Any] = Field(default_factory=dict)
     candidate_model_lease: Dict[str, Any] = Field(default_factory=dict)
     model_policy: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("candidate_model_lease", mode="before")
+    @classmethod
+    def _normalize_candidate_model_lease(cls, value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
 
 
 def _safe_autopilot_rel_path(value: Any) -> str:
@@ -2091,6 +2161,24 @@ def _autopilot_model_policy_value(policy: Dict[str, Any], *keys: str, default: A
         if key in policy and policy[key] not in (None, ""):
             return policy[key]
     return default
+
+
+def _autopilot_model_policy_timeout_seconds(policy: Dict[str, Any], *, default: float = 600.0) -> float:
+    millis = _autopilot_model_policy_value(policy, "timeout_ms", "timeoutMs")
+    raw = millis if millis is not None else _autopilot_model_policy_value(
+        policy,
+        "timeout_seconds",
+        "timeout_sec",
+        "timeout",
+        default=default,
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if millis is not None:
+        value = value / 1000.0
+    return max(1.0, value)
 
 
 def _autopilot_decision_system_prompt() -> str:
@@ -2446,17 +2534,22 @@ async def _autopilot_decision_chat(
     context_files: List[Dict[str, Any]],
     provider_id: Optional[str],
     model_id: Optional[str],
+    agent_id: Optional[str],
     temperature: float,
     max_tokens: int,
+    timeout_seconds: float,
 ) -> Tuple[Any, Dict[str, Any], List[Dict[str, Any]], bool, bool, Optional[str]]:
     response = await _chat_with_model_capability(
         message=_autopilot_decision_user_prompt(req, context_files),
         system_prompt=_autopilot_decision_system_prompt(),
         provider_id=str(provider_id) if provider_id else None,
         model=str(model_id) if model_id else None,
+        agent_id=str(agent_id) if agent_id else None,
+        project_dir=req.candidate_workspace,
         scope="model.decide",
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=timeout_seconds,
     )
     try:
         decision = _extract_json_object(response.text)
@@ -2473,9 +2566,12 @@ async def _autopilot_decision_chat(
             system_prompt=_autopilot_decision_system_prompt(),
             provider_id=str(provider_id) if provider_id else None,
             model=str(model_id) if model_id else None,
+            agent_id=str(agent_id) if agent_id else None,
+            project_dir=req.candidate_workspace,
             scope="model.decide",
             temperature=0.0,
             max_tokens=max_tokens,
+            timeout=timeout_seconds,
         )
         try:
             decision = _extract_json_object(repair_response.text)
@@ -2508,15 +2604,19 @@ async def create_autopilot_model_decision(req: AutopilotModelDecisionRequest):
         policy = dict(req.model_policy or {})
         provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
         model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
+        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
         response, decision, patches, repaired, text_fallback, parse_error = await _autopilot_decision_chat(
             req,
             context_files=context_files,
             provider_id=str(provider_id) if provider_id else None,
             model_id=str(model_id) if model_id else None,
+            agent_id=str(agent_id) if agent_id else None,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
         )
         clean_decision = {
             "summary": str(decision.get("summary") or "Model proposed a candidate-only iteration patch."),
@@ -3159,17 +3259,22 @@ async def _autopilot_research_decision_chat(
     *,
     provider_id: Optional[str],
     model_id: Optional[str],
+    agent_id: Optional[str],
     temperature: float,
     max_tokens: int,
+    timeout_seconds: float,
 ) -> Tuple[Any, Dict[str, Any], bool]:
     response = await _chat_with_model_capability(
         message=_autopilot_research_user_prompt(req),
         system_prompt=_autopilot_research_system_prompt(req),
         provider_id=str(provider_id) if provider_id else None,
         model=str(model_id) if model_id else None,
+        agent_id=str(agent_id) if agent_id else None,
+        project_dir=req.candidate_workspace,
         scope="model.research",
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id),
     )
     try:
@@ -3185,9 +3290,12 @@ async def _autopilot_research_decision_chat(
                 system_prompt=_autopilot_research_system_prompt(req),
                 provider_id=str(provider_id) if provider_id else None,
                 model=str(model_id) if model_id else None,
+                agent_id=str(agent_id) if agent_id else None,
+                project_dir=req.candidate_workspace,
                 scope="model.research",
                 temperature=0.0,
                 max_tokens=max_tokens,
+                timeout=timeout_seconds,
                 extra_body=_minimax_json_extra_body(provider_id),
             )
             try:
@@ -3251,14 +3359,18 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
         policy = dict(req.model_policy or {})
         provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
         model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
+        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
         response, decision, repaired = await _autopilot_research_decision_chat(
             req,
             provider_id=str(provider_id) if provider_id else None,
             model_id=str(model_id) if model_id else None,
+            agent_id=str(agent_id) if agent_id else None,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
         )
         clean = {
             "summary": decision["summary"],
@@ -3305,10 +3417,14 @@ def _autopilot_code_iteration_system_prompt(*, direct_patches: bool = False) -> 
             "Patch content must be complete file content. Prefer content_lines for code files; "
             "content strings and content_base64 are also accepted when they are valid JSON. "
         "Prefer pure helpers with tests, no network calls, no secrets, no subprocesses, and no filesystem writes. "
+        "Do not include token-shaped or key-shaped strings anywhere, including tests or examples: avoid sk-, ghp_, token=, secret=, api_key=, and bearer-style fixtures. "
         "Candidate test files must be standard-library only: do not import or use pytest, because validation runs them with python3/runpy. "
         "Candidate tests under backend/tests must import product modules through the package path, for example "
         "'from across_agents_assistant.autopilot_feature import helper'; never use flat imports like "
         "'from autopilot_feature import helper'. "
+        "Existing product integration files such as api_server.py, autopilot_workbench.py, and "
+        "loop_engineering_capability_pack.py must be surgical: use append or upsert_between_markers, never overwrite. "
+        "Preserve existing route registrations, capability registries, public functions, and imports unless the goal explicitly says to remove them. "
         "For existing README, CHANGELOG, or docs files, preserve existing content. Use append or upsert_between_markers for small additions; "
         "if you use upsert_between_markers you must include marker_start and marker_end. "
         "do not rewrite or delete large documentation sections unless the goal explicitly requires a documentation rewrite."
@@ -3346,6 +3462,8 @@ def _autopilot_code_iteration_user_prompt(req: AutopilotCodeIterationRequest, co
         "validation_feedback may include failed commands or semantic review blocking reasons. "
         "If validation_feedback is present, repair the candidate so commands pass and semantic review blocking reasons are resolved. "
         "If feedback reports a large documentation rewrite, restore or preserve the original documentation and move the change into focused code/tests or a small append/upsert section. "
+        "If feedback reports destructive_product_entrypoint_rewrite, restore the affected source-baseline file and replace the change with a marker-bounded append/upsert. "
+        "Existing product integration files such as api_server.py, autopilot_workbench.py, and loop_engineering_capability_pack.py must keep existing content and public surfaces. "
         "If feedback reports missing pytest, remove pytest imports/usages and rewrite tests as plain assert-based functions runnable through runpy. "
         "If feedback reports ModuleNotFoundError for an autopilot_* module, repair backend/tests imports to package imports under across_agents_assistant. "
         "Keep generated files concise: prefer one pure helper plus focused tests. "
@@ -3370,7 +3488,10 @@ def _autopilot_code_iteration_repair_prompt(req: AutopilotCodeIterationRequest, 
         "Return complete file contents for every patch, using only allowed_patch_paths. "
         "Resolve validation_feedback if present, including semantic review blocking reasons. "
         "Candidate test files must be standard-library only; do not import/use pytest, pytest.raises, tmp_path, monkeypatch, or other pytest fixtures. "
+        "Do not include token-shaped or key-shaped strings anywhere, including tests or examples: avoid sk-, ghp_, token=, secret=, api_key=, and bearer-style fixtures. "
         "Candidate test files must import AAA product modules through across_agents_assistant.<module>, not through flat autopilot_* imports. "
+        "If validation_feedback reports destructive_product_entrypoint_rewrite, do not overwrite existing product integration files; use marker-bounded append/upsert content only. "
+        "Preserve existing route registrations, capability registries, public functions, and imports. "
         "Preserve existing documentation; use append or upsert_between_markers for docs instead of destructive overwrite. "
         "If you use upsert_between_markers, include marker_start and marker_end. "
         "Use this shape: {\"summary\": string, \"risk\": \"low|medium|high\", "
@@ -4324,25 +4445,41 @@ def _fallback_direct_code_iteration_decision(
         "backend/tests/test_autopilot_iteration_telemetry.py",
     }
     iteration_telemetry_workbench = "backend/src/across_agents_assistant/autopilot_workbench.py"
-    mcp_tool_manifest_expected = {
-        "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
-        "backend/tests/test_autopilot_mcp_tool_manifest.py",
-    }
+    mcp_tool_manifest_pairs = [
+        (
+            "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+            "backend/tests/test_autopilot_mcp_tool_manifest.py",
+        ),
+        (
+            "backend/src/across_agents_assistant/autopilot_tool_manifest.py",
+            "backend/tests/test_autopilot_tool_manifest.py",
+        ),
+    ]
     mcp_tool_manifest_api = "backend/src/across_agents_assistant/api_server.py"
-    if mcp_tool_manifest_expected.issubset(allowed):
+    mcp_tool_manifest_pair = next(
+        (
+            (module_path, test_path)
+            for module_path, test_path in mcp_tool_manifest_pairs
+            if {module_path, test_path}.issubset(allowed)
+        ),
+        None,
+    )
+    if mcp_tool_manifest_pair:
+        module_path, test_path = mcp_tool_manifest_pair
+        module_name = Path(module_path).stem
         optional_paths = {mcp_tool_manifest_api} if mcp_tool_manifest_api in allowed else set()
         decision = {
             "summary": "Add validation-stable MCP tool manifest helpers.",
             "risk": "low",
-            "patch_paths": sorted(mcp_tool_manifest_expected | optional_paths),
+            "patch_paths": sorted({module_path, test_path} | optional_paths),
             "validation_commands": [
                 {
                     "command": "python3",
                     "args": [
                         "-m",
                         "py_compile",
-                        "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
-                        "backend/tests/test_autopilot_mcp_tool_manifest.py",
+                        module_path,
+                        test_path,
                     ],
                 },
                 {
@@ -4350,7 +4487,7 @@ def _fallback_direct_code_iteration_decision(
                     "args": [
                         "-c",
                         "import sys, runpy; sys.path.insert(0,'backend/src'); "
-                        "ns=runpy.run_path('backend/tests/test_autopilot_mcp_tool_manifest.py'); "
+                        f"ns=runpy.run_path({test_path!r}); "
                         "tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; "
                         "assert tests; [test() for test in tests]; print('tests-ok')",
                     ],
@@ -4360,14 +4497,14 @@ def _fallback_direct_code_iteration_decision(
         }
         patches = [
             {
-                "path": "backend/src/across_agents_assistant/autopilot_mcp_tool_manifest.py",
+                "path": module_path,
                 "mode": "overwrite",
                 "content": _render_mcp_tool_manifest_module(decision),
             },
             {
-                "path": "backend/tests/test_autopilot_mcp_tool_manifest.py",
+                "path": test_path,
                 "mode": "overwrite",
-                "content": _render_mcp_tool_manifest_test(),
+                "content": _render_mcp_tool_manifest_test(module_name=module_name),
             },
         ]
         if mcp_tool_manifest_api in allowed:
@@ -4377,7 +4514,7 @@ def _fallback_direct_code_iteration_decision(
                     "mode": "upsert_between_markers",
                     "marker_start": "# ACROSS MCP TOOL MANIFEST REGISTRATION START",
                     "marker_end": "# ACROSS MCP TOOL MANIFEST REGISTRATION END",
-                    "content": _render_mcp_tool_manifest_api_block(),
+                    "content": _render_mcp_tool_manifest_api_block(module_name=module_name),
                 }
             )
         return decision, patches
@@ -5250,9 +5387,9 @@ def _render_tool_registry_manifest_api_block() -> str:
     )
 
 
-def _render_mcp_tool_manifest_api_block() -> str:
+def _render_mcp_tool_manifest_api_block(module_name: str = "autopilot_mcp_tool_manifest") -> str:
     return (
-        "from .autopilot_mcp_tool_manifest import (\n"
+        f"from .{module_name} import (\n"
         "    TOOL_DESCRIPTORS as _ACROSS_MCP_TOOL_DESCRIPTORS,\n"
         "    validate_tool_manifests as _across_validate_mcp_tool_manifests,\n"
         ")\n\n"
@@ -5782,10 +5919,10 @@ def _render_mcp_tool_manifest_module(decision: Dict[str, Any]) -> str:
     )
 
 
-def _render_mcp_tool_manifest_test() -> str:
+def _render_mcp_tool_manifest_test(module_name: str = "autopilot_mcp_tool_manifest") -> str:
     return (
         "from pathlib import Path\n\n"
-        "from across_agents_assistant.autopilot_mcp_tool_manifest import (\n"
+        f"from across_agents_assistant.{module_name} import (\n"
         "    TOOL_DESCRIPTORS,\n"
         "    ToolManifestError,\n"
         "    get_registered_tools,\n"
@@ -5829,7 +5966,7 @@ def _render_mcp_tool_manifest_test() -> str:
         "def test_api_server_registration_marker_is_lightweight():\n"
         "    source = Path('backend/src/across_agents_assistant/api_server.py').read_text(encoding='utf-8')\n"
         "    assert 'ACROSS MCP TOOL MANIFEST REGISTRATION START' in source\n"
-        "    assert 'autopilot_mcp_tool_manifest' in source\n"
+        f"    assert {module_name!r} in source\n"
         "    assert 'ACROSS_MCP_TOOL_DESCRIPTORS' in source\n\n\n"
         "if __name__ == '__main__':\n"
         "    test_registered_tools_validate()\n"
@@ -6964,11 +7101,15 @@ def _validation_feedback_requires_model_repair(feedback: List[Dict[str, Any]]) -
         or "importerror" in combined_feedback
     ):
         return False
-    if "autopilot_mcp_tool_manifest" in combined_feedback and (
+    if (
+        "autopilot_mcp_tool_manifest" in combined_feedback
+        or "autopilot_tool_manifest" in combined_feedback
+    ) and (
         "tool_descriptors" in combined_feedback
         or "validate_tool_manifests" in combined_feedback
         or "unintegrated_candidate_helper" in combined_feedback
         or "constant_false_branch" in combined_feedback
+        or "destructive_product_entrypoint_rewrite" in combined_feedback
         or "uvicorn" in combined_feedback
         or "syntaxerror" in combined_feedback
         or "assertionerror" in combined_feedback
@@ -7332,8 +7473,10 @@ async def _autopilot_code_iteration_chat(
     context_files: List[Dict[str, Any]],
     provider_id: Optional[str],
     model_id: Optional[str],
+    agent_id: Optional[str],
     temperature: float,
     max_tokens: int,
+    timeout_seconds: float,
 ) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
     direct_patches = bool(req.model_policy.get("direct_patches") or req.model_policy.get("code_mode") == "direct_patches")
     allow_host_fallback = bool(
@@ -7350,9 +7493,12 @@ async def _autopilot_code_iteration_chat(
         system_prompt=_autopilot_code_iteration_system_prompt(direct_patches=direct_patches),
         provider_id=str(provider_id) if provider_id else None,
         model=str(model_id) if model_id else None,
+        agent_id=str(agent_id) if agent_id else None,
+        project_dir=req.candidate_workspace,
         scope="model.code_patch",
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id) if direct_patches else {},
     )
     if direct_patches:
@@ -7372,9 +7518,12 @@ async def _autopilot_code_iteration_chat(
                     system_prompt=_autopilot_code_iteration_system_prompt(direct_patches=True),
                     provider_id=str(provider_id) if provider_id else None,
                     model=str(model_id) if model_id else None,
+                    agent_id=str(agent_id) if agent_id else None,
+                    project_dir=req.candidate_workspace,
                     scope="model.code_patch",
                     temperature=0.0,
                     max_tokens=max_tokens,
+                    timeout=timeout_seconds,
                     extra_body=_minimax_json_extra_body(provider_id),
                 )
                 try:
@@ -7431,8 +7580,10 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
             context_files = _compact_autopilot_context_files(context_files)
         provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
         model_id = _autopilot_model_policy_value(policy, "model", "model_id")
+        agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         base_max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1200))
+        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
         host_validation_repair_fallback = False
         allow_host_fallback = bool(
             policy.get("allow_host_code_fallback")
@@ -7466,9 +7617,11 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
                     context_files=context_files,
                     provider_id=str(provider_id) if provider_id else None,
                     model_candidates=_code_model_candidates(policy),
+                    agent_id=str(agent_id) if agent_id else None,
                     temperature=temperature,
                     base_max_tokens=base_max_tokens,
                     direct_patches_requested=direct_patches_requested,
+                    timeout_seconds=timeout_seconds,
                 )
         else:
             response, decision, direct_patches, text_fallback, repaired_json = await _run_code_iteration_with_model_fallbacks(
@@ -7476,9 +7629,11 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
                 context_files=context_files,
                 provider_id=str(provider_id) if provider_id else None,
                 model_candidates=_code_model_candidates(policy),
+                agent_id=str(agent_id) if agent_id else None,
                 temperature=temperature,
                 base_max_tokens=base_max_tokens,
                 direct_patches_requested=direct_patches_requested,
+                timeout_seconds=timeout_seconds,
             )
         host_validation_repair_fallback = host_validation_repair_fallback or bool(decision.get("host_validation_repair_fallback"))
         module_path = "backend/src/across_agents_assistant/loop_engineering_candidate.py"
@@ -7560,9 +7715,11 @@ async def _run_code_iteration_with_model_fallbacks(
     context_files: List[Dict[str, Any]],
     provider_id: Optional[str],
     model_candidates: List[Optional[str]],
+    agent_id: Optional[str],
     temperature: float,
     base_max_tokens: int,
     direct_patches_requested: bool,
+    timeout_seconds: float,
 ) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
     last_error: Optional[Exception] = None
     for candidate_model in model_candidates or [None]:
@@ -7575,8 +7732,10 @@ async def _run_code_iteration_with_model_fallbacks(
                 context_files=context_files,
                 provider_id=provider_id,
                 model_id=str(candidate_model) if candidate_model else None,
+                agent_id=agent_id,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
             )
         except Exception as exc:
             last_error = exc
@@ -7754,17 +7913,22 @@ async def _autopilot_review_decision_chat(
     *,
     provider_id: Optional[str],
     model_id: Optional[str],
+    agent_id: Optional[str],
     temperature: float,
     max_tokens: int,
+    timeout_seconds: float,
 ) -> Tuple[Any, Dict[str, Any], bool]:
     response = await _chat_with_model_capability(
         message=_autopilot_review_user_prompt(req),
         system_prompt=_autopilot_review_system_prompt(),
         provider_id=str(provider_id) if provider_id else None,
         model=str(model_id) if model_id else None,
+        agent_id=str(agent_id) if agent_id else None,
+        project_dir=None,
         scope="model.review",
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id),
     )
     try:
@@ -7775,9 +7939,12 @@ async def _autopilot_review_decision_chat(
             system_prompt=_autopilot_review_system_prompt(),
             provider_id=str(provider_id) if provider_id else None,
             model=str(model_id) if model_id else None,
+            agent_id=str(agent_id) if agent_id else None,
+            project_dir=None,
             scope="model.review",
             temperature=0.0,
             max_tokens=max_tokens,
+            timeout=timeout_seconds,
             extra_body=_minimax_json_extra_body(provider_id),
         )
         return repair_response, _normalize_review_decision(_extract_json_object(repair_response.text), req), True
@@ -7785,15 +7952,18 @@ async def _autopilot_review_decision_chat(
 
 @app.post("/api/autopilot/review-decision")
 async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
-    """Return a distinct host-model-backed independent review decision."""
+    """Return a host-backed independent review decision."""
     try:
         policy = dict(req.model_policy or {})
         provider_id = _autopilot_model_policy_value(policy, "provider", "provider_id")
+        agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.0))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1600))
+        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
+        require_distinct = policy.get("require_distinct_from_builder") is not False
         last_error: Optional[Exception] = None
         for model_id in _review_model_candidates(policy):
-            if _same_model_identity(req.builder_model, str(provider_id) if provider_id else None, str(model_id) if model_id else None):
+            if require_distinct and _same_model_identity(req.builder_model, str(provider_id) if provider_id else None, str(model_id) if model_id else None):
                 last_error = ValueError("reviewer model must differ from builder model")
                 continue
             try:
@@ -7801,8 +7971,10 @@ async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
                     req,
                     provider_id=str(provider_id) if provider_id else None,
                     model_id=str(model_id) if model_id else None,
+                    agent_id=str(agent_id) if agent_id else None,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
                 )
                 clean_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
                 return {
@@ -7897,6 +8069,39 @@ async def get_autopilot_capability_packs():
         return _sanitize_public_payload(loop_engineering_capability_pack())
     except Exception as exc:
         raise _safe_http_500("Across Autopilot capability packs")
+
+
+@app.get("/api/autopilot/tool-manifest")
+async def get_autopilot_tool_manifest():
+    """Return a bounded MCP-style manifest of AAA loop-engineering tools."""
+    try:
+        from .autopilot_tool_manifest import build_autopilot_tool_manifest
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        return _sanitize_public_payload(
+            build_autopilot_tool_manifest(
+                tool_schemas=_runtime_tool_schemas(),
+                capability_pack=loop_engineering_capability_pack(),
+            )
+        )
+    except Exception as exc:
+        raise _safe_http_500("Across Autopilot tool manifest")
+
+
+@app.get("/api/autopilot/a2a/capability-card")
+async def get_autopilot_a2a_capability_card():
+    """Return an A2A-style agent capability card for AAA self-iteration."""
+    try:
+        from .autopilot_a2a_capability_card import build_autopilot_a2a_capability_card
+        from .loop_engineering_capability_pack import loop_engineering_capability_pack
+
+        return _sanitize_public_payload(
+            build_autopilot_a2a_capability_card(
+                capability_pack=loop_engineering_capability_pack(),
+            )
+        )
+    except Exception as exc:
+        raise _safe_http_500("Across Autopilot A2A capability card")
 
 
 @app.post("/api/autopilot/specs/validate")

@@ -163,6 +163,16 @@ class FakeAutopilotClient:
         return {"status": "completed", "trigger": {"trigger_id": trigger_id or "trg-api-1"}}
 
 
+def test_autopilot_code_iteration_prompt_blocks_token_shaped_test_fixtures():
+    prompt = api_server._autopilot_code_iteration_system_prompt(direct_patches=True)
+
+    assert "including tests or examples" in prompt
+    assert "sk-" in prompt
+    assert "ghp_" in prompt
+    assert "token=" in prompt
+    assert "api_key=" in prompt
+
+
 class DispatchingFakeAutopilotClient:
     def __init__(self):
         self.items = []
@@ -428,8 +438,8 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
             "spec": "daily-news-brief",
             "trigger": "user-e2e",
             "model_policy_overrides": {
-                "builder": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M3"},
-                "reviewer": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M2.5"},
+                "builder": {"agent_id": "codex", "provider": "local-agent", "model": "codex"},
+                "reviewer": {"agent_id": "codex", "provider": "local-agent", "model": "codex", "require_distinct_from_builder": False},
             },
         },
     )
@@ -437,8 +447,8 @@ def test_autopilot_control_plane_endpoints(monkeypatch, tmp_path):
     body = run.json()
     assert body["run"]["run_id"] == "run-api-1"
     assert body["evidence"]["orchestrator"]["tasks"][0]["metadata_reflected"] is True
-    assert body["evidence"]["model_policy_overrides"]["builder"]["model"] == "MiniMax-M3"
-    assert body["evidence"]["model_policy_overrides"]["reviewer"]["model"] == "MiniMax-M2.5"
+    assert body["evidence"]["model_policy_overrides"]["builder"]["model"] == "codex"
+    assert body["evidence"]["model_policy_overrides"]["reviewer"]["model"] == "codex"
     assert body["evidence"]["memory"]["written"][0]["status"] == "accepted_pending"
 
     assert client.get("/api/autopilot/runs").json()["runs"][0]["run_id"] == "run-api-1"
@@ -598,6 +608,28 @@ def test_autopilot_client_passes_candidate_model_lease_without_raw_keys(monkeypa
     assert "model.code_patch" in lease["scopes"]
 
 
+def test_autopilot_host_requests_normalize_null_candidate_model_lease():
+    assert api_server.AutopilotModelDecisionRequest(
+        goal="Patch safely.",
+        candidate_workspace="/tmp/candidate",
+        candidate_model_lease=None,
+    ).candidate_model_lease == {}
+    assert api_server.AutopilotResearchDecisionRequest(
+        goal="Pick direction.",
+        candidate_workspace="/tmp/candidate",
+        candidate_model_lease=None,
+    ).candidate_model_lease == {}
+    assert api_server.AutopilotCodeIterationRequest(
+        goal="Implement direction.",
+        candidate_workspace="/tmp/candidate",
+        candidate_model_lease=None,
+    ).candidate_model_lease == {}
+    assert api_server.AutopilotReviewDecisionRequest(
+        goal="Review candidate.",
+        candidate_model_lease=None,
+    ).candidate_model_lease == {}
+
+
 def test_autopilot_client_passes_model_overrides(monkeypatch):
     observed = {}
     monkeypatch.setenv("ACROSS_AAA_SOURCE_MIRROR_REFRESH", "0")
@@ -616,15 +648,18 @@ def test_autopilot_client_passes_model_overrides(monkeypatch):
         "aaa-autonomous-self-iteration",
         trigger="test",
         model_policy_overrides={
-            "builder": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M3"},
-            "reviewer": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M2.5"},
+            "builder": {"agent_id": "codex", "provider": "local-agent", "model": "codex"},
+            "reviewer": {"agent_id": "codex", "provider": "local-agent", "model": "codex", "require_distinct_from_builder": False},
         },
     )
 
     assert "--model-overrides-json" in observed["args"]
     payload = json.loads(observed["args"][observed["args"].index("--model-overrides-json") + 1])
-    assert payload["builder"]["model"] == "MiniMax-M3"
-    assert payload["reviewer"]["model"] == "MiniMax-M2.5"
+    assert payload["builder"]["agent_id"] == "codex"
+    assert payload["builder"]["model"] == "codex"
+    assert payload["reviewer"]["agent_id"] == "codex"
+    assert payload["reviewer"]["model"] == "codex"
+    assert payload["reviewer"]["require_distinct_from_builder"] is False
     assert observed["timeout"] == 1800
 
 
@@ -658,7 +693,7 @@ def test_loop_engineering_capability_pack_endpoint():
     assert response.status_code == 200
     body = response.json()
     assert body["schema_version"] == "across-aaa-loop-engineering-capability-pack/1.0"
-    assert body["ready_count"] >= 41
+    assert body["ready_count"] >= 43
     ids = {item["id"] for item in body["ready"]}
     assert "runtime_policy_contract" in ids
     assert "capability_preflight" in ids
@@ -680,11 +715,43 @@ def test_loop_engineering_capability_pack_endpoint():
     assert "loop_capability_audit_skill" in ids
     assert "e2e_failure_triage_skill" in ids
     assert "unified_capability_registry" in ids
+    assert "mcp_tool_manifest_endpoint" in ids
+    assert "a2a_capability_card_endpoint" in ids
     assert body["skill_candidate_count"] == 0
     assert "fallback" in body["policy"]
     assert body["policy"]["promotion"].startswith("commit")
     assert body["ai_ready_context"]["schema_version"] == "across-aaa-ai-ready-context/1.0"
     assert body["ai_ready_context"]["policy"]["raw_secrets_excluded"] is True
+
+
+def test_autopilot_tool_manifest_endpoint_exposes_runtime_tools_and_resources():
+    response = TestClient(app).get("/api/autopilot/tool-manifest")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "across-aaa-mcp-tool-manifest/1.0"
+    assert body["policy"]["human_promotion_required"] is True
+    assert body["summary"]["tool_count"] >= 1
+    assert body["summary"]["resource_count"] >= 1
+    resource_uris = {item["uri"] for item in body["resources"]}
+    assert "across://capabilities/continuous_self_iteration_plan" in resource_uris
+    assert "across://capabilities/mcp_tool_manifest_endpoint" in resource_uris
+    assert body["prompts"][0]["name"] == "aaa_autonomous_self_iteration"
+
+
+def test_autopilot_a2a_capability_card_endpoint_exposes_human_gated_agent_card():
+    response = TestClient(app).get("/api/autopilot/a2a/capability-card")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "across-aaa-a2a-capability-card/1.0"
+    assert body["agent"]["id"] == "aaa-autonomous-self-iteration"
+    assert body["protocol_projection"]["endpoints"]["tool_manifest"] == "/api/autopilot/tool-manifest"
+    assert body["safety"]["merge_release_signing_blocked"] is True
+    assert body["summary"]["human_review_required"] is True
+    capability_ids = {item["id"] for item in body["capabilities"]}
+    assert "candidate_workspace" in capability_ids
+    assert "promotion_attestation" in capability_ids
 
 
 def test_agent_interop_e2e_endpoints(monkeypatch):
@@ -1054,6 +1121,62 @@ def test_autopilot_review_decision_rejects_builder_model(monkeypatch):
 
     assert response.status_code == 422
     assert "reviewer model must differ" in response.json()["detail"]
+
+
+def test_autopilot_review_decision_routes_codex_local_agent(monkeypatch):
+    captured = {}
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+            captured["message"] = message
+            captured["target_agent"] = target_agent
+            captured["project_dir"] = project_dir
+            captured["timeout"] = timeout
+            return SimpleNamespace(
+                text=json.dumps({
+                    "status": "passed",
+                    "recommendation": "review",
+                    "merge_recommendation": "open_review_pr",
+                    "product_value_score": 92,
+                    "maintainability_score": 91,
+                    "risk_score": 8,
+                    "blocking_reasons": [],
+                    "human_review_notes": ["human approval is still required before promotion"],
+                }),
+                elapsed_sec=0.01,
+                requires_approval=False,
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/review-decision", json={
+        "goal": "Review a candidate with the local Codex agent",
+        "changed_files": ["across-agents-assistant/backend/src/across_agents_assistant/autopilot_product.py"],
+        "validation": {"status": "passed", "command_count": 2},
+        "builder_model": {"provider": "local-agent", "model": "codex"},
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "require_distinct_from_builder": False,
+            "timeout_ms": 900000,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "local-agent"
+    assert body["model"] == "codex"
+    assert body["merge_recommendation"] == "open_review_pr"
+    assert captured["target_agent"] == "codex"
+    assert captured["project_dir"] is None
+    assert captured["timeout"] == 900.0
+    assert "independent acceptance reviewer" in captured["message"]
 
 
 def test_autopilot_research_decision_selects_catalog_target(monkeypatch, tmp_path):
@@ -2186,6 +2309,77 @@ def test_autopilot_code_iteration_returns_bounded_code_and_test_patches(monkeypa
     assert body["validation_commands"]
 
 
+def test_autopilot_code_iteration_routes_codex_local_agent(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+    captured = {}
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+            captured["message"] = message
+            captured["target_agent"] = target_agent
+            captured["project_dir"] = project_dir
+            captured["timeout"] = timeout
+            return SimpleNamespace(
+                text=(
+                    "OpenAI Codex v0.142.5\n"
+                    "user\n"
+                    "{\"schema_version\":\"request-json-that-must-not-be-parsed\"}\n"
+                    "codex\n"
+                    + json.dumps({
+                        "summary": "Add Codex local-agent proof",
+                        "risk": "low",
+                        "patches": [{
+                            "path": "backend/src/across_agents_assistant/codex_local_agent_probe.py",
+                            "mode": "overwrite",
+                            "content": "CODEX_LOCAL_AGENT_READY = True\n",
+                        }],
+                        "validation_commands": [{
+                            "command": "python3",
+                            "args": ["-m", "py_compile", "backend/src/across_agents_assistant/codex_local_agent_probe.py"],
+                        }],
+                    })
+                    + "\ntokens used\n123\n"
+                ),
+                elapsed_sec=0.01,
+                requires_approval=False,
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Use the local Codex agent for candidate development",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-codex",
+        "run_id": "run-codex",
+        "allowed_patch_paths": ["backend/src/across_agents_assistant/codex_local_agent_probe.py"],
+        "context_files": ["README.md"],
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "direct_patches": True,
+            "timeout_ms": 900000,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "local-agent"
+    assert body["model"] == "codex"
+    assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_local_agent_probe.py"
+    assert captured["target_agent"] == "codex"
+    assert captured["project_dir"] == str(candidate)
+    assert captured["timeout"] == 900.0
+    assert "Return JSON only" in captured["message"]
+
+
 def test_autopilot_code_iteration_accepts_direct_product_patches(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -3252,6 +3446,82 @@ def test_autopilot_code_iteration_validation_fallback_repairs_mcp_tool_manifest(
     assert "ACROSS_MCP_TOOL_DESCRIPTORS" in api_patch["content"]
     assert "test_api_server_registration_marker_is_lightweight" in test_patch["content"]
     assert "import_module(\"across_agents_assistant.api_server\")" not in test_patch["content"]
+
+
+def test_autopilot_code_iteration_validation_fallback_accepts_tool_manifest_alias(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = tmp_path / "source"
+    api_path = source / "backend/src/across_agents_assistant/api_server.py"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text("from fastapi import FastAPI\n\napp = FastAPI()\n", encoding="utf-8")
+
+    class UnexpectedGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("tool manifest alias fallback should not call the model")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnexpectedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Repair AAA MCP tool manifest endpoint",
+        "candidate_workspace": str(candidate),
+        "source_repository": str(source),
+        "candidate_id": "cand-tool-manifest-alias-fallback",
+        "run_id": "run-tool-manifest-alias-fallback",
+        "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+            "backend/src/across_agents_assistant/autopilot_tool_manifest.py",
+            "backend/tests/test_autopilot_tool_manifest.py",
+        ],
+        "context_files": ["backend/src/across_agents_assistant/api_server.py"],
+        "validation_feedback": [
+            {
+                "repo": "across-agents-assistant",
+                "command": "candidate_quality",
+                "args": [],
+                "status": "failed",
+                "stderr": (
+                    "destructive_product_entrypoint_rewrite: "
+                    "backend/src/across_agents_assistant/api_server.py: line 1: destructive rewrite"
+                ),
+                "diagnostic": {"failure_kind": "candidate_quality_failure"},
+            },
+            {
+                "repo": "across-agents-assistant",
+                "command": "python3",
+                "args": ["-m", "py_compile", "backend/tests/test_autopilot_tool_manifest.py"],
+                "status": "failed",
+                "stderr": "SyntaxError: unterminated string literal in test_autopilot_tool_manifest.py",
+                "diagnostic": {"failure_kind": "validation_command_failed"},
+            },
+        ],
+        "model_policy": {
+            "required": True,
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "direct_patches": True,
+            "allow_host_validation_repair_fallback": True,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host_validation_repair_fallback"] is True
+    paths = {patch["path"] for patch in body["patches"]}
+    assert paths == {
+        "backend/src/across_agents_assistant/api_server.py",
+        "backend/src/across_agents_assistant/autopilot_tool_manifest.py",
+        "backend/tests/test_autopilot_tool_manifest.py",
+    }
+    module = next(patch for patch in body["patches"] if patch["path"].endswith("autopilot_tool_manifest.py"))
+    api_patch = next(patch for patch in body["patches"] if patch["path"].endswith("api_server.py"))
+    test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
+    namespace = {}
+    exec(compile(module["content"], module["path"], "exec"), namespace)
+    assert namespace["mcp_tool_manifest_snapshot"]()["summary"]["tool_count"] == 1
+    _assert_marker_upsert(api_patch, "# ACROSS MCP TOOL MANIFEST REGISTRATION START", "# ACROSS MCP TOOL MANIFEST REGISTRATION END")
+    assert "autopilot_tool_manifest" in api_patch["content"]
+    assert "from across_agents_assistant.autopilot_tool_manifest import" in test_patch["content"]
 
 
 def test_autopilot_code_iteration_validation_fallback_repairs_mcp_tool_registry(monkeypatch, tmp_path):

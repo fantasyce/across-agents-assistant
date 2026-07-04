@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.30 - 2026-07-05
+
+### Added
+
+- Added autonomous self-iteration product integration surfaces for Autopilot tool
+  manifests and A2A capability cards so the loop can expose reviewable host
+  contracts without importing producer implementation code.
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.14`, which routes the
+  autonomous self-iteration researcher, builder, and reviewer through local
+  Codex and hardens candidate app lifecycle validation.
+- Live E2E now discovers the managed `~/.across` Orchestrator runtime and no
+  longer falls back to a sibling development checkout.
+
+### Fixed
+
+- Bundled the MCP CLI extra required by PyInstaller collection during candidate
+  app lifecycle validation.
+- Tightened candidate app socket path preflight and LLM status handling so
+  valid candidates are not rejected by host validation plumbing.
+- Strengthened self-iteration prompts against token-shaped fixtures in generated
+  tests and examples.
+
 ## 0.9.29 - 2026-07-04
 
 ### Fixed

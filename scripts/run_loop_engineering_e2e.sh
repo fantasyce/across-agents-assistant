@@ -281,8 +281,8 @@ run_payload = request("POST", "/api/autopilot/runs", {
     "spec": spec_id,
     "trigger": "user-e2e",
     "model_policy_overrides": {
-        "builder": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M3"},
-        "reviewer": {"agent_id": "minimax", "provider": "minimax", "model": "MiniMax-M2.5", "require_distinct_from_builder": True},
+        "builder": {"agent_id": "codex", "provider": "local-agent", "model": "codex"},
+        "reviewer": {"agent_id": "codex", "provider": "local-agent", "model": "codex", "require_distinct_from_builder": False},
     },
 })
 run = run_payload["run"]
@@ -312,11 +312,13 @@ if spec_id == "aaa-autonomous-self-iteration":
     assert reviewer.get("independent") is True, reviewer
     assert reviewer.get("model_backed") is True, reviewer
     separation = reviewer.get("model_separation") or {}
-    assert separation.get("status") == "passed", separation
+    assert separation.get("required") is False, separation
+    assert separation.get("status") == "not_required", separation
     builder_model = (candidate["model"].get("provider"), candidate["model"].get("name"))
     reviewer_model = (reviewer.get("provider"), reviewer.get("model"))
     assert all(builder_model) and all(reviewer_model), {"builder": builder_model, "reviewer": reviewer_model}
-    assert builder_model != reviewer_model, {"builder": builder_model, "reviewer": reviewer_model}
+    assert builder_model == ("local-agent", "codex"), {"builder": builder_model}
+    assert reviewer_model == ("local-agent", "codex"), {"reviewer": reviewer_model}
 assert candidate["self_hosting_probe"]["required"] is True, candidate
 assert candidate["self_hosting_probe"]["status"] == "passed", candidate
 candidate_app_lifecycle = candidate.get("candidate_app_lifecycle") or {}

@@ -266,6 +266,20 @@ READY_CAPABILITIES: tuple[dict[str, Any], ...] = (
         "reusable_by": ["loop_engineering", "agent_routing", "workbench", "plugin_interop"],
     },
     {
+        "id": "mcp_tool_manifest_endpoint",
+        "layer": "Tool",
+        "form": "aaa_api_manifest",
+        "entrypoint": "/api/autopilot/tool-manifest",
+        "reusable_by": ["loop_engineering", "plugin_interop", "independent_review", "human_review"],
+    },
+    {
+        "id": "a2a_capability_card_endpoint",
+        "layer": "Agent Interop",
+        "form": "aaa_api_agent_card",
+        "entrypoint": "/api/autopilot/a2a/capability-card",
+        "reusable_by": ["agent_interop", "loop_engineering", "human_review"],
+    },
+    {
         "id": "registry_health_compatibility",
         "layer": "Tool",
         "form": "aaa_api",
