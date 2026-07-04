@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.32 - 2026-07-05
+
+### Fixed
+
+- Hardened public release-source bootstrap for user machines without local
+  development checkouts by retrying failed clones and falling back to Git
+  HTTP/1.1 when GitHub/proxy HTTP/2 framing errors occur.
+
 ## 0.9.31 - 2026-07-05
 
 ### Changed

@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.32` | Hardens public release-source bootstrap for user machines without development checkouts by retrying failed clones and falling back to Git HTTP/1.1. |
 | `0.9.31` | Removes implicit development-checkout source discovery from self-iteration, bootstraps source mirrors from public release tags, pins Autopilot `v0.2.15`, and finishes Codex defaults for self-repair LoopSpecs. |
 | `0.9.30` | Routes autonomous self-iteration through local Codex, pins Autopilot `v0.2.14`, adds reviewable tool/A2A integration surfaces, and removes development-checkout fallback from Live E2E. |
 | `0.9.29` | Removes exception-object text from the public self-iteration source-mirror status payload while preserving local diagnostics. |
@@ -271,7 +272,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.31` and
+This project is under active development. The current release is `0.9.32` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
