@@ -98,7 +98,7 @@ $PYTHON_BIN -m pip install --quiet \
     "anyio>=4.0.0" \
     "fastapi>=0.138.2" \
     "httpx>=0.28.1" \
-    "mcp>=1.28.1" \
+    "mcp[cli]>=1.28.1" \
     "pydantic>=2.9.0" \
     "starlette>=0.46.0" \
     "uvicorn>=0.49.0"
@@ -115,6 +115,7 @@ required = [
     "mcp",
     "pydantic",
     "starlette",
+    "typer",
     "uvicorn",
 ]
 missing = []

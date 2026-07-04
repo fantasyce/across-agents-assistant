@@ -26,6 +26,9 @@ def test_live_e2e_runner_enables_live_gate_and_legacy_socket_e2e():
     assert "ACROSS_AGENTS_PRE_RELEASE_GATE_RUNNER=\"scripts/run_live_e2e.sh\"" in script
     assert "ACROSS_AGENTS_PRE_RELEASE_GATE_ORCHESTRATOR_COMMAND" in script
     assert 'ORCHESTRATOR_COMMAND="$(cd "$(dirname "$ORCHESTRATOR_COMMAND")" && pwd)/$(basename "$ORCHESTRATOR_COMMAND")"' in script
+    assert '$HOME/.across/bin/across-orchestrator' in script
+    assert '$HOME/.across/plugins/across-orchestrator/venv/bin/across-orchestrator' in script
+    assert '../across-orchestrator' not in script
 
 
 def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
@@ -81,6 +84,7 @@ def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate
     script = _read("scripts/candidate_app_lifecycle.sh")
 
     assert "MAX_SOCKET_BYTES" in script
+    assert 'MAX_SOCKET_BYTES="${MAX_SOCKET_BYTES:-100}"' in script
     assert "cleanup_candidate_processes" in script
     assert "candidate_pids" in script
     assert "plist_set_or_add" in script
@@ -115,13 +119,22 @@ def test_build_app_bundles_candidate_app_lifecycle_helper():
 
     assert 'REQUIREMENTS_FILE="$PROJECT_ROOT/backend/requirements.txt"' in script
     assert "Installing critical backend runtime dependencies" in script
+    assert '"mcp[cli]>=1.28.1"' in script
     assert "Verifying critical backend runtime modules" in script
     assert 'PYTHONPATH= "$PYTHON_BIN"' in script
+    assert '"typer"' in script
     assert '"uvicorn"' in script
     assert '"anyio"' in script
     assert "Contents/Resources/scripts" in script
     assert "scripts/candidate_app_lifecycle.sh" in script
     assert "chmod +x \"$APP_DIR/Contents/Resources/scripts/candidate_app_lifecycle.sh\"" in script
+
+
+def test_backend_requirements_include_mcp_cli_extra_for_pyinstaller_collection():
+    for path in ("backend/requirements.txt", "backend/requirements_no_pyobjc.txt"):
+        requirements = _read(path).splitlines()
+
+        assert any(line.strip().startswith("mcp[cli]>=") for line in requirements), path
 
 
 def test_packaged_backend_dispatches_autopilot_review_cli():
