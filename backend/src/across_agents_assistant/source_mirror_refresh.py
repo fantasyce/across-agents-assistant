@@ -4,10 +4,12 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from . import __version__
 from .paths import component_data_home, ecosystem_home
 
 
@@ -26,6 +28,44 @@ SOURCE_INPUT_ENV = {
     "across-orchestrator": "ACROSS_ORCHESTRATOR_SOURCE_INPUT",
     "across-context": "ACROSS_CONTEXT_SOURCE_INPUT",
     "across-autopilot": "ACROSS_AUTOPILOT_SOURCE_INPUT",
+}
+
+RELEASE_SOURCE_ENV = {
+    "across-agents-assistant": (
+        "ACROSS_AGENTS_ASSISTANT_RELEASE_SOURCE_URL",
+        "ACROSS_AGENTS_ASSISTANT_RELEASE_SOURCE_REF",
+    ),
+    "across-orchestrator": (
+        "ACROSS_ORCHESTRATOR_RELEASE_SOURCE_URL",
+        "ACROSS_ORCHESTRATOR_RELEASE_SOURCE_REF",
+    ),
+    "across-context": (
+        "ACROSS_CONTEXT_RELEASE_SOURCE_URL",
+        "ACROSS_CONTEXT_RELEASE_SOURCE_REF",
+    ),
+    "across-autopilot": (
+        "ACROSS_AUTOPILOT_RELEASE_SOURCE_URL",
+        "ACROSS_AUTOPILOT_RELEASE_SOURCE_REF",
+    ),
+}
+
+DEFAULT_RELEASE_SOURCES = {
+    "across-agents-assistant": {
+        "url": "https://github.com/fantasyce/across-agents-assistant.git",
+        "ref": f"v{__version__}",
+    },
+    "across-orchestrator": {
+        "url": "https://github.com/fantasyce/across-orchestrator.git",
+        "ref": "v0.7.10",
+    },
+    "across-context": {
+        "url": "https://github.com/fantasyce/across-context.git",
+        "ref": "v0.8.8",
+    },
+    "across-autopilot": {
+        "url": "https://github.com/fantasyce/across-autopilot.git",
+        "ref": "v0.2.15",
+    },
 }
 
 CANDIDATE_SOURCE_SPECS = {
@@ -90,9 +130,42 @@ def refresh_source_mirrors(env: Mapping[str, str] | None = None) -> dict[str, An
             "reason": "disabled_by_env",
             "updated_at": _now(),
         }
-    sources = _resolve_source_repos(merged)
+    sources = _resolve_source_repos(merged, strict=False)
+    source_metadata: dict[str, dict[str, Any]] = {}
+    missing = [repo_id for repo_id in REQUIRED_SOURCE_REPOS if repo_id not in sources]
+    if missing and not _has_configured_source_input(merged):
+        existing = source_mirror_status(merged)
+        if existing.get("status") == "passed":
+            return {
+                "schema_version": SOURCE_MIRROR_REFRESH_SCHEMA_VERSION,
+                "status": "passed",
+                "reason": "existing_release_mirrors_current",
+                "updated_at": _now(),
+                "roots": [
+                    {
+                        "schema_version": SOURCE_MIRROR_REFRESH_SCHEMA_VERSION,
+                        "status": "passed",
+                        "root": existing.get("root"),
+                        "manifest_path": existing.get("manifest_path"),
+                        "repos": existing.get("repos", []),
+                    }
+                ],
+                "repo_count": len(REQUIRED_SOURCE_REPOS),
+            }
+    if missing:
+        with tempfile.TemporaryDirectory(prefix="across-source-mirror-") as tmp_dir:
+            cloned, cloned_metadata = _clone_release_sources(missing, merged, Path(tmp_dir))
+            sources = {**sources, **cloned}
+            source_metadata.update(cloned_metadata)
+            roots = _source_mirror_roots(merged)
+            refreshed = [_refresh_root(root, sources, merged, source_metadata) for root in roots]
+            return _refresh_result(refreshed)
     roots = _source_mirror_roots(merged)
-    refreshed = [_refresh_root(root, sources, merged) for root in roots]
+    refreshed = [_refresh_root(root, sources, merged, source_metadata) for root in roots]
+    return _refresh_result(refreshed)
+
+
+def _refresh_result(refreshed: list[dict[str, Any]]) -> dict[str, Any]:
     status = "passed" if all(item.get("status") == "passed" for item in refreshed) else "failed"
     result = {
         "schema_version": SOURCE_MIRROR_REFRESH_SCHEMA_VERSION,
@@ -124,6 +197,7 @@ def source_mirror_status(env: Mapping[str, str] | None = None) -> dict[str, Any]
         source = sources.get(repo_id)
         mirror = root / repo_id
         manifest_repo = manifest_by_id.get(repo_id, {})
+        release_source = _release_source_spec(repo_id, merged)
         current_head = _git(["rev-parse", "HEAD"], source, check=False).strip() if source else None
         current_status = _git(["status", "--short", "--untracked-files=all"], source, check=False).strip() if source else ""
         origin_main = _git(["rev-parse", "origin/main"], source, check=False).strip() if source else None
@@ -136,19 +210,34 @@ def source_mirror_status(env: Mapping[str, str] | None = None) -> dict[str, Any]
         }
         release_aligned = bool(not require_origin or (origin_main and origin_main == current_head) or exact_tag)
         manifest_head = str(manifest_repo.get("source_head") or "").strip() or None
+        manifest_ref = str(manifest_repo.get("source_ref") or "").strip() or None
+        release_ref = str(release_source.get("ref") or "").strip() or None
         mirror_exists = (mirror / ".git").is_dir() or mirror.is_dir()
-        fresh = bool(
-            current_head
-            and manifest_head
-            and current_head == manifest_head
-            and mirror_exists
-            and not current_status
-            and release_aligned
-        )
+        if source:
+            fresh = bool(
+                current_head
+                and manifest_head
+                and current_head == manifest_head
+                and mirror_exists
+                and not current_status
+                and release_aligned
+            )
+        else:
+            fresh = bool(
+                manifest
+                and mirror_exists
+                and manifest_head
+                and manifest_repo.get("source_mode") == "release_source"
+                and manifest_ref
+                and manifest_ref == release_ref
+            )
         repos.append(
             {
                 "id": repo_id,
                 "source": str(source) if source else None,
+                "source_mode": "local_checkout" if source else "release_source",
+                "release_source_url": release_source.get("url"),
+                "release_source_ref": release_ref,
                 "mirror": str(mirror),
                 "mirror_exists": mirror_exists,
                 "source_head": current_head,
@@ -157,11 +246,12 @@ def source_mirror_status(env: Mapping[str, str] | None = None) -> dict[str, Any]
                 "source_exact_tag": exact_tag,
                 "source_release_aligned": release_aligned,
                 "manifest_source_head": manifest_head,
+                "manifest_source_ref": manifest_ref,
                 "version": manifest_repo.get("version"),
                 "fresh": fresh,
             }
         )
-    missing = [item["id"] for item in repos if not item["source"] or not item["mirror_exists"]]
+    missing = [item["id"] for item in repos if not item["mirror_exists"]]
     dirty = [item["id"] for item in repos if item.get("source_status")]
     unaligned = [item["id"] for item in repos if item["source"] and not item.get("source_release_aligned")]
     drifted = [
@@ -173,7 +263,8 @@ def source_mirror_status(env: Mapping[str, str] | None = None) -> dict[str, Any]
         and item.get("manifest_source_head")
         and item["source_head"] != item["manifest_source_head"]
     ]
-    status = "passed" if manifest and not missing and not dirty and not unaligned and not drifted else "failed"
+    stale = [item["id"] for item in repos if item["mirror_exists"] and not item.get("source") and not item.get("fresh")]
+    status = "passed" if manifest and not missing and not dirty and not unaligned and not drifted and not stale else "failed"
     return {
         "schema_version": "across-source-mirror-status/1.0",
         "status": status,
@@ -184,18 +275,25 @@ def source_mirror_status(env: Mapping[str, str] | None = None) -> dict[str, Any]
         "dirty_repos": dirty,
         "unaligned_repos": unaligned,
         "drifted_repos": drifted,
+        "stale_repos": stale,
         "repos": repos,
         "updated_at": _now(),
     }
 
 
-def _refresh_root(root: Path, sources: Mapping[str, Path], env: Mapping[str, str]) -> dict[str, Any]:
+def _refresh_root(
+    root: Path,
+    sources: Mapping[str, Path],
+    env: Mapping[str, str],
+    source_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     root.mkdir(parents=True, exist_ok=True)
     repo_records = []
+    metadata = dict(source_metadata or {})
     for repo_id in REQUIRED_SOURCE_REPOS:
         source = sources[repo_id]
         target = root / repo_id
-        source_record = _inspect_source(repo_id, source, env)
+        source_record = _inspect_source(repo_id, source, env, metadata.get(repo_id))
         _copy_git_snapshot(repo_id, source, target)
         mirror_head = _git(["rev-parse", "HEAD"], target).strip()
         mirror_status = _git(["status", "--short", "--untracked-files=all"], target).strip()
@@ -225,7 +323,13 @@ def _refresh_root(root: Path, sources: Mapping[str, Path], env: Mapping[str, str
     }
 
 
-def _inspect_source(repo_id: str, source: Path, env: Mapping[str, str]) -> dict[str, Any]:
+def _inspect_source(
+    repo_id: str,
+    source: Path,
+    env: Mapping[str, str],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = dict(metadata or {})
     if not (source / ".git").is_dir():
         raise SourceMirrorRefreshError(
             f"Source repo is missing or not a git checkout: {source}",
@@ -261,17 +365,24 @@ def _inspect_source(repo_id: str, source: Path, env: Mapping[str, str]) -> dict[
                 "exact_tag": exact_tag,
             },
         )
-    return {
+    source_mode = str(metadata.get("source_mode") or "local_checkout")
+    source_value = str(metadata.get("source_url") or source)
+    record = {
         "id": repo_id,
-        "source": str(source),
+        "source": source_value,
+        "source_mode": source_mode,
         "source_head": head,
         "source_branch": branch,
         "source_origin_main": origin_main,
         "source_exact_tag": exact_tag,
+        "source_ref": str(metadata.get("source_ref") or exact_tag or branch or head),
         "source_clean": True,
         "source_origin_aligned": origin_aligned,
         "version": _read_version(source),
     }
+    if metadata.get("source_url"):
+        record["source_checkout"] = str(source)
+    return record
 
 
 def _copy_git_snapshot(repo_id: str, source: Path, target: Path) -> None:
@@ -345,6 +456,8 @@ def _source_root(env: Mapping[str, str]) -> Path | None:
     explicit = str(env.get("ACROSS_LOOP_SOURCE_ROOT") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
+    if not _allow_implicit_source_root(env):
+        return None
     home_projects = Path(str(env.get("HOME") or Path.home())).expanduser() / "Documents" / "projects"
     if all((home_projects / repo_id).exists() for repo_id in REQUIRED_SOURCE_REPOS):
         return home_projects.resolve()
@@ -355,6 +468,79 @@ def _source_root(env: Mapping[str, str]) -> Path | None:
     except IndexError:
         return None
     return None
+
+
+def _allow_implicit_source_root(env: Mapping[str, str]) -> bool:
+    return _truthy(env.get("ACROSS_AAA_ALLOW_IMPLICIT_SOURCE_ROOT")) or _truthy(env.get("ACROSS_AGENTS_DEVELOPER_MODE"))
+
+
+def _has_configured_source_input(env: Mapping[str, str]) -> bool:
+    if str(env.get("ACROSS_LOOP_SOURCE_ROOT") or "").strip():
+        return True
+    return any(str(env.get(env_key) or "").strip() for env_key in SOURCE_INPUT_ENV.values())
+
+
+def _clone_release_sources(
+    repo_ids: list[str],
+    env: Mapping[str, str],
+    tmp_root: Path,
+) -> tuple[dict[str, Path], dict[str, dict[str, Any]]]:
+    sources: dict[str, Path] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    for repo_id in repo_ids:
+        spec = _release_source_spec(repo_id, env)
+        url = str(spec.get("url") or "").strip()
+        ref = str(spec.get("ref") or "").strip()
+        if not url or not ref:
+            raise SourceMirrorRefreshError(
+                f"Release source is unavailable: {repo_id}",
+                payload={"repo": repo_id, "reason": "release_source_unavailable", "url": url, "ref": ref},
+            )
+        target = tmp_root / repo_id
+        _git_clone(url, ref, target, repo_id, env)
+        sources[repo_id] = target
+        metadata[repo_id] = {
+            "source_mode": "release_source",
+            "source_url": url,
+            "source_ref": ref,
+        }
+    return sources, metadata
+
+
+def _release_source_spec(repo_id: str, env: Mapping[str, str]) -> dict[str, str]:
+    default = DEFAULT_RELEASE_SOURCES[repo_id]
+    url_env, ref_env = RELEASE_SOURCE_ENV[repo_id]
+    return {
+        "url": str(env.get(url_env) or default["url"]).strip(),
+        "ref": str(env.get(ref_env) or default["ref"]).strip(),
+    }
+
+
+def _git_clone(url: str, ref: str, target: Path, repo_id: str, env: Mapping[str, str]) -> None:
+    timeout = _git_clone_timeout_seconds(env)
+    args = ["clone", "--depth", "1", "--branch", ref, url, str(target)]
+    proc = _run_git(args, Path("/"), timeout=timeout, include_cwd=False)
+    if proc.returncode != 0:
+        raise SourceMirrorRefreshError(
+            f"Could not bootstrap release source: {repo_id}",
+            payload={
+                "repo": repo_id,
+                "reason": "release_source_clone_failed",
+                "url": url,
+                "ref": ref,
+                "stderr": proc.stderr[:2000],
+            },
+        )
+
+
+def _git_clone_timeout_seconds(env: Mapping[str, str]) -> int:
+    raw = str(env.get("ACROSS_AAA_SOURCE_MIRROR_CLONE_TIMEOUT_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(30, min(int(raw), 900))
+        except ValueError:
+            pass
+    return 180
 
 
 def _primary_source_mirror_root(env: Mapping[str, str]) -> Path:
@@ -443,8 +629,8 @@ def _read_version(root: Path) -> str | None:
     return None
 
 
-def _git(args: list[str], cwd: Path, *, check: bool = True) -> str:
-    proc = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+def _git(args: list[str], cwd: Path, *, check: bool = True, timeout: int = 30) -> str:
+    proc = _run_git(args, cwd, timeout=timeout)
     if check and proc.returncode != 0:
         raise SourceMirrorRefreshError(
             f"Git command failed: git -C {cwd} {' '.join(args)}",
@@ -453,6 +639,44 @@ def _git(args: list[str], cwd: Path, *, check: bool = True) -> str:
     if proc.returncode != 0:
         return ""
     return proc.stdout
+
+
+def _run_git(args: list[str], cwd: Path, *, timeout: int, include_cwd: bool = True) -> subprocess.CompletedProcess[str]:
+    command = ["git", "-C", str(cwd), *args] if include_cwd else ["git", *args]
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=_git_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            stdout=exc.stdout if isinstance(exc.stdout, str) else "",
+            stderr=(exc.stderr if isinstance(exc.stderr, str) else "") or f"git command timed out after {timeout}s",
+        )
+
+
+def _git_env() -> dict[str, str]:
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", ""),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+    }
+    for key in ("LANG", "LC_ALL", "LC_CTYPE"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    return env
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _read_json(path: Path) -> dict[str, Any]:

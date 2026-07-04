@@ -196,7 +196,7 @@ class AutopilotClient:
         candidate_app_lifecycle_command = _candidate_app_lifecycle_command()
         if candidate_app_lifecycle_command:
             env.setdefault("ACROSS_AAA_CANDIDATE_APP_LIFECYCLE_COMMAND", json.dumps(candidate_app_lifecycle_command))
-        env.setdefault("ACROSS_AAA_HOST_MODEL_PROVIDER", "minimax")
+        env.setdefault("ACROSS_AAA_HOST_MODEL_PROVIDER", "local-agent")
         env.setdefault("ACROSS_AAA_CANDIDATE_MODEL_LEASE_JSON", json.dumps(_candidate_model_lease_template(), sort_keys=True))
         _scrub_model_secret_env(env)
         _apply_source_mirror_env(env)

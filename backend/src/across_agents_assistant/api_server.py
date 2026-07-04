@@ -8329,12 +8329,13 @@ async def get_autopilot_self_iteration_plan():
         capability_pack = loop_engineering_capability_pack()
     except Exception:
         capability_pack = {}
+    source_mirrors = await asyncio.to_thread(get_source_mirror_status)
     return _sanitize_public_payload(
         build_self_iteration_plan(
             trigger_registry=trigger_registry,
             trigger_queue=trigger_queue,
             capability_pack=capability_pack,
-            source_mirrors=get_source_mirror_status(),
+            source_mirrors=source_mirrors,
         )
     )
 
@@ -8364,12 +8365,13 @@ async def ensure_autopilot_self_iteration_plan(req: AutopilotSelfIterationPlanRe
             trigger_queue = {}
         from .loop_engineering_capability_pack import loop_engineering_capability_pack
 
+        source_mirrors = await asyncio.to_thread(get_source_mirror_status)
         return _sanitize_public_payload(
             build_self_iteration_plan(
                 trigger_registry=trigger_registry,
                 trigger_queue=trigger_queue,
                 capability_pack=loop_engineering_capability_pack(),
-                source_mirrors=get_source_mirror_status(),
+                source_mirrors=source_mirrors,
                 spec=req.spec,
                 trigger_id=req.trigger_id,
             )
