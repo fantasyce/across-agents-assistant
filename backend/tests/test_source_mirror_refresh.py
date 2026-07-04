@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from across_agents_assistant import source_mirror_refresh as source_mirror_refresh_module
 from across_agents_assistant.autopilot_client import AutopilotClient
 from across_agents_assistant.source_mirror_refresh import (
     RELEASE_SOURCE_ENV,
@@ -144,6 +145,30 @@ def test_refresh_source_mirrors_bootstraps_release_sources_without_dev_checkouts
     assert {item["source_mode"] for item in manifest["repos"]} == {"release_source"}
     assert {item["source_ref"] for item in manifest["repos"]} == {"v1.0.0"}
     assert (primary_root / "across-agents-assistant" / "backend" / "pyproject.toml").exists()
+
+
+def test_git_clone_retries_with_http1_fallback_and_cleans_failed_target(tmp_path, monkeypatch):
+    target = tmp_path / "clone"
+    calls = []
+    saw_leftover = []
+
+    def fake_run_git(args, cwd, *, timeout, include_cwd=True):
+        calls.append(list(args))
+        saw_leftover.append((target / "partial").exists())
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "partial").write_text("failed clone residue\n", encoding="utf-8")
+        if len(calls) < 3:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="fatal: Error in the HTTP2 framing layer")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(source_mirror_refresh_module, "_run_git", fake_run_git)
+    monkeypatch.setattr(source_mirror_refresh_module.time, "sleep", lambda _seconds: None)
+
+    source_mirror_refresh_module._git_clone("https://example.invalid/repo.git", "v1.0.0", target, "repo", {})
+
+    assert len(calls) == 3
+    assert calls[2][:3] == ["-c", "http.version=HTTP/1.1", "clone"]
+    assert saw_leftover == [False, False, False]
 
 
 def test_refresh_source_mirrors_blocks_dirty_a_source(tmp_path):

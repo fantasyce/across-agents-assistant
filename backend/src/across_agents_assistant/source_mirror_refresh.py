@@ -518,19 +518,41 @@ def _release_source_spec(repo_id: str, env: Mapping[str, str]) -> dict[str, str]
 
 def _git_clone(url: str, ref: str, target: Path, repo_id: str, env: Mapping[str, str]) -> None:
     timeout = _git_clone_timeout_seconds(env)
-    args = ["clone", "--depth", "1", "--branch", ref, url, str(target)]
-    proc = _run_git(args, Path("/"), timeout=timeout, include_cwd=False)
-    if proc.returncode != 0:
-        raise SourceMirrorRefreshError(
-            f"Could not bootstrap release source: {repo_id}",
-            payload={
-                "repo": repo_id,
-                "reason": "release_source_clone_failed",
-                "url": url,
-                "ref": ref,
+    base_args = ["clone", "--depth", "1", "--branch", ref, url, str(target)]
+    attempts = [
+        ("default", base_args),
+        ("retry", base_args),
+        ("http1_fallback", ["-c", "http.version=HTTP/1.1", *base_args]),
+    ]
+    failures: list[dict[str, Any]] = []
+    for index, (strategy, args) in enumerate(attempts):
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        proc = _run_git(args, Path("/"), timeout=timeout, include_cwd=False)
+        if proc.returncode == 0:
+            return
+        failures.append(
+            {
+                "strategy": strategy,
+                "returncode": proc.returncode,
                 "stderr": proc.stderr[:2000],
-            },
+            }
         )
+        if index + 1 < len(attempts):
+            time.sleep(min(index + 1, 2))
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+    raise SourceMirrorRefreshError(
+        f"Could not bootstrap release source: {repo_id}",
+        payload={
+            "repo": repo_id,
+            "reason": "release_source_clone_failed",
+            "url": url,
+            "ref": ref,
+            "stderr": failures[-1]["stderr"] if failures else "",
+            "attempts": failures,
+        },
+    )
 
 
 def _git_clone_timeout_seconds(env: Mapping[str, str]) -> int:
