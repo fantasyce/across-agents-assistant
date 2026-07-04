@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.31 - 2026-07-05
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.15`, finishing the Codex
+  default migration for platform self-repair and older self-iteration LoopSpecs.
+- AAA self-iteration source mirrors now bootstrap from public release tags when
+  no explicit development source root is configured.
+
+### Fixed
+
+- Stopped default self-iteration status and refresh paths from implicitly
+  probing `~/Documents/projects` development checkouts.
+- Added timeouts around source-mirror Git probes and moved self-iteration plan
+  source-mirror status checks off the API event loop.
+
 ## 0.9.30 - 2026-07-05
 
 ### Added

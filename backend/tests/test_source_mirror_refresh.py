@@ -8,6 +8,7 @@ import pytest
 
 from across_agents_assistant.autopilot_client import AutopilotClient
 from across_agents_assistant.source_mirror_refresh import (
+    RELEASE_SOURCE_ENV,
     REQUIRED_SOURCE_REPOS,
     SourceMirrorRefreshError,
     refresh_source_mirrors,
@@ -41,6 +42,7 @@ def _create_repo(root: Path, repo_id: str, *, version: str = "1.0.0") -> Path:
             "initial",
         ]
     )
+    subprocess.check_call(["git", "-C", str(repo), "tag", "v1.0.0"])
     return repo
 
 
@@ -57,6 +59,19 @@ def _env(tmp_path: Path, source_root: Path) -> dict[str, str]:
         "ACROSS_LOOP_SOURCE_ROOT": str(source_root),
         "ACROSS_AAA_SOURCE_MIRROR_REQUIRE_ORIGIN_MAIN": "0",
     }
+
+
+def _release_source_env(tmp_path: Path, source_root: Path) -> dict[str, str]:
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "ACROSS_HOME": str(tmp_path / "across"),
+        "ACROSS_AAA_SOURCE_MIRROR_REQUIRE_ORIGIN_MAIN": "0",
+    }
+    for repo_id in REQUIRED_SOURCE_REPOS:
+        url_env, ref_env = RELEASE_SOURCE_ENV[repo_id]
+        env[url_env] = str(source_root / repo_id)
+        env[ref_env] = "v1.0.0"
+    return env
 
 
 def test_refresh_source_mirrors_copies_clean_a_sources_and_detects_drift(tmp_path):
@@ -100,6 +115,37 @@ def test_refresh_source_mirrors_copies_clean_a_sources_and_detects_drift(tmp_pat
     assert source_mirror_status(env)["status"] == "passed"
 
 
+def test_source_mirror_status_does_not_implicitly_probe_home_projects(tmp_path):
+    home = tmp_path / "home"
+    projects = home / "Documents" / "projects"
+    for repo_id in REQUIRED_SOURCE_REPOS:
+        _create_repo(projects, repo_id)
+    env = {"HOME": str(home), "ACROSS_HOME": str(tmp_path / "across")}
+
+    status = source_mirror_status(env)
+
+    assert status["status"] == "failed"
+    assert set(status["missing_repos"]) == set(REQUIRED_SOURCE_REPOS)
+    assert all(repo["source"] is None for repo in status["repos"])
+
+
+def test_refresh_source_mirrors_bootstraps_release_sources_without_dev_checkouts(tmp_path):
+    source_root = _create_sources(tmp_path / "release-sources")
+    env = _release_source_env(tmp_path, source_root)
+
+    refreshed = refresh_source_mirrors(env)
+    status = source_mirror_status(env)
+
+    assert refreshed["status"] == "passed"
+    assert status["status"] == "passed"
+    assert status["stale_repos"] == []
+    primary_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
+    manifest = json.loads((primary_root / "manifest.json").read_text(encoding="utf-8"))
+    assert {item["source_mode"] for item in manifest["repos"]} == {"release_source"}
+    assert {item["source_ref"] for item in manifest["repos"]} == {"v1.0.0"}
+    assert (primary_root / "across-agents-assistant" / "backend" / "pyproject.toml").exists()
+
+
 def test_refresh_source_mirrors_blocks_dirty_a_source(tmp_path):
     source_root = _create_sources(tmp_path)
     env = _env(tmp_path, source_root)
@@ -135,6 +181,26 @@ def test_autopilot_client_refreshes_before_candidate_run(tmp_path, monkeypatch):
     mirror_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
     assert Path(calls[0]["env"]["ACROSS_AGENTS_ASSISTANT_SOURCE"]) == mirror_root / "across-agents-assistant"
     assert (mirror_root / "manifest.json").exists()
+
+
+def test_autopilot_client_bootstraps_release_mirrors_before_candidate_run(tmp_path, monkeypatch):
+    source_root = _create_sources(tmp_path / "release-sources")
+    env = _release_source_env(tmp_path, source_root)
+    calls = []
+
+    def fake_cli(args, *, env=None, timeout=60):
+        calls.append({"args": args, "env": dict(env or {}), "timeout": timeout})
+        return {"run": {"run_id": "run-1", "status": "completed"}, "evidence": {}}
+
+    monkeypatch.setattr("across_agents_assistant.autopilot_client.run_autopilot_cli_json", fake_cli)
+
+    result = AutopilotClient(env=env).run("aaa-autonomous-self-iteration")
+
+    assert result["run"]["status"] == "completed"
+    mirror_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
+    assert Path(calls[0]["env"]["ACROSS_AGENTS_ASSISTANT_SOURCE"]) == mirror_root / "across-agents-assistant"
+    manifest = json.loads((mirror_root / "manifest.json").read_text(encoding="utf-8"))
+    assert {item["source_mode"] for item in manifest["repos"]} == {"release_source"}
 
 
 def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, monkeypatch):
