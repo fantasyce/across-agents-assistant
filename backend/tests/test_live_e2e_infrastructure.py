@@ -106,6 +106,9 @@ def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate
     assert "crash_reports_json" in script
     assert "AcrossAgentsAssistant-*.ips" in script
     assert "KEEP_CANDIDATE_APP_RUNNING" in script
+    assert "KEEP_CANDIDATE_APP_BUNDLE" in script
+    assert "cleanup_candidate_app_bundle" in script
+    assert '"app_bundle_retained": pathlib.Path(app_path).exists()' in script
     assert "--env \"ACROSS_HOME=$RUNTIME_HOME\"" in script
     assert "--env \"ACROSS_AGENTS_HOME=$APP_HOME\"" in script
     assert "candidate-model-lease.json" in script

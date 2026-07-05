@@ -12,8 +12,10 @@ APP_HOME=""
 OUTPUT_PATH=""
 ACROSS_HOME="${ACROSS_HOME:-"$HOME/.across"}"
 APP_PATH=""
+APP_PATH_DEFAULTED="0"
 MAX_SOCKET_BYTES="${MAX_SOCKET_BYTES:-100}"
 KEEP_RUNNING="${KEEP_CANDIDATE_APP_RUNNING:-0}"
+KEEP_APP_BUNDLE="${KEEP_CANDIDATE_APP_BUNDLE:-0}"
 CONTEXT_ROOT="${ACROSS_CONTEXT_SOURCE:-"$ROOT_DIR/../across-context"}"
 AUTOPILOT_ROOT="${ACROSS_AUTOPILOT_SOURCE:-"$ROOT_DIR/../across-autopilot"}"
 
@@ -83,6 +85,7 @@ require_candidate_context() {
   fi
   if [[ -z "$APP_PATH" ]]; then
     APP_PATH="$(default_app_path)"
+    APP_PATH_DEFAULTED="1"
   fi
 }
 
@@ -172,6 +175,22 @@ cleanup_candidate_processes() {
       [[ -n "$pid" ]] && kill -9 "$pid" >/dev/null 2>&1 || true
     done <<< "$pids"
   fi
+}
+
+cleanup_candidate_app_bundle() {
+  if [[ "$KEEP_RUNNING" == "1" || "$KEEP_APP_BUNDLE" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$APP_PATH_DEFAULTED" != "1" ]]; then
+    return 0
+  fi
+  local app_root
+  app_root="$ACROSS_HOME/data/across-autopilot/candidate-apps/"
+  case "$APP_PATH" in
+    "$app_root"*)
+      rm -rf "$(dirname "$APP_PATH")"
+      ;;
+  esac
 }
 
 crash_reports_json() {
@@ -321,6 +340,7 @@ payload = {
     "candidate_id": candidate_id,
     "bundle_id": bundle_id,
     "app_path": app_path,
+    "app_bundle_retained": pathlib.Path(app_path).exists(),
     "runtime_home": runtime_home,
     "app_home": app_home,
     "socket_path": socket_path,
@@ -369,6 +389,7 @@ cleanup() {
     cleanup_candidate_processes
     CLEANED_UP="true"
   fi
+  cleanup_candidate_app_bundle
   rm -f "$MARKER" "$HEALTH_FILE" "$LLM_STATUS_FILE"
 }
 trap cleanup EXIT
@@ -382,6 +403,7 @@ if launch_and_probe "$MARKER" "$(socket_path)" "$HEALTH_FILE" "$LLM_STATUS_FILE"
     cleanup_candidate_processes
     CLEANED_UP="true"
   fi
+  cleanup_candidate_app_bundle
   sleep 1
   write_result "passed" "$MARKER" "$HEALTH_JSON" "$LLM_STATUS_JSON" "$CLEANED_UP"
 else
@@ -389,6 +411,7 @@ else
     cleanup_candidate_processes
     CLEANED_UP="true"
   fi
+  cleanup_candidate_app_bundle
   sleep 1
   write_result "failed" "$MARKER" "$HEALTH_JSON" "$LLM_STATUS_JSON" "$CLEANED_UP"
   exit 1

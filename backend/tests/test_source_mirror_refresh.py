@@ -232,12 +232,18 @@ def test_autopilot_client_bootstraps_release_mirrors_before_candidate_run(tmp_pa
     source_root = _create_sources(tmp_path / "release-sources")
     env = _release_source_env(tmp_path, source_root)
     calls = []
+    retention_calls = []
 
     def fake_cli(args, *, env=None, timeout=60):
         calls.append({"args": args, "env": dict(env or {}), "timeout": timeout})
         return {"run": {"run_id": "run-1", "status": "completed"}, "evidence": {}}
 
+    def fake_retention(**kwargs):
+        retention_calls.append(kwargs)
+        return {"status": "applied", "summary": {"deleted_count": 0}}
+
     monkeypatch.setattr("across_agents_assistant.autopilot_client.run_autopilot_cli_json", fake_cli)
+    monkeypatch.setattr("across_agents_assistant.autopilot_client.run_retention", fake_retention)
 
     result = AutopilotClient(env=env).run("aaa-autonomous-self-iteration")
 
@@ -246,12 +252,20 @@ def test_autopilot_client_bootstraps_release_mirrors_before_candidate_run(tmp_pa
     assert Path(calls[0]["env"]["ACROSS_AGENTS_ASSISTANT_SOURCE"]) == mirror_root / "across-agents-assistant"
     manifest = json.loads((mirror_root / "manifest.json").read_text(encoding="utf-8"))
     assert {item["source_mode"] for item in manifest["repos"]} == {"release_source"}
+    assert len(retention_calls) == 1
+    policy = retention_calls[0]["policy"]
+    assert retention_calls[0]["across_home"] == env["ACROSS_HOME"]
+    assert policy.keep_latest == 3
+    assert policy.delete_beyond_keep_latest is True
+    assert policy.include_promotion_ready is False
+    assert policy.include_source_mirrors is False
 
 
 def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, monkeypatch):
     source_root = _create_sources(tmp_path)
     env = _env(tmp_path, source_root)
     calls = []
+    retention_calls = []
 
     def fake_cli(args, *, env=None, timeout=60):
         calls.append(args)
@@ -267,7 +281,12 @@ def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, mo
             }
         return {"status": "completed", "trigger": {"trigger_id": "trg-self"}}
 
+    def fake_retention(**kwargs):
+        retention_calls.append(kwargs)
+        return {"status": "applied", "summary": {"deleted_count": 0}}
+
     monkeypatch.setattr("across_agents_assistant.autopilot_client.run_autopilot_cli_json", fake_cli)
+    monkeypatch.setattr("across_agents_assistant.autopilot_client.run_retention", fake_retention)
 
     result = AutopilotClient(env=env).run_trigger("trg-self")
 
@@ -275,17 +294,47 @@ def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, mo
     assert calls[0][:2] == ["loop", "trigger-queue"]
     assert calls[1][:2] == ["loop", "run-trigger"]
     assert (Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors" / "manifest.json").exists()
+    assert len(retention_calls) == 1
+    assert retention_calls[0]["policy"].prune_trigger_queue is True
 
 
 def test_autopilot_client_does_not_refresh_for_non_candidate_loop(tmp_path, monkeypatch):
     source_root = _create_sources(tmp_path)
     env = _env(tmp_path, source_root)
+    retention_calls = []
 
     def fake_cli(args, *, env=None, timeout=60):
         return {"run": {"run_id": "run-1", "status": "completed"}, "evidence": {}}
 
     monkeypatch.setattr("across_agents_assistant.autopilot_client.run_autopilot_cli_json", fake_cli)
+    monkeypatch.setattr(
+        "across_agents_assistant.autopilot_client.run_retention",
+        lambda **kwargs: retention_calls.append(kwargs),
+    )
 
     AutopilotClient(env=env).run("daily-news-brief")
 
     assert not (Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors" / "manifest.json").exists()
+    assert retention_calls == []
+
+
+def test_candidate_retention_still_runs_when_source_mirror_refresh_is_disabled(tmp_path, monkeypatch):
+    source_root = _create_sources(tmp_path)
+    env = _env(tmp_path, source_root)
+    env["ACROSS_AAA_SOURCE_MIRROR_REFRESH"] = "0"
+    retention_calls = []
+
+    def fake_cli(args, *, env=None, timeout=60):
+        return {"run": {"run_id": "run-1", "spec_id": "aaa-autonomous-self-iteration", "status": "completed"}}
+
+    def fake_retention(**kwargs):
+        retention_calls.append(kwargs)
+        return {"status": "applied", "summary": {"deleted_count": 0}}
+
+    monkeypatch.setattr("across_agents_assistant.autopilot_client.run_autopilot_cli_json", fake_cli)
+    monkeypatch.setattr("across_agents_assistant.autopilot_client.run_retention", fake_retention)
+
+    AutopilotClient(env=env).run("aaa-autonomous-self-iteration")
+
+    assert not (Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors" / "manifest.json").exists()
+    assert len(retention_calls) == 1

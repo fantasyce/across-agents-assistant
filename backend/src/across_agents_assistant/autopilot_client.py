@@ -9,6 +9,7 @@ import sys
 import time
 
 from .llm_gateway.provider_registry import get_default_provider_definitions
+from .loop_engineering_retention import RetentionPolicy, run_retention
 from .paths import backend_socket_path, component_data_home
 from .plugin_runtime import PluginLifecycleError, run_autopilot_cli_json
 from .source_mirror_refresh import refresh_source_mirrors, source_mirror_refresh_required
@@ -44,11 +45,16 @@ class AutopilotClient:
         trigger: str = "aaa-user",
         model_policy_overrides: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        retention_required = self._candidate_retention_required(spec)
         self._refresh_source_mirrors_if_needed(spec)
         args = ["loop", "run", "--spec", _required(spec, "spec"), "--trigger", trigger, "--json"]
         if model_policy_overrides:
             args.extend(["--model-overrides-json", json.dumps(model_policy_overrides, sort_keys=True)])
-        return self._dict(args, timeout=_long_run_timeout_seconds(self.env))
+        try:
+            return self._dict(args, timeout=_long_run_timeout_seconds(self.env))
+        finally:
+            if retention_required:
+                self._run_candidate_retention()
 
     def enqueue_trigger(
         self,
@@ -86,11 +92,19 @@ class AutopilotClient:
         return self._dict(["loop", "trigger-queue", "--json"])
 
     def run_trigger(self, trigger_id: str | None = None) -> dict[str, Any]:
-        self._refresh_source_mirrors_for_trigger(trigger_id)
+        spec = self._queued_trigger_spec(trigger_id)
+        retention_required = self._candidate_retention_required(spec)
+        self._refresh_source_mirrors_if_needed(spec)
         args = ["loop", "run-trigger", "--json"]
         if trigger_id:
             args.extend(["--trigger-id", trigger_id])
-        return self._dict(args, timeout=_long_run_timeout_seconds(self.env))
+        result: dict[str, Any] | None = None
+        try:
+            result = self._dict(args, timeout=_long_run_timeout_seconds(self.env))
+            return result
+        finally:
+            if retention_required or self._candidate_retention_required(_spec_from_run_result(result)):
+                self._run_candidate_retention()
 
     def status(self, run_id: str) -> dict[str, Any]:
         return self._dict(["loop", "status", "--run-id", _required(run_id, "run_id"), "--json"])
@@ -207,6 +221,39 @@ class AutopilotClient:
             env["PYTHONPATH"] = src_root if not existing_pythonpath else f"{src_root}{os.pathsep}{existing_pythonpath}"
         return env
 
+    def _candidate_retention_required(self, spec: Any) -> bool:
+        env = self._runtime_env()
+        if not _candidate_retention_enabled(env):
+            return False
+        probe_env = dict(env)
+        probe_env["ACROSS_AAA_SOURCE_MIRROR_REFRESH"] = "auto"
+        return source_mirror_refresh_required(spec, probe_env)
+
+    def _run_candidate_retention(self) -> dict[str, Any] | None:
+        env = self._runtime_env()
+        if not _candidate_retention_enabled(env):
+            return None
+        try:
+            return run_retention(
+                across_home=env.get("ACROSS_HOME"),
+                runtime_home_root=env.get("ACROSS_CANDIDATE_HOME_ROOT"),
+                policy=RetentionPolicy(
+                    max_age_days=_retention_int(env, "ACROSS_AAA_CANDIDATE_RETENTION_MAX_AGE_DAYS", 7, 1, 365),
+                    keep_latest=_retention_int(env, "ACROSS_AAA_CANDIDATE_RETENTION_KEEP_LATEST", 3, 1, 50),
+                    delete_beyond_keep_latest=_retention_bool(
+                        env,
+                        "ACROSS_AAA_CANDIDATE_RETENTION_DELETE_BEYOND_KEEP_LATEST",
+                        True,
+                    ),
+                    apply=True,
+                    include_promotion_ready=False,
+                    include_source_mirrors=False,
+                    prune_trigger_queue=True,
+                ),
+            )
+        except Exception:
+            return None
+
 
 def _required(value: str, name: str) -> str:
     text = str(value or "").strip()
@@ -225,6 +272,57 @@ def _long_run_timeout_seconds(env: Mapping[str, str] | None = None) -> int:
     except ValueError:
         return _DEFAULT_LONG_RUN_TIMEOUT_SECONDS
     return max(600, min(value, 7200))
+
+
+def _candidate_retention_enabled(env: Mapping[str, str]) -> bool:
+    raw = str(env.get("ACROSS_AAA_CANDIDATE_RETENTION") or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
+def _retention_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = str(env.get(key) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if raw in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _retention_int(env: Mapping[str, str], key: str, default: int, minimum: int, maximum: int) -> int:
+    raw = str(env.get(key) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
+
+
+def _spec_from_run_result(result: Mapping[str, Any] | None) -> Any:
+    if not isinstance(result, Mapping):
+        return None
+    for value in (result.get("spec_id"), result.get("spec")):
+        if value:
+            return value
+    run = result.get("run")
+    if isinstance(run, Mapping):
+        for value in (run.get("spec_id"), run.get("spec")):
+            if value:
+                return value
+    trigger = result.get("trigger")
+    if isinstance(trigger, Mapping):
+        for value in (trigger.get("spec_id"), trigger.get("spec")):
+            if value:
+                return value
+    evidence = result.get("evidence")
+    if isinstance(evidence, Mapping):
+        for value in (evidence.get("spec_id"), evidence.get("spec")):
+            if value:
+                return value
+    return None
 
 
 def _host_model_command() -> list[str]:

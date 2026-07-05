@@ -66,6 +66,53 @@ def test_retention_apply_deletes_only_planned_paths(tmp_path):
     assert result["summary"]["deleted_count"] == 1
 
 
+def test_retention_can_delete_beyond_keep_latest_without_waiting_for_age(tmp_path):
+    across_home = tmp_path / "across"
+    workspaces = across_home / "data" / "across-autopilot" / "candidate-workspaces"
+    apps = across_home / "data" / "across-autopilot" / "candidate-apps"
+    runs = across_home / "data" / "across-autopilot" / "runs"
+    runtime_root = tmp_path / "runtime-homes"
+    _touch(workspaces / "candidate-old", 2)
+    _touch(workspaces / "candidate-new", 1)
+    _touch(apps / "app-old", 2)
+    _touch(apps / "app-new", 1)
+    _touch(runs / "run-promotion-ready", 2)
+    (runs / "run-promotion-ready" / "evidence.json").write_text(
+        json.dumps({"candidate": {"promotion_ready": True}}),
+        encoding="utf-8",
+    )
+    _touch(runs / "run-promotion-ready", 2)
+    _touch(runs / "run-new", 1)
+    _touch(runtime_root / "runtime-old", 2)
+    _touch(runtime_root / "runtime-new", 1)
+
+    result = run_retention(
+        across_home=across_home,
+        runtime_home_root=runtime_root,
+        policy=RetentionPolicy(
+            max_age_days=365,
+            keep_latest=1,
+            delete_beyond_keep_latest=True,
+            apply=True,
+        ),
+    )
+
+    assert result["status"] == "applied"
+    assert not (workspaces / "candidate-old").exists()
+    assert (workspaces / "candidate-new").exists()
+    assert not (apps / "app-old").exists()
+    assert (apps / "app-new").exists()
+    assert (runs / "run-promotion-ready").exists()
+    assert (runs / "run-new").exists()
+    assert not (runtime_root / "runtime-old").exists()
+    assert (runtime_root / "runtime-new").exists()
+    reasons = {(item["category"], item["name"]): item["reason"] for item in result["items"]}
+    assert reasons[("candidate_workspaces", "candidate-old")] == "beyond_keep_latest"
+    assert reasons[("candidate_apps", "app-old")] == "beyond_keep_latest"
+    assert reasons[("runs", "run-promotion-ready")] == "promotion_ready_protected"
+    assert reasons[("candidate_runtime_homes", "runtime-old")] == "beyond_keep_latest"
+
+
 def test_retention_source_mirrors_are_opt_in(tmp_path):
     across_home = tmp_path / "across"
     mirrors = across_home / "data" / "across-autopilot" / "source-mirrors"

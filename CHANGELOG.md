@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.37 - 2026-07-05
+
+### Changed
+
+- Added automatic candidate artifact retention after self-iteration runs:
+  candidate workspaces, candidate app artifacts, candidate runtime homes, and
+  non-promotion-ready run records are pruned down to a small latest set by
+  default.
+- Candidate B app bundles are deleted after lifecycle validation unless the
+  caller explicitly opts in to retaining the bundle or leaving the candidate
+  app running.
+
 ## 0.9.36 - 2026-07-05
 
 ### Changed

@@ -17,6 +17,7 @@ RETENTION_SCHEMA_VERSION = "across-loop-engineering-retention/1.0"
 class RetentionPolicy:
     max_age_days: int = 14
     keep_latest: int = 5
+    delete_beyond_keep_latest: bool = False
     apply: bool = False
     include_promotion_ready: bool = False
     include_source_mirrors: bool = False
@@ -35,7 +36,7 @@ def build_retention_plan(
     policy = policy or RetentionPolicy()
     now = time.time() if now is None else float(now)
     across_root = _across_home(across_home)
-    runtime_root = _runtime_home_root(runtime_home_root)
+    runtime_root = _runtime_home_root(runtime_home_root, across_home=across_root)
     autopilot_data = across_root / "data" / "across-autopilot"
     categories = [
         ("candidate_workspaces", autopilot_data / "candidate-workspaces", "dir"),
@@ -59,6 +60,9 @@ def build_retention_plan(
                 reason = "promotion_ready_protected"
             elif item["path"] in keep_ids:
                 reason = "within_keep_latest"
+            elif policy.delete_beyond_keep_latest:
+                action = "delete"
+                reason = "beyond_keep_latest"
             elif age_days >= policy.max_age_days:
                 action = "delete"
                 reason = "expired"
@@ -86,6 +90,7 @@ def build_retention_plan(
         "policy": {
             "max_age_days": policy.max_age_days,
             "keep_latest": policy.keep_latest,
+            "delete_beyond_keep_latest": policy.delete_beyond_keep_latest,
             "include_promotion_ready": policy.include_promotion_ready,
             "include_source_mirrors": policy.include_source_mirrors,
             "prune_trigger_queue": policy.prune_trigger_queue,
@@ -282,8 +287,12 @@ def _across_home(value: str | Path | None = None) -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def _runtime_home_root(value: str | Path | None = None) -> Path:
-    raw = value or os.environ.get("ACROSS_CANDIDATE_HOME_ROOT") or (Path.home() / ".across" / "c")
+def _runtime_home_root(value: str | Path | None = None, *, across_home: Path | None = None) -> Path:
+    raw = (
+        value
+        or os.environ.get("ACROSS_CANDIDATE_HOME_ROOT")
+        or ((across_home or Path.home() / ".across") / "c")
+    )
     return Path(raw).expanduser().resolve()
 
 
@@ -303,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-home-root")
     parser.add_argument("--max-age-days", type=int, default=14)
     parser.add_argument("--keep-latest", type=int, default=5)
+    parser.add_argument("--delete-beyond-keep-latest", action="store_true")
     parser.add_argument("--include-promotion-ready", action="store_true")
     parser.add_argument("--include-source-mirrors", action="store_true")
     parser.add_argument("--prune-trigger-queue", action="store_true")
@@ -314,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         policy=RetentionPolicy(
             max_age_days=args.max_age_days,
             keep_latest=args.keep_latest,
+            delete_beyond_keep_latest=args.delete_beyond_keep_latest,
             apply=args.apply,
             include_promotion_ready=args.include_promotion_ready,
             include_source_mirrors=args.include_source_mirrors,

@@ -633,6 +633,7 @@ def test_autopilot_host_requests_normalize_null_candidate_model_lease():
 def test_autopilot_client_passes_model_overrides(monkeypatch):
     observed = {}
     monkeypatch.setenv("ACROSS_AAA_SOURCE_MIRROR_REFRESH", "0")
+    monkeypatch.setenv("ACROSS_AAA_CANDIDATE_RETENTION", "0")
 
     def fake_run_autopilot_cli_json(args, env=None, timeout=60):
         observed["args"] = args
