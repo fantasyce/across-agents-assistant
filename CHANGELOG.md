@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.38 - 2026-07-06
+
+### Changed
+
+- Reduced automatic self-iteration candidate retention to the latest two
+  candidate artifact sets by default.
+- Stopped refreshing the legacy `~/.across/source-mirrors` root by default;
+  self-iteration uses the primary Autopilot-managed source mirror under
+  `~/.across/data/across-autopilot/source-mirrors`.
+
 ## 0.9.37 - 2026-07-05
 
 ### Changed
