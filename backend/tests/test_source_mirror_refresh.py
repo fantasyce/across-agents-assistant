@@ -8,7 +8,9 @@ import pytest
 
 from across_agents_assistant import source_mirror_refresh as source_mirror_refresh_module
 from across_agents_assistant.autopilot_client import AutopilotClient
+from across_agents_assistant.plugin_runtime import KNOWN_PLUGINS
 from across_agents_assistant.source_mirror_refresh import (
+    DEFAULT_RELEASE_SOURCES,
     RELEASE_SOURCE_ENV,
     REQUIRED_SOURCE_REPOS,
     SourceMirrorRefreshError,
@@ -73,6 +75,24 @@ def _release_source_env(tmp_path: Path, source_root: Path) -> dict[str, str]:
         env[url_env] = str(source_root / repo_id)
         env[ref_env] = "v1.0.0"
     return env
+
+
+def _git_source_parts(source: str) -> tuple[str, str]:
+    body = source.removeprefix("git+")
+    if "#" in body:
+        url, ref = body.rsplit("#", 1)
+    else:
+        url, ref = body.rsplit("@", 1)
+    return url, ref
+
+
+def test_default_release_sources_match_managed_plugin_pins():
+    plugins = {plugin.plugin_id: plugin for plugin in KNOWN_PLUGINS}
+    for repo_id in ("across-orchestrator", "across-context", "across-autopilot"):
+        plugin = plugins[repo_id]
+        assert plugin.default_install_source
+        url, ref = _git_source_parts(plugin.default_install_source)
+        assert DEFAULT_RELEASE_SOURCES[repo_id] == {"url": url, "ref": ref}
 
 
 def test_refresh_source_mirrors_copies_clean_a_sources_and_detects_drift(tmp_path):
