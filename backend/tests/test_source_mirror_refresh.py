@@ -255,10 +255,35 @@ def test_autopilot_client_bootstraps_release_mirrors_before_candidate_run(tmp_pa
     assert len(retention_calls) == 1
     policy = retention_calls[0]["policy"]
     assert retention_calls[0]["across_home"] == env["ACROSS_HOME"]
-    assert policy.keep_latest == 3
+    assert policy.keep_latest == 2
     assert policy.delete_beyond_keep_latest is True
     assert policy.include_promotion_ready is False
     assert policy.include_source_mirrors is False
+
+
+def test_source_mirror_refresh_does_not_write_legacy_root_by_default(tmp_path):
+    source_root = _create_sources(tmp_path)
+    env = _env(tmp_path, source_root)
+
+    refresh_source_mirrors(env)
+
+    primary_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
+    legacy_root = Path(env["ACROSS_HOME"]) / "source-mirrors"
+    assert (primary_root / "manifest.json").exists()
+    assert not (legacy_root / "manifest.json").exists()
+
+
+def test_source_mirror_refresh_can_still_write_legacy_root_when_explicitly_enabled(tmp_path):
+    source_root = _create_sources(tmp_path)
+    env = _env(tmp_path, source_root)
+    env["ACROSS_AAA_REFRESH_LEGACY_SOURCE_MIRRORS"] = "1"
+
+    refresh_source_mirrors(env)
+
+    primary_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
+    legacy_root = Path(env["ACROSS_HOME"]) / "source-mirrors"
+    assert (primary_root / "manifest.json").exists()
+    assert (legacy_root / "manifest.json").exists()
 
 
 def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, monkeypatch):

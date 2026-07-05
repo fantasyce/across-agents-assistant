@@ -574,7 +574,7 @@ def _primary_source_mirror_root(env: Mapping[str, str]) -> Path:
 
 def _source_mirror_roots(env: Mapping[str, str]) -> list[Path]:
     roots = [_primary_source_mirror_root(env)]
-    if str(env.get("ACROSS_AAA_REFRESH_LEGACY_SOURCE_MIRRORS") or "1").strip().lower() not in {
+    if str(env.get("ACROSS_AAA_REFRESH_LEGACY_SOURCE_MIRRORS") or "0").strip().lower() not in {
         "0",
         "false",
         "no",

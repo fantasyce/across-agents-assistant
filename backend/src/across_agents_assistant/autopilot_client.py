@@ -239,7 +239,7 @@ class AutopilotClient:
                 runtime_home_root=env.get("ACROSS_CANDIDATE_HOME_ROOT"),
                 policy=RetentionPolicy(
                     max_age_days=_retention_int(env, "ACROSS_AAA_CANDIDATE_RETENTION_MAX_AGE_DAYS", 7, 1, 365),
-                    keep_latest=_retention_int(env, "ACROSS_AAA_CANDIDATE_RETENTION_KEEP_LATEST", 3, 1, 50),
+                    keep_latest=_retention_int(env, "ACROSS_AAA_CANDIDATE_RETENTION_KEEP_LATEST", 2, 1, 50),
                     delete_beyond_keep_latest=_retention_bool(
                         env,
                         "ACROSS_AAA_CANDIDATE_RETENTION_DELETE_BEYOND_KEEP_LATEST",

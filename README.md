@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.38` | Keeps only the latest two self-iteration candidate artifact sets by default and stops maintaining the legacy `~/.across/source-mirrors` copy unless explicitly enabled. |
 | `0.9.37` | Adds automatic lifecycle retention for self-iteration B candidates so old workspaces, candidate app artifacts, runtime homes, and failed run records do not accumulate indefinitely. |
 | `0.9.36` | Moves self-iteration candidate app bundles into Autopilot-managed candidate artifacts under `~/.across` instead of leaving B apps in `~/Applications`. |
 | `0.9.35` | Pins Autopilot `v0.2.17` so autonomous self-iteration uses Node-fetchable OpenAI Agents SDK source signals instead of a docs HTML page that Node fetch can receive as 403. |
@@ -277,7 +278,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.37` and
+This project is under active development. The current release is `0.9.38` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
