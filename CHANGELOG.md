@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.35 - 2026-07-05
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default self-iteration
+  release-source mirror to `v0.2.17`, which keeps OpenAI Agents SDK source
+  intake on Node-fetchable official GitHub README sources.
+
 ## 0.9.34 - 2026-07-05
 
 ### Fixed
