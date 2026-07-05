@@ -83,6 +83,11 @@ def test_platform_self_repair_e2e_exercises_router_and_repair_loop():
 def test_candidate_app_lifecycle_enforces_single_instance_cleanup_and_crash_gate():
     script = _read("scripts/candidate_app_lifecycle.sh")
 
+    assert 'ACROSS_HOME="${ACROSS_HOME:-"$HOME/.across"}"' in script
+    assert 'APP_PATH=""' in script
+    assert "data/across-autopilot/candidate-apps/%s/Across Agents Assistant Candidate.app" in script
+    assert 'APP_PATH="$(default_app_path)"' in script
+    assert 'APP_PATH="$HOME/Applications/Across Agents Assistant Candidate.app"' not in script
     assert "MAX_SOCKET_BYTES" in script
     assert 'MAX_SOCKET_BYTES="${MAX_SOCKET_BYTES:-100}"' in script
     assert "cleanup_candidate_processes" in script

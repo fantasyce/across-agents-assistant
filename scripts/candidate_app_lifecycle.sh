@@ -10,7 +10,8 @@ CANDIDATE_ID=""
 RUNTIME_HOME=""
 APP_HOME=""
 OUTPUT_PATH=""
-APP_PATH="$HOME/Applications/Across Agents Assistant Candidate.app"
+ACROSS_HOME="${ACROSS_HOME:-"$HOME/.across"}"
+APP_PATH=""
 MAX_SOCKET_BYTES="${MAX_SOCKET_BYTES:-100}"
 KEEP_RUNNING="${KEEP_CANDIDATE_APP_RUNNING:-0}"
 CONTEXT_ROOT="${ACROSS_CONTEXT_SOURCE:-"$ROOT_DIR/../across-context"}"
@@ -58,6 +59,14 @@ print(value or "candidate")
 PY
 }
 
+bundle_id() {
+  printf 'app.acrossagents.assistant.candidate.%s\n' "$(safe_bundle_suffix "$CANDIDATE_ID")"
+}
+
+default_app_path() {
+  printf '%s/data/across-autopilot/candidate-apps/%s/Across Agents Assistant Candidate.app\n' "$ACROSS_HOME" "$(safe_bundle_suffix "$CANDIDATE_ID")"
+}
+
 require_candidate_context() {
   if [[ -z "$CANDIDATE_REPO" || ! -d "$CANDIDATE_REPO" ]]; then
     echo "--candidate-repo is required and must exist." >&2
@@ -67,15 +76,14 @@ require_candidate_context() {
     CANDIDATE_ID="$(basename "$(cd "$CANDIDATE_REPO/.." && pwd)")"
   fi
   if [[ -z "$RUNTIME_HOME" ]]; then
-    RUNTIME_HOME="$HOME/.across/c/$(safe_bundle_suffix "$CANDIDATE_ID")"
+    RUNTIME_HOME="$ACROSS_HOME/c/$(safe_bundle_suffix "$CANDIDATE_ID")"
   fi
   if [[ -z "$APP_HOME" ]]; then
     APP_HOME="$RUNTIME_HOME/aaa"
   fi
-}
-
-bundle_id() {
-  printf 'app.acrossagents.assistant.candidate.%s\n' "$(safe_bundle_suffix "$CANDIDATE_ID")"
+  if [[ -z "$APP_PATH" ]]; then
+    APP_PATH="$(default_app_path)"
+  fi
 }
 
 plist_set_or_add() {

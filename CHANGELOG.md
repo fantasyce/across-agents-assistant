@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.36 - 2026-07-05
+
+### Changed
+
+- Moved candidate B app lifecycle bundles into Autopilot-managed candidate
+  artifacts under `~/.across/data/across-autopilot/candidate-apps/<candidate_id>/`
+  so autonomous self-iteration keeps one formal A app in `/Applications` while
+  validating B apps in isolated runtime/artifact locations.
+
 ## 0.9.35 - 2026-07-05
 
 ### Changed
