@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.34 - 2026-07-05
+
+### Fixed
+
+- Aligned the default self-iteration release-source mirror for Across Autopilot
+  with the managed plugin pin at `v0.2.16`, so user machines without
+  development checkouts bootstrap tomorrow's candidate workspace from the same
+  released Autopilot build they execute.
+- Added a regression test that keeps managed plugin install pins and default
+  release-source mirror refs synchronized for producer repos.
+
 ## 0.9.33 - 2026-07-05
 
 ### Changed
