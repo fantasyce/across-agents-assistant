@@ -17,13 +17,23 @@ def default_local_agent_workspace() -> Path:
     return app_subdir("workspace")
 
 class LocalAgentReply:
-    def __init__(self, text: str, session_id: Optional[str] = None, elapsed_sec: float = 0.0,
-                 requires_approval: bool = False, approval_request: Optional[dict] = None):
+    def __init__(
+        self,
+        text: str,
+        session_id: Optional[str] = None,
+        elapsed_sec: float = 0.0,
+        requires_approval: bool = False,
+        approval_request: Optional[dict] = None,
+        timed_out: bool = False,
+        error_code: Optional[str] = None,
+    ):
         self.text = text
         self.session_id = session_id
         self.elapsed_sec = elapsed_sec
         self.requires_approval = requires_approval
         self.approval_request = approval_request
+        self.timed_out = timed_out
+        self.error_code = error_code
 
 class UniversalAgentClient:
     def __init__(self, manager: AgentManager):
@@ -148,7 +158,8 @@ class UniversalAgentClient:
             return LocalAgentReply(
                 text=f"本地未找到 {agent_id} 可执行文件，请在菜单栏点击【配置智能体】进行设置。",
                 session_id=session_id,
-                elapsed_sec=time.time() - t0
+                elapsed_sec=time.time() - t0,
+                error_code="agent_not_found",
             )
 
         args_template = config.get("args_template", [])
@@ -376,7 +387,9 @@ class UniversalAgentClient:
             return LocalAgentReply(
                 text=f"抱歉，{agent_id} 执行超时（超过 {agent_timeout:g} 秒），已自动终止。",
                 session_id=session_id,
-                elapsed_sec=elapsed
+                elapsed_sec=elapsed,
+                timed_out=True,
+                error_code="timeout",
             )
         except Exception as e:
             import logging
@@ -386,7 +399,8 @@ class UniversalAgentClient:
             return LocalAgentReply(
                 text=f"抱歉，处理失败或已被取消。无法连接到 {agent_id}。",
                 session_id=session_id,
-                elapsed_sec=time.time() - t0
+                elapsed_sec=time.time() - t0,
+                error_code="execution_failed",
             )
 
         # Parse output based on configured format
@@ -411,7 +425,7 @@ class UniversalAgentClient:
 
             if not msg:
                 msg = f"{agent_id} 执行失败 (exit code: {process.returncode})"
-            return LocalAgentReply(text=msg, session_id=session_id, elapsed_sec=elapsed)
+            return LocalAgentReply(text=msg, session_id=session_id, elapsed_sec=elapsed, error_code="exit_error")
 
         if (not clean or not clean.strip()) and clean_err:
             clean = clean_err
