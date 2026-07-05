@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.36` | Moves self-iteration candidate app bundles into Autopilot-managed candidate artifacts under `~/.across` instead of leaving B apps in `~/Applications`. |
 | `0.9.35` | Pins Autopilot `v0.2.17` so autonomous self-iteration uses Node-fetchable OpenAI Agents SDK source signals instead of a docs HTML page that Node fetch can receive as 403. |
 | `0.9.34` | Aligns the self-iteration release-source mirror with the managed Autopilot `v0.2.16` plugin pin, keeping user-machine candidate workspaces on the same released producer version they execute. |
 | `0.9.33` | Hardens autonomous research-decision timeout handling with structured local Codex fallback diagnostics and pins Autopilot `v0.2.16` for more reliable source intake. |
@@ -275,7 +276,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.35` and
+This project is under active development. The current release is `0.9.36` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
@@ -297,6 +298,9 @@ snapshots, not as editable working copies. Before candidate B workspaces run,
 AAA refreshes those mirrors from clean A checkouts and exposes mirror freshness
 in the self-iteration plan; drifted mirrors block the loop before any candidate
 mutation starts.
+Candidate B app lifecycle checks install temporary app bundles under
+`~/.across/data/across-autopilot/candidate-apps/<candidate_id>/` with isolated
+runtime homes instead of leaving long-lived candidate apps in `~/Applications`.
 
 AAA remains the host UI and policy surface. It uses plugin manifests, wrappers,
 HTTP, CLI, MCP, or host APIs; product code must not import implementation files
