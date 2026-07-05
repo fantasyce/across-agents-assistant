@@ -1843,6 +1843,102 @@ def test_autopilot_research_decision_production_rejects_host_target_fallback(mon
     assert "host target fallback is disabled" in response.json()["detail"]
 
 
+def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    captured = {}
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+            captured["message"] = message
+            captured["target_agent"] = target_agent
+            captured["project_dir"] = project_dir
+            captured["timeout"] = timeout
+            return SimpleNamespace(
+                text="抱歉，codex 执行超时（超过 540 秒），已自动终止。",
+                elapsed_sec=540.0,
+                requires_approval=False,
+                timed_out=True,
+                error_code="timeout",
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose an open autonomous AAA iteration",
+        "candidate_workspace": str(candidate),
+        "sources": [{"id": "architecture-signal", "status": "passed", "result": {"excerpt": "review quality and stable tool packs"}}],
+        "product_context": {"autonomous_loop_state": {"backlog_count": 0}},
+        "target_catalog": [],
+        "target_generation": {
+            "mode": "model_generated",
+            "allow_model_generated_targets": True,
+            "minimum_candidates": 3,
+        },
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "timeout_ms": 600000,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_backed"] is False
+    assert body["provider"] == "local-agent"
+    assert body["model"] == "codex"
+    assert "timed out" in body["fallback_reason"]
+    assert body["selected_target_id"] == "autonomous-research-timeout-recovery"
+    assert len(body["candidate_targets"]) == 3
+    assert body["selected_iteration"]["allowed_patch_paths"][0] == "backend/src/across_agents_assistant/api_server.py"
+    assert body["selected_iteration"]["semantic_review"]["independent_reviewer_required"] is True
+    assert captured["target_agent"] == "codex"
+    assert captured["project_dir"] == str(candidate)
+    assert captured["timeout"] == 540.0
+
+
+def test_autopilot_research_decision_local_agent_missing_returns_structured_failure(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+            return SimpleNamespace(
+                text="本地未找到 codex 可执行文件，请在菜单栏点击【配置智能体】进行设置。",
+                elapsed_sec=0.01,
+                requires_approval=False,
+                error_code="agent_not_found",
+            )
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose an open autonomous AAA iteration",
+        "candidate_workspace": str(candidate),
+        "product_context": {"autonomous_loop_state": {"backlog_count": 0}},
+        "target_generation": {
+            "mode": "model_generated",
+            "allow_model_generated_targets": True,
+            "minimum_candidates": 3,
+        },
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "timeout_ms": 600000,
+        },
+    })
+
+    assert response.status_code == 503
+    assert "executable was not found" in response.json()["detail"]
+
+
 def test_autopilot_research_decision_preserves_autonomous_catalog_metadata(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()

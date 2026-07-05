@@ -43,6 +43,16 @@ def _safe_http_500(operation: str) -> HTTPException:
     return HTTPException(status_code=500, detail=_safe_error_message(operation))
 
 
+class LocalAgentExecutionError(RuntimeError):
+    """Raised when a local CLI agent fails before producing model text."""
+
+    def __init__(self, agent_id: str, code: str, message: str, *, elapsed_sec: Optional[float] = None):
+        super().__init__(message)
+        self.agent_id = agent_id
+        self.code = code
+        self.elapsed_sec = elapsed_sec
+
+
 def _external_orchestrator_http_error(operation: str, exc: "OrchestratorPluginHTTPError") -> HTTPException:
     logger.debug("%s returned HTTP %s from Across Orchestrator", operation, exc.status_code)
     if 400 <= exc.status_code < 500:
@@ -1476,6 +1486,39 @@ def _post_json_to_http_url(base_url: str, path: str, payload: Dict[str, Any], *,
         raise RuntimeError(f"host model lease proxy returned HTTP {exc.code}: {detail}") from exc
 
 
+def _local_agent_timeout_for_scope(requested: Any, scope: str) -> float:
+    try:
+        timeout = float(requested if requested is not None else 600.0)
+    except (TypeError, ValueError):
+        timeout = 600.0
+    if scope == "model.research" and timeout >= 180.0:
+        # Keep a buffer for host-side timeout handling and deterministic fallback.
+        return max(30.0, timeout - 60.0)
+    return timeout
+
+
+def _raise_for_local_agent_infra_error(agent_id: str, reply: Any) -> None:
+    code = str(getattr(reply, "error_code", "") or "").strip()
+    if getattr(reply, "timed_out", False):
+        code = "timeout"
+    if not code:
+        return
+    elapsed = getattr(reply, "elapsed_sec", None)
+    text = str(getattr(reply, "text", "") or "").strip()
+    if code == "timeout":
+        suffix = f" after {float(elapsed):.1f}s" if isinstance(elapsed, (int, float)) else ""
+        message = f"local agent {agent_id} timed out{suffix}"
+    elif code == "agent_not_found":
+        message = f"local agent {agent_id} executable was not found"
+    elif code == "exit_error":
+        message = f"local agent {agent_id} exited before returning model text"
+    else:
+        message = f"local agent {agent_id} failed before returning model text"
+    if text:
+        message = f"{message}: {text[:500]}"
+    raise LocalAgentExecutionError(agent_id, code, message, elapsed_sec=elapsed if isinstance(elapsed, (int, float)) else None)
+
+
 async def _chat_with_model_capability(
     *,
     message: str,
@@ -1490,6 +1533,7 @@ async def _chat_with_model_capability(
 ) -> LLMResponse:
     normalized_agent_id = normalize_agent_id(agent_id) if agent_id else None
     if normalized_agent_id in LOCAL_CLI_AGENT_IDS:
+        local_timeout = _local_agent_timeout_for_scope(kwargs.get("timeout", 600.0), scope)
         prompt_parts = []
         if system_prompt:
             prompt_parts.extend(["System instructions:", system_prompt.strip(), ""])
@@ -1499,10 +1543,11 @@ async def _chat_with_model_capability(
             "\n".join(prompt_parts),
             target_agent=normalized_agent_id,
             project_dir=project_dir,
-            timeout=float(kwargs.get("timeout", 600.0)),
+            timeout=local_timeout,
         )
         if getattr(reply, "requires_approval", False):
             raise RuntimeError(f"local agent {normalized_agent_id} requires interactive approval")
+        _raise_for_local_agent_infra_error(normalized_agent_id, reply)
         text = _normalize_local_agent_model_text(normalized_agent_id, str(getattr(reply, "text", "") or ""))
         return LLMResponse(
             text=text,
@@ -2928,6 +2973,137 @@ def _autopilot_research_allows_host_fallback(req: AutopilotResearchDecisionReque
     )
 
 
+def _autopilot_research_allows_timeout_fallback(
+    req: AutopilotResearchDecisionRequest,
+    *,
+    policy: Dict[str, Any],
+    agent_id: Optional[str],
+) -> bool:
+    if policy.get("allow_research_timeout_fallback") is False:
+        return False
+    if not req.target_catalog and not _autopilot_research_allows_generated_targets(req):
+        return False
+    if policy.get("allow_research_timeout_fallback") is True:
+        return True
+    normalized_agent_id = normalize_agent_id(agent_id) if agent_id else None
+    autonomous = isinstance(req.product_context.get("autonomous_loop_state"), dict)
+    return bool(autonomous and normalized_agent_id in LOCAL_CLI_AGENT_IDS)
+
+
+def _autopilot_research_source_refs(req: AutopilotResearchDecisionRequest) -> List[str]:
+    refs: List[str] = []
+    for source in req.sources[:12]:
+        if not isinstance(source, dict):
+            continue
+        status = str(source.get("status") or "").strip().lower()
+        source_id = str(source.get("id") or source.get("title") or "").strip()
+        if source_id and status != "failed" and source_id not in refs:
+            refs.append(source_id[:160])
+    return refs[:6]
+
+
+def _autopilot_host_fallback_research_targets(req: AutopilotResearchDecisionRequest) -> List[Dict[str, Any]]:
+    if req.target_catalog:
+        return req.target_catalog
+    source_refs = _autopilot_research_source_refs(req)
+    semantic_review = {
+        "require_model_backed": True,
+        "require_selected_target_change": True,
+        "reject_self_proof_only": True,
+        "independent_reviewer_required": True,
+        "minimum_validation_commands": 2,
+    }
+    templates = [
+        {
+            "id": "autonomous-research-timeout-recovery",
+            "summary": "Harden autonomous research-decision timeout recovery.",
+            "goal": "Add product-integrated diagnostics and timeout recovery evidence for autonomous research decisions so stalled local agents do not leave opaque failed runs.",
+            "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/api_server.py",
+                "backend/src/across_agents_assistant/autopilot_research_timeout_recovery.py",
+                "backend/tests/test_autopilot_research_timeout_recovery.py",
+            ],
+            "tool_packs": ["source_research_digest", "candidate_workspace", "validation_harness", "independent_review"],
+        },
+        {
+            "id": "autonomous-source-signal-hardening",
+            "summary": "Improve source-signal handling for autonomous iteration.",
+            "goal": "Add a product-integrated source-signal quality summary that keeps unavailable external sources visible without blocking candidate selection.",
+            "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/autopilot_workbench.py",
+                "backend/src/across_agents_assistant/autopilot_source_signal_summary.py",
+                "backend/tests/test_autopilot_source_signal_summary.py",
+            ],
+            "tool_packs": ["source_research_digest", "validation_harness"],
+        },
+        {
+            "id": "autonomous-candidate-quality-evidence",
+            "summary": "Strengthen candidate quality evidence before promotion review.",
+            "goal": "Add a product-integrated helper that summarizes candidate evidence quality across research support, selected target changes, and validation coverage.",
+            "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+                "backend/src/across_agents_assistant/autopilot_candidate_quality_evidence.py",
+                "backend/tests/test_autopilot_candidate_quality_evidence.py",
+            ],
+            "tool_packs": ["candidate_workspace", "validation_harness", "independent_review"],
+        },
+        {
+            "id": "autonomous-tool-pack-routing-evidence",
+            "summary": "Expose Tool Pack routing evidence for autonomous runs.",
+            "goal": "Add product-integrated evidence that records which deterministic Tool Packs shaped an autonomous candidate target and why.",
+            "allowed_patch_paths": [
+                "backend/src/across_agents_assistant/unified_capability_registry.py",
+                "backend/src/across_agents_assistant/autopilot_tool_pack_routing_evidence.py",
+                "backend/tests/test_autopilot_tool_pack_routing_evidence.py",
+            ],
+            "tool_packs": ["candidate_workspace", "validation_harness", "source_research_digest"],
+        },
+    ]
+    count = _autopilot_research_minimum_candidates(req)
+    targets: List[Dict[str, Any]] = []
+    for index in range(count):
+        template = dict(templates[index % len(templates)])
+        if index >= len(templates):
+            template["id"] = f"{template['id']}-{index + 1}"
+        paths = [str(path) for path in template["allowed_patch_paths"]]
+        target = {
+            **template,
+            "target_repo": "across-agents-assistant",
+            "validation_commands": _default_research_validation_commands(paths, repo="across-agents-assistant"),
+            "semantic_review": semantic_review,
+            "source_refs": source_refs,
+            "generated_from": "host_timeout_fallback",
+            "risk": "low",
+            "score": max(1, 100 - index),
+        }
+        targets.append(target)
+    return targets
+
+
+def _autopilot_research_host_fallback_decision(
+    req: AutopilotResearchDecisionRequest,
+    *,
+    reason: str,
+) -> Dict[str, Any]:
+    targets = _autopilot_host_fallback_research_targets(req)
+    selected = targets[0] if targets else {}
+    fallback = {
+        "summary": "Use a safe timeout-recovery target for autonomous self-iteration.",
+        "rationale": (
+            "The local research agent did not return in time. The host selected a bounded, "
+            "product-integrated target so the loop can continue through candidate validation "
+            "and human review instead of failing without reviewable output. "
+            f"Failure reason: {reason[:500]}"
+        ),
+        "decision": "implement",
+        "selected_target_id": str(selected.get("id") or selected.get("target_id") or ""),
+        "candidate_targets": targets,
+        "selected_iteration": selected,
+        "rejected_directions": ["unbounded_retry", "silent_timeout_failure"],
+    }
+    return _normalize_research_decision(fallback, req)
+
+
 def _autopilot_target_id(value: Any, *, default: str) -> str:
     text = re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-._")
     return text[:80] or default
@@ -3263,7 +3439,7 @@ async def _autopilot_research_decision_chat(
     temperature: float,
     max_tokens: int,
     timeout_seconds: float,
-) -> Tuple[Any, Dict[str, Any], bool]:
+) -> Tuple[Any, Dict[str, Any], bool, bool, Optional[str]]:
     response = await _chat_with_model_capability(
         message=_autopilot_research_user_prompt(req),
         system_prompt=_autopilot_research_system_prompt(req),
@@ -3279,7 +3455,7 @@ async def _autopilot_research_decision_chat(
     )
     try:
         decision = _normalize_research_decision(_extract_json_object(response.text), req)
-        return response, decision, False
+        return response, decision, False, True, None
     except Exception as first_error:
         repair_errors: List[str] = [str(first_error)]
         repair_seed = response.text
@@ -3300,7 +3476,7 @@ async def _autopilot_research_decision_chat(
             )
             try:
                 decision = _normalize_research_decision(_extract_json_object(repair_response.text), req)
-                return repair_response, decision, True
+                return repair_response, decision, True, True, None
             except Exception as repair_error:
                 repair_errors.append(str(repair_error))
                 repair_seed = repair_response.text
@@ -3310,46 +3486,48 @@ async def _autopilot_research_decision_chat(
                 "for autonomous production loops. Enable model_policy.allow_host_target_fallback only for "
                 f"conformance fixtures. Validation errors: {' | '.join(repair_errors[-3:])}"
             ) from first_error
-        fallback_targets = req.target_catalog
-        if _autopilot_research_allows_generated_targets(req) and not fallback_targets:
-            fallback_targets = [
-                {
-                    "id": "autonomous-review-quality",
-                    "target_repo": "across-agents-assistant",
-                    "summary": "Add a bounded autonomous review-quality helper for candidate promotion evidence.",
-                    "goal": "Implement a small helper that scores whether candidate evidence has research support, product-source changes, and validation coverage.",
-                    "allowed_patch_paths": [
-                        "backend/src/across_agents_assistant/autopilot_autonomous_review_quality.py",
-                        "backend/tests/test_autopilot_autonomous_review_quality.py",
-                    ],
-                    "tool_packs": ["candidate_workspace", "validation_harness", "independent_review"],
-                    "generated_from": "host_fallback",
-                    "risk": "low",
-                },
-                {
-                    "id": "autonomous-source-signal-summary",
-                    "target_repo": "across-agents-assistant",
-                    "summary": "Add a bounded source-signal summary helper for autonomous backlog review.",
-                    "goal": "Implement a helper that summarizes source signal quality before backlog admission.",
-                    "allowed_patch_paths": [
-                        "backend/src/across_agents_assistant/autopilot_source_signal_summary.py",
-                        "backend/tests/test_autopilot_source_signal_summary.py",
-                    ],
-                    "tool_packs": ["source_research_digest", "validation_harness"],
-                    "generated_from": "host_fallback",
-                    "risk": "low",
-                },
-            ]
-        fallback = {
-            "summary": "Use the safest research-driven target to improve candidate review quality.",
-            "rationale": "The model output could not be parsed, so the host selected the safest admitted target.",
-            "decision": "implement",
-            "selected_target_id": str((fallback_targets[0] if fallback_targets else {}).get("id") or ""),
-            "candidate_targets": fallback_targets,
-            "rejected_directions": ["unparseable_model_output"],
-        }
-        decision = _normalize_research_decision(fallback, req)
-        return response, decision, True
+        decision = _autopilot_research_host_fallback_decision(
+            req,
+            reason="Model research decision remained invalid after repair: " + " | ".join(repair_errors[-3:]),
+        )
+        return response, decision, True, False, "invalid_model_output_host_fallback"
+
+
+def _autopilot_research_response_payload(
+    req: AutopilotResearchDecisionRequest,
+    decision: Dict[str, Any],
+    *,
+    response: Any,
+    repaired: bool,
+    model_backed: bool,
+    fallback_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    clean = {
+        "summary": decision["summary"],
+        "rationale": decision["rationale"],
+        "decision": decision["decision"],
+        "selected_target_id": decision["selected_target_id"],
+        "candidate_targets": decision.get("candidate_targets") or [],
+        "selected_iteration": decision["selected_iteration"],
+        "rejected_directions": decision["rejected_directions"],
+    }
+    decision_json = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+    payload = {
+        **decision,
+        "model_backed": bool(model_backed),
+        "provider": getattr(response, "provider", None),
+        "model": getattr(response, "model", None),
+        "finish_reason": getattr(response, "finish_reason", None),
+        "usage": getattr(response, "usage", None),
+        "repaired_json": repaired,
+        "decision_hash": hashlib.sha256(decision_json.encode("utf-8")).hexdigest(),
+        "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
+        "source_count": len(req.sources),
+        "source_ids": [str(source.get("id") or "") for source in req.sources[:20]],
+    }
+    if fallback_reason:
+        payload["fallback_reason"] = str(fallback_reason)[:1000]
+    return payload
 
 
 @app.post("/api/autopilot/research-decision")
@@ -3363,38 +3541,50 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
         timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
-        response, decision, repaired = await _autopilot_research_decision_chat(
+        try:
+            response, decision, repaired, model_backed, fallback_reason = await _autopilot_research_decision_chat(
+                req,
+                provider_id=str(provider_id) if provider_id else None,
+                model_id=str(model_id) if model_id else None,
+                agent_id=str(agent_id) if agent_id else None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+            )
+        except LocalAgentExecutionError as exc:
+            if exc.code == "timeout" and _autopilot_research_allows_timeout_fallback(
+                req,
+                policy=policy,
+                agent_id=str(agent_id) if agent_id else None,
+            ):
+                logger.warning("Autopilot research local agent timed out; using host timeout fallback: %s", exc)
+                decision = _autopilot_research_host_fallback_decision(req, reason=str(exc))
+                response = LLMResponse(
+                    text="",
+                    raw={"error_code": exc.code, "elapsed_sec": exc.elapsed_sec},
+                    model=str(model_id or agent_id or "local-agent"),
+                    provider=str(provider_id or "local-agent"),
+                    finish_reason="timeout_fallback",
+                    usage=None,
+                )
+                return _autopilot_research_response_payload(
+                    req,
+                    decision,
+                    response=response,
+                    repaired=False,
+                    model_backed=False,
+                    fallback_reason=str(exc),
+                )
+            status_code = 504 if exc.code == "timeout" else 503
+            raise HTTPException(status_code=status_code, detail=_sanitize_public_error_text(str(exc)))
+        return _autopilot_research_response_payload(
             req,
-            provider_id=str(provider_id) if provider_id else None,
-            model_id=str(model_id) if model_id else None,
-            agent_id=str(agent_id) if agent_id else None,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout_seconds=timeout_seconds,
+            decision,
+            response=response,
+            repaired=repaired,
+            model_backed=model_backed,
+            fallback_reason=fallback_reason,
         )
-        clean = {
-            "summary": decision["summary"],
-            "rationale": decision["rationale"],
-            "decision": decision["decision"],
-            "selected_target_id": decision["selected_target_id"],
-            "candidate_targets": decision.get("candidate_targets") or [],
-            "selected_iteration": decision["selected_iteration"],
-            "rejected_directions": decision["rejected_directions"],
-        }
-        decision_json = json.dumps(clean, ensure_ascii=False, sort_keys=True)
-        return {
-            **decision,
-            "model_backed": True,
-            "provider": response.provider,
-            "model": response.model,
-            "finish_reason": response.finish_reason,
-            "usage": response.usage,
-            "repaired_json": repaired,
-            "decision_hash": hashlib.sha256(decision_json.encode("utf-8")).hexdigest(),
-            "candidate_model_lease": _public_request_model_lease(req.candidate_model_lease),
-            "source_count": len(req.sources),
-            "source_ids": [str(source.get("id") or "") for source in req.sources[:20]],
-        }
     except HTTPException:
         raise
     except ValueError as exc:

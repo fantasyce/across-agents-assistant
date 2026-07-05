@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.33 - 2026-07-05
+
+### Changed
+
+- Updated the managed Across Autopilot pin to `v0.2.16`, which hardens
+  autonomous self-iteration source intake with URL retries, longer source
+  timeouts, fallback URLs, and raw Agent2Agent README content.
+
+### Fixed
+
+- Added structured local Codex timeout handling for autonomous research
+  decisions so stalled strategy selection can fall back to bounded,
+  product-integrated candidate targets instead of failing without reviewable
+  output.
+- Added research-decision child-process JSONL diagnostics so future timeouts
+  preserve start/completion/failure events in local AAA logs and Autopilot
+  stderr evidence.
+
 ## 0.9.32 - 2026-07-05
 
 ### Fixed
