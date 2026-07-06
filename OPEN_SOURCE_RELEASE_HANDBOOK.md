@@ -182,6 +182,7 @@ PYTHONPATH=backend/src <python> -m pytest backend/tests --ignore=backend/tests/e
 bash scripts/verify_swift_package_lock.sh
 swift build --package-path macOS-Client --skip-update
 swift test --package-path macOS-Client --skip-update
+bash scripts/build_and_run.sh
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=/path/to/across-orchestrator \
 ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e-release.XXXXXX)" \
   PYTHON=<python> bash scripts/run_live_e2e.sh all
@@ -189,6 +190,10 @@ ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e-release.XXXX
 
 Use a temporary Python virtual environment when the machine's persistent
 environment is not the intended release baseline.
+
+For AAA, `scripts/build_and_run.sh` is the canonical local packaged-app
+verification path. It refreshes `/Applications/Across Agents Assistant.app` and
+must not leave a duplicate long-lived app copy in `~/Applications`.
 
 ## Release PR
 
@@ -282,6 +287,17 @@ Expected state:
 - open issue list is empty or contains only intentionally deferred work
 - CodeQL open alert count is zero after the default-branch Security workflow
   has completed
+
+For AAA post-release verification, also confirm the locally installed app is the
+fresh formal A app:
+
+```bash
+/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  "/Applications/Across Agents Assistant.app/Contents/Info.plist"
+pgrep -fl "Across Agents Assistant|across-agents-backend"
+```
+
+Do not use `~/Applications/Across Agents Assistant.app` as a release target.
 
 To confirm all version tags are on the current `main` history:
 

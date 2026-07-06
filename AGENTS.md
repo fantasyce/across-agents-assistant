@@ -58,12 +58,22 @@ ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e.XXXXXX)" \
   product entrypoints.
 - Keep docs under `docs/` as internal local notes unless the release policy is
   intentionally changed.
+- The formal local packaged app is `/Applications/Across Agents Assistant.app`.
+  Use `bash scripts/build_and_run.sh` to refresh it; do not create or rely on
+  duplicate long-lived AAA app copies under `~/Applications`.
+- Self-iteration B app bundles are temporary candidate artifacts under
+  `~/.across/data/across-autopilot/candidate-apps/<candidate_id>/`, not local
+  installed apps. They may be promoted only through a reviewed formal
+  release/install path.
 
 ## Boundary Rules
 
 - Do not make AAA import implementation files from development checkouts of
   Autopilot, Orchestrator, or Context.
 - Product runtime paths must stay under `~/.across`.
+- The primary source mirror root is
+  `~/.across/data/across-autopilot/source-mirrors`; legacy
+  `~/.across/source-mirrors` compatibility must remain opt-in.
 - Keep model credentials, raw approvals, and UI permission decisions with the
   host.
 - Do not store raw secrets or full transcripts as long-term memory.
