@@ -1491,10 +1491,20 @@ def _local_agent_timeout_for_scope(requested: Any, scope: str) -> float:
         timeout = float(requested if requested is not None else 600.0)
     except (TypeError, ValueError):
         timeout = 600.0
-    if scope == "model.research" and timeout >= 180.0:
+    if scope in {"model.research", "model.code_patch", "model.review"} and timeout >= 180.0:
         # Keep a buffer for host-side timeout handling and deterministic fallback.
         return max(30.0, timeout - 60.0)
     return timeout
+
+
+def _local_agent_model_override(agent_id: str, model: Any) -> Optional[str]:
+    text = str(model or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower in {"auto", "local-agent", agent_id.lower()}:
+        return None
+    return text
 
 
 def _raise_for_local_agent_infra_error(agent_id: str, reply: Any) -> None:
@@ -1544,6 +1554,7 @@ async def _chat_with_model_capability(
             target_agent=normalized_agent_id,
             project_dir=project_dir,
             timeout=local_timeout,
+            model=_local_agent_model_override(normalized_agent_id, model),
         )
         if getattr(reply, "requires_approval", False):
             raise RuntimeError(f"local agent {normalized_agent_id} requires interactive approval")
@@ -7893,6 +7904,10 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
         }
     except HTTPException:
         raise
+    except LocalAgentExecutionError as exc:
+        status_code = 504 if exc.code == "timeout" else 503
+        detail = f"Autopilot code iteration local agent failed: {_sanitize_public_error_text(str(exc))}"
+        raise HTTPException(status_code=status_code, detail=detail)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
@@ -7936,7 +7951,7 @@ async def _run_code_iteration_with_model_fallbacks(
                 _sanitize_public_error_text(exc),
             )
             continue
-    if isinstance(last_error, ValueError):
+    if isinstance(last_error, (ValueError, LocalAgentExecutionError)):
         raise last_error
     raise RuntimeError(f"All Autopilot code iteration model candidates failed: {last_error}")
 

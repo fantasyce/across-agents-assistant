@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.39 - 2026-07-06
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default self-iteration
+  release-source mirror to `v0.2.18`, which preserves fallback model policy and
+  routes host local-agent timeouts into platform self-repair.
+- Documented `/Applications/Across Agents Assistant.app` as the canonical local
+  packaged app target for development and release validation.
+
+### Fixed
+
+- Passed local Codex fallback model overrides into the universal local-agent
+  client during autonomous code iteration.
+- Returned structured HTTP 504/503 failures for local-agent code-iteration
+  timeout and infrastructure errors so Autopilot can classify and repair the
+  platform gap instead of losing the failure behind an outer timeout.
+
 ## 0.9.38 - 2026-07-06
 
 ### Changed

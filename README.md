@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.39` | Pins Autopilot `v0.2.18`, applies local Codex fallback model overrides during self-iteration, and returns structured local-agent timeout failures for platform self-repair. |
 | `0.9.38` | Keeps only the latest two self-iteration candidate artifact sets by default and stops maintaining the legacy `~/.across/source-mirrors` copy unless explicitly enabled. |
 | `0.9.37` | Adds automatic lifecycle retention for self-iteration B candidates so old workspaces, candidate app artifacts, runtime homes, and failed run records do not accumulate indefinitely. |
 | `0.9.36` | Moves self-iteration candidate app bundles into Autopilot-managed candidate artifacts under `~/.across` instead of leaving B apps in `~/Applications`. |
@@ -278,14 +279,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.38` and
+This project is under active development. The current release is `0.9.39` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.17`
+- Across Autopilot `v0.2.18`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
@@ -295,14 +296,22 @@ an already configured daily scheduler on startup, dispatches the default
 self-iteration trigger at `10:00` in `Asia/Shanghai`, and validates candidates
 through managed plugin runtimes under `~/.across`.
 
-Autonomous Product Iteration uses `~/.across` source mirrors as controlled
-snapshots, not as editable working copies. Before candidate B workspaces run,
-AAA refreshes those mirrors from clean A checkouts and exposes mirror freshness
-in the self-iteration plan; drifted mirrors block the loop before any candidate
-mutation starts.
-Candidate B app lifecycle checks install temporary app bundles under
+Autonomous Product Iteration uses
+`~/.across/data/across-autopilot/source-mirrors` as the primary source-mirror
+root for controlled snapshots, not as editable working copies. The legacy
+`~/.across/source-mirrors` root is not maintained unless explicitly enabled for
+compatibility. Before candidate B workspaces run, AAA refreshes source mirrors
+from clean A checkouts and exposes mirror freshness in the self-iteration plan;
+drifted mirrors block the loop before any candidate mutation starts.
+
+The formal local A app is `/Applications/Across Agents Assistant.app`. Local
+development and release validation should refresh that app through
+`bash scripts/build_and_run.sh`; do not keep duplicate long-lived AAA app copies
+in `~/Applications`. Candidate B app lifecycle checks install temporary app
+bundles under
 `~/.across/data/across-autopilot/candidate-apps/<candidate_id>/` with isolated
-runtime homes instead of leaving long-lived candidate apps in `~/Applications`.
+runtime homes. Candidate workspaces and app artifacts are lifecycle-managed, with
+only the latest two candidate artifact sets retained by default.
 
 AAA remains the host UI and policy surface. It uses plugin manifests, wrappers,
 HTTP, CLI, MCP, or host APIs; product code must not import implementation files
@@ -327,7 +336,17 @@ git clone git@github.com:fantasyce/across-agents-assistant.git
 cd across-agents-assistant
 ```
 
-Build the local macOS app bundle:
+Build and launch the current local macOS app:
+
+```bash
+bash scripts/build_and_run.sh
+```
+
+This stops old AAA app/backend processes, builds the app bundle, installs the
+fresh bundle to `/Applications/Across Agents Assistant.app`, and opens that app.
+This is the canonical path for local development and release validation.
+
+For build-only troubleshooting, build the local macOS app bundle:
 
 ```bash
 bash build_app.sh
@@ -343,14 +362,6 @@ Open the app from the generated bundle:
 
 ```bash
 open -n "build/Across Agents Assistant.app"
-```
-
-Optional: install the locally built app into Applications:
-
-```bash
-rm -rf "/Applications/Across Agents Assistant.app"
-ditto "build/Across Agents Assistant.app" "/Applications/Across Agents Assistant.app"
-open -n "/Applications/Across Agents Assistant.app"
 ```
 
 On first launch:
@@ -458,7 +469,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.17
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.18
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8

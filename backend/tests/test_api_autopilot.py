@@ -1176,7 +1176,7 @@ def test_autopilot_review_decision_routes_codex_local_agent(monkeypatch):
     assert body["merge_recommendation"] == "open_review_pr"
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] is None
-    assert captured["timeout"] == 900.0
+    assert captured["timeout"] == 840.0
     assert "independent acceptance reviewer" in captured["message"]
 
 
@@ -2413,11 +2413,12 @@ def test_autopilot_code_iteration_routes_codex_local_agent(monkeypatch, tmp_path
     captured = {}
 
     class LocalAgentClient:
-        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, model=None, **_kwargs):
             captured["message"] = message
             captured["target_agent"] = target_agent
             captured["project_dir"] = project_dir
             captured["timeout"] = timeout
+            captured["model"] = model
             return SimpleNamespace(
                 text=(
                     "OpenAI Codex v0.142.5\n"
@@ -2473,8 +2474,122 @@ def test_autopilot_code_iteration_routes_codex_local_agent(monkeypatch, tmp_path
     assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_local_agent_probe.py"
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] == str(candidate)
-    assert captured["timeout"] == 900.0
+    assert captured["timeout"] == 840.0
+    assert captured["model"] is None
     assert "Return JSON only" in captured["message"]
+
+
+def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+    calls = []
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, model=None, **_kwargs):
+            calls.append({
+                "target_agent": target_agent,
+                "project_dir": project_dir,
+                "timeout": timeout,
+                "model": model,
+            })
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    text="抱歉，codex 执行超时（超过 180 秒），已自动终止。",
+                    elapsed_sec=180.0,
+                    requires_approval=False,
+                    timed_out=True,
+                    error_code="timeout",
+                )
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Add fallback model proof",
+                    "risk": "low",
+                    "patches": [{
+                        "path": "backend/src/across_agents_assistant/codex_fallback_probe.py",
+                        "mode": "overwrite",
+                        "content": "CODEX_FALLBACK_MODEL_READY = True\n",
+                    }],
+                    "validation_commands": [{
+                        "command": "python3",
+                        "args": ["-m", "py_compile", "backend/src/across_agents_assistant/codex_fallback_probe.py"],
+                    }],
+                }),
+                elapsed_sec=0.01,
+                requires_approval=False,
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Use a fallback local Codex model for candidate development",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-codex-fallback",
+        "run_id": "run-codex-fallback",
+        "allowed_patch_paths": ["backend/src/across_agents_assistant/codex_fallback_probe.py"],
+        "context_files": ["README.md"],
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "fallback_models": ["gpt-5.4-mini"],
+            "direct_patches": True,
+            "timeout_ms": 240000,
+        },
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_fallback_probe.py"
+    assert [call["model"] for call in calls] == [None, "gpt-5.4-mini"]
+    assert [call["timeout"] for call in calls] == [180.0, 180.0]
+
+
+def test_autopilot_code_iteration_local_agent_timeout_returns_structured_failure(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, model=None, **_kwargs):
+            return SimpleNamespace(
+                text="抱歉，codex 执行超时（超过 180 秒），已自动终止。",
+                elapsed_sec=180.0,
+                requires_approval=False,
+                timed_out=True,
+                error_code="timeout",
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Use the local Codex agent for candidate development",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-codex-timeout",
+        "run_id": "run-codex-timeout",
+        "allowed_patch_paths": ["backend/src/across_agents_assistant/codex_timeout_probe.py"],
+        "context_files": ["README.md"],
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "direct_patches": True,
+            "timeout_ms": 240000,
+        },
+    })
+
+    assert response.status_code == 504
+    assert "local agent codex timed out" in response.json()["detail"]
 
 
 def test_autopilot_code_iteration_accepts_direct_product_patches(monkeypatch, tmp_path):

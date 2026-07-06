@@ -139,6 +139,7 @@ class UniversalAgentClient:
         target_agent: Optional[str] = None,
         project_dir: Optional[str] = None,
         timeout: Optional[float] = None,
+        model: Optional[str] = None,
     ) -> LocalAgentReply:
         t0 = time.time()
 
@@ -201,7 +202,8 @@ class UniversalAgentClient:
             else:
                 args.append(arg)
 
-        configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
+        requested_model = str(model or "").strip()
+        configured_model = requested_model or get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
         if configured_model and configured_model.lower() != "auto":
             if agent_id == "codex" and "exec" in args:
                 exec_index = args.index("exec")
