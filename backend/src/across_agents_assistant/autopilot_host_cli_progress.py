@@ -92,21 +92,25 @@ def host_cli_heartbeat(
     stop = threading.Event()
     started = time.monotonic()
     interval = heartbeat_interval_seconds() if interval_seconds is None else max(0.01, float(interval_seconds))
+    beat_count = 0
+
+    def emit_beat() -> None:
+        nonlocal beat_count
+        beat_count += 1
+        host_cli_log(
+            log_file,
+            event,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            phase=phase or None,
+            heartbeat_kind="watchdog",
+            heartbeat=beat_count,
+            elapsed_sec=round(time.monotonic() - started, 3),
+        )
 
     def emit() -> None:
-        beat = 0
         while not stop.wait(interval):
-            beat += 1
-            host_cli_log(
-                log_file,
-                event,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                phase=phase or None,
-                heartbeat_kind="watchdog",
-                heartbeat=beat,
-                elapsed_sec=round(time.monotonic() - started, 3),
-            )
+            emit_beat()
 
     thread = threading.Thread(target=emit, name=f"{event}-heartbeat", daemon=True)
     thread.start()
@@ -115,3 +119,5 @@ def host_cli_heartbeat(
     finally:
         stop.set()
         thread.join(timeout=1.0)
+        if beat_count == 0 and (time.monotonic() - started) >= interval:
+            emit_beat()

@@ -90,6 +90,16 @@ _PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
 _EXTERNAL_TASK_EVIDENCE_STATUSES = {"completed", "failed", "cancelled"}
 
 
+def _autopilot_research_value_error_detail(exc: ValueError) -> str:
+    text = str(exc)
+    if "host target fallback is disabled" in text:
+        return (
+            "Model research decision remained invalid after repair; host target fallback "
+            "is disabled for autonomous production loops."
+        )
+    return _safe_error_message("Create Autopilot research decision")
+
+
 def _sanitize_public_error_text(value: Any) -> Any:
     if value is None:
         return None
@@ -3577,7 +3587,7 @@ def _autopilot_research_response_payload(
         "source_ids": [str(source.get("id") or "") for source in req.sources[:20]],
     }
     if fallback_reason:
-        payload["fallback_reason"] = str(fallback_reason)[:1000]
+        payload["fallback_reason"] = str(_sanitize_public_error_text(fallback_reason) or "")[:1000]
     return payload
 
 
@@ -3637,13 +3647,15 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                 finish_reason="trigger_target",
                 usage=None,
             )
-            return _autopilot_research_response_payload(
-                req,
-                deterministic,
-                response=response,
-                repaired=False,
-                model_backed=False,
-                fallback_reason="deterministic_trigger_target",
+            return _sanitize_public_payload(
+                _autopilot_research_response_payload(
+                    req,
+                    deterministic,
+                    response=response,
+                    repaired=False,
+                    model_backed=False,
+                    fallback_reason="deterministic_trigger_target",
+                )
             )
         model_candidates = _local_agent_model_candidates(policy, str(agent_id) if agent_id else None)
         last_local_agent_error: Optional[LocalAgentExecutionError] = None
@@ -3691,28 +3703,32 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                     finish_reason="timeout_fallback",
                     usage=None,
                 )
-                return _autopilot_research_response_payload(
-                    req,
-                    decision,
-                    response=response,
-                    repaired=False,
-                    model_backed=False,
-                    fallback_reason=str(exc),
+                return _sanitize_public_payload(
+                    _autopilot_research_response_payload(
+                        req,
+                        decision,
+                        response=response,
+                        repaired=False,
+                        model_backed=False,
+                        fallback_reason=str(exc),
+                    )
                 )
             status_code = 504 if exc.code == "timeout" else 503
             raise HTTPException(status_code=status_code, detail=_sanitize_public_error_text(str(exc)))
-        return _autopilot_research_response_payload(
-            req,
-            decision,
-            response=response,
-            repaired=repaired,
-            model_backed=model_backed,
-            fallback_reason=fallback_reason,
+        return _sanitize_public_payload(
+            _autopilot_research_response_payload(
+                req,
+                decision,
+                response=response,
+                repaired=repaired,
+                model_backed=model_backed,
+                fallback_reason=fallback_reason,
+            )
         )
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=_autopilot_research_value_error_detail(exc))
     except Exception as exc:
         raise _safe_http_500("Create Autopilot research decision")
 

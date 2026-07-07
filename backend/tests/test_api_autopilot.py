@@ -1346,6 +1346,73 @@ def test_autopilot_research_decision_prefers_trigger_target_id(monkeypatch, tmp_
     assert all("npm test" not in command for command in rendered_commands)
 
 
+def test_autopilot_research_decision_sanitizes_public_payload(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    traceback_text = 'Traceback (most recent call last)\n  File "/tmp/secret.py", line 7, in run\nboom'
+
+    class ResearchGateway:
+        async def chat(self, **kwargs):
+            raise AssertionError("explicit trigger target must not require model target selection")
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: ResearchGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose platform self-repair target",
+        "candidate_workspace": str(candidate),
+        "product_context": {
+            "trigger_payload": {
+                "target_id": "autopilot-self-repair-replay-fixture",
+                "target_repo": "across-autopilot",
+            }
+        },
+        "target_catalog": [
+            {
+                "id": "autopilot-self-repair-replay-fixture",
+                "target_repo": "across-autopilot",
+                "summary": traceback_text,
+                "goal": traceback_text,
+                "allowed_patch_paths": ["tests/platform-self-repair.test.js"],
+                "context_files": ["src/platform-self-repair.js"],
+                "source_refs": [traceback_text],
+            },
+        ],
+        "model_policy": {"required": True, "provider": "fake"},
+    })
+
+    assert response.status_code == 200
+    rendered = json.dumps(response.json(), sort_keys=True)
+    assert "Traceback (most recent call last)" not in rendered
+    assert 'File "/tmp/secret.py"' not in rendered
+    assert "Internal operation failed. See local backend logs for details." in rendered
+
+
+def test_autopilot_research_decision_value_error_uses_safe_detail(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    async def fail_research_decision(*args, **kwargs):
+        raise ValueError('Traceback (most recent call last)\n  File "/tmp/secret.py", line 7, in run\nboom')
+
+    monkeypatch.setattr(api_server, "_autopilot_research_decision_chat", fail_research_decision)
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose an open autonomous AAA iteration",
+        "candidate_workspace": str(candidate),
+        "sources": [{"id": "architecture-signal", "status": "passed", "result": {"excerpt": "review quality"}}],
+        "target_catalog": [
+            {
+                "id": "aaa-host-runtime-repair",
+                "target_repo": "across-agents-assistant",
+                "allowed_patch_paths": ["backend/main.py"],
+                "context_files": ["backend/main.py"],
+            },
+        ],
+        "model_policy": {"required": True, "provider": "fake"},
+    })
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Create Autopilot research decision failed. See local backend logs for details."
+
+
 def test_autopilot_research_decision_generates_open_backlog(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
