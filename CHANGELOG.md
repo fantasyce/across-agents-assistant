@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.41 - 2026-07-08
+
+### Fixed
+
+- Sanitized Autopilot research-decision public payloads and 422 details so
+  traceback text, file paths, and internal exception content stay in local logs
+  instead of API responses.
+
 ## 0.9.40 - 2026-07-08
 
 ### Changed
