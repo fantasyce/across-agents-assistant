@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import json
 
 import across_agents_assistant.api_server as api_server
+from across_agents_assistant import local_agent_health
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
 from across_agents_assistant.autopilot_promotion_review import build_promotion_review_packet
 from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRegistry, AutopilotTriggerScheduler
@@ -176,6 +177,7 @@ def test_autopilot_code_iteration_prompt_blocks_token_shaped_test_fixtures():
 class DispatchingFakeAutopilotClient:
     def __init__(self):
         self.items = []
+        self.run_trigger_calls = []
 
     def enqueue_trigger(
         self,
@@ -208,6 +210,7 @@ class DispatchingFakeAutopilotClient:
         return {"schema_version": "across-autopilot-trigger-queue/1.0", "items": list(self.items)}
 
     def run_trigger(self, trigger_id=None):
+        self.run_trigger_calls.append(trigger_id)
         for item in self.items:
             if item["trigger_id"] == trigger_id:
                 item["status"] = "completed"
@@ -245,6 +248,36 @@ def test_autopilot_trigger_scheduler_dispatches_due_queue_items(tmp_path):
     status = scheduler.status()
     assert status["last_tick_status"] == "dispatched"
     assert status["last_dispatch_count"] == 1
+
+
+def test_autopilot_trigger_scheduler_skips_stale_due_queue_items(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    fake_client = DispatchingFakeAutopilotClient()
+    fake_client.items.append(
+        {
+            "trigger_id": "trg-stale-1",
+            "spec_id": "aaa-platform-self-repair",
+            "status": "pending",
+            "not_before": "2000-01-01T00:00:00Z",
+            "enqueued_at": "2000-01-01T00:00:00Z",
+        }
+    )
+    scheduler = AutopilotTriggerScheduler(
+        registry,
+        lambda: fake_client,
+        run_queued_triggers=True,
+        max_runs_per_tick=1,
+    )
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "idle"
+    assert tick["dispatch"]["items"] == []
+    assert tick["dispatch"]["skipped_stale"][0]["trigger_id"] == "trg-stale-1"
+    assert fake_client.run_trigger_calls == []
+    status = scheduler.status()
+    assert status["last_dispatch_count"] == 0
+    assert status["last_dispatch_status"] == "idle"
 
 
 def test_daily_cron_trigger_runs_at_configured_local_time(tmp_path):
@@ -661,7 +694,7 @@ def test_autopilot_client_passes_model_overrides(monkeypatch):
     assert payload["reviewer"]["agent_id"] == "codex"
     assert payload["reviewer"]["model"] == "codex"
     assert payload["reviewer"]["require_distinct_from_builder"] is False
-    assert observed["timeout"] == 1800
+    assert observed["timeout"] == 7200
 
 
 def test_autopilot_client_long_run_timeout_is_configurable(monkeypatch):
@@ -669,7 +702,7 @@ def test_autopilot_client_long_run_timeout_is_configurable(monkeypatch):
     assert _long_run_timeout_seconds() == 2400
 
     monkeypatch.setenv("ACROSS_AAA_AUTOPILOT_RUN_TIMEOUT_SECONDS", "not-a-number")
-    assert _long_run_timeout_seconds() == 1800
+    assert _long_run_timeout_seconds() == 7200
 
     assert _long_run_timeout_seconds({"ACROSS_AAA_AUTOPILOT_RUN_TIMEOUT_SECONDS": "12"}) == 600
     assert _long_run_timeout_seconds({"ACROSS_AAA_AUTOPILOT_RUN_TIMEOUT_SECONDS": "99999"}) == 7200
@@ -1176,7 +1209,7 @@ def test_autopilot_review_decision_routes_codex_local_agent(monkeypatch):
     assert body["merge_recommendation"] == "open_review_pr"
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] is None
-    assert captured["timeout"] == 840.0
+    assert captured["timeout"] == 900.0
     assert "independent acceptance reviewer" in captured["message"]
 
 
@@ -1259,28 +1292,7 @@ def test_autopilot_research_decision_prefers_trigger_target_id(monkeypatch, tmp_
 
     class ResearchGateway:
         async def chat(self, **kwargs):
-            assert "product_context.trigger_payload.target_id" in kwargs["system_prompt"]
-            return SimpleNamespace(
-                text=json.dumps({
-                    "summary": "Repair host runtime path",
-                    "rationale": "The model drifted to a host target, but the trigger payload carries a stricter route.",
-                    "decision": "implement",
-                    "selected_target_id": "aaa-host-runtime-repair",
-                    "selected_iteration": {
-                        "target_id": "aaa-host-runtime-repair",
-                    "target_repo": "across-agents-assistant",
-                    "goal": "Repair host runtime",
-                    "allowed_patch_paths": ["backend/main.py"],
-                    "validation_commands": [
-                        {"repo": "across-agents-assistant", "command": "npm", "args": ["test", "--", "--runInBand"]}
-                    ],
-                },
-                }),
-                provider="fake-provider",
-                model="fake-research-model",
-                finish_reason="stop",
-                usage={"total_tokens": 88},
-            )
+            raise AssertionError("explicit trigger target must not require model target selection")
 
     monkeypatch.setattr(api_server, "get_gateway", lambda: ResearchGateway())
     response = TestClient(app).post("/api/autopilot/research-decision", json={
@@ -1318,6 +1330,9 @@ def test_autopilot_research_decision_prefers_trigger_target_id(monkeypatch, tmp_
 
     assert response.status_code == 200
     body = response.json()
+    assert body["model_backed"] is False
+    assert body["provider"] == "deterministic"
+    assert body["fallback_reason"] == "deterministic_trigger_target"
     assert body["selected_target_id"] == "autopilot-self-repair-replay-fixture"
     assert body["selected_iteration"]["target_repo"] == "across-autopilot"
     assert body["selected_iteration"]["allowed_patch_paths"] == [
@@ -1901,7 +1916,7 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
     assert body["selected_iteration"]["semantic_review"]["independent_reviewer_required"] is True
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] == str(candidate)
-    assert captured["timeout"] == 540.0
+    assert captured["timeout"] == 600.0
 
 
 def test_autopilot_research_decision_local_agent_missing_returns_structured_failure(monkeypatch, tmp_path):
@@ -2474,7 +2489,7 @@ def test_autopilot_code_iteration_routes_codex_local_agent(monkeypatch, tmp_path
     assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_local_agent_probe.py"
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] == str(candidate)
-    assert captured["timeout"] == 840.0
+    assert captured["timeout"] == 900.0
     assert captured["model"] is None
     assert "Return JSON only" in captured["message"]
 
@@ -2525,6 +2540,10 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
 
     monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
     monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    monkeypatch.setattr(local_agent_health, "discover_codex_models", lambda: {
+        "available": True,
+        "available_models": ["gpt-5.4-mini"],
+    })
     response = TestClient(app).post("/api/autopilot/code-iteration", json={
         "goal": "Use a fallback local Codex model for candidate development",
         "candidate_workspace": str(candidate),
@@ -2537,7 +2556,7 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
             "agent_id": "codex",
             "provider": "local-agent",
             "model": "codex",
-            "fallback_models": ["gpt-5.4-mini"],
+            "fallback_models": ["gpt-5-codex", "gpt-5.4-mini"],
             "direct_patches": True,
             "timeout_ms": 240000,
         },
@@ -2547,7 +2566,7 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
     body = response.json()
     assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_fallback_probe.py"
     assert [call["model"] for call in calls] == [None, "gpt-5.4-mini"]
-    assert [call["timeout"] for call in calls] == [180.0, 180.0]
+    assert [call["timeout"] for call in calls] == [240.0, 240.0]
 
 
 def test_autopilot_code_iteration_local_agent_timeout_returns_structured_failure(monkeypatch, tmp_path):

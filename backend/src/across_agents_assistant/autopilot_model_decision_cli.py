@@ -6,23 +6,79 @@ import json
 import sys
 from typing import Any
 
+from .autopilot_host_cli_progress import host_cli_heartbeat, host_cli_log, host_cli_progress_scope
+
+LOG_FILE = "autopilot-model-decision.jsonl"
+
 
 async def _run(payload: dict[str, Any]) -> dict[str, Any]:
     from fastapi import HTTPException
 
     from .api_server import AutopilotModelDecisionRequest, create_autopilot_model_decision
 
+    model_policy = payload.get("model_policy") if isinstance(payload.get("model_policy"), dict) else {}
+    host_cli_log(
+        LOG_FILE,
+        "model_decision.start",
+        run_id=payload.get("run_id"),
+        candidate_id=payload.get("candidate_id"),
+        provider=model_policy.get("provider") or model_policy.get("provider_id"),
+        model=model_policy.get("model") or model_policy.get("model_id"),
+        agent_id=model_policy.get("agent_id") or model_policy.get("agent"),
+    )
     try:
-        result = await create_autopilot_model_decision(AutopilotModelDecisionRequest(**payload))
+        with host_cli_progress_scope(
+            LOG_FILE,
+            run_id=payload.get("run_id"),
+            candidate_id=payload.get("candidate_id"),
+            phase="model_decision.model_call",
+        ):
+            with host_cli_heartbeat(
+                LOG_FILE,
+                "model_decision.heartbeat",
+                run_id=payload.get("run_id"),
+                candidate_id=payload.get("candidate_id"),
+                phase="model_decision.model_call",
+            ):
+                result = await create_autopilot_model_decision(AutopilotModelDecisionRequest(**payload))
         if not isinstance(result, dict):
+            host_cli_log(LOG_FILE, "model_decision.failed", run_id=payload.get("run_id"), error="unexpected_result")
             return {"schema_version": "across-host-model-decision/1.0", "status": "failed", "error": "unexpected_result"}
+        host_cli_log(
+            LOG_FILE,
+            "model_decision.complete",
+            run_id=payload.get("run_id"),
+            status=result.get("status"),
+            model_backed=result.get("model_backed"),
+        )
         return result
     except HTTPException as exc:
+        host_cli_log(
+            LOG_FILE,
+            "model_decision.failed",
+            run_id=payload.get("run_id"),
+            status_code=exc.status_code,
+            error=str(exc.detail)[:1000],
+        )
         return {
             "schema_version": "across-host-model-decision/1.0",
             "status": "failed",
             "error": str(exc.detail),
             "status_code": exc.status_code,
+        }
+    except Exception as exc:
+        host_cli_log(
+            LOG_FILE,
+            "model_decision.failed",
+            run_id=payload.get("run_id"),
+            exception_type=type(exc).__name__,
+            error=str(exc)[:1000],
+        )
+        return {
+            "schema_version": "across-host-model-decision/1.0",
+            "status": "failed",
+            "error": f"Unhandled model decision error: {type(exc).__name__}",
+            "status_code": 500,
         }
 
 
@@ -35,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
+        host_cli_log(LOG_FILE, "model_decision.failed", error=f"Invalid request JSON: {exc}")
         print(json.dumps({
             "schema_version": "across-host-model-decision/1.0",
             "status": "failed",

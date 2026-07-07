@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.40 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default self-iteration
+  release-source mirror to `v0.2.19`, which preserves long-running host command
+  activity timeouts, max-wall guardrails, valid Codex model defaults, and
+  deterministic platform self-repair trigger target selection.
+- Added non-secret host CLI progress evidence for autonomous research, code,
+  model, and review decisions so watchdog heartbeats can be distinguished from
+  real local-agent stdout/stderr activity.
+
+### Fixed
+
+- Refreshed local Codex idle timeouts on real subprocess output during
+  self-iteration instead of treating long-running model work as a silent outer
+  timeout.
+- Filtered unavailable Codex model candidates from self-iteration model policy
+  and ignored stale configured Codex defaults that are not available locally.
+- Skipped stale pending Autopilot triggers during scheduler dispatch so old
+  platform self-repair work is not restarted automatically after an app rebuild.
+
 ## 0.9.39 - 2026-07-06
 
 ### Changed

@@ -20,7 +20,7 @@ _SOURCE_MIRROR_ENV = {
     "across-context": "ACROSS_CONTEXT_SOURCE",
     "across-autopilot": "ACROSS_AUTOPILOT_SOURCE",
 }
-_DEFAULT_LONG_RUN_TIMEOUT_SECONDS = 1800
+_DEFAULT_LONG_RUN_TIMEOUT_SECONDS = 7200
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@ import os
 import subprocess
 import time
 import re
+import threading
 from pathlib import Path
 from typing import Optional
 from ..agent_manager import AgentManager
@@ -26,6 +27,7 @@ class LocalAgentReply:
         approval_request: Optional[dict] = None,
         timed_out: bool = False,
         error_code: Optional[str] = None,
+        timeout_kind: Optional[str] = None,
     ):
         self.text = text
         self.session_id = session_id
@@ -34,6 +36,7 @@ class LocalAgentReply:
         self.approval_request = approval_request
         self.timed_out = timed_out
         self.error_code = error_code
+        self.timeout_kind = timeout_kind
 
 class UniversalAgentClient:
     def __init__(self, manager: AgentManager):
@@ -131,6 +134,18 @@ class UniversalAgentClient:
         except (TypeError, ValueError):
             return 600.0
 
+    @staticmethod
+    def _resolve_agent_idle_timeout(timeout: Optional[float], max_wall_timeout: float) -> float:
+        if timeout is not None:
+            return float(timeout)
+        try:
+            configured = float(os.environ.get("ACROSS_AGENTS_AGENT_IDLE_TIMEOUT", "300"))
+        except (TypeError, ValueError):
+            configured = 300.0
+        if max_wall_timeout > 0:
+            return min(configured, max_wall_timeout)
+        return configured
+
     def send(
         self,
         message: str,
@@ -139,13 +154,15 @@ class UniversalAgentClient:
         target_agent: Optional[str] = None,
         project_dir: Optional[str] = None,
         timeout: Optional[float] = None,
+        idle_timeout: Optional[float] = None,
+        max_wall_timeout: Optional[float] = None,
         model: Optional[str] = None,
     ) -> LocalAgentReply:
         t0 = time.time()
 
         agent_id = normalize_agent_id(target_agent or self.manager.get_active_agent()) or LOCAL_AGENT_ID
         config = self.manager.get_agent_config(agent_id) or {}
-        from ..local_agent_health import get_configured_agent_model, resolve_local_agent_executable
+        from ..local_agent_health import codex_model_is_available, get_configured_agent_model, resolve_local_agent_executable
 
         executable_path = resolve_local_agent_executable(agent_id)
 
@@ -204,6 +221,17 @@ class UniversalAgentClient:
 
         requested_model = str(model or "").strip()
         configured_model = requested_model or get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
+        if configured_model and configured_model.lower() != "auto" and agent_id == "codex":
+            model_available = codex_model_is_available(configured_model)
+            if model_available is False:
+                if requested_model:
+                    return LocalAgentReply(
+                        text=f"Codex model is not available on this machine: {configured_model}",
+                        session_id=session_id,
+                        elapsed_sec=time.time() - t0,
+                        error_code="unsupported_model",
+                    )
+                configured_model = ""
         if configured_model and configured_model.lower() != "auto":
             if agent_id == "codex" and "exec" in args:
                 exec_index = args.index("exec")
@@ -225,6 +253,9 @@ class UniversalAgentClient:
                 args[agent_index + 1:agent_index + 1] = ["--model", configured_model]
 
         if agent_id == "codex":
+            if "exec" in args and "--json" not in args:
+                exec_index = args.index("exec")
+                args[exec_index + 1:exec_index + 1] = ["--json"]
             if project_dir and os.path.isdir(project_dir):
                 prompt_index = len(args) - 1
                 args[prompt_index:prompt_index] = ["--cd", project_dir]
@@ -362,8 +393,31 @@ class UniversalAgentClient:
             if session_id:
                 self.active_processes[session_id] = process
 
-            agent_timeout = self._resolve_agent_timeout(timeout)
-            stdout, stderr = process.communicate(timeout=agent_timeout)
+            agent_timeout = self._resolve_agent_timeout(max_wall_timeout if max_wall_timeout is not None else timeout)
+            if agent_id == "codex":
+                agent_idle_timeout = self._resolve_agent_idle_timeout(idle_timeout, agent_timeout)
+                stdout, stderr, timeout_kind, timeout_seconds = self._communicate_with_activity_timeout(
+                    process,
+                    max_wall_timeout=agent_timeout,
+                    idle_timeout=agent_idle_timeout,
+                )
+                if timeout_kind:
+                    if session_id and session_id in self.active_processes:
+                        del self.active_processes[session_id]
+                    elapsed = time.time() - t0
+                    return LocalAgentReply(
+                        text=(
+                            f"抱歉，{agent_id} 执行超时（{timeout_kind} 超过 {timeout_seconds:g} 秒），"
+                            "已自动终止。"
+                        ),
+                        session_id=session_id,
+                        elapsed_sec=elapsed,
+                        timed_out=True,
+                        error_code=timeout_kind,
+                        timeout_kind=timeout_kind,
+                    )
+            else:
+                stdout, stderr = process.communicate(timeout=agent_timeout)
 
             # PinTaskSession: Detect and persist session_id from output immediately
             # This ensures session_id is saved even if the process crashes later
@@ -392,6 +446,7 @@ class UniversalAgentClient:
                 elapsed_sec=elapsed,
                 timed_out=True,
                 error_code="timeout",
+                timeout_kind="max_wall_timeout",
             )
         except Exception as e:
             import logging
@@ -431,6 +486,11 @@ class UniversalAgentClient:
 
         if (not clean or not clean.strip()) and clean_err:
             clean = clean_err
+
+        if agent_id == "codex":
+            codex_answer = self._extract_codex_jsonl_text(clean)
+            if codex_answer:
+                return LocalAgentReply(text=codex_answer, session_id=session_id, elapsed_sec=elapsed)
 
         if agent_id == "kimi":
             reply_parts = []
@@ -576,7 +636,7 @@ class UniversalAgentClient:
         agent_id = normalize_agent_id(target_agent or self.manager.get_active_agent()) or LOCAL_AGENT_ID
 
         # Check if agent supports streaming
-        supports_streaming = self._is_claude_family(agent_id) or agent_id == "hermes"
+        supports_streaming = self._is_claude_family(agent_id) or agent_id in {"hermes", "codex"}
 
         if not supports_streaming:
             # Fall back to blocking send for OpenClaw
@@ -641,7 +701,7 @@ class UniversalAgentClient:
             stream_cwd = workspace_dir
         elif agent_id == "codex":
             configured_model = get_configured_agent_model(agent_id) or (config.get("model") or "").strip()
-            args.extend(["exec"])
+            args.extend(["exec", "--json"])
             if configured_model:
                 args.extend(["--model", configured_model])
             args.extend(["--sandbox", "workspace-write", "--skip-git-repo-check"])
@@ -688,6 +748,10 @@ class UniversalAgentClient:
                                 self.claude_sessions[session_id] = sid
                             elif agent_id == "hermes":
                                 self.hermes_sessions[session_id] = sid
+                    if data.get("type") == "item.completed":
+                        item = data.get("item") if isinstance(data.get("item"), dict) else {}
+                        if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                            yield item["text"]
                     if "content" in data:
                         yield data["content"]
                 except json.JSONDecodeError:
@@ -704,6 +768,118 @@ class UniversalAgentClient:
                     pass  # Streaming mode already tracks via init message above
             if session_id and session_id in self.active_processes:
                 del self.active_processes[session_id]
+
+    @staticmethod
+    def _communicate_with_activity_timeout(process, *, max_wall_timeout: float, idle_timeout: float):
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        lock = threading.Lock()
+        started = time.monotonic()
+        last_activity = started
+
+        progress_logger = None
+        if os.environ.get("ACROSS_AAA_HOST_CLI_PROGRESS_LOG_FILE"):
+            try:
+                from ..autopilot_host_cli_progress import host_cli_activity
+
+                progress_logger = host_cli_activity
+            except Exception:
+                progress_logger = None
+
+        def reader(stream, parts, stream_name: str):
+            nonlocal last_activity
+            pending_chars = 0
+            pending_lines = 0
+            total_chars = 0
+            last_emit = time.monotonic()
+
+            def emit_activity(force: bool = False) -> None:
+                nonlocal pending_chars, pending_lines, last_emit
+                if not progress_logger or pending_chars <= 0:
+                    return
+                now = time.monotonic()
+                if not force and pending_chars < 4096 and pending_lines < 1 and now - last_emit < 2.0:
+                    return
+                try:
+                    progress_logger(
+                        "local_agent.activity",
+                        stream=stream_name,
+                        chars=pending_chars,
+                        lines=pending_lines,
+                        total_chars=total_chars,
+                        elapsed_sec=round(now - started, 3),
+                    )
+                except Exception:
+                    pass
+                pending_chars = 0
+                pending_lines = 0
+                last_emit = now
+
+            try:
+                while True:
+                    chunk = stream.read(1)
+                    if not chunk:
+                        break
+                    with lock:
+                        parts.append(chunk)
+                        last_activity = time.monotonic()
+                    pending_chars += len(chunk)
+                    total_chars += len(chunk)
+                    if chunk == "\n":
+                        pending_lines += 1
+                    emit_activity()
+            except Exception:
+                return
+            finally:
+                emit_activity(force=True)
+
+        threads = [
+            threading.Thread(target=reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
+            threading.Thread(target=reader, args=(process.stderr, stderr_parts, "stderr"), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        timeout_kind = None
+        timeout_seconds = None
+        while process.poll() is None:
+            now = time.monotonic()
+            if max_wall_timeout > 0 and now - started > max_wall_timeout:
+                timeout_kind = "max_wall_timeout"
+                timeout_seconds = max_wall_timeout
+                process.kill()
+                break
+            if idle_timeout > 0 and now - last_activity > idle_timeout:
+                timeout_kind = "idle_timeout"
+                timeout_seconds = idle_timeout
+                process.kill()
+                break
+            time.sleep(0.1)
+
+        process.wait()
+        for thread in threads:
+            thread.join(timeout=1.0)
+        return "".join(stdout_parts), "".join(stderr_parts), timeout_kind, timeout_seconds
+
+    @staticmethod
+    def _extract_codex_jsonl_text(text: str) -> str:
+        chunks: list[str] = []
+        for line in str(text or "").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") != "item.completed":
+                continue
+            item = event.get("item") if isinstance(event.get("item"), dict) else {}
+            if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                content = item["text"].strip()
+                if content:
+                    chunks.append(content)
+        return "\n".join(chunks).strip()
 
     def _extract_claude_session_id(self, stdout: str) -> Optional[str]:
         """Extract Claude session ID from JSON output."""

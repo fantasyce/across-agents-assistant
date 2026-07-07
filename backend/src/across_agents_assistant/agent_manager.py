@@ -102,7 +102,7 @@ SUPERSEDED_AGENT_DEFAULT_MODELS = {
     "hermes": {"gpt-4o-mini"},
     "claude": {"claude-3-5-sonnet-20241022"},
     "claude-desktop": {"claude-3-5-sonnet-20241022"},
-    "codex": {"gpt-5.1", "gpt-5-codex"},
+    "codex": {"gpt-5", "gpt-5.1", "gpt-5-codex"},
 }
 
 

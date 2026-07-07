@@ -16,6 +16,7 @@ from .paths import data_file
 
 
 TRIGGER_REGISTRY_SCHEMA_VERSION = "across-aaa-autopilot-trigger-registry/1.0"
+DEFAULT_AUTOPILOT_TRIGGER_DISPATCH_MAX_PENDING_AGE_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -525,6 +526,7 @@ class AutopilotTriggerScheduler:
 
 def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
     queue = client.trigger_queue()
+    stale: list[dict[str, Any]] = []
     pending = [
         item
         for item in queue.get("items", []) or []
@@ -532,6 +534,7 @@ def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
         and item.get("status") == "pending"
         and _not_before_due(item.get("not_before"))
         and item.get("trigger_id")
+        and _pending_queue_item_fresh(item, stale=stale)
     ][: max(1, int(limit or 1))]
     dispatched: list[dict[str, Any]] = []
     for item in pending:
@@ -559,7 +562,32 @@ def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
         "schema_version": "across-aaa-autopilot-trigger-dispatch-tick/1.0",
         "status": "dispatched" if dispatched else "idle",
         "items": dispatched,
+        "skipped_stale": stale,
     }
+
+
+def _pending_queue_item_fresh(item: Mapping[str, Any], *, stale: list[dict[str, Any]] | None = None) -> bool:
+    age = _pending_queue_item_age_seconds(item)
+    if age is None or age <= DEFAULT_AUTOPILOT_TRIGGER_DISPATCH_MAX_PENDING_AGE_SECONDS:
+        return True
+    if stale is not None:
+        stale.append(
+            {
+                "trigger_id": item.get("trigger_id"),
+                "spec_id": item.get("spec_id"),
+                "age_seconds": round(age, 3),
+                "max_age_seconds": DEFAULT_AUTOPILOT_TRIGGER_DISPATCH_MAX_PENDING_AGE_SECONDS,
+            }
+        )
+    return False
+
+
+def _pending_queue_item_age_seconds(item: Mapping[str, Any]) -> float | None:
+    candidates = [_parse_iso(item.get("not_before")), _parse_iso(item.get("enqueued_at"))]
+    parsed = [value for value in candidates if value is not None]
+    if not parsed:
+        return None
+    return max(0.0, time.time() - max(parsed))
 
 
 def _not_before_due(value: Any) -> bool:
