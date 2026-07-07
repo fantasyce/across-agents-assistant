@@ -80,7 +80,7 @@ LOCAL_AGENT_SPECS = {
         "probe_args": None,
         "candidate_dirs": ["/Applications/Codex.app/Contents/Resources", "/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
         "model_args": ["--model"],
-        "default_models": ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"],
+        "default_models": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
     },
     "kimi": {
         "display_name": "Kimi Code",
@@ -158,11 +158,13 @@ class LocalAgentHealth:
 
 
 _CACHE: Optional[tuple[float, Dict[str, LocalAgentHealth]]] = None
+_CODEX_MODELS_CACHE: Optional[tuple[float, Dict[str, object]]] = None
 
 
 def clear_local_agent_health_cache() -> None:
-    global _CACHE
+    global _CACHE, _CODEX_MODELS_CACHE
     _CACHE = None
+    _CODEX_MODELS_CACHE = None
 
 
 def list_local_agent_specs() -> Dict[str, Dict[str, object]]:
@@ -244,6 +246,122 @@ def resolve_local_agent_executable(agent_id: str) -> Optional[str]:
         return None
     path, _, _, _ = _resolve_executable(agent_id, spec)
     return path
+
+
+def discover_codex_models(*, force: bool = False, timeout: float = 12.0) -> Dict[str, object]:
+    """Return the local Codex model registry without running an agent prompt."""
+    global _CODEX_MODELS_CACHE
+    ttl = float(os.environ.get("ACROSS_AGENTS_CODEX_MODEL_TTL", "300"))
+    now = time.time()
+    if not force and _CODEX_MODELS_CACHE and now - _CODEX_MODELS_CACHE[0] < ttl:
+        return dict(_CODEX_MODELS_CACHE[1])
+
+    executable = resolve_local_agent_executable("codex")
+    if not executable:
+        result: Dict[str, object] = {
+            "available": False,
+            "error": "codex executable was not found",
+            "models": [],
+            "available_models": [],
+            "supported_api_models": [],
+        }
+        _CODEX_MODELS_CACHE = (now, result)
+        return dict(result)
+
+    try:
+        completed = subprocess.run(
+            [executable, "debug", "models"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        result = {
+            "available": False,
+            "error": f"codex debug models timed out after {timeout:g}s",
+            "models": [],
+            "available_models": [],
+            "supported_api_models": [],
+        }
+        _CODEX_MODELS_CACHE = (now, result)
+        return dict(result)
+    except Exception as exc:
+        result = {
+            "available": False,
+            "error": f"codex debug models failed: {exc}",
+            "models": [],
+            "available_models": [],
+            "supported_api_models": [],
+        }
+        _CODEX_MODELS_CACHE = (now, result)
+        return dict(result)
+
+    output = (completed.stdout or "").strip()
+    if completed.returncode != 0:
+        first_line = ((completed.stderr or completed.stdout or "").strip().split("\n") or ["non-zero exit"])[0]
+        result = {
+            "available": False,
+            "error": f"codex debug models exited {completed.returncode}: {first_line}",
+            "models": [],
+            "available_models": [],
+            "supported_api_models": [],
+        }
+        _CODEX_MODELS_CACHE = (now, result)
+        return dict(result)
+
+    try:
+        payload = json.loads(output[output.find("{"):]) if output.find("{") >= 0 else {}
+    except json.JSONDecodeError as exc:
+        result = {
+            "available": False,
+            "error": f"codex debug models returned invalid JSON: {exc}",
+            "models": [],
+            "available_models": [],
+            "supported_api_models": [],
+        }
+        _CODEX_MODELS_CACHE = (now, result)
+        return dict(result)
+
+    models = payload.get("models") if isinstance(payload, dict) else []
+    normalized = []
+    for item in models if isinstance(models, list) else []:
+        if not isinstance(item, dict):
+            continue
+        slug = str(item.get("slug") or "").strip()
+        if not slug:
+            continue
+        normalized.append({
+            "slug": slug,
+            "display_name": str(item.get("display_name") or slug),
+            "supported_in_api": item.get("supported_in_api"),
+            "visibility": item.get("visibility"),
+        })
+    available_models = [item["slug"] for item in normalized]
+    supported_api_models = [
+        item["slug"]
+        for item in normalized
+        if item.get("supported_in_api") is not False
+    ]
+    result = {
+        "available": True,
+        "error": None,
+        "models": normalized,
+        "available_models": available_models,
+        "supported_api_models": supported_api_models,
+    }
+    _CODEX_MODELS_CACHE = (now, result)
+    return dict(result)
+
+
+def codex_model_is_available(model: Optional[str]) -> Optional[bool]:
+    """Return True/False when Codex model discovery is available, otherwise None."""
+    text = str(model or "").strip()
+    if not text or text.lower() in {"auto", "codex", "local-agent"}:
+        return True
+    registry = discover_codex_models()
+    if not registry.get("available"):
+        return None
+    return text in set(str(item) for item in registry.get("available_models") or [])
 
 
 def refresh_login_shell_path() -> None:

@@ -1491,9 +1491,6 @@ def _local_agent_timeout_for_scope(requested: Any, scope: str) -> float:
         timeout = float(requested if requested is not None else 600.0)
     except (TypeError, ValueError):
         timeout = 600.0
-    if scope in {"model.research", "model.code_patch", "model.review"} and timeout >= 180.0:
-        # Keep a buffer for host-side timeout handling and deterministic fallback.
-        return max(30.0, timeout - 60.0)
     return timeout
 
 
@@ -1522,6 +1519,8 @@ def _raise_for_local_agent_infra_error(agent_id: str, reply: Any) -> None:
         message = f"local agent {agent_id} executable was not found"
     elif code == "exit_error":
         message = f"local agent {agent_id} exited before returning model text"
+    elif code == "unsupported_model":
+        message = f"local agent {agent_id} was asked to use an unavailable model"
     else:
         message = f"local agent {agent_id} failed before returning model text"
     if text:
@@ -1543,7 +1542,10 @@ async def _chat_with_model_capability(
 ) -> LLMResponse:
     normalized_agent_id = normalize_agent_id(agent_id) if agent_id else None
     if normalized_agent_id in LOCAL_CLI_AGENT_IDS:
-        local_timeout = _local_agent_timeout_for_scope(kwargs.get("timeout", 600.0), scope)
+        local_timeout = _local_agent_timeout_for_scope(kwargs.get("max_wall_timeout", kwargs.get("timeout", 600.0)), scope)
+        local_idle_timeout = kwargs.get("idle_timeout")
+        if local_idle_timeout is not None:
+            local_idle_timeout = _local_agent_timeout_for_scope(local_idle_timeout, scope)
         prompt_parts = []
         if system_prompt:
             prompt_parts.extend(["System instructions:", system_prompt.strip(), ""])
@@ -1554,6 +1556,8 @@ async def _chat_with_model_capability(
             target_agent=normalized_agent_id,
             project_dir=project_dir,
             timeout=local_timeout,
+            idle_timeout=local_idle_timeout,
+            max_wall_timeout=local_timeout,
             model=_local_agent_model_override(normalized_agent_id, model),
         )
         if getattr(reply, "requires_approval", False):
@@ -2235,6 +2239,37 @@ def _autopilot_model_policy_timeout_seconds(policy: Dict[str, Any], *, default: 
     if millis is not None:
         value = value / 1000.0
     return max(1.0, value)
+
+
+def _autopilot_model_policy_timeout_plan(policy: Dict[str, Any], *, default: float = 600.0) -> Dict[str, float]:
+    max_wall = _autopilot_model_policy_timeout_seconds(policy, default=default)
+    idle_ms = _autopilot_model_policy_value(
+        policy,
+        "idle_timeout_ms",
+        "activity_timeout_ms",
+        "no_progress_timeout_ms",
+    )
+    idle_seconds = None
+    if idle_ms is not None:
+        try:
+            idle_seconds = float(idle_ms) / 1000.0
+        except (TypeError, ValueError):
+            idle_seconds = None
+    if idle_seconds is None:
+        idle_seconds = _autopilot_model_policy_value(
+            policy,
+            "idle_timeout_seconds",
+            "activity_timeout_seconds",
+            "no_progress_timeout_seconds",
+        )
+        try:
+            idle_seconds = float(idle_seconds) if idle_seconds is not None else min(max_wall, 300.0)
+        except (TypeError, ValueError):
+            idle_seconds = min(max_wall, 300.0)
+    return {
+        "max_wall_timeout_seconds": max(1.0, max_wall),
+        "idle_timeout_seconds": max(1.0, min(float(idle_seconds), max_wall)),
+    }
 
 
 def _autopilot_decision_system_prompt() -> str:
@@ -3450,6 +3485,7 @@ async def _autopilot_research_decision_chat(
     temperature: float,
     max_tokens: int,
     timeout_seconds: float,
+    idle_timeout_seconds: Optional[float] = None,
 ) -> Tuple[Any, Dict[str, Any], bool, bool, Optional[str]]:
     response = await _chat_with_model_capability(
         message=_autopilot_research_user_prompt(req),
@@ -3462,6 +3498,8 @@ async def _autopilot_research_decision_chat(
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=timeout_seconds,
+        max_wall_timeout=timeout_seconds,
+        idle_timeout=idle_timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id),
     )
     try:
@@ -3483,6 +3521,8 @@ async def _autopilot_research_decision_chat(
                 temperature=0.0,
                 max_tokens=max_tokens,
                 timeout=timeout_seconds,
+                max_wall_timeout=timeout_seconds,
+                idle_timeout=idle_timeout_seconds,
                 extra_body=_minimax_json_extra_body(provider_id),
             )
             try:
@@ -3541,6 +3581,39 @@ def _autopilot_research_response_payload(
     return payload
 
 
+def _deterministic_research_decision_from_trigger(req: AutopilotResearchDecisionRequest) -> Optional[Dict[str, Any]]:
+    trigger_payload = req.product_context.get("trigger_payload") if isinstance(req.product_context.get("trigger_payload"), dict) else {}
+    target_id = str(trigger_payload.get("target_id") or "").strip()
+    if not target_id:
+        return None
+    matching = next(
+        (
+            item
+            for item in req.target_catalog
+            if isinstance(item, dict) and str(item.get("id") or item.get("target_id") or "").strip() == target_id
+        ),
+        None,
+    )
+    if not matching:
+        return None
+    selected = {
+        **matching,
+        "id": target_id,
+        "target_id": target_id,
+        "generated_from": matching.get("generated_from") or "trigger_payload",
+    }
+    raw = {
+        "summary": f"Deterministically selected trigger target {target_id}.",
+        "rationale": "The trigger payload supplied an explicit target_id that matched target_catalog; no model target selection was required.",
+        "decision": "implement",
+        "selected_target_id": target_id,
+        "candidate_targets": req.target_catalog,
+        "selected_iteration": selected,
+        "rejected_directions": ["model_target_reselection"],
+    }
+    return _normalize_research_decision(raw, req)
+
+
 @app.post("/api/autopilot/research-decision")
 async def create_autopilot_research_decision(req: AutopilotResearchDecisionRequest):
     """Return a host-model-backed research-to-product iteration strategy."""
@@ -3551,17 +3624,57 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
         agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1800))
-        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
-        try:
-            response, decision, repaired, model_backed, fallback_reason = await _autopilot_research_decision_chat(
-                req,
-                provider_id=str(provider_id) if provider_id else None,
-                model_id=str(model_id) if model_id else None,
-                agent_id=str(agent_id) if agent_id else None,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout_seconds=timeout_seconds,
+        timeout_plan = _autopilot_model_policy_timeout_plan(policy)
+        timeout_seconds = timeout_plan["max_wall_timeout_seconds"]
+        idle_timeout_seconds = timeout_plan["idle_timeout_seconds"]
+        deterministic = _deterministic_research_decision_from_trigger(req)
+        if deterministic is not None and policy.get("allow_deterministic_trigger_target", True) is not False:
+            response = LLMResponse(
+                text="",
+                raw={"deterministic_trigger_target": True},
+                model="trigger-target",
+                provider="deterministic",
+                finish_reason="trigger_target",
+                usage=None,
             )
+            return _autopilot_research_response_payload(
+                req,
+                deterministic,
+                response=response,
+                repaired=False,
+                model_backed=False,
+                fallback_reason="deterministic_trigger_target",
+            )
+        model_candidates = _local_agent_model_candidates(policy, str(agent_id) if agent_id else None)
+        last_local_agent_error: Optional[LocalAgentExecutionError] = None
+        last_error: Optional[Exception] = None
+        try:
+            for candidate_model in model_candidates or [None]:
+                try:
+                    response, decision, repaired, model_backed, fallback_reason = await _autopilot_research_decision_chat(
+                        req,
+                        provider_id=str(provider_id) if provider_id else None,
+                        model_id=str(candidate_model) if candidate_model else None,
+                        agent_id=str(agent_id) if agent_id else None,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout_seconds=timeout_seconds,
+                        idle_timeout_seconds=idle_timeout_seconds,
+                    )
+                    break
+                except LocalAgentExecutionError as exc:
+                    last_local_agent_error = exc
+                    last_error = exc
+                    continue
+                except Exception as exc:
+                    last_error = exc
+                    continue
+            else:
+                if last_local_agent_error:
+                    raise last_local_agent_error
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("All Autopilot research model candidates failed")
         except LocalAgentExecutionError as exc:
             if exc.code == "timeout" and _autopilot_research_allows_timeout_fallback(
                 req,
@@ -7668,6 +7781,31 @@ def _code_model_candidates(policy: Dict[str, Any]) -> List[Optional[str]]:
     return candidates
 
 
+def _local_agent_model_candidates(policy: Dict[str, Any], agent_id: Optional[str]) -> List[Optional[str]]:
+    candidates = _code_model_candidates(policy)
+    normalized_agent_id = normalize_agent_id(agent_id) if agent_id else None
+    if normalized_agent_id != "codex":
+        return candidates
+    if all(str(candidate or "").strip().lower() in {"", "auto", "codex", "local-agent"} for candidate in candidates):
+        return candidates
+    try:
+        from .local_agent_health import discover_codex_models
+
+        registry = discover_codex_models()
+    except Exception:
+        return candidates
+    if not registry.get("available"):
+        return candidates
+    available = set(str(item) for item in (registry.get("available_models") or []))
+    filtered: List[Optional[str]] = []
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text or text.lower() in {"auto", "codex", "local-agent"} or text in available:
+            if candidate not in filtered:
+                filtered.append(candidate)
+    return filtered
+
+
 async def _autopilot_code_iteration_chat(
     req: AutopilotCodeIterationRequest,
     *,
@@ -7678,6 +7816,7 @@ async def _autopilot_code_iteration_chat(
     temperature: float,
     max_tokens: int,
     timeout_seconds: float,
+    idle_timeout_seconds: Optional[float] = None,
 ) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
     direct_patches = bool(req.model_policy.get("direct_patches") or req.model_policy.get("code_mode") == "direct_patches")
     allow_host_fallback = bool(
@@ -7700,6 +7839,8 @@ async def _autopilot_code_iteration_chat(
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=timeout_seconds,
+        max_wall_timeout=timeout_seconds,
+        idle_timeout=idle_timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id) if direct_patches else {},
     )
     if direct_patches:
@@ -7725,6 +7866,8 @@ async def _autopilot_code_iteration_chat(
                     temperature=0.0,
                     max_tokens=max_tokens,
                     timeout=timeout_seconds,
+                    max_wall_timeout=timeout_seconds,
+                    idle_timeout=idle_timeout_seconds,
                     extra_body=_minimax_json_extra_body(provider_id),
                 )
                 try:
@@ -7784,7 +7927,9 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
         agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         base_max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1200))
-        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
+        timeout_plan = _autopilot_model_policy_timeout_plan(policy)
+        timeout_seconds = timeout_plan["max_wall_timeout_seconds"]
+        idle_timeout_seconds = timeout_plan["idle_timeout_seconds"]
         host_validation_repair_fallback = False
         allow_host_fallback = bool(
             policy.get("allow_host_code_fallback")
@@ -7817,24 +7962,26 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
                     req,
                     context_files=context_files,
                     provider_id=str(provider_id) if provider_id else None,
-                    model_candidates=_code_model_candidates(policy),
+                    model_candidates=_local_agent_model_candidates(policy, str(agent_id) if agent_id else None),
                     agent_id=str(agent_id) if agent_id else None,
                     temperature=temperature,
                     base_max_tokens=base_max_tokens,
                     direct_patches_requested=direct_patches_requested,
                     timeout_seconds=timeout_seconds,
+                    idle_timeout_seconds=idle_timeout_seconds,
                 )
         else:
             response, decision, direct_patches, text_fallback, repaired_json = await _run_code_iteration_with_model_fallbacks(
                 req,
                 context_files=context_files,
                 provider_id=str(provider_id) if provider_id else None,
-                model_candidates=_code_model_candidates(policy),
+                model_candidates=_local_agent_model_candidates(policy, str(agent_id) if agent_id else None),
                 agent_id=str(agent_id) if agent_id else None,
                 temperature=temperature,
                 base_max_tokens=base_max_tokens,
                 direct_patches_requested=direct_patches_requested,
                 timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
             )
         host_validation_repair_fallback = host_validation_repair_fallback or bool(decision.get("host_validation_repair_fallback"))
         module_path = "backend/src/across_agents_assistant/loop_engineering_candidate.py"
@@ -7925,6 +8072,7 @@ async def _run_code_iteration_with_model_fallbacks(
     base_max_tokens: int,
     direct_patches_requested: bool,
     timeout_seconds: float,
+    idle_timeout_seconds: Optional[float] = None,
 ) -> Tuple[Any, Dict[str, Any], Optional[List[Dict[str, Any]]], bool, bool]:
     last_error: Optional[Exception] = None
     for candidate_model in model_candidates or [None]:
@@ -7941,6 +8089,7 @@ async def _run_code_iteration_with_model_fallbacks(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
             )
         except Exception as exc:
             last_error = exc
@@ -8122,6 +8271,7 @@ async def _autopilot_review_decision_chat(
     temperature: float,
     max_tokens: int,
     timeout_seconds: float,
+    idle_timeout_seconds: Optional[float] = None,
 ) -> Tuple[Any, Dict[str, Any], bool]:
     response = await _chat_with_model_capability(
         message=_autopilot_review_user_prompt(req),
@@ -8134,6 +8284,8 @@ async def _autopilot_review_decision_chat(
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=timeout_seconds,
+        max_wall_timeout=timeout_seconds,
+        idle_timeout=idle_timeout_seconds,
         extra_body=_minimax_json_extra_body(provider_id),
     )
     try:
@@ -8150,6 +8302,8 @@ async def _autopilot_review_decision_chat(
             temperature=0.0,
             max_tokens=max_tokens,
             timeout=timeout_seconds,
+            max_wall_timeout=timeout_seconds,
+            idle_timeout=idle_timeout_seconds,
             extra_body=_minimax_json_extra_body(provider_id),
         )
         return repair_response, _normalize_review_decision(_extract_json_object(repair_response.text), req), True
@@ -8164,10 +8318,12 @@ async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
         agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.0))
         max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1600))
-        timeout_seconds = _autopilot_model_policy_timeout_seconds(policy)
+        timeout_plan = _autopilot_model_policy_timeout_plan(policy)
+        timeout_seconds = timeout_plan["max_wall_timeout_seconds"]
+        idle_timeout_seconds = timeout_plan["idle_timeout_seconds"]
         require_distinct = policy.get("require_distinct_from_builder") is not False
         last_error: Optional[Exception] = None
-        for model_id in _review_model_candidates(policy):
+        for model_id in _local_agent_model_candidates(policy, str(agent_id) if agent_id else None):
             if require_distinct and _same_model_identity(req.builder_model, str(provider_id) if provider_id else None, str(model_id) if model_id else None):
                 last_error = ValueError("reviewer model must differ from builder model")
                 continue
@@ -8180,6 +8336,7 @@ async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout_seconds=timeout_seconds,
+                    idle_timeout_seconds=idle_timeout_seconds,
                 )
                 clean_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
                 return {

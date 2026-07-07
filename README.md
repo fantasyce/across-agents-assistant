@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.40` | Pins Autopilot `v0.2.19`, refreshes long-running self-iteration timeouts on real local-agent activity, records non-secret host CLI progress evidence, filters unavailable Codex models, and skips stale pending trigger queue items. |
 | `0.9.39` | Pins Autopilot `v0.2.18`, applies local Codex fallback model overrides during self-iteration, and returns structured local-agent timeout failures for platform self-repair. |
 | `0.9.38` | Keeps only the latest two self-iteration candidate artifact sets by default and stops maintaining the legacy `~/.across/source-mirrors` copy unless explicitly enabled. |
 | `0.9.37` | Adds automatic lifecycle retention for self-iteration B candidates so old workspaces, candidate app artifacts, runtime homes, and failed run records do not accumulate indefinitely. |
@@ -279,22 +280,25 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.39` and
+This project is under active development. The current release is `0.9.40` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.18`
+- Across Autopilot `v0.2.19`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
 The current release keeps autonomous Loop Engineering reviewable while routing
-the researcher, builder, and reviewer through the local Codex agent. AAA restores
-an already configured daily scheduler on startup, dispatches the default
-self-iteration trigger at `10:00` in `Asia/Shanghai`, and validates candidates
-through managed plugin runtimes under `~/.across`.
+the researcher, builder, and reviewer through the local Codex agent. Long-running
+host model calls now expose non-secret activity and watchdog progress, refresh
+idle timeouts on real stdout/stderr activity, and retain max-wall timeouts as the
+final stuck-run guardrail. AAA restores an already configured daily scheduler on
+startup, dispatches the default self-iteration trigger at `10:00` in
+`Asia/Shanghai`, and validates candidates through managed plugin runtimes under
+`~/.across`.
 
 Autonomous Product Iteration uses
 `~/.across/data/across-autopilot/source-mirrors` as the primary source-mirror
@@ -469,7 +473,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.18
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.19
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8

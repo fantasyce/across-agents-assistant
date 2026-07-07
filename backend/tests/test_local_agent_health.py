@@ -284,6 +284,32 @@ def test_codex_detection_is_lightweight_and_does_not_run_prompt(monkeypatch):
     )
 
 
+def test_codex_model_discovery_uses_debug_models_without_prompt(monkeypatch):
+    local_agent_health.clear_local_agent_health_cache()
+    calls = []
+
+    monkeypatch.setattr(local_agent_health, "resolve_local_agent_executable", lambda agent_id: "/usr/local/bin/codex")
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        assert cmd == ["/usr/local/bin/codex", "debug", "models"]
+        return _Completed(stdout=json.dumps({
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5", "supported_in_api": True},
+                {"slug": "gpt-5.4-mini", "display_name": "GPT-5.4-Mini", "supported_in_api": True},
+            ]
+        }))
+
+    monkeypatch.setattr(local_agent_health.subprocess, "run", fake_run)
+
+    registry = local_agent_health.discover_codex_models(force=True)
+
+    assert registry["available"] is True
+    assert registry["available_models"] == ["gpt-5.5", "gpt-5.4-mini"]
+    assert local_agent_health.codex_model_is_available("gpt-5-codex") is False
+    assert not any(cmd[:2] == ["/usr/local/bin/codex", "exec"] for cmd in calls)
+
+
 def test_new_local_agent_detection_is_lightweight(monkeypatch):
     local_agent_health.clear_local_agent_health_cache()
     calls = []
