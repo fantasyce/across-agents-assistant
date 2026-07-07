@@ -3516,7 +3516,7 @@ async def _autopilot_research_decision_chat(
         decision = _normalize_research_decision(_extract_json_object(response.text), req)
         return response, decision, False, True, None
     except Exception as first_error:
-        repair_errors: List[str] = [str(first_error)]
+        repair_error_count = 1
         repair_seed = response.text
         repair_response = response
         for _attempt in range(3):
@@ -3539,17 +3539,17 @@ async def _autopilot_research_decision_chat(
                 decision = _normalize_research_decision(_extract_json_object(repair_response.text), req)
                 return repair_response, decision, True, True, None
             except Exception as repair_error:
-                repair_errors.append(str(repair_error))
+                repair_error_count += 1
                 repair_seed = repair_response.text
         if not _autopilot_research_allows_host_fallback(req):
             raise ValueError(
                 "Model research decision remained invalid after repair; host target fallback is disabled "
                 "for autonomous production loops. Enable model_policy.allow_host_target_fallback only for "
-                f"conformance fixtures. Validation errors: {' | '.join(repair_errors[-3:])}"
+                "conformance fixtures."
             ) from first_error
         decision = _autopilot_research_host_fallback_decision(
             req,
-            reason="Model research decision remained invalid after repair: " + " | ".join(repair_errors[-3:]),
+            reason=f"invalid_model_output_after_{repair_error_count}_validation_attempts",
         )
         return response, decision, True, False, "invalid_model_output_host_fallback"
 
@@ -3694,7 +3694,7 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                 agent_id=str(agent_id) if agent_id else None,
             ):
                 logger.warning("Autopilot research local agent timed out; using host timeout fallback: %s", exc)
-                decision = _autopilot_research_host_fallback_decision(req, reason=str(exc))
+                decision = _autopilot_research_host_fallback_decision(req, reason="local_agent_timeout")
                 response = LLMResponse(
                     text="",
                     raw={"error_code": exc.code, "elapsed_sec": exc.elapsed_sec},
@@ -3710,11 +3710,11 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                         response=response,
                         repaired=False,
                         model_backed=False,
-                        fallback_reason=str(exc),
+                        fallback_reason="local_agent_timeout_host_fallback",
                     )
                 )
             status_code = 504 if exc.code == "timeout" else 503
-            raise HTTPException(status_code=status_code, detail=_sanitize_public_error_text(str(exc)))
+            raise HTTPException(status_code=status_code, detail=_safe_error_message("Autopilot research local agent"))
         return _sanitize_public_payload(
             _autopilot_research_response_payload(
                 req,

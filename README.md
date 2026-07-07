@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.42` | Replaces Autopilot research-decision timeout and invalid-model fallback reasons with fixed public reason codes. |
 | `0.9.41` | Sanitizes Autopilot research-decision public payloads and 422 details so internal traceback content stays in local logs. |
 | `0.9.40` | Pins Autopilot `v0.2.19`, refreshes long-running self-iteration timeouts on real local-agent activity, records non-secret host CLI progress evidence, filters unavailable Codex models, and skips stale pending trigger queue items. |
 | `0.9.39` | Pins Autopilot `v0.2.18`, applies local Codex fallback model overrides during self-iteration, and returns structured local-agent timeout failures for platform self-repair. |
@@ -281,7 +282,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.41` and
+This project is under active development. The current release is `0.9.42` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.

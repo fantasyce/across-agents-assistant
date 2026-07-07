@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.42 - 2026-07-08
+
+### Fixed
+
+- Replaced Autopilot research-decision timeout and invalid-model fallback
+  reasons with fixed public reason codes so local exception strings cannot flow
+  into API responses or CodeQL stack-trace exposure alerts.
+
 ## 0.9.41 - 2026-07-08
 
 ### Fixed
