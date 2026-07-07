@@ -1926,6 +1926,45 @@ def test_autopilot_research_decision_production_rejects_host_target_fallback(mon
     assert "host target fallback is disabled" in response.json()["detail"]
 
 
+def test_autopilot_research_decision_host_fallback_omits_validation_trace(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    class BrokenResearchGateway:
+        async def chat(self, **kwargs):
+            return SimpleNamespace(
+                text="<think>no valid JSON</think>",
+                provider="fake-provider",
+                model="fake-research-model",
+                finish_reason="length",
+                usage={"total_tokens": 12},
+            )
+
+    monkeypatch.setattr(api_server, "get_gateway", lambda: BrokenResearchGateway())
+    response = TestClient(app).post("/api/autopilot/research-decision", json={
+        "goal": "Choose an open autonomous AAA iteration",
+        "candidate_workspace": str(candidate),
+        "sources": [{"id": "architecture-signal", "status": "passed", "result": {"excerpt": "review quality"}}],
+        "product_context": {"autonomous_loop_state": {"backlog_count": 0}},
+        "target_catalog": [],
+        "target_generation": {
+            "mode": "model_generated",
+            "allow_model_generated_targets": True,
+            "minimum_candidates": 2,
+        },
+        "model_policy": {"required": True, "provider": "fake", "allow_host_target_fallback": True},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    rendered = json.dumps(body, sort_keys=True)
+    assert body["fallback_reason"] == "invalid_model_output_host_fallback"
+    assert body["model_backed"] is False
+    assert "Traceback (most recent call last)" not in rendered
+    assert "JSONDecodeError" not in rendered
+    assert "Expecting value" not in rendered
+
+
 def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(monkeypatch, tmp_path):
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -1976,7 +2015,7 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
     assert body["model_backed"] is False
     assert body["provider"] == "local-agent"
     assert body["model"] == "codex"
-    assert "timed out" in body["fallback_reason"]
+    assert body["fallback_reason"] == "local_agent_timeout_host_fallback"
     assert body["selected_target_id"] == "autonomous-research-timeout-recovery"
     assert len(body["candidate_targets"]) == 3
     assert body["selected_iteration"]["allowed_patch_paths"][0] == "backend/src/across_agents_assistant/api_server.py"
@@ -2019,7 +2058,7 @@ def test_autopilot_research_decision_local_agent_missing_returns_structured_fail
     })
 
     assert response.status_code == 503
-    assert "executable was not found" in response.json()["detail"]
+    assert response.json()["detail"] == "Autopilot research local agent failed. See local backend logs for details."
 
 
 def test_autopilot_research_decision_preserves_autonomous_catalog_metadata(monkeypatch, tmp_path):
