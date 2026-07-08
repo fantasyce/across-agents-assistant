@@ -4695,9 +4695,20 @@ def test_autopilot_code_iteration_validation_fallback_repairs_tool_pack_registry
     test_patch = next(patch for patch in body["patches"] if patch["path"].startswith("backend/tests/"))
     namespace = {}
     exec(compile(module["content"], module["path"], "exec"), namespace)
-    assert [item.id for item in namespace["ALL_PACKS"]] == ["intake", "research", "build", "validate", "review"]
-    assert namespace["evaluate"]({"tool_packs": ["intake"]})["status"] == "attention"
-    assert namespace["advise_tool_packs"]("validate loop", {"tool_packs": ["intake", "research", "build", "validate", "review"]})["status"] == "passed"
+    expected_pack_ids = [
+        "trigger_ingestion",
+        "source_research_digest",
+        "model_target_admission",
+        "candidate_workspace",
+        "validation_harness",
+        "independent_review",
+        "promotion_attestation",
+    ]
+    assert [item.id for item in namespace["ALL_PACKS"]] == expected_pack_ids
+    assert namespace["evaluate"]({"tool_packs": ["trigger_ingestion"]})["status"] == "attention"
+    assert namespace["advise_tool_packs"]("validate loop", {"tool_packs": expected_pack_ids})["status"] == "passed"
+    assert namespace["advise_tool_packs"]("validate loop", {"tool_packs": expected_pack_ids})["recommended_packs"] == []
+    assert namespace["tool_pack_registry_snapshot"]({"tool_packs": expected_pack_ids})["contract"]["status"] == "passed"
     _assert_marker_upsert(workbench, "# ACROSS TOOL PACK REGISTRY WORKBENCH START", "# ACROSS TOOL PACK REGISTRY WORKBENCH END")
     assert "def tool_pack_registry_snapshot()" in workbench["content"]
     _assert_marker_upsert(
@@ -4707,6 +4718,7 @@ def test_autopilot_code_iteration_validation_fallback_repairs_tool_pack_registry
     )
     assert "def advise_with_capability" in pack["content"]
     assert "test_workbench_and_capability_pack_markers_use_delayed_imports" in test_patch["content"]
+    assert "test_product_entrypoints_execute_tool_pack_contract" in test_patch["content"]
     assert "Mapping[str, Any] | None" not in module["content"]
 
 
