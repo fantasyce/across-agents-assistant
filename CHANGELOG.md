@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.48 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.25`, adding duplicate marker repair collapse and implicit workbench /
+  capability-pack entrypoint validation for self-iteration candidates.
+- Hardened the Tool Pack registry code-iteration fallback so generated
+  candidates expose a real pack-id contract, dynamic advice, and executable
+  product-entrypoint smoke tests before independent review.
+
 ## 0.9.47 - 2026-07-08
 
 ### Changed
