@@ -808,6 +808,12 @@ class UniversalAgentClient:
 
     @staticmethod
     def _communicate_with_activity_timeout(process, *, max_wall_timeout: float, idle_timeout: float):
+        """Communicate with a CLI agent while treating streamed output as progress.
+
+        Local coding agents can run for a long time on complex tasks while still
+        emitting JSONL/progress chunks.  For this path, both idle and wall
+        budgets are activity windows rather than a hard kill from process start.
+        """
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
         lock = threading.Lock()
@@ -881,12 +887,14 @@ class UniversalAgentClient:
         timeout_seconds = None
         while process.poll() is None:
             now = time.monotonic()
-            if max_wall_timeout > 0 and now - started > max_wall_timeout:
+            with lock:
+                last_seen_activity = last_activity
+            if max_wall_timeout > 0 and now - last_seen_activity > max_wall_timeout:
                 timeout_kind = "max_wall_timeout"
                 timeout_seconds = max_wall_timeout
                 UniversalAgentClient._terminate_process_tree(process)
                 break
-            if idle_timeout > 0 and now - last_activity > idle_timeout:
+            if idle_timeout > 0 and now - last_seen_activity > idle_timeout:
                 timeout_kind = "idle_timeout"
                 timeout_seconds = idle_timeout
                 UniversalAgentClient._terminate_process_tree(process)
