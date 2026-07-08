@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.46 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.23`, adding hard source-discovery deadlines even when an underlying URL
+  fetch or body stream ignores abort signals.
+
 ## 0.9.45 - 2026-07-08
 
 ### Changed

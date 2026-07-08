@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.46` | Pins Autopilot `v0.2.23`, adding hard source-discovery deadlines even when an underlying fetch/body stream ignores abort signals. |
 | `0.9.45` | Pins Autopilot `v0.2.22`, so autonomous URL source timeouts cover stalled response body reads as well as response headers during source discovery. |
 | `0.9.44` | Pins Autopilot `v0.2.21`, terminates cancelled Autopilot executor process trees, and records per-model research-decision progress evidence before builder work starts. |
 | `0.9.43` | Pins Autopilot `v0.2.20`, propagates code-iteration timeout policy into builder model calls, and gives complex local Codex builder runs a longer bounded idle window with per-model progress evidence. |
@@ -285,14 +286,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.45` and
+This project is under active development. The current release is `0.9.46` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.22`
+- Across Autopilot `v0.2.23`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
@@ -479,7 +480,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.22
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.23
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8
