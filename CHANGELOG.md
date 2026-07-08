@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.47 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.24`, so self-iteration uses locally smoke-tested Codex models by role.
+- Hardened local Codex timeout handling to terminate the full subprocess group
+  when idle or max-wall timeouts fire.
+
 ## 0.9.46 - 2026-07-08
 
 ### Changed

@@ -105,7 +105,7 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
     monkeypatch.setattr(
         local_agent_health,
         "get_configured_agent_model",
-        lambda agent_id: "gpt-5.5",
+        lambda agent_id: "gpt-5.3-codex-spark",
     )
     monkeypatch.setattr(local_agent_health, "codex_model_is_available", lambda model: True)
 
@@ -116,6 +116,7 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
         observed["args"] = args
         observed["cwd"] = kwargs.get("cwd")
         observed["stdin"] = kwargs.get("stdin")
+        observed["start_new_session"] = kwargs.get("start_new_session")
         return FakeProcess()
 
     monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
@@ -139,11 +140,43 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
     )
 
     assert reply.text == "codex completed"
-    assert observed["args"][:5] == ["/usr/local/bin/codex", "exec", "--json", "--model", "gpt-5.5"]
+    assert observed["args"][:5] == ["/usr/local/bin/codex", "exec", "--json", "--model", "gpt-5.3-codex-spark"]
     assert "--ask-for-approval" not in observed["args"]
     assert "--cd" in observed["args"]
     assert str(tmp_path) in observed["args"]
     assert observed["stdin"] is client_mod.subprocess.DEVNULL
+    assert observed["start_new_session"] is True
+
+
+def test_universal_agent_client_terminates_process_group(monkeypatch):
+    observed = {}
+
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class FakeProcess:
+        pid = 12345
+        _polls = [None, None, 0]
+
+        def poll(self):
+            return self._polls.pop(0) if self._polls else 0
+
+        def terminate(self):
+            observed["terminated"] = True
+
+        def kill(self):
+            observed["killed"] = True
+
+        def wait(self, timeout=None):
+            observed.setdefault("waits", []).append(timeout)
+            return 0
+
+    monkeypatch.setattr(client_mod.os, "getpgid", lambda pid: 67890)
+    monkeypatch.setattr(client_mod.os, "killpg", lambda pgid, sig: observed.setdefault("signals", []).append((pgid, sig)))
+
+    client_mod.UniversalAgentClient._terminate_process_tree(FakeProcess())
+
+    assert observed["signals"] == [(67890, client_mod.signal.SIGTERM)]
+    assert observed["waits"] == [2.0]
 
 
 def test_universal_agent_client_ignores_unavailable_configured_codex_model(monkeypatch, tmp_path):

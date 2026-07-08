@@ -295,8 +295,8 @@ def test_codex_model_discovery_uses_debug_models_without_prompt(monkeypatch):
         assert cmd == ["/usr/local/bin/codex", "debug", "models"]
         return _Completed(stdout=json.dumps({
             "models": [
-                {"slug": "gpt-5.5", "display_name": "GPT-5.5", "supported_in_api": True},
-                {"slug": "gpt-5.4-mini", "display_name": "GPT-5.4-Mini", "supported_in_api": True},
+                {"slug": "gpt-5.3-codex-spark", "display_name": "GPT-5.3 Codex Spark", "supported_in_api": True},
+                {"slug": "codex-auto-review", "display_name": "Codex Auto Review", "supported_in_api": True},
             ]
         }))
 
@@ -305,7 +305,7 @@ def test_codex_model_discovery_uses_debug_models_without_prompt(monkeypatch):
     registry = local_agent_health.discover_codex_models(force=True)
 
     assert registry["available"] is True
-    assert registry["available_models"] == ["gpt-5.5", "gpt-5.4-mini"]
+    assert registry["available_models"] == ["gpt-5.3-codex-spark", "codex-auto-review"]
     assert local_agent_health.codex_model_is_available("gpt-5-codex") is False
     assert not any(cmd[:2] == ["/usr/local/bin/codex", "exec"] for cmd in calls)
 

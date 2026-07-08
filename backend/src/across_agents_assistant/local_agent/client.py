@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 import time
 import re
@@ -387,7 +388,8 @@ class UniversalAgentClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=process_cwd
+                cwd=process_cwd,
+                start_new_session=(os.name != "nt"),
             )
 
             if session_id:
@@ -435,8 +437,7 @@ class UniversalAgentClient:
 
             elapsed = time.time() - t0
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            self._terminate_process_tree(process)
             if session_id and session_id in self.active_processes:
                 del self.active_processes[session_id]
             elapsed = time.time() - t0
@@ -770,6 +771,42 @@ class UniversalAgentClient:
                 del self.active_processes[session_id]
 
     @staticmethod
+    def _terminate_process_tree(process) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            if os.name != "nt":
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            else:
+                process.terminate()
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                return
+        try:
+            process.wait(timeout=2.0)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            return
+        try:
+            if os.name != "nt":
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            else:
+                process.kill()
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                return
+        try:
+            process.wait(timeout=1.0)
+        except Exception:
+            pass
+
+    @staticmethod
     def _communicate_with_activity_timeout(process, *, max_wall_timeout: float, idle_timeout: float):
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
@@ -847,16 +884,17 @@ class UniversalAgentClient:
             if max_wall_timeout > 0 and now - started > max_wall_timeout:
                 timeout_kind = "max_wall_timeout"
                 timeout_seconds = max_wall_timeout
-                process.kill()
+                UniversalAgentClient._terminate_process_tree(process)
                 break
             if idle_timeout > 0 and now - last_activity > idle_timeout:
                 timeout_kind = "idle_timeout"
                 timeout_seconds = idle_timeout
-                process.kill()
+                UniversalAgentClient._terminate_process_tree(process)
                 break
             time.sleep(0.1)
 
-        process.wait()
+        if process.poll() is None:
+            process.wait()
         for thread in threads:
             thread.join(timeout=1.0)
         return "".join(stdout_parts), "".join(stderr_parts), timeout_kind, timeout_seconds
