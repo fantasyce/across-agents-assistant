@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.52 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.28`, keeping AAA self-iteration research and review on
+  `gpt-5.3-codex-spark` first while leaving `codex-auto-review` only as a
+  fallback after live E2E showed review-model sessions could hang during
+  research repair.
+
 ## 0.9.51 - 2026-07-08
 
 ### Changed
