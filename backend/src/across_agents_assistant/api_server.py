@@ -46,11 +46,20 @@ def _safe_http_500(operation: str) -> HTTPException:
 class LocalAgentExecutionError(RuntimeError):
     """Raised when a local CLI agent fails before producing model text."""
 
-    def __init__(self, agent_id: str, code: str, message: str, *, elapsed_sec: Optional[float] = None):
+    def __init__(
+        self,
+        agent_id: str,
+        code: str,
+        message: str,
+        *,
+        elapsed_sec: Optional[float] = None,
+        timeout_kind: Optional[str] = None,
+    ):
         super().__init__(message)
         self.agent_id = agent_id
         self.code = code
         self.elapsed_sec = elapsed_sec
+        self.timeout_kind = timeout_kind
 
 
 def _external_orchestrator_http_error(operation: str, exc: "OrchestratorPluginHTTPError") -> HTTPException:
@@ -1535,7 +1544,14 @@ def _raise_for_local_agent_infra_error(agent_id: str, reply: Any) -> None:
         message = f"local agent {agent_id} failed before returning model text"
     if text:
         message = f"{message}: {text[:500]}"
-    raise LocalAgentExecutionError(agent_id, code, message, elapsed_sec=elapsed if isinstance(elapsed, (int, float)) else None)
+    timeout_kind = getattr(reply, "timeout_kind", None)
+    raise LocalAgentExecutionError(
+        agent_id,
+        code,
+        message,
+        elapsed_sec=elapsed if isinstance(elapsed, (int, float)) else None,
+        timeout_kind=str(timeout_kind) if timeout_kind else None,
+    )
 
 
 async def _chat_with_model_capability(
@@ -2251,7 +2267,12 @@ def _autopilot_model_policy_timeout_seconds(policy: Dict[str, Any], *, default: 
     return max(1.0, value)
 
 
-def _autopilot_model_policy_timeout_plan(policy: Dict[str, Any], *, default: float = 600.0) -> Dict[str, float]:
+def _autopilot_model_policy_timeout_plan(
+    policy: Dict[str, Any],
+    *,
+    default: float = 600.0,
+    default_idle: float = 300.0,
+) -> Dict[str, float]:
     max_wall = _autopilot_model_policy_timeout_seconds(policy, default=default)
     idle_ms = _autopilot_model_policy_value(
         policy,
@@ -2273,9 +2294,9 @@ def _autopilot_model_policy_timeout_plan(policy: Dict[str, Any], *, default: flo
             "no_progress_timeout_seconds",
         )
         try:
-            idle_seconds = float(idle_seconds) if idle_seconds is not None else min(max_wall, 300.0)
+            idle_seconds = float(idle_seconds) if idle_seconds is not None else min(max_wall, default_idle)
         except (TypeError, ValueError):
-            idle_seconds = min(max_wall, 300.0)
+            idle_seconds = min(max_wall, default_idle)
     return {
         "max_wall_timeout_seconds": max(1.0, max_wall),
         "idle_timeout_seconds": max(1.0, min(float(idle_seconds), max_wall)),
@@ -7943,7 +7964,7 @@ async def create_autopilot_code_iteration(req: AutopilotCodeIterationRequest):
         agent_id = _autopilot_model_policy_value(policy, "agent_id", "agent")
         temperature = float(_autopilot_model_policy_value(policy, "temperature", default=0.2))
         base_max_tokens = int(_autopilot_model_policy_value(policy, "max_tokens", "maxTokens", default=1200))
-        timeout_plan = _autopilot_model_policy_timeout_plan(policy)
+        timeout_plan = _autopilot_model_policy_timeout_plan(policy, default_idle=900.0)
         timeout_seconds = timeout_plan["max_wall_timeout_seconds"]
         idle_timeout_seconds = timeout_plan["idle_timeout_seconds"]
         host_validation_repair_fallback = False
@@ -8095,8 +8116,21 @@ async def _run_code_iteration_with_model_fallbacks(
         max_tokens = base_max_tokens
         if direct_patches_requested and str(provider_id or "").lower() == "minimax":
             max_tokens = max(max_tokens, 8192)
+        from .autopilot_host_cli_progress import host_cli_log
+
+        host_cli_log(
+            "autopilot-code-iteration.jsonl",
+            "code_iteration.model_candidate.start",
+            run_id=req.run_id,
+            candidate_id=req.candidate_id,
+            provider=provider_id,
+            agent_id=agent_id,
+            model=candidate_model,
+            idle_timeout_sec=idle_timeout_seconds,
+            max_wall_timeout_sec=timeout_seconds,
+        )
         try:
-            return await _autopilot_code_iteration_chat(
+            result = await _autopilot_code_iteration_chat(
                 req,
                 context_files=context_files,
                 provider_id=provider_id,
@@ -8107,8 +8141,32 @@ async def _run_code_iteration_with_model_fallbacks(
                 timeout_seconds=timeout_seconds,
                 idle_timeout_seconds=idle_timeout_seconds,
             )
+            host_cli_log(
+                "autopilot-code-iteration.jsonl",
+                "code_iteration.model_candidate.complete",
+                run_id=req.run_id,
+                candidate_id=req.candidate_id,
+                provider=provider_id,
+                agent_id=agent_id,
+                model=candidate_model,
+            )
+            return result
         except Exception as exc:
             last_error = exc
+            host_cli_log(
+                "autopilot-code-iteration.jsonl",
+                "code_iteration.model_candidate.failed",
+                run_id=req.run_id,
+                candidate_id=req.candidate_id,
+                provider=provider_id,
+                agent_id=agent_id,
+                model=candidate_model,
+                error_type=type(exc).__name__,
+                error_code=getattr(exc, "code", None),
+                timeout_kind=getattr(exc, "timeout_kind", None),
+                elapsed_sec=getattr(exc, "elapsed_sec", None),
+                error=_sanitize_public_error_text(str(exc))[:500],
+            )
             logger.warning(
                 "Autopilot code iteration model candidate failed: provider=%s model=%s error=%s",
                 provider_id,

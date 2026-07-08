@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import json
 
 import across_agents_assistant.api_server as api_server
+from across_agents_assistant import autopilot_host_cli_progress
 from across_agents_assistant import local_agent_health
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
 from across_agents_assistant.autopilot_promotion_review import build_promotion_review_packet
@@ -2605,6 +2606,7 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
     candidate.mkdir()
     (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
     calls = []
+    progress_events = []
 
     class LocalAgentClient:
         def send(self, message, *, target_agent=None, project_dir=None, timeout=None, model=None, **_kwargs):
@@ -2621,6 +2623,7 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
                     requires_approval=False,
                     timed_out=True,
                     error_code="timeout",
+                    timeout_kind="idle_timeout",
                 )
             return SimpleNamespace(
                 text=json.dumps({
@@ -2646,6 +2649,11 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
 
     monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
     monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    monkeypatch.setattr(
+        autopilot_host_cli_progress,
+        "host_cli_log",
+        lambda log_file, event, **fields: progress_events.append({"log_file": log_file, "event": event, **fields}),
+    )
     monkeypatch.setattr(local_agent_health, "discover_codex_models", lambda: {
         "available": True,
         "available_models": ["gpt-5.4-mini"],
@@ -2673,6 +2681,69 @@ def test_autopilot_code_iteration_local_agent_falls_back_to_model_override(monke
     assert body["patches"][0]["path"] == "backend/src/across_agents_assistant/codex_fallback_probe.py"
     assert [call["model"] for call in calls] == [None, "gpt-5.4-mini"]
     assert [call["timeout"] for call in calls] == [240.0, 240.0]
+    assert [event["event"] for event in progress_events] == [
+        "code_iteration.model_candidate.start",
+        "code_iteration.model_candidate.failed",
+        "code_iteration.model_candidate.start",
+        "code_iteration.model_candidate.complete",
+    ]
+    assert progress_events[1]["timeout_kind"] == "idle_timeout"
+
+
+def test_autopilot_code_iteration_defaults_idle_timeout_for_long_builder_runs(monkeypatch, tmp_path):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "README.md").write_text("# Candidate\n", encoding="utf-8")
+    captured = {}
+
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, idle_timeout=None, model=None, **_kwargs):
+            captured["timeout"] = timeout
+            captured["idle_timeout"] = idle_timeout
+            return SimpleNamespace(
+                text=json.dumps({
+                    "summary": "Add long builder timeout proof",
+                    "risk": "low",
+                    "patches": [{
+                        "path": "backend/src/across_agents_assistant/long_builder_probe.py",
+                        "mode": "overwrite",
+                        "content": "LONG_BUILDER_TIMEOUT_READY = True\n",
+                    }],
+                    "validation_commands": [{
+                        "command": "python3",
+                        "args": ["-m", "py_compile", "backend/src/across_agents_assistant/long_builder_probe.py"],
+                    }],
+                }),
+                elapsed_sec=0.01,
+                requires_approval=False,
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/code-iteration", json={
+        "goal": "Use the local Codex agent for a long builder run",
+        "candidate_workspace": str(candidate),
+        "candidate_id": "cand-long-builder",
+        "run_id": "run-long-builder",
+        "allowed_patch_paths": ["backend/src/across_agents_assistant/long_builder_probe.py"],
+        "context_files": ["README.md"],
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "direct_patches": True,
+            "timeout_ms": 2400000,
+        },
+    })
+
+    assert response.status_code == 200
+    assert captured["timeout"] == 2400.0
+    assert captured["idle_timeout"] == 900.0
 
 
 def test_autopilot_code_iteration_local_agent_timeout_returns_structured_failure(monkeypatch, tmp_path):
