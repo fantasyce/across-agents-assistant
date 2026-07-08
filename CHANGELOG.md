@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.50 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.27`, so generated self-iteration validation commands are filtered
+  before candidate execution and AAA runtime dependency smoke tests recognize
+  standard-library imports on older system Python runtimes.
+
 ## 0.9.49 - 2026-07-08
 
 ### Changed

@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.50` | Pins Autopilot `v0.2.27`, filters generated pytest validation commands, and keeps AAA runtime dependency smoke stable on older system Python runtimes. |
 | `0.9.49` | Pins Autopilot `v0.2.26` and refreshes local-agent wall-timeout windows while CLI output is still streaming. |
 | `0.9.48` | Pins Autopilot `v0.2.25`, collapses duplicate candidate marker repairs, and validates AAA workbench/capability-pack entrypoints before independent review. |
 | `0.9.47` | Pins Autopilot `v0.2.24`, uses smoke-tested local Codex models for self-iteration roles, and terminates timed-out local agent process groups. |
@@ -289,14 +290,14 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.49` and
+This project is under active development. The current release is `0.9.50` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
 
 Current managed producer pins:
 
-- Across Autopilot `v0.2.26`
+- Across Autopilot `v0.2.27`
 - Across Orchestrator `v0.7.10`
 - Across Context `v0.8.8`
 
@@ -483,7 +484,7 @@ ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
-ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.26
+ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.27
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
 ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-context.git#v0.8.8
