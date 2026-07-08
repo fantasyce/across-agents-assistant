@@ -65,7 +65,7 @@ DEFAULT_RELEASE_SOURCES = {
     },
     "across-autopilot": {
         "url": "https://github.com/fantasyce/across-autopilot.git",
-        "ref": "v0.2.29",
+        "ref": "v0.2.30",
     },
 }
 
