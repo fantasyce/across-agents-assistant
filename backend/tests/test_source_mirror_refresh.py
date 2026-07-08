@@ -167,6 +167,56 @@ def test_refresh_source_mirrors_bootstraps_release_sources_without_dev_checkouts
     assert (primary_root / "across-agents-assistant" / "backend" / "pyproject.toml").exists()
 
 
+def test_refresh_source_mirrors_reuses_fresh_release_mirrors_when_one_ref_changes(tmp_path, monkeypatch):
+    source_root = _create_sources(tmp_path / "release-sources")
+    env = _release_source_env(tmp_path, source_root)
+    env.pop("ACROSS_AAA_SOURCE_MIRROR_REQUIRE_ORIGIN_MAIN")
+    refresh_source_mirrors(env)
+
+    repo = source_root / "across-autopilot"
+    (repo / "package.json").write_text(json.dumps({"version": "1.0.1"}) + "\n", encoding="utf-8")
+    subprocess.check_call(["git", "-C", str(repo), "add", "package.json"])
+    subprocess.check_call(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=pytest",
+            "-c",
+            "user.email=pytest@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "release 1.0.1",
+        ]
+    )
+    subprocess.check_call(["git", "-C", str(repo), "tag", "v1.0.1"])
+    _, ref_env = RELEASE_SOURCE_ENV["across-autopilot"]
+    env[ref_env] = "v1.0.1"
+    assert source_mirror_status(env)["stale_repos"] == ["across-autopilot"]
+
+    cloned: list[str] = []
+    original_git_clone = source_mirror_refresh_module._git_clone
+
+    def tracking_git_clone(url, ref, target, repo_id, git_env):
+        cloned.append(repo_id)
+        return original_git_clone(url, ref, target, repo_id, git_env)
+
+    monkeypatch.setattr(source_mirror_refresh_module, "_git_clone", tracking_git_clone)
+
+    refresh_source_mirrors(env)
+    status = source_mirror_status(env)
+    primary_root = Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors"
+    manifest = json.loads((primary_root / "manifest.json").read_text(encoding="utf-8"))
+    refs = {item["id"]: item["source_ref"] for item in manifest["repos"]}
+
+    assert cloned == ["across-autopilot"]
+    assert status["status"] == "passed"
+    assert refs["across-autopilot"] == "v1.0.1"
+    assert {refs[repo_id] for repo_id in REQUIRED_SOURCE_REPOS if repo_id != "across-autopilot"} == {"v1.0.0"}
+
+
 def test_git_clone_retries_with_http1_fallback_and_cleans_failed_target(tmp_path, monkeypatch):
     target = tmp_path / "clone"
     calls = []

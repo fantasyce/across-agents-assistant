@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -152,6 +153,11 @@ def refresh_source_mirrors(env: Mapping[str, str] | None = None) -> dict[str, An
                 ],
                 "repo_count": len(REQUIRED_SOURCE_REPOS),
             }
+        cached_sources, cached_metadata = _fresh_release_mirror_cache(existing, merged)
+        if cached_sources:
+            sources = {**cached_sources, **sources}
+            source_metadata.update(cached_metadata)
+            missing = [repo_id for repo_id in REQUIRED_SOURCE_REPOS if repo_id not in sources]
     if missing:
         with tempfile.TemporaryDirectory(prefix="across-source-mirror-") as tmp_dir:
             cloned, cloned_metadata = _clone_release_sources(missing, merged, Path(tmp_dir))
@@ -352,7 +358,8 @@ def _inspect_source(
     }
     exact_tag = _git(["describe", "--tags", "--exact-match", "HEAD"], source, check=False).strip() or None
     origin_aligned = bool(origin_main and origin_main == head)
-    if require_origin and not origin_aligned and not exact_tag:
+    trusted_release_mirror_cache = _truthy(metadata.get("trusted_release_mirror_cache"))
+    if require_origin and not origin_aligned and not exact_tag and not trusted_release_mirror_cache:
         raise SourceMirrorRefreshError(
             f"Source repo is not aligned with origin/main or an exact tag: {repo_id}",
             payload={
@@ -381,7 +388,7 @@ def _inspect_source(
         "version": _read_version(source),
     }
     if metadata.get("source_url"):
-        record["source_checkout"] = str(source)
+        record["source_checkout"] = str(metadata.get("source_checkout") or source)
     return record
 
 
@@ -514,6 +521,43 @@ def _release_source_spec(repo_id: str, env: Mapping[str, str]) -> dict[str, str]
         "url": str(env.get(url_env) or default["url"]).strip(),
         "ref": str(env.get(ref_env) or default["ref"]).strip(),
     }
+
+
+def _fresh_release_mirror_cache(
+    status: Mapping[str, Any],
+    env: Mapping[str, str],
+) -> tuple[dict[str, Path], dict[str, dict[str, Any]]]:
+    sources: dict[str, Path] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    repos = status.get("repos") if isinstance(status, Mapping) else []
+    if not isinstance(repos, list):
+        return sources, metadata
+    for item in repos:
+        if not isinstance(item, Mapping):
+            continue
+        repo_id = str(item.get("id") or "").strip()
+        if repo_id not in REQUIRED_SOURCE_REPOS:
+            continue
+        release_source = _release_source_spec(repo_id, env)
+        release_ref = str(release_source.get("ref") or "").strip()
+        mirror = Path(str(item.get("mirror") or "")).expanduser()
+        if not (
+            item.get("fresh")
+            and not item.get("source")
+            and item.get("source_mode") == "release_source"
+            and item.get("manifest_source_ref") == release_ref
+            and mirror.exists()
+        ):
+            continue
+        sources[repo_id] = mirror
+        metadata[repo_id] = {
+            "source_mode": "release_source",
+            "source_url": str(release_source.get("url") or ""),
+            "source_ref": release_ref,
+            "source_checkout": str(mirror),
+            "trusted_release_mirror_cache": "1",
+        }
+    return sources, metadata
 
 
 def _git_clone(url: str, ref: str, target: Path, repo_id: str, env: Mapping[str, str]) -> None:
@@ -665,21 +709,47 @@ def _git(args: list[str], cwd: Path, *, check: bool = True, timeout: int = 30) -
 
 def _run_git(args: list[str], cwd: Path, *, timeout: int, include_cwd: bool = True) -> subprocess.CompletedProcess[str]:
     command = ["git", "-C", str(cwd), *args] if include_cwd else ["git", *args]
+    proc: subprocess.Popen[str] | None = None
     try:
-        return subprocess.run(
+        proc = subprocess.Popen(
             command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
             env=_git_env(),
+            start_new_session=True,
         )
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, proc.returncode, stdout=stdout, stderr=stderr)
     except subprocess.TimeoutExpired as exc:
+        if proc is not None:
+            _terminate_process_group(proc, signal.SIGTERM)
+            try:
+                stdout, stderr = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                _terminate_process_group(proc, signal.SIGKILL)
+                stdout, stderr = proc.communicate()
+        else:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
         return subprocess.CompletedProcess(
             command,
             124,
-            stdout=exc.stdout if isinstance(exc.stdout, str) else "",
-            stderr=(exc.stderr if isinstance(exc.stderr, str) else "") or f"git command timed out after {timeout}s",
+            stdout=stdout or "",
+            stderr=(stderr or "") or f"git command timed out after {timeout}s",
         )
+
+
+def _terminate_process_group(proc: subprocess.Popen[str], sig: int) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if sig == signal.SIGKILL:
+            proc.kill()
+        else:
+            proc.terminate()
 
 
 def _git_env() -> dict[str, str]:

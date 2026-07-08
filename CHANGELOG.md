@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.51 - 2026-07-08
+
+### Changed
+
+- Reused already-fresh release source mirrors when refreshing self-iteration
+  source snapshots, so unchanged producer repos are not recloned during a
+  partial release-pin change.
+- Hardened source-mirror git command timeouts by terminating the full process
+  group before reporting timeout failures.
+
 ## 0.9.50 - 2026-07-08
 
 ### Changed
