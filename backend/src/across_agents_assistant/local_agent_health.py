@@ -80,7 +80,7 @@ LOCAL_AGENT_SPECS = {
         "probe_args": None,
         "candidate_dirs": ["/Applications/Codex.app/Contents/Resources", "/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"],
         "model_args": ["--model"],
-        "default_models": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+        "default_models": ["gpt-5.3-codex-spark", "codex-auto-review", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
     },
     "kimi": {
         "display_name": "Kimi Code",

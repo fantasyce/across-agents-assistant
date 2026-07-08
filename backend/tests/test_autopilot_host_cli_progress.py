@@ -28,7 +28,7 @@ def test_code_iteration_cli_emits_heartbeat_while_awaiting_model(monkeypatch):
         "model_policy": {
             "provider": "local-agent",
             "agent_id": "codex",
-            "model": "gpt-5.5",
+            "model": "gpt-5.3-codex-spark",
         },
     }))
 

@@ -73,7 +73,7 @@ DEFAULT_CONFIG = {
             "type": "local_cli",
             "base_url": "",
             "api_key": "",
-            "model": "gpt-5.5"
+            "model": "gpt-5.3-codex-spark"
         },
         "kimi": {
             "type": "local_cli",

@@ -96,8 +96,8 @@ struct AgentConfig: Identifiable, Codable {
         executablePath: nil,
         version: nil,
         status: .notInstalled,
-        selectedModel: "gpt-5.5",
-        availableModels: ["gpt-5.5", "gpt-5.4-mini", "o3", "gpt-5-codex"]
+        selectedModel: "gpt-5.3-codex-spark",
+        availableModels: ["gpt-5.3-codex-spark", "codex-auto-review", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
     )
 
     static let kimi = AgentConfig(
