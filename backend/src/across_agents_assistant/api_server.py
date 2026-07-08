@@ -3683,6 +3683,19 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
         last_error: Optional[Exception] = None
         try:
             for candidate_model in model_candidates or [None]:
+                from .autopilot_host_cli_progress import host_cli_log
+
+                host_cli_log(
+                    "autopilot-research-decision.jsonl",
+                    "research_decision.model_candidate.start",
+                    run_id=req.run_id,
+                    candidate_id=req.candidate_id,
+                    provider=provider_id,
+                    agent_id=agent_id,
+                    model=candidate_model,
+                    idle_timeout_sec=idle_timeout_seconds,
+                    max_wall_timeout_sec=timeout_seconds,
+                )
                 try:
                     response, decision, repaired, model_backed, fallback_reason = await _autopilot_research_decision_chat(
                         req,
@@ -3694,13 +3707,50 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                         timeout_seconds=timeout_seconds,
                         idle_timeout_seconds=idle_timeout_seconds,
                     )
+                    host_cli_log(
+                        "autopilot-research-decision.jsonl",
+                        "research_decision.model_candidate.complete",
+                        run_id=req.run_id,
+                        candidate_id=req.candidate_id,
+                        provider=provider_id,
+                        agent_id=agent_id,
+                        model=candidate_model,
+                    )
                     break
                 except LocalAgentExecutionError as exc:
                     last_local_agent_error = exc
                     last_error = exc
+                    host_cli_log(
+                        "autopilot-research-decision.jsonl",
+                        "research_decision.model_candidate.failed",
+                        run_id=req.run_id,
+                        candidate_id=req.candidate_id,
+                        provider=provider_id,
+                        agent_id=agent_id,
+                        model=candidate_model,
+                        error_type=type(exc).__name__,
+                        error_code=getattr(exc, "code", None),
+                        timeout_kind=getattr(exc, "timeout_kind", None),
+                        elapsed_sec=getattr(exc, "elapsed_sec", None),
+                        error=_sanitize_public_error_text(str(exc))[:500],
+                    )
                     continue
                 except Exception as exc:
                     last_error = exc
+                    host_cli_log(
+                        "autopilot-research-decision.jsonl",
+                        "research_decision.model_candidate.failed",
+                        run_id=req.run_id,
+                        candidate_id=req.candidate_id,
+                        provider=provider_id,
+                        agent_id=agent_id,
+                        model=candidate_model,
+                        error_type=type(exc).__name__,
+                        error_code=getattr(exc, "code", None),
+                        timeout_kind=getattr(exc, "timeout_kind", None),
+                        elapsed_sec=getattr(exc, "elapsed_sec", None),
+                        error=_sanitize_public_error_text(str(exc))[:500],
+                    )
                     continue
             else:
                 if last_local_agent_error:
@@ -3718,7 +3768,7 @@ async def create_autopilot_research_decision(req: AutopilotResearchDecisionReque
                 decision = _autopilot_research_host_fallback_decision(req, reason="local_agent_timeout")
                 response = LLMResponse(
                     text="",
-                    raw={"error_code": exc.code, "elapsed_sec": exc.elapsed_sec},
+                    raw={"error_code": exc.code, "elapsed_sec": exc.elapsed_sec, "timeout_kind": exc.timeout_kind},
                     model=str(model_id or agent_id or "local-agent"),
                     provider=str(provider_id or "local-agent"),
                     finish_reason="timeout_fallback",
