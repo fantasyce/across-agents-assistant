@@ -56,7 +56,7 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-autopilot",
         install_command="across-autopilot install host-plugin",
         install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.2.28",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.2.29",
     ),
 )
 

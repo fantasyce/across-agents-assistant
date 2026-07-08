@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.53 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.29`, removing `codex-auto-review` from AAA self-iteration model
+  candidates and giving research/review Codex calls a longer silent reasoning
+  window after live E2E showed `gpt-5.3-codex-spark` could exceed a 300-second
+  idle budget.
+
 ## 0.9.52 - 2026-07-08
 
 ### Changed
