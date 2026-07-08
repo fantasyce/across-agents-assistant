@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.49 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.26`, so host command wall-timeout windows refresh while stdout/stderr
+  activity is still streaming.
+- Hardened local Codex process supervision to treat active CLI output as
+  progress for wall-timeout windows during long autonomous self-iteration runs.
+
 ## 0.9.48 - 2026-07-08
 
 ### Changed

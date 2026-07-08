@@ -73,3 +73,34 @@ def test_local_agent_activity_progress_omits_output_text(monkeypatch):
     assert "\"stream\": \"stderr\"" in progress
     assert "SECRET_OUTPUT" not in progress
     assert "ERR_OUTPUT" not in progress
+
+
+def test_local_agent_activity_refreshes_wall_timeout():
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            (
+                "import sys, time\n"
+                "for i in range(4):\n"
+                "    print(f'heartbeat {i}', file=sys.stderr, flush=True)\n"
+                "    time.sleep(0.2)\n"
+                "print('DONE', flush=True)\n"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    stdout, process_stderr, timeout_kind, _timeout_seconds = UniversalAgentClient._communicate_with_activity_timeout(
+        process,
+        max_wall_timeout=0.35,
+        idle_timeout=0.55,
+    )
+
+    assert timeout_kind is None
+    assert "DONE" in stdout
+    assert "heartbeat 3" in process_stderr
