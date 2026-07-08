@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.43 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default self-iteration
+  release-source mirror to `v0.2.20`, which propagates code-iteration timeout
+  policy into the builder model request and gives complex local Codex builder
+  runs a longer bounded idle window.
+
+### Fixed
+
+- Raised the default code-iteration local-agent idle window for long builder
+  runs and added per-model candidate progress evidence so fallback attempts,
+  idle timeouts, and wall-clock guardrails are visible in host CLI logs.
+
 ## 0.9.42 - 2026-07-08
 
 ### Fixed
