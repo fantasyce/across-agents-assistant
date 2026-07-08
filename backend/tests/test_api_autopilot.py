@@ -1970,6 +1970,7 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
     candidate = tmp_path / "candidate"
     candidate.mkdir()
     captured = {}
+    progress_events = []
 
     class LocalAgentClient:
         def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
@@ -1983,6 +1984,7 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
                 requires_approval=False,
                 timed_out=True,
                 error_code="timeout",
+                timeout_kind="idle_timeout",
             )
 
     class UnusedGateway:
@@ -1991,6 +1993,11 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
 
     monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
     monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    monkeypatch.setattr(
+        autopilot_host_cli_progress,
+        "host_cli_log",
+        lambda log_file, event, **fields: progress_events.append({"log_file": log_file, "event": event, **fields}),
+    )
     response = TestClient(app).post("/api/autopilot/research-decision", json={
         "goal": "Choose an open autonomous AAA iteration",
         "candidate_workspace": str(candidate),
@@ -2024,6 +2031,12 @@ def test_autopilot_research_decision_local_agent_timeout_uses_timeout_fallback(m
     assert captured["target_agent"] == "codex"
     assert captured["project_dir"] == str(candidate)
     assert captured["timeout"] == 600.0
+    assert [event["event"] for event in progress_events] == [
+        "research_decision.model_candidate.start",
+        "research_decision.model_candidate.failed",
+    ]
+    assert progress_events[0]["max_wall_timeout_sec"] == 600.0
+    assert progress_events[1]["timeout_kind"] == "idle_timeout"
 
 
 def test_autopilot_research_decision_local_agent_missing_returns_structured_failure(monkeypatch, tmp_path):

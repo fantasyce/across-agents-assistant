@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.44 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default self-iteration
+  release-source mirror to `v0.2.21`, which makes cancel requests terminate the
+  recorded Autopilot executor process tree instead of only marking run state.
+
+### Fixed
+
+- Added per-model candidate progress evidence for autonomous research
+  decisions so long Codex research attempts, fallback models, idle timeouts, and
+  timeout kinds are visible in host CLI logs before code iteration starts.
+
 ## 0.9.43 - 2026-07-08
 
 ### Changed
