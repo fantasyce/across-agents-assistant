@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.54 - 2026-07-08
+
+### Changed
+
+- Updated the managed Across Autopilot pin and default release-source mirror to
+  `v0.2.30`, moving AAA self-iteration Codex policies to locally smoke-tested
+  `gpt-5.5` and adding builder/reviewer timeout-recovery evidence for stalled
+  local agent calls.
+
 ## 0.9.53 - 2026-07-08
 
 ### Changed
