@@ -208,6 +208,7 @@ full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
+| `0.9.55` | Updates the managed Across Orchestrator pin and release source mirror to `v0.7.13`, keeping AAA on the latest lockfile-aligned, CodeQL-clean Orchestrator patch release. |
 | `0.9.54` | Pins Autopilot `v0.2.30`, uses locally smoke-tested `gpt-5.5`, and records builder/reviewer timeout-recovery evidence for stalled local agent calls. |
 | `0.9.53` | Pins Autopilot `v0.2.29`, removing `codex-auto-review` from self-iteration model candidates and allowing longer silent Codex research/review work. |
 | `0.9.52` | Pins Autopilot `v0.2.28`, keeping self-iteration research and review on `gpt-5.3-codex-spark` first with `codex-auto-review` only as fallback. |
@@ -294,7 +295,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.9.54` and
+This project is under active development. The current release is `0.9.55` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
@@ -302,7 +303,7 @@ release notes.
 Current managed producer pins:
 
 - Across Autopilot `v0.2.30`
-- Across Orchestrator `v0.7.10`
+- Across Orchestrator `v0.7.13`
 - Across Context `v0.8.8`
 
 The current release keeps autonomous Loop Engineering reviewable while routing
@@ -487,7 +488,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
-ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.10
+ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.7.13
 ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.2.30
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
 ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=1
@@ -604,7 +605,7 @@ The packaged app reads these files from
 `$HOME/.across/data/across-agents-assistant/release-reports/`. It does not need
 or use a development checkout path to verify attached release evidence.
 The GitHub `Live E2E` workflow exposes the same runner as a manual
-`workflow_dispatch` job and installs Across Orchestrator `v0.7.10` before
+`workflow_dispatch` job and installs Across Orchestrator `v0.7.13` before
 running it. The workflow uploads `live-e2e-gate-evidence` as a run artifact.
 Run the GitHub `Live E2E` workflow with `tier=all` before approving a release,
 and keep the workflow run URL with the release evidence. The evidence JSON

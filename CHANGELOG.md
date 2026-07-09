@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.55 - 2026-07-09
+
+### Changed
+
+- Updated the managed Across Orchestrator pin and default release-source mirror
+  to `v0.7.13`, keeping AAA on the latest lockfile-aligned, CodeQL-clean
+  Orchestrator patch release.
+
 ## 0.9.54 - 2026-07-08
 
 ### Changed
