@@ -7,28 +7,28 @@
   "summary": "Across turns recurring engineering work into repeatable AI workflows with durable evidence, local memory, host-owned credentials, and human approval across Codex, Kimi Code, Claude Code, Claude Desktop, AAA, and other MCP-capable hosts.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.9.55",
-      "published_at": "2026-07-09",
-      "tag": "v0.9.55",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.9.55"
+      "version": "v0.10.0",
+      "published_at": "2026-07-11",
+      "tag": "v0.10.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.10.0"
     },
     "across_autopilot": {
-      "version": "v0.2.30",
-      "published_at": "2026-07-08",
-      "tag": "v0.2.30",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.30"
+      "version": "v0.3.0",
+      "published_at": "2026-07-11",
+      "tag": "v0.3.0",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.3.0"
     },
     "across_orchestrator": {
-      "version": "v0.7.13",
-      "published_at": "2026-07-09",
-      "tag": "v0.7.13",
-      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.7.13"
+      "version": "v0.8.0",
+      "published_at": "2026-07-11",
+      "tag": "v0.8.0",
+      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.8.0"
     },
     "across_context": {
-      "version": "v0.8.8",
-      "published_at": "2026-06-29",
-      "tag": "v0.8.8",
-      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.8.8"
+      "version": "v0.9.0",
+      "published_at": "2026-07-11",
+      "tag": "v0.9.0",
+      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.9.0"
     }
   },
   "primary_users": [

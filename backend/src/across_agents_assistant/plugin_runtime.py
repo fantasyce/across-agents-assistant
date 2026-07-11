@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -38,16 +39,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.8.8",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.9.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.7.13",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.7.13",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-autopilot",
@@ -56,13 +57,20 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-autopilot",
         install_command="across-autopilot install host-plugin",
         install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.2.30",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.3.0",
     ),
 )
 
 
 class PluginLifecycleError(RuntimeError):
     """Raised when a plugin lifecycle action cannot be completed safely."""
+
+
+_CONTEXT_RETRIEVAL_ROUTES = frozenset(
+    {"keyword", "embedding", "evidence_graph", "project_profile", "loop_recall"}
+)
+_CONTEXT_MEMORY_STATUSES = frozenset({"active", "pinned", "pending", "archived", "expired"})
+_CONTEXT_MEMORY_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def discover_across_plugins(
@@ -203,8 +211,20 @@ def run_autopilot_plugin_lifecycle_action(
     raise PluginLifecycleError("Unsupported Across Autopilot lifecycle action")
 
 
-def run_autopilot_cli_json(args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 60) -> Any:
-    return _run_cli_json("across-autopilot", args, env=env, timeout=timeout)
+def run_autopilot_cli_json(
+    args: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout: int = 60,
+    allowed_returncodes: frozenset[int] | None = None,
+) -> Any:
+    return _run_cli_json(
+        "across-autopilot",
+        args,
+        env=env,
+        timeout=timeout,
+        allowed_returncodes=allowed_returncodes,
+    )
 
 
 def list_context_memories(
@@ -232,6 +252,195 @@ def list_context_memories(
     if type:
         entries = [entry for entry in entries if str(entry.get("type") or "") == type]
     return entries
+
+
+def search_context_memories(
+    query: str,
+    *,
+    project_root: str | None = None,
+    mode: str = "hybrid",
+    status: str | None = None,
+    limit: int = 10,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    text = str(query or "").strip()
+    if not text:
+        raise PluginLifecycleError("Across Context search query is required")
+    normalized_mode = str(mode or "hybrid").strip().lower()
+    if normalized_mode not in {"keyword", "semantic", "hybrid"}:
+        raise PluginLifecycleError("Across Context search mode is invalid")
+    bounded_limit = max(1, min(int(limit), 100))
+    args = ["search", text, "--mode", normalized_mode, "--limit", str(bounded_limit), "--json"]
+    if project_root:
+        args.extend(["--project", project_root])
+    if status:
+        args.extend(["--status", status])
+    if status == "pending":
+        args.append("--review-pending")
+    payload = _run_context_cli_json(args, env=env, timeout=15)
+    if not isinstance(payload, dict):
+        raise PluginLifecycleError("Across Context returned an unexpected search payload")
+    return payload
+
+
+def improve_context_memory(
+    *,
+    project_root: str | None = None,
+    include_projects: bool = False,
+    source_ids: list[str] | None = None,
+    similarity_threshold: float = 0.34,
+    max_proposal_length: int = 420,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    normalized_project_root = _normalize_context_project_root(project_root)
+    if normalized_project_root and include_projects:
+        raise PluginLifecycleError("Across Context improve scope is ambiguous")
+    normalized_source_ids = _normalize_context_memory_ids(source_ids or [], allow_empty=True)
+    try:
+        normalized_threshold = float(similarity_threshold)
+    except (TypeError, ValueError) as exc:
+        raise PluginLifecycleError("Across Context similarity threshold is invalid") from exc
+    if not 0.0 <= normalized_threshold <= 1.0:
+        raise PluginLifecycleError("Across Context similarity threshold is invalid")
+    try:
+        normalized_max_length = int(max_proposal_length)
+    except (TypeError, ValueError) as exc:
+        raise PluginLifecycleError("Across Context proposal length is invalid") from exc
+    if not 80 <= normalized_max_length <= 4_000:
+        raise PluginLifecycleError("Across Context proposal length is invalid")
+
+    args = [
+        "improve",
+        "run",
+        "--similarity-threshold",
+        format(normalized_threshold, ".6g"),
+        "--max-proposal-length",
+        str(normalized_max_length),
+        "--json",
+    ]
+    if normalized_project_root:
+        args.extend(["--project", normalized_project_root])
+    elif include_projects:
+        args.append("--all-projects")
+    for source_id in normalized_source_ids:
+        args.extend(["--source-id", source_id])
+    payload = _run_context_cli_json(args, env=env, timeout=60)
+    return _require_context_object_payload(payload, "improve")
+
+
+def retrieve_context_memories_merged(
+    query: str,
+    *,
+    routes: list[str] | None = None,
+    project_root: str | None = None,
+    include_projects: bool = False,
+    status: str | None = None,
+    review_pending: bool = False,
+    limit: int = 10,
+    include_route_results: bool = False,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    text = str(query or "").strip()
+    if not text or len(text) > 10_000 or "\x00" in text:
+        raise PluginLifecycleError("Across Context retrieval query is invalid")
+    normalized_routes = _normalize_context_retrieval_routes(routes)
+    normalized_project_root = _normalize_context_project_root(project_root)
+    if normalized_project_root and include_projects:
+        raise PluginLifecycleError("Across Context retrieval scope is ambiguous")
+    normalized_status = str(status or "").strip().lower() or None
+    if normalized_status not in _CONTEXT_MEMORY_STATUSES | {None}:
+        raise PluginLifecycleError("Across Context memory status is invalid")
+    if normalized_status == "pending" and not review_pending:
+        raise PluginLifecycleError("Across Context pending retrieval requires explicit review")
+    if review_pending and normalized_status != "pending":
+        raise PluginLifecycleError("Across Context pending review requires pending status")
+    try:
+        bounded_limit = int(limit)
+    except (TypeError, ValueError) as exc:
+        raise PluginLifecycleError("Across Context retrieval limit is invalid") from exc
+    if not 1 <= bounded_limit <= 100:
+        raise PluginLifecycleError("Across Context retrieval limit is invalid")
+
+    args = [
+        "retrieve",
+        text,
+        "--routes",
+        ",".join(normalized_routes),
+        "--limit",
+        str(bounded_limit),
+        "--json",
+    ]
+    if normalized_project_root:
+        args.extend(["--project", normalized_project_root])
+    elif include_projects:
+        args.append("--all-projects")
+    if normalized_status:
+        args.extend(["--status", normalized_status])
+    if review_pending:
+        args.append("--review-pending")
+    if include_route_results:
+        args.append("--include-route-results")
+    payload = _run_context_cli_json(args, env=env, timeout=30)
+    return _require_context_object_payload(payload, "merged retrieval")
+
+
+def rollback_distilled_context_memory(
+    memory_id: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    normalized_id = _normalize_context_memory_ids([memory_id])[0]
+    payload = _run_context_cli_json(
+        ["improve", "rollback", normalized_id, "--json"],
+        env=env,
+        timeout=15,
+    )
+    return _require_context_object_payload(payload, "distilled memory rollback")
+
+
+def _normalize_context_project_root(project_root: str | None) -> str | None:
+    if project_root is None:
+        return None
+    normalized = str(project_root).strip()
+    if not normalized or len(normalized) > 4_096 or "\x00" in normalized or not os.path.isabs(normalized):
+        raise PluginLifecycleError("Across Context project root is invalid")
+    return os.path.normpath(normalized)
+
+
+def _normalize_context_memory_ids(memory_ids: list[str], *, allow_empty: bool = False) -> list[str]:
+    if not memory_ids and not allow_empty:
+        raise PluginLifecycleError("Across Context memory id is required")
+    if len(memory_ids) > 100:
+        raise PluginLifecycleError("Across Context source id limit exceeded")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in memory_ids:
+        memory_id = str(value or "").strip()
+        if not _CONTEXT_MEMORY_ID_PATTERN.fullmatch(memory_id):
+            raise PluginLifecycleError("Across Context memory id is invalid")
+        if memory_id not in seen:
+            seen.add(memory_id)
+            normalized.append(memory_id)
+    return normalized
+
+
+def _normalize_context_retrieval_routes(routes: list[str] | None) -> list[str]:
+    requested = routes or ["keyword", "embedding", "evidence_graph", "project_profile", "loop_recall"]
+    if not isinstance(requested, list) or not requested or len(requested) > len(_CONTEXT_RETRIEVAL_ROUTES):
+        raise PluginLifecycleError("Across Context retrieval routes are invalid")
+    normalized: list[str] = []
+    for value in requested:
+        route = str(value or "").strip().lower()
+        if route not in _CONTEXT_RETRIEVAL_ROUTES or route in normalized:
+            raise PluginLifecycleError("Across Context retrieval routes are invalid")
+        normalized.append(route)
+    return normalized
+
+
+def _require_context_object_payload(payload: Any, operation: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise PluginLifecycleError(f"Across Context returned an unexpected {operation} payload")
+    return payload
 
 
 def get_agent_loop_memory_metrics(
@@ -277,7 +486,22 @@ def update_context_memory_status(
     *,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    payload = _run_context_cli_json(["update-status", status, memory_id, "--json"], env=env, timeout=15)
+    normalized_id = _normalize_context_memory_ids([memory_id])[0]
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in _CONTEXT_MEMORY_STATUSES:
+        raise PluginLifecycleError("Across Context memory status is invalid")
+    if normalized_status == "active":
+        payload = _run_context_cli_json(["approve", normalized_id, "--json"], env=env, timeout=15)
+        if isinstance(payload, dict) and isinstance(payload.get("memory"), dict):
+            return payload["memory"]
+        if isinstance(payload, dict) and payload.get("proposal_id") == normalized_id:
+            return {"id": normalized_id, **payload}
+        raise PluginLifecycleError("Across Context memory was not found")
+    payload = _run_context_cli_json(
+        ["update-status", normalized_status, normalized_id, "--json"],
+        env=env,
+        timeout=15,
+    )
     updated = payload.get("updated") if isinstance(payload, dict) else None
     if isinstance(updated, list) and updated:
         first = updated[0]
@@ -568,7 +792,14 @@ def _run_context_cli_json(args: list[str], *, env: Mapping[str, str] | None = No
     return _run_cli_json("across-context", args, env=env, timeout=timeout)
 
 
-def _run_cli_json(command: str, args: list[str], *, env: Mapping[str, str] | None = None, timeout: int = 15) -> Any:
+def _run_cli_json(
+    command: str,
+    args: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout: int = 15,
+    allowed_returncodes: frozenset[int] | None = None,
+) -> Any:
     source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     command_path = _resolve_command(command, source)
     if not command_path.is_file() or not os.access(command_path, os.X_OK):
@@ -577,16 +808,23 @@ def _run_cli_json(command: str, args: list[str], *, env: Mapping[str, str] | Non
     integrity_issues = _command_integrity_issues(command_path, ecosystem_plugin_root(source) / plugin_id, source)
     if integrity_issues:
         raise PluginLifecycleError(f"{command} plugin must be repaired because its runtime is not self-contained")
-    completed = subprocess.run(
-        [str(command_path), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        env=_safe_plugin_env(source),
-        check=False,
-    )
-    if completed.returncode != 0:
+    try:
+        completed = subprocess.run(
+            [str(command_path), *args],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            env=_safe_plugin_env(source),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise PluginLifecycleError(f"{command} command timed out") from None
+    accepted = allowed_returncodes if allowed_returncodes is not None else frozenset({0})
+    if completed.returncode not in accepted:
+        stderr = str(completed.stderr or "").lower()
+        if command == "across-context" and "not found" in stderr:
+            raise PluginLifecycleError("Across Context memory was not found")
         raise PluginLifecycleError(f"{command} command failed")
     try:
         return json.loads(completed.stdout or "{}")

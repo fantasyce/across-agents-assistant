@@ -95,7 +95,7 @@ class UniversalAgentClient:
         process = self.active_processes.get(session_id)
         if process:
             try:
-                process.kill() # Force kill to ensure it stops immediately
+                self._terminate_process_tree(process)
                 return True
             except Exception as e:
                 import logging

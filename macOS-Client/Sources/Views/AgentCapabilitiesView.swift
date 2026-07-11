@@ -64,7 +64,7 @@ struct AgentCapabilitiesView: View {
     private var softColor: Color { colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.04) }
     private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10) }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+    private var accentColor: Color { AcrossTheme.accent }
     private var mcpColor: Color { colorScheme == .dark ? Color(hex: "38d88b") : Color(hex: "29a36a") }
     private var toolColor: Color { colorScheme == .dark ? Color(hex: "4da3ff") : Color(hex: "0a84ff") }
 

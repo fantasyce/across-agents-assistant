@@ -65,6 +65,7 @@ def _write_fake_context_memory_command(across_home: Path) -> Path:
         "  list) printf '[{\"id\":\"mem_cli_1\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"CLI memory\",\"status\":\"pending\"}]\\n' ;;\n"
         "  loop-memory-metrics) printf '{\"schema_version\":\"agent-loop-memory-metrics/1.0\",\"candidate_schema\":\"agent-loop-memory-candidate/1.0\",\"totals\":{\"candidate_count\":1,\"pending_count\":1},\"metrics\":[{\"id\":\"agent_loop_memory.candidate_count\",\"value\":1}]}\\n' ;;\n"
         "  remember) printf '{\"memory\":{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"pending\"}}\\n' ;;\n"
+        "  approve) printf '{\"memory\":{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"active\"}}\\n' ;;\n"
         "  update-status) printf '{\"updated\":[{\"id\":\"mem_cli_2\",\"scope\":\"global\",\"type\":\"note\",\"text\":\"Host apps use plugin CLI.\",\"status\":\"active\"}],\"missing\":[]}\\n' ;;\n"
         "  forget) printf '{\"forgotten\":1}\\n' ;;\n"
         "  *) printf '{}\\n' ;;\n"

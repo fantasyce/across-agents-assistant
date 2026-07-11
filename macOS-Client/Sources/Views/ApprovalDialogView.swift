@@ -73,12 +73,13 @@ struct ApprovalDialogView: View {
     let onDecision: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
+    @FocusState private var focusedDecision: ApprovalDialogFocusTarget?
 
-    private var panelColor: Color { colorScheme == .dark ? Color(hex: "20222a") : Color(hex: "fafbfd") }
-    private var boxColor: Color { colorScheme == .dark ? Color.white.opacity(0.055) : .white }
-    private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10) }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : Color(hex: "151820") }
-    private var blueColor: Color { colorScheme == .dark ? Color(hex: "4da3ff") : Color(hex: "0a84ff") }
+    private var panelColor: Color { AcrossTheme.panelFill(for: colorScheme) }
+    private var boxColor: Color { AcrossTheme.recessedFill(for: colorScheme) }
+    private var lineColor: Color { AcrossTheme.separator(for: colorScheme) }
+    private var textColor: Color { .primary }
+    private var blueColor: Color { AcrossTheme.accent }
 
     private var riskColor: Color {
         switch request.risk_level.lowercased() {
@@ -144,13 +145,13 @@ struct ApprovalDialogView: View {
 
             HStack(spacing: 8) {
                 Spacer()
-                dialogButton(title: appPreferences.text("approval.deny"), foreground: .red, background: boxColor) {
+                dialogButton(title: appPreferences.text("approval.deny"), foreground: .red, background: boxColor, focus: .deny) {
                     onDecision("reject")
                 }
-                dialogButton(title: appPreferences.text("approval.allowOnce"), foreground: textColor, background: boxColor) {
+                dialogButton(title: appPreferences.text("approval.allowOnce"), foreground: textColor, background: boxColor, focus: .allowOnce) {
                     onDecision("approve")
                 }
-                dialogButton(title: appPreferences.text("approval.alwaysAllow"), foreground: .white, background: blueColor) {
+                dialogButton(title: appPreferences.text("approval.alwaysAllow"), foreground: .white, background: blueColor, focus: .alwaysAllow) {
                     onDecision("always_allow")
                 }
             }
@@ -158,12 +159,16 @@ struct ApprovalDialogView: View {
         .padding(16)
         .frame(width: 430)
         .background(panelColor)
-        .clipShape(RoundedRectangle(cornerRadius: 17))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
         .overlay(
-            RoundedRectangle(cornerRadius: 17)
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
                 .stroke(lineColor, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.32 : 0.22), radius: 24, x: 0, y: 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(appPreferences.text("approval.title")))
+        .onAppear { focusedDecision = ApprovalDialogAccessibilityContract.standard.initialFocus }
+        .onExitCommand { onDecision(ApprovalDialogAccessibilityContract.standard.escapeDecision) }
     }
 
     private func requestRow(label: String, value: String, valueIsMonospaced: Bool = false) -> some View {
@@ -192,6 +197,7 @@ struct ApprovalDialogView: View {
         title: String,
         foreground: Color,
         background: Color,
+        focus: ApprovalDialogFocusTarget,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -208,5 +214,9 @@ struct ApprovalDialogView: View {
                 )
         }
         .buttonStyle(.plain)
+        .focused($focusedDecision, equals: focus)
+        .accessibilityLabel(Text(title))
+        .accessibilityHint(Text(appPreferences.text("approval.decisionHint")))
+        .help(title)
     }
 }

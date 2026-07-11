@@ -225,6 +225,19 @@ registry_health = request("GET", "/api/capability-registry/health")
 assert registry_health["status"] == "passed", registry_health
 assert registry_health["compatibility"]["schema_family"] == "across-unified-capability-registry", registry_health
 
+workspace_readiness = request("GET", "/api/agent-workspaces/readiness?refresh=true")
+assert workspace_readiness["schema_version"] == "agent-workspace-readiness/1.0", workspace_readiness
+assert workspace_readiness["readonly"] is True, workspace_readiness
+assert isinstance(workspace_readiness["mutation_enabled"], bool), workspace_readiness
+assert workspace_readiness["execution_strategy"] == "parallel_worktrees", workspace_readiness
+assert workspace_readiness["workspace"]["under_across_home"] is True, workspace_readiness
+assert workspace_readiness["workspace"]["creation_enabled"] is workspace_readiness["mutation_enabled"], workspace_readiness
+assert workspace_readiness["workspace_isolation"]["status"] in {"ready", "blocked"}, workspace_readiness
+assert workspace_readiness["workspace_isolation"]["mode"] == "detached_git_worktrees", workspace_readiness
+assert workspace_readiness["security"]["secrets_included"] is False, workspace_readiness["security"]
+assert workspace_readiness["security"]["credential_fields_redacted"] is True, workspace_readiness["security"]
+assert any(route["path"] == "/api/agent-workspaces" and route["enabled"] is True for route in workspace_readiness["future_routes"]), workspace_readiness["future_routes"]
+
 self_iteration_initial = request("GET", "/api/autopilot/self-iteration-plan")
 assert self_iteration_initial["schema_version"] == "across-aaa-self-iteration-plan/1.0", self_iteration_initial
 self_iteration_plan = request("POST", "/api/autopilot/self-iteration-plan/ensure", {
@@ -319,6 +332,9 @@ if spec_id == "aaa-autonomous-self-iteration":
     assert all(builder_model) and all(reviewer_model), {"builder": builder_model, "reviewer": reviewer_model}
     assert builder_model == ("local-agent", "codex"), {"builder": builder_model}
     assert reviewer_model == ("local-agent", "codex"), {"reviewer": reviewer_model}
+    review_notes = reviewer.get("human_review_notes") or []
+    assert isinstance(review_notes, list) and review_notes, reviewer
+    assert all(isinstance(note, str) and len(note.strip()) > 1 for note in review_notes), reviewer
 assert candidate["self_hosting_probe"]["required"] is True, candidate
 assert candidate["self_hosting_probe"]["status"] == "passed", candidate
 candidate_app_lifecycle = candidate.get("candidate_app_lifecycle") or {}
@@ -331,6 +347,14 @@ assert candidate_lease_status.get("secrets_included") is False, candidate_lease_
 assert candidate_lease_status.get("raw_credentials_allowed") is False, candidate_lease_status
 assert candidate["semantic_alignment_status"] == "passed", candidate
 assert candidate["promotion_ready"] is True, candidate
+assert isinstance(candidate.get("normalized_findings"), list), candidate
+push_receipt = candidate.get("push_receipt") or {}
+assert push_receipt.get("schema_version") == "across-autopilot-push-receipt/1.0", push_receipt
+assert push_receipt.get("gate_verdict") == "pass", push_receipt
+assert push_receipt.get("dirty_tree") is False, push_receipt
+assert push_receipt.get("evidence_hash"), push_receipt
+assert push_receipt.get("pr_ready_summary", "").startswith("PR-ready:"), push_receipt
+assert "/Users/" not in json.dumps(push_receipt), push_receipt
 for expected in expected_changed_files:
     assert expected in candidate["changed_files"], candidate
 manifest_path = pathlib.Path(candidate["manifest_path"])
@@ -404,6 +428,14 @@ summary = {
         "autopilot_fallback_executor": fallback_pack["executor"],
         "health_status": registry_health["status"],
     },
+    "agent_workspace_readiness": {
+        "status": workspace_readiness["status"],
+        "readonly": workspace_readiness["readonly"],
+        "mutation_enabled": workspace_readiness["mutation_enabled"],
+        "workspace_root": workspace_readiness["workspace"]["root"],
+        "available_agent_count": len(workspace_readiness["available_local_agents"]),
+        "future_route_count": len(workspace_readiness["future_routes"]),
+    },
     "promotion_review": {
         "status": promotion_review["status"],
         "open_review_pr": promotion_review["allowed_actions"]["open_review_pr"],
@@ -428,6 +460,12 @@ summary = {
     },
     "candidate_research_strategy": candidate.get("research_strategy"),
     "candidate_independent_reviewer": candidate.get("independent_reviewer"),
+    "candidate_normalized_finding_count": len(candidate.get("normalized_findings") or []),
+    "candidate_push_receipt": {
+        "gate_verdict": push_receipt["gate_verdict"],
+        "evidence_hash": push_receipt["evidence_hash"],
+        "pr_ready_summary": push_receipt["pr_ready_summary"],
+    },
     "semantic_alignment_status": candidate["semantic_alignment_status"],
     "source_paths": source_paths,
     "self_hosting_probe": candidate["self_hosting_probe"],
@@ -483,4 +521,8 @@ PY
     --output "$TMP_ROOT/candidate-app-lifecycle.json"
 fi
 
-echo "Loop Engineering E2E passed. Summary: $TMP_ROOT/e2e-summary.json"
+REPORT_DIR="$HOME/.across/data/across-agents-assistant/release-reports"
+mkdir -p "$REPORT_DIR"
+REPORT_PATH="$REPORT_DIR/loop-engineering-e2e-$(date -u +%Y%m%dT%H%M%SZ).json"
+cp "$TMP_ROOT/e2e-summary.json" "$REPORT_PATH"
+echo "Loop Engineering E2E passed. Summary: $REPORT_PATH"

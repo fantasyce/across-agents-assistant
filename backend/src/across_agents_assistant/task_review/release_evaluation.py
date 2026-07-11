@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import re
 from statistics import mean
 import time
 from typing import Any, Dict, Iterable, List, Optional
@@ -32,6 +33,22 @@ REQUIRED_RELEASE_PROBES = {
 PROBE_TYPE_ALIASES = {
     "static_web_smoke": "static_web",
 }
+
+_LOCAL_PATH_PATTERNS = (
+    re.compile(r"/Users/[^/\s]+(?:/[^\s,;:]+)+"),
+    re.compile(r"/(?:private/)?var/folders/[^\s,;:]+"),
+    re.compile(r"/tmp/[^\s,;:]+"),
+)
+_MAX_PUBLIC_DESCRIPTION_CHARS = 280
+
+
+def _public_task_description(value: Any) -> str:
+    text = re.sub(r"[\r\n\t]+", " ", str(value or "")).strip()
+    for pattern in _LOCAL_PATH_PATTERNS:
+        text = pattern.sub("[redacted-local-path]", text)
+    if len(text) <= _MAX_PUBLIC_DESCRIPTION_CHARS:
+        return text
+    return text[: _MAX_PUBLIC_DESCRIPTION_CHARS - 3].rstrip() + "..."
 
 
 def build_release_evaluation_summary(
@@ -194,7 +211,7 @@ def _build_evaluation_item(row: Dict[str, Any], quality: Dict[str, Any]) -> Dict
 
     return {
         "task_id": str(row.get("task_id") or ""),
-        "description": str(row.get("description") or ""),
+        "description": _public_task_description(row.get("description")),
         "status": str(row.get("status") or "created"),
         "quality_gate": gate,
         "final_quality_score": final_score,

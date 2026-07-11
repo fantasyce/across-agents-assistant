@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import os
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from across_agents_assistant.workspace_hygiene import IGNORED_DIR_NAMES
 
@@ -43,6 +43,58 @@ ADAPTER_DIMENSIONS = {
 PASSING_STATUSES = {"passed"}
 FAILING_STATUSES = {"failed", "error"}
 MANUAL_STATUSES = {"manual_required"}
+
+_REMOTE_SECRET_KEY_PARTS = ("secret", "password", "credential", "access_token", "auth_token", "approval_token")
+_REMOTE_SECRET_METADATA_SUFFIXES = ("_env", "_present", "_verified", "_persisted", "_included")
+_REMOTE_SECRET_PATTERN = re.compile(
+    r"(?i)(?:\bbearer\s+\S+|\b(?:ghp_|github_pat_|sk[-_])[A-Za-z0-9_-]+"
+    r"|\b(?:access[_-]?token|auth[_-]?token|approval[_-]?token|password|secret)\s*[=:]\s*\S+)"
+)
+
+
+def sanitize_remote_gate_evidence(
+    value: Any,
+    *,
+    sensitive_values: Iterable[str] = (),
+    key: str = "",
+) -> Any:
+    """Redact credential material while preserving public remote recovery evidence."""
+    secrets = tuple(
+        sorted(
+            {str(item) for item in sensitive_values if isinstance(item, str) and len(str(item)) >= 4},
+            key=len,
+            reverse=True,
+        )
+    )
+    return _sanitize_remote_gate_value(value, key=key, sensitive_values=secrets)
+
+
+def _sanitize_remote_gate_value(value: Any, *, key: str, sensitive_values: Sequence[str]) -> Any:
+    lowered = key.lower()
+    is_secret_field = any(part in lowered for part in _REMOTE_SECRET_KEY_PARTS)
+    is_public_metadata = lowered.endswith(_REMOTE_SECRET_METADATA_SUFFIXES) or isinstance(value, bool)
+    if is_secret_field and not is_public_metadata and value is not None and value != "":
+        return "[redacted]"
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _sanitize_remote_gate_value(
+                item,
+                key=str(item_key),
+                sensitive_values=sensitive_values,
+            )
+            for item_key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_remote_gate_value(item, key=key, sensitive_values=sensitive_values)
+            for item in value
+        ]
+    if isinstance(value, str):
+        sanitized = value
+        for secret in sensitive_values:
+            sanitized = sanitized.replace(secret, "[redacted]")
+        return _REMOTE_SECRET_PATTERN.sub("[redacted]", sanitized)
+    return value
 
 
 @dataclass(frozen=True)

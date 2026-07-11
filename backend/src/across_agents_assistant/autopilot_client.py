@@ -13,6 +13,7 @@ from .loop_engineering_retention import RetentionPolicy, run_retention
 from .paths import backend_socket_path, component_data_home
 from .plugin_runtime import PluginLifecycleError, run_autopilot_cli_json
 from .source_mirror_refresh import refresh_source_mirrors, source_mirror_refresh_required
+from .task_review.quality_gates import sanitize_remote_gate_evidence
 
 _SOURCE_MIRROR_ENV = {
     "across-agents-assistant": "ACROSS_AGENTS_ASSISTANT_SOURCE",
@@ -21,6 +22,10 @@ _SOURCE_MIRROR_ENV = {
     "across-autopilot": "ACROSS_AUTOPILOT_SOURCE",
 }
 _DEFAULT_LONG_RUN_TIMEOUT_SECONDS = 7200
+_DEFAULT_GITHUB_CI_MAX_WALL_TIMEOUT_SECONDS = 7200
+_REMOTE_GATE_TIMEOUT_BUFFER_SECONDS = 120
+_MAX_GATE_COMMAND_TIMEOUT_SECONDS = 18_000
+_REMOTE_GATE_CREDENTIAL_ENV_KEY_PARTS = ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY")
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,99 @@ class AutopilotClient:
 
     def dry_run(self, spec: str) -> dict[str, Any]:
         return self._dict(["loop", "dry-run", "--spec", _required(spec, "spec"), "--json"])
+
+    def gate(
+        self,
+        repo_root: str,
+        *,
+        base_ref: str | None = None,
+        head_ref: str | None = None,
+        branch: str | None = None,
+        commit: str | None = None,
+        ci_path: str | None = None,
+        ci_wait_seconds: int = 0,
+        draft_pr: bool = False,
+        push_branch: bool = False,
+        approve_remote: bool = False,
+        watch_ci: bool | None = None,
+        ci_idle_timeout_seconds: int | None = None,
+        ci_max_wall_timeout_seconds: int | None = None,
+        max_repairs: int = 0,
+        timeout: int = 900,
+    ) -> dict[str, Any]:
+        """Run the managed Autopilot repository gate through the host boundary."""
+        root = Path(_required(repo_root, "repo_root")).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError("repo_root must be an existing directory")
+        repairs = int(max_repairs)
+        if repairs < 0 or repairs > 10:
+            raise ValueError("max_repairs must be between 0 and 10")
+
+        args = ["gate", "--repo", str(root)]
+        if base_ref:
+            args.extend(["--base-ref", _required(base_ref, "base_ref")])
+        if head_ref:
+            args.extend(["--head-ref", _required(head_ref, "head_ref")])
+        if branch:
+            args.extend(["--branch", _required(branch, "branch")])
+        if commit:
+            args.extend(["--commit", _required(commit, "commit")])
+        if ci_path:
+            ci_file = Path(ci_path).expanduser().resolve()
+            if not ci_file.is_file():
+                raise ValueError("ci_path must be an existing file")
+            args.extend(["--ci-path", str(ci_file)])
+        ci_wait = int(ci_wait_seconds)
+        if ci_wait < 0 or ci_wait > 900:
+            raise ValueError("ci_wait_seconds must be between 0 and 900")
+        if ci_wait:
+            args.extend(["--ci-wait-seconds", str(ci_wait)])
+        if draft_pr:
+            args.append("--draft-pr")
+        if push_branch:
+            args.append("--push-branch")
+        if approve_remote:
+            args.append("--approve-remote")
+        if watch_ci is not None:
+            args.extend(["--watch-ci", "true" if watch_ci else "false"])
+        idle_timeout = _optional_bounded_int(
+            ci_idle_timeout_seconds,
+            "ci_idle_timeout_seconds",
+            minimum=1,
+            maximum=7_200,
+        )
+        max_wall_timeout = _optional_bounded_int(
+            ci_max_wall_timeout_seconds,
+            "ci_max_wall_timeout_seconds",
+            minimum=1,
+            maximum=14_400,
+        )
+        if idle_timeout is not None and max_wall_timeout is not None and idle_timeout > max_wall_timeout:
+            raise ValueError("ci_idle_timeout_seconds must not exceed ci_max_wall_timeout_seconds")
+        if idle_timeout is not None:
+            args.extend(["--ci-idle-timeout-ms", str(idle_timeout * 1_000)])
+        if max_wall_timeout is not None:
+            args.extend(["--ci-max-wall-timeout-ms", str(max_wall_timeout * 1_000)])
+        if repairs:
+            args.extend(["--max-repairs", str(repairs)])
+        args.append("--json")
+
+        command_timeout = max(30, min(int(timeout), _MAX_GATE_COMMAND_TIMEOUT_SECONDS))
+        if approve_remote and watch_ci is not False:
+            ci_wall_seconds = max_wall_timeout or _DEFAULT_GITHUB_CI_MAX_WALL_TIMEOUT_SECONDS
+            command_timeout = max(command_timeout, ci_wall_seconds + _REMOTE_GATE_TIMEOUT_BUFFER_SECONDS)
+        payload = self._dict(
+            args,
+            timeout=command_timeout,
+            allowed_returncodes=frozenset({0, 2}),
+        )
+        if payload.get("schema_version") != "across-autopilot-gate-result/1.0":
+            raise PluginLifecycleError("Across Autopilot returned an incompatible gate result")
+        runtime_env = self._runtime_env()
+        return sanitize_remote_gate_evidence(
+            payload,
+            sensitive_values=_remote_gate_sensitive_values(runtime_env),
+        )
 
     def run(
         self,
@@ -159,14 +257,29 @@ class AutopilotClient:
             "--json",
         ])
 
-    def _dict(self, args: list[str], *, timeout: int = 60) -> dict[str, Any]:
-        payload = self._json(args, timeout=timeout)
+    def _dict(
+        self,
+        args: list[str],
+        *,
+        timeout: int = 60,
+        allowed_returncodes: frozenset[int] | None = None,
+    ) -> dict[str, Any]:
+        payload = self._json(args, timeout=timeout, allowed_returncodes=allowed_returncodes)
         if not isinstance(payload, dict):
             raise PluginLifecycleError("Across Autopilot returned an unexpected JSON payload")
         return payload
 
-    def _json(self, args: list[str], *, timeout: int = 60) -> Any:
-        return run_autopilot_cli_json(args, env=self._runtime_env(), timeout=timeout)
+    def _json(
+        self,
+        args: list[str],
+        *,
+        timeout: int = 60,
+        allowed_returncodes: frozenset[int] | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {"env": self._runtime_env(), "timeout": timeout}
+        if allowed_returncodes is not None:
+            kwargs["allowed_returncodes"] = allowed_returncodes
+        return run_autopilot_cli_json(args, **kwargs)
 
     def _refresh_source_mirrors_if_needed(self, spec: Any) -> dict[str, Any] | None:
         if not source_mirror_refresh_required(spec, self.env):
@@ -260,6 +373,23 @@ def _required(value: str, name: str) -> str:
     if not text:
         raise PluginLifecycleError(f"Across Autopilot requires {name}")
     return text
+
+
+def _optional_bounded_int(value: int | None, name: str, *, minimum: int, maximum: int) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _remote_gate_sensitive_values(env: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(
+        str(value)
+        for name, value in env.items()
+        if value and any(part in str(name).upper() for part in _REMOTE_GATE_CREDENTIAL_ENV_KEY_PARTS)
+    )
 
 
 def _long_run_timeout_seconds(env: Mapping[str, str] | None = None) -> int:

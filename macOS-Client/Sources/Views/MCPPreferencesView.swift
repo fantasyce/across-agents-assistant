@@ -90,7 +90,7 @@ struct MCPCardView: View {
 
     // Dynamic colors
     private var sidebarBgColor: Color { colorScheme == .dark ? .legacySidebarDark : .legacySidebarLight }
-    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+    private var accentColor: Color { AcrossTheme.accent }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
 
     var body: some View {

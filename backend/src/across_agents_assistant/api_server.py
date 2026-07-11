@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Optional, List, Dict, Any, Tuple, Set
+from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
 import asyncio
 import logging
 import os
@@ -301,6 +301,7 @@ from .external_task_planning import (
 from .task_history.state import TaskState
 from .task_history.models import TaskType, JobStatus, TaskStatus
 from .task_review.release_evaluation import build_release_evaluation_summary
+from .task_review.quality_gates import sanitize_remote_gate_evidence
 from .release_verification import (
     RELEASE_VERIFICATION_EXPECTED_FILES,
     RELEASE_VERIFICATION_REQUIRED_PROBES,
@@ -362,11 +363,15 @@ from .plugin_runtime import (
     discover_across_plugins,
     forget_context_memory,
     get_agent_loop_memory_metrics,
+    improve_context_memory,
     inspect_across_plugin,
     list_context_memories,
     remember_context_memory,
+    retrieve_context_memories_merged,
+    rollback_distilled_context_memory,
     run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
+    search_context_memories,
     update_context_memory_status,
 )
 from .autopilot_promotion_review import build_promotion_review_packet
@@ -823,6 +828,9 @@ async def _api_lifespan(app: FastAPI):
     try:
         yield
     finally:
+        workspace_manager = globals().get("_agent_workspace_manager")
+        if workspace_manager is not None:
+            await asyncio.to_thread(workspace_manager.shutdown, wait=False, cancel_active=True)
         await asyncio.to_thread(_stop_autopilot_trigger_scheduler_for_shutdown)
 
 
@@ -1050,13 +1058,17 @@ async def _continue_after_tool_execution(
 agent_manager = AgentManager()
 agent_client = OrchestratorClient(agent_manager)
 _local_agent_client = None
+_local_agent_client_lock = threading.Lock()
 
 
 def get_local_agent_client():
     global _local_agent_client
     if _local_agent_client is None:
-        from .local_agent.client import UniversalAgentClient
-        _local_agent_client = UniversalAgentClient(agent_manager)
+        with _local_agent_client_lock:
+            if _local_agent_client is None:
+                from .local_agent.client import UniversalAgentClient
+
+                _local_agent_client = UniversalAgentClient(agent_manager)
     return _local_agent_client
 
 class KeysRequest(BaseModel):
@@ -1987,6 +1999,26 @@ class AutopilotCancelRequest(BaseModel):
 
 class AutopilotOutputRequest(BaseModel):
     outputId: str
+
+
+class AutopilotGateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repo_root: str = Field(min_length=1)
+    base_ref: Optional[str] = None
+    head_ref: Optional[str] = None
+    branch: Optional[str] = None
+    commit: Optional[str] = None
+    ci_path: Optional[str] = None
+    ci_wait_seconds: int = Field(default=0, ge=0, le=900)
+    draft_pr: bool = False
+    push_branch: bool = False
+    approve_remote: bool = False
+    watch_ci: Optional[bool] = None
+    ci_idle_timeout_seconds: Optional[int] = Field(default=None, ge=1, le=7_200)
+    ci_max_wall_timeout_seconds: Optional[int] = Field(default=None, ge=1, le=14_400)
+    max_repairs: int = Field(default=0, ge=0, le=10)
+    timeout_seconds: int = Field(default=900, ge=30, le=18_000)
 
 
 class AutopilotTriggerRequest(BaseModel):
@@ -3823,6 +3855,8 @@ def _autopilot_code_iteration_system_prompt(*, direct_patches: bool = False) -> 
         "Candidate tests under backend/tests must import product modules through the package path, for example "
         "'from across_agents_assistant.autopilot_feature import helper'; never use flat imports like "
         "'from autopilot_feature import helper'. "
+        "For dynamic gate, evidence, status, readiness, or Tool Pack outputs, tests must assert stable invariants: schema version, key presence, critical booleans, counts, membership, set/subset coverage, and required item properties. "
+        "Do not assert exact ordered full-list equality for dynamic evidence gaps, remaining gates, planning checklists, tool pack statuses, or ready tool packs. "
         "Existing product integration files such as api_server.py, autopilot_workbench.py, and "
         "loop_engineering_capability_pack.py must be surgical: use append or upsert_between_markers, never overwrite. "
         "Preserve existing route registrations, capability registries, public functions, and imports unless the goal explicitly says to remove them. "
@@ -3864,6 +3898,7 @@ def _autopilot_code_iteration_user_prompt(req: AutopilotCodeIterationRequest, co
         "If validation_feedback is present, repair the candidate so commands pass and semantic review blocking reasons are resolved. "
         "If feedback reports a large documentation rewrite, restore or preserve the original documentation and move the change into focused code/tests or a small append/upsert section. "
         "If feedback reports destructive_product_entrypoint_rewrite, restore the affected source-baseline file and replace the change with a marker-bounded append/upsert. "
+        "If feedback reports brittle_dynamic_list_assertion, rewrite candidate tests to assert schema, key presence, set membership/subset coverage, counts, and item properties instead of exact ordered list equality for dynamic gate/evidence/status outputs. "
         "Existing product integration files such as api_server.py, autopilot_workbench.py, and loop_engineering_capability_pack.py must keep existing content and public surfaces. "
         "If feedback reports missing pytest, remove pytest imports/usages and rewrite tests as plain assert-based functions runnable through runpy. "
         "If feedback reports ModuleNotFoundError for an autopilot_* module, repair backend/tests imports to package imports under across_agents_assistant. "
@@ -3891,6 +3926,7 @@ def _autopilot_code_iteration_repair_prompt(req: AutopilotCodeIterationRequest, 
         "Candidate test files must be standard-library only; do not import/use pytest, pytest.raises, tmp_path, monkeypatch, or other pytest fixtures. "
         "Do not include token-shaped or key-shaped strings anywhere, including tests or examples: avoid sk-, ghp_, token=, secret=, api_key=, and bearer-style fixtures. "
         "Candidate test files must import AAA product modules through across_agents_assistant.<module>, not through flat autopilot_* imports. "
+        "If validation_feedback reports brittle_dynamic_list_assertion, replace exact ordered list equality on dynamic gate/evidence/status outputs with stable invariant assertions such as membership, subset/set coverage, key presence, counts, and required item properties. "
         "If validation_feedback reports destructive_product_entrypoint_rewrite, do not overwrite existing product integration files; use marker-bounded append/upsert content only. "
         "Preserve existing route registrations, capability registries, public functions, and imports. "
         "Preserve existing documentation; use append or upsert_between_markers for docs instead of destructive overwrite. "
@@ -8498,6 +8534,16 @@ def _review_replay_fixture_only_blocker(reason: str) -> bool:
     )
 
 
+def _normalize_review_notes(value: Any) -> List[str]:
+    if value is None:
+        items: List[Any] = ["human approval is still required before promotion"]
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+    return [str(item)[:500] for item in items if str(item).strip()][:12]
+
+
 def _normalize_review_decision(raw: Dict[str, Any], req: AutopilotReviewDecisionRequest) -> Dict[str, Any]:
     allow_replay_fixture_only = _review_allows_replay_fixture_only(req)
     blocking = [str(item)[:500] for item in (raw.get("blocking_reasons") or []) if str(item).strip()][:12]
@@ -8544,11 +8590,7 @@ def _normalize_review_decision(raw: Dict[str, Any], req: AutopilotReviewDecision
         "maintainability_score": _clamp_review_score(raw.get("maintainability_score"), 92 if not blocking else 55),
         "risk_score": _clamp_review_score(raw.get("risk_score"), 10 if not blocking else 70),
         "blocking_reasons": blocking,
-        "human_review_notes": [
-            str(item)[:500]
-            for item in (raw.get("human_review_notes") or ["human approval is still required before promotion"])
-            if str(item).strip()
-        ][:12],
+        "human_review_notes": _normalize_review_notes(raw.get("human_review_notes")),
     }
 
 
@@ -9631,6 +9673,203 @@ class MemoryStatusRequest(BaseModel):
     status: str
 
 
+class MemorySearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=10_000)
+    projectRoot: Optional[str] = None
+    mode: str = "hybrid"
+    status: Optional[str] = None
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class MemoryImproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    projectRoot: Optional[str] = Field(default=None, max_length=4_096)
+    allProjects: bool = False
+    sourceIds: List[str] = Field(default_factory=list, max_length=100)
+    similarityThreshold: float = Field(default=0.34, ge=0.0, le=1.0)
+    maxProposalLength: int = Field(default=420, ge=80, le=4_000)
+
+
+class MemoryMergedRetrieveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=10_000)
+    routes: List[str] = Field(
+        default_factory=lambda: ["keyword", "embedding", "evidence_graph", "project_profile", "loop_recall"],
+        min_length=1,
+        max_length=5,
+    )
+    projectRoot: Optional[str] = Field(default=None, max_length=4_096)
+    allProjects: bool = False
+    status: Optional[str] = None
+    reviewPending: bool = False
+    limit: int = Field(default=10, ge=1, le=100)
+    includeRouteResults: bool = False
+
+
+_MEMORY_API_SENSITIVE_KEY_PARTS = ("secret", "token", "credential", "password", "api_key", "authorization", "cookie")
+_MEMORY_API_PATH_KEYS = {
+    "path",
+    "projectroot",
+    "project_root",
+    "root",
+    "home",
+    "cwd",
+    "directory",
+    "file_path",
+}
+
+
+def _sanitize_memory_api_payload(value: Any, key: str = "") -> Any:
+    lowered = key.lower()
+    if lowered in _MEMORY_API_PATH_KEYS:
+        return "[local-path]" if value is not None and value != "" else value
+    if any(part in lowered for part in _MEMORY_API_SENSITIVE_KEY_PARTS):
+        return "[redacted]" if value is not None and value != "" else value
+    if isinstance(value, dict):
+        return {str(item_key): _sanitize_memory_api_payload(item, str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_memory_api_payload(item, key) for item in value]
+    if isinstance(value, str):
+        sanitized = (
+            _sanitize_public_error_text(value)
+            if "Traceback (most recent call last)" in value or "\n  File " in value
+            else value
+        )
+        sanitized = re.sub(
+            r"(?i)\b(?:bearer\s+\S+|(?:api[_-]?key|access[_-]?token|password|secret)\s*[=:]\s*\S+|(?:sk[-_]|ghp_|github_pat_)[A-Za-z0-9_-]+)",
+            "[redacted]",
+            sanitized,
+        )
+        return re.sub(r"(?<![A-Za-z0-9])/(?:Users|private|tmp|var/folders)/[^\s\"'<>]+", "[local-path]", sanitized)
+    return value
+
+
+def _context_memory_http_error(exc: PluginLifecycleError) -> HTTPException:
+    detail = str(exc).lower()
+    if "not installed" in detail or "must be repaired" in detail:
+        return HTTPException(status_code=503, detail="Across Context plugin is not available")
+    if "timed out" in detail:
+        return HTTPException(status_code=504, detail="Across Context operation timed out")
+    if "not found" in detail:
+        return HTTPException(status_code=404, detail="Memory not found")
+    if "command failed" in detail or "invalid json" in detail or "unexpected" in detail:
+        return HTTPException(status_code=502, detail="Across Context returned an invalid response")
+    return HTTPException(status_code=400, detail="Across Context request is invalid")
+
+
+@app.post("/api/quality-gates/run")
+async def run_repository_quality_gate(req: AutopilotGateRequest):
+    """Run the managed repository gate and preserve structured blocked results."""
+    try:
+        result = await asyncio.to_thread(
+            get_autopilot_client().gate,
+            req.repo_root,
+            base_ref=req.base_ref,
+            head_ref=req.head_ref,
+            branch=req.branch,
+            commit=req.commit,
+            ci_path=req.ci_path,
+            ci_wait_seconds=req.ci_wait_seconds,
+            draft_pr=req.draft_pr,
+            push_branch=req.push_branch,
+            approve_remote=req.approve_remote,
+            watch_ci=req.watch_ci,
+            ci_idle_timeout_seconds=req.ci_idle_timeout_seconds,
+            ci_max_wall_timeout_seconds=req.ci_max_wall_timeout_seconds,
+            max_repairs=req.max_repairs,
+            timeout=req.timeout_seconds,
+        )
+        return _sanitize_public_payload(sanitize_remote_gate_evidence(result))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Run repository quality gate", exc)
+    except Exception:
+        raise _safe_http_500("Run repository quality gate")
+
+
+@app.post("/api/memory/search")
+async def search_across_context_memory(req: MemorySearchRequest):
+    """Search active memory by default; pending memory requires explicit status."""
+    if req.status not in {None, "active", "pinned", "pending"}:
+        raise HTTPException(status_code=400, detail="Unsupported memory status")
+    try:
+        result = await asyncio.to_thread(
+            search_context_memories,
+            req.query,
+            project_root=req.projectRoot,
+            mode=req.mode,
+            status=req.status,
+            limit=req.limit,
+        )
+        return _sanitize_public_payload(result)
+    except PluginLifecycleError as exc:
+        if "not installed" in str(exc).lower():
+            raise HTTPException(status_code=503, detail="Across Context plugin is not available")
+        raise HTTPException(status_code=400, detail=_sanitize_public_error_text(exc))
+    except Exception:
+        raise _safe_http_500("Search Across Context memory")
+
+
+@app.post("/api/memory/improve")
+async def improve_across_context_memory(req: MemoryImproveRequest):
+    """Create governed pending distillation proposals without auto-approval."""
+    try:
+        result = await asyncio.to_thread(
+            improve_context_memory,
+            project_root=req.projectRoot,
+            include_projects=req.allProjects,
+            source_ids=req.sourceIds,
+            similarity_threshold=req.similarityThreshold,
+            max_proposal_length=req.maxProposalLength,
+        )
+        return _sanitize_memory_api_payload(_sanitize_public_payload(result))
+    except PluginLifecycleError as exc:
+        raise _context_memory_http_error(exc)
+    except Exception:
+        raise _safe_http_500("Improve Across Context memory")
+
+
+@app.post("/api/memory/retrieve/merged")
+async def retrieve_across_context_memory_merged(req: MemoryMergedRetrieveRequest):
+    """Merge explicit memory routes; pending records require reviewPending=true."""
+    if req.status not in {None, "active", "pinned", "pending", "archived", "expired"}:
+        raise HTTPException(status_code=400, detail="Across Context request is invalid")
+    if (req.status == "pending") != req.reviewPending:
+        raise HTTPException(status_code=400, detail="Pending memory requires explicit review")
+    try:
+        result = await asyncio.to_thread(
+            retrieve_context_memories_merged,
+            req.query,
+            routes=req.routes,
+            project_root=req.projectRoot,
+            include_projects=req.allProjects,
+            status=req.status,
+            review_pending=req.reviewPending,
+            limit=req.limit,
+            include_route_results=req.includeRouteResults,
+        )
+        return _sanitize_memory_api_payload(_sanitize_public_payload(result))
+    except PluginLifecycleError as exc:
+        raise _context_memory_http_error(exc)
+    except Exception:
+        raise _safe_http_500("Retrieve merged Across Context memory")
+
+
+@app.post("/api/memory/distilled/{memory_id}/rollback")
+async def rollback_across_context_distilled_memory(memory_id: str):
+    """Archive one distilled proposal and restore its governed source states."""
+    try:
+        result = await asyncio.to_thread(rollback_distilled_context_memory, memory_id)
+        return _sanitize_memory_api_payload(_sanitize_public_payload(result))
+    except PluginLifecycleError as exc:
+        raise _context_memory_http_error(exc)
+    except Exception:
+        raise _safe_http_500("Rollback Across Context distilled memory")
+
+
 @app.get("/api/memory/memories")
 async def list_across_context_memories(
     projectRoot: Optional[str] = None,
@@ -10095,6 +10334,185 @@ class AgentConfigRequest(BaseModel):
     executable_path: Optional[str] = None
     model: Optional[str] = None
 
+
+class AgentWorkspaceRepoAccessRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(default="implicit", max_length=32)
+    security_scope_active: bool = False
+    grant_id: Optional[str] = Field(default=None, max_length=128)
+
+
+class AgentWorkspaceCreateRequest(BaseModel):
+    repo_root: str = Field(min_length=1)
+    prompt: str = Field(min_length=1, max_length=50_000)
+    agent_ids: List[str] = Field(min_length=1, max_length=4)
+    execution_strategy: str = "parallel_worktrees"
+    validation_commands: Optional[List[List[str]]] = None
+    task_timeout_seconds: float = Field(default=900.0, ge=1.0, le=3600.0)
+    test_timeout_seconds: float = Field(default=300.0, ge=1.0, le=1800.0)
+    idempotency_key: Optional[str] = Field(default=None, max_length=500)
+    workflow: Optional[str] = Field(default=None, max_length=200)
+    quality_gate_ci_path: Optional[str] = None
+    quality_gate_ci_wait_seconds: int = Field(default=0, ge=0, le=900)
+    quality_gate_draft_pr: bool = False
+    repo_access: Optional[AgentWorkspaceRepoAccessRequest] = None
+
+
+class AgentWorkspaceCancelRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=2_000)
+
+
+class AgentWorkspaceCommentRequest(BaseModel):
+    candidate_id: str = Field(min_length=1, max_length=128)
+    comment: str = Field(min_length=1, max_length=10_000)
+
+
+class AgentWorkspaceReviewAnchorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_sha: str = Field(min_length=40, max_length=64)
+    head_sha: str = Field(min_length=40, max_length=64)
+    patch_sha256: str = Field(min_length=64, max_length=64)
+
+
+class AgentWorkspaceLineCommentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=2_000)
+    side: str = Field(min_length=4, max_length=5)
+    line: int = Field(ge=1)
+    start_line: Optional[int] = Field(default=None, ge=1)
+    body: str = Field(min_length=1, max_length=4_000)
+
+
+class AgentWorkspaceLineReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1, max_length=128)
+    anchor: AgentWorkspaceReviewAnchorRequest
+    comments: List[AgentWorkspaceLineCommentRequest] = Field(min_length=1, max_length=50)
+    idempotency_key: Optional[str] = Field(default=None, max_length=500)
+
+
+class AgentWorkspaceSelectRequest(BaseModel):
+    candidate_id: str = Field(min_length=1, max_length=128)
+
+
+class AgentWorkspacePromoteRequest(BaseModel):
+    candidate_id: Optional[str] = Field(default=None, max_length=128)
+    approved: bool = False
+    approved_by: Optional[str] = Field(default=None, max_length=200)
+
+
+_agent_workspace_manager = None
+
+
+def _agent_workspace_http_error(exc: Exception) -> HTTPException:
+    from .agent_workspaces import AgentWorkspaceError
+
+    if isinstance(exc, AgentWorkspaceError):
+        return HTTPException(status_code=exc.status_code, detail=exc.detail())
+    logger.exception("Agent workspace operation failed")
+    return HTTPException(status_code=500, detail={"code": "workspace_operation_failed", "message": _safe_error_message("Agent workspace operation")})
+
+
+def _run_agent_workspace_task(
+    agent_id: str,
+    prompt: str,
+    worktree: str,
+    timeout: float,
+    session_id: str,
+) -> Dict[str, Any]:
+    from .local_agent_health import get_configured_agent_model
+
+    client = get_local_agent_client()
+    reply = client.send(
+        message=prompt,
+        session_id=session_id,
+        use_current=False,
+        target_agent=agent_id,
+        project_dir=worktree,
+        timeout=timeout,
+        max_wall_timeout=timeout,
+    )
+    return {
+        "success": bool(reply and not getattr(reply, "error_code", None) and not getattr(reply, "timed_out", False)),
+        "output": getattr(reply, "text", "") if reply else "",
+        "error_code": getattr(reply, "error_code", None) if reply else "empty_agent_reply",
+        "provider": "local_cli",
+        "model": get_configured_agent_model(agent_id),
+    }
+
+
+def _cancel_agent_workspace_task(session_id: str) -> bool:
+    client = get_local_agent_client()
+    process = getattr(client, "active_processes", {}).get(session_id)
+    if process is not None and os.name != "nt":
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+
+            def force_kill_if_running():
+                time.sleep(2.0)
+                if process.poll() is None:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        pass
+
+            threading.Thread(target=force_kill_if_running, daemon=True).start()
+            return True
+        except (OSError, ProcessLookupError):
+            pass
+    return bool(client.cancel(session_id))
+
+
+def _run_agent_workspace_quality_gate(
+    worktree: str,
+    base_sha: str,
+    timeout: float,
+    options: Mapping[str, Any],
+) -> Dict[str, Any]:
+    return get_autopilot_client().gate(
+        worktree,
+        base_ref=base_sha,
+        head_ref="HEAD",
+        ci_path=str(options.get("ci_path")) if options.get("ci_path") else None,
+        ci_wait_seconds=int(options.get("ci_wait_seconds") or 0),
+        draft_pr=bool(options.get("draft_pr")),
+        max_repairs=0,
+        timeout=max(30, min(int(timeout), 3600)),
+    )
+
+
+def _run_agent_workspace_capability_preflight(
+    prompt: str,
+    agent_ids: List[str],
+    workflow: Optional[str],
+) -> Dict[str, Any]:
+    from .agent_capabilities import get_agent_capability_store
+
+    return get_agent_capability_store().build_task_preflight(
+        description=prompt,
+        owner_agent=agent_ids[0] if agent_ids else None,
+        allowed_subtask_agents=agent_ids[1:],
+        task_types=[workflow] if workflow else None,
+    )
+
+
+def get_agent_workspace_manager():
+    global _agent_workspace_manager
+    if _agent_workspace_manager is None:
+        from .agent_workspaces import AgentWorkspaceManager
+
+        _agent_workspace_manager = AgentWorkspaceManager(
+            agent_runner=_run_agent_workspace_task,
+            agent_canceller=_cancel_agent_workspace_task,
+            quality_gate_runner=_run_agent_workspace_quality_gate,
+            capability_preflight=_run_agent_workspace_capability_preflight,
+        )
+    return _agent_workspace_manager
+
 @app.post("/api/agents/config")
 async def save_agent_config(req: AgentConfigRequest):
     """Save local agent configuration (executable path)."""
@@ -10145,6 +10563,226 @@ async def get_agent_registry():
     from .local_agent_health import list_local_agent_specs
 
     return {"agents": list(list_local_agent_specs().values())}
+
+
+@app.get("/api/agent-workspaces/readiness")
+async def get_agent_workspace_readiness(
+    refresh: bool = False,
+    repo_root: Optional[str] = None,
+    selected_agent_ids: Optional[List[str]] = None,
+    repo_access_mode: str = "implicit",
+    security_scope_active: bool = False,
+    repo_access_grant_id: Optional[str] = None,
+):
+    """Return a non-secret, read-only snapshot before workspace mutation."""
+    from .agent_workspace_readiness import build_agent_workspace_readiness
+
+    return await asyncio.to_thread(
+        build_agent_workspace_readiness,
+        refresh=refresh,
+        repo_root=repo_root,
+        selected_agent_ids=selected_agent_ids,
+        repo_access={
+            "mode": repo_access_mode,
+            "security_scope_active": security_scope_active,
+            "grant_id": repo_access_grant_id,
+        },
+    )
+
+
+@app.get("/api/agent-workspaces/agent-status")
+async def get_agent_workspace_agent_status(refresh: bool = False):
+    """Return explicit non-secret operational state; unavailable telemetry stays unknown."""
+    from .agent_workspace_readiness import build_agent_workspace_readiness
+
+    snapshot = await asyncio.to_thread(build_agent_workspace_readiness, refresh=refresh)
+    return {
+        "schema_version": "agent-workspace-agent-status/1.0",
+        "generated_at": snapshot.get("generated_at"),
+        "agents": snapshot.get("agent_operational_status") or [],
+        "security": snapshot.get("security") or {},
+    }
+
+
+@app.get("/api/agent-workspaces")
+async def list_agent_workspaces():
+    """List durable agent workspace sets without raw prompts or transcripts."""
+    try:
+        return await asyncio.to_thread(get_agent_workspace_manager().list)
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.post("/api/agent-workspaces", status_code=201)
+async def create_agent_workspace(req: AgentWorkspaceCreateRequest):
+    """Create isolated worktrees and launch one bounded task per selected agent."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().create,
+            repo_root=req.repo_root,
+            prompt=req.prompt,
+            agent_ids=req.agent_ids,
+            execution_strategy=req.execution_strategy,
+            validation_commands=req.validation_commands,
+            task_timeout_seconds=req.task_timeout_seconds,
+            test_timeout_seconds=req.test_timeout_seconds,
+            idempotency_key=req.idempotency_key,
+            workflow=req.workflow,
+            quality_gate_ci_path=req.quality_gate_ci_path,
+            quality_gate_ci_wait_seconds=req.quality_gate_ci_wait_seconds,
+            quality_gate_draft_pr=req.quality_gate_draft_pr,
+            repo_access=req.repo_access.model_dump(exclude_none=True) if req.repo_access else None,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.get("/api/agent-workspaces/{workspace_id}")
+async def get_agent_workspace(workspace_id: str):
+    """Return durable lifecycle, comparison summaries, and promotion state."""
+    try:
+        return await asyncio.to_thread(get_agent_workspace_manager().get, workspace_id)
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.get("/api/agent-workspaces/{workspace_id}/comparison")
+async def compare_agent_workspace_candidates(workspace_id: str):
+    """Compare candidate diffs, tests, risk, and evidence."""
+    try:
+        return await asyncio.to_thread(get_agent_workspace_manager().comparison, workspace_id)
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.get("/api/agent-workspaces/{workspace_id}/events")
+async def get_agent_workspace_events(
+    workspace_id: str,
+    after_sequence: Optional[int] = None,
+    stream: bool = False,
+    follow: bool = False,
+):
+    """Read durable redacted events, optionally as a resumable SSE stream."""
+    manager = get_agent_workspace_manager()
+    try:
+        initial = await asyncio.to_thread(manager.events, workspace_id, after_sequence=after_sequence)
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+    if not stream and not follow:
+        return initial
+
+    async def event_generator():
+        cursor = after_sequence
+        snapshot = initial
+        idle_deadline = time.monotonic() + 30.0
+        while True:
+            events = snapshot.get("events") or []
+            if events:
+                idle_deadline = time.monotonic() + 30.0
+            for event in events:
+                sequence = event.get("sequence")
+                if isinstance(sequence, int):
+                    cursor = max(cursor or 0, sequence)
+                event_type = str(event.get("type") or "workspace.event")
+                yield f"id: {sequence}\nevent: {event_type}\ndata: {json.dumps(event, ensure_ascii=True, separators=(',', ':'))}\n\n"
+            status = str(snapshot.get("workspace_status") or "")
+            if not follow or status not in {"creating", "running", "revising", "cancelling", "promoting"}:
+                return
+            if time.monotonic() >= idle_deadline:
+                yield ": idle_timeout\n\n"
+                return
+            await asyncio.sleep(0.25)
+            try:
+                snapshot = await asyncio.to_thread(manager.events, workspace_id, after_sequence=cursor)
+            except Exception:
+                logger.debug("Agent workspace SSE polling stopped", exc_info=True)
+                return
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.post("/api/agent-workspaces/{workspace_id}/cancel")
+async def cancel_agent_workspace(workspace_id: str, req: Optional[AgentWorkspaceCancelRequest] = None):
+    """Cancel active candidate tasks without mutating the source repository."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().cancel,
+            workspace_id,
+            reason=req.reason if req else None,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.post("/api/agent-workspaces/{workspace_id}/comment")
+async def comment_agent_workspace(workspace_id: str, req: AgentWorkspaceCommentRequest):
+    """Send bounded human feedback back to one isolated candidate."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().comment,
+            workspace_id,
+            req.candidate_id,
+            req.comment,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.post("/api/agent-workspaces/{workspace_id}/line-reviews")
+async def review_agent_workspace_lines(workspace_id: str, req: AgentWorkspaceLineReviewRequest):
+    """Apply immutable diff-anchored line comments to one candidate rerun."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().line_review,
+            workspace_id,
+            req.candidate_id,
+            anchor=req.anchor.model_dump(),
+            comments=[comment.model_dump(exclude_none=True) for comment in req.comments],
+            idempotency_key=req.idempotency_key,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.post("/api/agent-workspaces/{workspace_id}/select")
+async def select_agent_workspace_candidate(workspace_id: str, req: AgentWorkspaceSelectRequest):
+    """Select one completed candidate for promotion review."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().select,
+            workspace_id,
+            req.candidate_id,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.post("/api/agent-workspaces/{workspace_id}/promote")
+async def promote_agent_workspace(workspace_id: str, req: AgentWorkspacePromoteRequest):
+    """Apply a validated candidate only after explicit human approval."""
+    try:
+        return await asyncio.to_thread(
+            get_agent_workspace_manager().promote,
+            workspace_id,
+            candidate_id=req.candidate_id,
+            approved=req.approved,
+            approved_by=req.approved_by,
+        )
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
+
+
+@app.delete("/api/agent-workspaces/{workspace_id}")
+async def cleanup_agent_workspace(workspace_id: str):
+    """Remove retained isolated worktrees while keeping durable review state."""
+    try:
+        return await asyncio.to_thread(get_agent_workspace_manager().cleanup, workspace_id)
+    except Exception as exc:
+        raise _agent_workspace_http_error(exc)
 
 
 @app.get("/api/agents/protocols")
