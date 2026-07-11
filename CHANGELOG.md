@@ -18,6 +18,8 @@
 
 - Updated managed producer pins to Autopilot `v0.3.0`, Orchestrator `v0.8.0`,
   and Context `v0.9.0`.
+- Updated the supported backend dependency floors to Uvicorn `0.51.0`, FastAPI
+  `0.139.0`, and Anthropic `0.116.0` after their dedicated CI gates passed.
 
 ## 0.9.55 - 2026-07-09
 
