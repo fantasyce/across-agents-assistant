@@ -14,6 +14,15 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static let groupedNavigation: [SettingsHubTab] = [
+        .diagnostics,
+        .models,
+        .capabilities,
+        .plugins,
+        .tools,
+        .settings,
+    ]
+
     var iconName: String {
         switch self {
         case .diagnostics: return "stethoscope"
@@ -30,13 +39,13 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     @MainActor
     func title(preferences: AppPreferences) -> String {
         switch self {
-        case .diagnostics: return preferences.text("settings.diagnostics")
+        case .diagnostics: return preferences.text("settings.systemHealth")
         case .workbench: return preferences.text("settings.workbench")
-        case .models: return preferences.text("settings.models")
+        case .models: return preferences.text("settings.agentsModels")
         case .capabilities: return preferences.text("settings.capabilities")
         case .mcp: return preferences.text("settings.mcp")
-        case .plugins: return preferences.text("settings.plugins")
-        case .tools: return preferences.text("settings.tools")
+        case .plugins: return preferences.text("settings.pluginsMCP")
+        case .tools: return preferences.text("settings.toolPermissions")
         case .settings: return preferences.text("settings.preferences")
         }
     }
@@ -50,15 +59,26 @@ struct SettingsHubView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+    private var bgColor: Color { AcrossTheme.canvasFill(for: colorScheme) }
+
+    private var normalizedSelection: SettingsHubTab {
+        selectedTab == .mcp ? .plugins : selectedTab
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.35)
-            content
+            Rectangle()
+                .fill(AcrossTheme.separator(for: colorScheme))
+                .frame(height: 1)
+            HStack(spacing: 0) {
+                navigationSidebar
+                    .frame(width: AcrossTheme.Metrics.sidebarWidth)
+                Rectangle()
+                    .fill(AcrossTheme.separator(for: colorScheme))
+                    .frame(width: 1)
+                content
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(VisualEffectView().ignoresSafeArea())
@@ -76,60 +96,65 @@ struct SettingsHubView: View {
             CustomTrafficLights(onClose: onClose)
                 .frame(width: 120, alignment: .leading)
 
-            Spacer(minLength: 16)
+            Spacer()
 
-            HStack(spacing: 8) {
-                ForEach(SettingsHubTab.allCases) { tab in
-                    Button {
-                        selectedTab = tab
-                    } label: {
-                        HStack(spacing: 7) {
-                            if tab == .plugins {
-                                BundledTemplateIcon(
-                                    name: "ui.plugin-center",
-                                    fallbackSystemName: tab.iconName,
-                                    size: 12,
-                                    color: selectedTab == tab ? textColor : .secondary
-                                )
-                            } else {
-                                Image(systemName: tab.iconName)
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            Text(tab.title(preferences: preferences))
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundColor(selectedTab == tab ? textColor : .secondary)
-                        .frame(minWidth: 74, minHeight: 32)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedTab == tab ? accentColor.opacity(0.18) : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(selectedTab == tab ? accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(RoundedRectangle(cornerRadius: 8))
-                    .help(tab.title(preferences: preferences))
-                }
-            }
-
-            Spacer(minLength: 16)
+            Text(preferences.text("settings.title"))
+                .font(.system(size: 14, weight: .semibold))
 
             Spacer()
-                .frame(width: 120)
+
+            Spacer().frame(width: 120)
         }
         .padding(.horizontal, 16)
         .frame(height: 56)
         .background(
             ZStack {
-                bgColor.opacity(colorScheme == .dark ? 0.84 : 0.96)
+                AcrossTheme.panelFill(for: colorScheme)
                 WindowDragView().contentShape(Rectangle())
             }
         )
+    }
+
+    private var navigationSidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(preferences.text("settings.navigation"))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+
+            ForEach(SettingsHubTab.groupedNavigation) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 18, height: 18)
+                            .accessibilityHidden(true)
+                        Text(tab.title(preferences: preferences))
+                            .font(.system(size: 12, weight: normalizedSelection == tab ? .semibold : .medium))
+                            .lineLimit(2)
+                        Spacer()
+                    }
+                    .foregroundStyle(normalizedSelection == tab ? AcrossTheme.accent : Color.primary)
+                    .padding(.horizontal, 9)
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .background(normalizedSelection == tab ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .help(tab.title(preferences: preferences))
+            }
+
+            Spacer()
+        }
+        .background(AcrossTheme.sidebarFill(for: colorScheme))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(preferences.text("settings.navigation")))
     }
 
     @ViewBuilder
@@ -151,7 +176,7 @@ struct SettingsHubView: View {
             MCPPreferencesView(onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)
         case .plugins:
-            PluginLifecycleView(onClose: nil, embeddedInHub: true)
+            PluginsAndMCPSettingsView()
                 .environmentObject(preferences)
         case .tools:
             ToolPermissionsView(onClose: nil, embeddedInHub: true)
@@ -163,16 +188,63 @@ struct SettingsHubView: View {
     }
 }
 
+private enum PluginsAndMCPSection: String, CaseIterable, Identifiable {
+    case plugins
+    case mcp
+
+    var id: String { rawValue }
+}
+
+private struct PluginsAndMCPSettingsView: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var section: PluginsAndMCPSection = .plugins
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Picker("", selection: $section) {
+                    Text(preferences.text("settings.plugins")).tag(PluginsAndMCPSection.plugins)
+                    Text(preferences.text("settings.mcp")).tag(PluginsAndMCPSection.mcp)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+                .accessibilityLabel(Text(preferences.text("settings.pluginsMCP")))
+                Spacer()
+            }
+            .padding(.horizontal, SettingsHubPageLayout.contentPadding)
+            .frame(height: 50)
+            .background(AcrossTheme.panelFill(for: colorScheme))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(AcrossTheme.separator(for: colorScheme))
+                    .frame(height: 1)
+            }
+
+            switch section {
+            case .plugins:
+                PluginLifecycleView(onClose: nil, embeddedInHub: true)
+                    .environmentObject(preferences)
+            case .mcp:
+                MCPPreferencesView(onClose: nil, embeddedInHub: true)
+                    .environmentObject(preferences)
+            }
+        }
+        .background(AcrossTheme.canvasFill(for: colorScheme))
+    }
+}
+
 private struct GlobalPreferencesContent: View {
     @ObservedObject var preferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
     @State private var availableVoices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()
     @State private var isVoicePickerPresented = false
 
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "202227") : Color(hex: "fafbfc") }
-    private var fieldColor: Color { colorScheme == .dark ? Color(hex: "15171b") : Color.black.opacity(0.045) }
-    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+    private var textColor: Color { .primary }
+    private var cardColor: Color { AcrossTheme.panelFill(for: colorScheme) }
+    private var fieldColor: Color { AcrossTheme.recessedFill(for: colorScheme) }
+    private var accentColor: Color { AcrossTheme.accent }
     private let controlColumnWidth: CGFloat = 320
 
     var body: some View {

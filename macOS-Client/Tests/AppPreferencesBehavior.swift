@@ -42,6 +42,33 @@ func testLocalizedStringsFallbackToEnglish() {
         )
     }
 
+    let operationsKeys = OperationsWorkbenchSurface.allCases.map(\.localizationKey)
+        + WorkspacePaneKind.allCases.map(\.localizationKey)
+        + HumanReviewKind.allCases.map(\.localizationKey)
+        + [
+            "settings.systemHealth",
+            "settings.agentsModels",
+            "settings.pluginsMCP",
+            "settings.toolPermissions",
+            "workspace.output.notPersisted",
+            "gate.run",
+            "gate.result.ciTaxonomy",
+            "memory.scope.ordinary",
+            "memory.scope.pending",
+            "memory.pendingExplicit",
+            "review.humanBoundary",
+        ]
+    for key in operationsKeys {
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "en") != key,
+            "\(key) should be localized in English"
+        )
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "zh-Hans") != key,
+            "\(key) should be localized in Simplified Chinese"
+        )
+    }
+
     assert(
         AppPreferences.localizedString("settings.title", localeIdentifier: "zh-Hans") == "设置",
         "Simplified Chinese labels should be available"

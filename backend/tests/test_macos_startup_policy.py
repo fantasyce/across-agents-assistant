@@ -23,9 +23,11 @@ def test_session_view_model_constructor_does_not_fetch_backend():
 
 
 def test_main_panel_owns_one_initial_data_load():
-    source = _swift_source("macOS-Client/Sources/Views/MainPanelView.swift")
+    view_source = _swift_source("macOS-Client/Sources/Views/MainPanelView.swift")
+    actions_source = _swift_source("macOS-Client/Sources/Views/MainPanelActions.swift")
+    source = view_source + "\n" + actions_source
 
-    assert "loadInitialDataWhenBackendAvailable()" in source
+    assert "loadInitialDataWhenBackendAvailable()" in view_source
     assert source.count("viewModel.loadInitialDataIfNeeded()") == 1
     assert "settingsViewModel.availabilityBootstrapState != .loading" in source
     assert source.count("viewModel.fetchProjects()") == 0

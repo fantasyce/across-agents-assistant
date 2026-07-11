@@ -15,7 +15,7 @@ struct PluginLifecycleView: View {
     private var fieldColor: Color { colorScheme == .dark ? Color(hex: "15171b") : Color.black.opacity(0.045) }
     private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10) }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
+    private var accentColor: Color { AcrossTheme.accent }
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
 

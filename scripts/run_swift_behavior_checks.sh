@@ -14,6 +14,7 @@ echo "== AppPreferencesBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/AppPreferencesBehavior.swift \
   macOS-Client/Sources/Models/AppPreferences.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
   macOS-Client/Sources/Models/PluginLifecycleModels.swift \
   macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
   -o "$TMP_DIR/AppPreferencesBehavior"
@@ -33,6 +34,60 @@ swiftc -parse-as-library \
   macOS-Client/Sources/Models/AutopilotWorkbenchModels.swift \
   -o "$TMP_DIR/AutopilotWorkbenchBehavior"
 "$TMP_DIR/AutopilotWorkbenchBehavior"
+
+echo "== AgentWorkspaceReadinessBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/AgentWorkspaceReadinessBehavior.swift \
+  macOS-Client/Sources/Models/AgentWorkspaceModels.swift \
+  macOS-Client/Sources/ViewModels/AgentWorkspaceReadinessViewModel.swift \
+  macOS-Client/Sources/Views/AcrossDesignSystem.swift \
+  -o "$TMP_DIR/AgentWorkspaceReadinessBehavior"
+"$TMP_DIR/AgentWorkspaceReadinessBehavior"
+
+echo "== OperationsWorkbenchBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/OperationsWorkbenchBehavior.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  -o "$TMP_DIR/OperationsWorkbenchBehavior"
+"$TMP_DIR/OperationsWorkbenchBehavior"
+
+echo "== OperationsLifecycleBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/OperationsLifecycleBehavior.swift \
+  macOS-Client/Sources/Models/AgentWorkspaceModels.swift \
+  macOS-Client/Sources/Models/AgentWorkspaceOperationsModels.swift \
+  macOS-Client/Sources/Models/MemorySearchModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/QualityGateModels.swift \
+  macOS-Client/Sources/ViewModels/AgentWorkspaceOperationsViewModel.swift \
+  macOS-Client/Sources/ViewModels/MemorySearchViewModel.swift \
+  macOS-Client/Sources/ViewModels/QualityGateViewModel.swift \
+  -o "$TMP_DIR/OperationsLifecycleBehavior"
+"$TMP_DIR/OperationsLifecycleBehavior"
+
+echo "== VNextOperationsBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/VNextOperationsBehavior.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/AgentWorkspaceModels.swift \
+  macOS-Client/Sources/Models/AgentWorkspaceOperationsModels.swift \
+  macOS-Client/Sources/Models/QualityGateModels.swift \
+  macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/MemorySearchModels.swift \
+  macOS-Client/Sources/ViewModels/AgentWorkspaceOperationsViewModel.swift \
+  macOS-Client/Sources/ViewModels/MemorySearchViewModel.swift \
+  -o "$TMP_DIR/VNextOperationsBehavior"
+"$TMP_DIR/VNextOperationsBehavior"
+
+echo "== QualityGateRemoteBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/QualityGateRemoteBehavior.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/QualityGateModels.swift \
+  macOS-Client/Sources/ViewModels/QualityGateViewModel.swift \
+  -o "$TMP_DIR/QualityGateRemoteBehavior"
+"$TMP_DIR/QualityGateRemoteBehavior"
 
 echo "== SimpleStartWorkflowBehavior =="
 swiftc -parse-as-library \

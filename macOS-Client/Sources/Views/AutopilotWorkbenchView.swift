@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AutopilotWorkbenchView: View {
     @StateObject private var viewModel = AutopilotWorkbenchViewModel()
+    @StateObject private var workspaceReadiness = AgentWorkspaceReadinessViewModel()
     @EnvironmentObject private var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
 
@@ -39,6 +40,7 @@ struct AutopilotWorkbenchView: View {
             VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
                 titleRow
                 feedbackRows
+                agentWorkspaceReadinessSection
 
                 if let snapshot = viewModel.snapshot {
                     summaryGrid(snapshot)
@@ -65,7 +67,9 @@ struct AutopilotWorkbenchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(bgColor)
         .task {
-            await viewModel.load()
+            async let workbenchLoad: Void = viewModel.load()
+            async let readinessLoad: Void = workspaceReadiness.load()
+            _ = await (workbenchLoad, readinessLoad)
         }
     }
 
@@ -85,7 +89,11 @@ struct AutopilotWorkbenchView: View {
 
             HStack(spacing: 8) {
                 iconButton("arrow.clockwise", help: appPreferences.text("workbench.refresh")) {
-                    Task { await viewModel.load(refresh: true) }
+                    Task {
+                        async let workbenchLoad: Void = viewModel.load(refresh: true)
+                        async let readinessLoad: Void = workspaceReadiness.load(refresh: true)
+                        _ = await (workbenchLoad, readinessLoad)
+                    }
                 }
                 iconButton("checkmark.seal", help: appPreferences.text("workbench.ensure")) {
                     Task { await viewModel.ensureSelfIterationPlan() }
@@ -116,6 +124,17 @@ struct AutopilotWorkbenchView: View {
         }
     }
 
+    @ViewBuilder
+    private var agentWorkspaceReadinessSection: some View {
+        if let snapshot = workspaceReadiness.snapshot {
+            agentWorkspaceReadinessPanel(snapshot)
+        } else if workspaceReadiness.isLoading {
+            loadingPanel(title: appPreferences.text("workbench.workspace.loading"))
+        } else if let error = workspaceReadiness.errorMessage {
+            readinessErrorPanel(error)
+        }
+    }
+
     private var loadingRow: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
@@ -128,6 +147,191 @@ struct AutopilotWorkbenchView: View {
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
+    }
+
+    private func loadingPanel(title: String) -> some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    private func readinessErrorPanel(_ error: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(statusColor("attention"))
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(appPreferences.text("workbench.workspace.title"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textColor)
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            CommandToolbarButton(
+                systemName: "arrow.clockwise",
+                accessibilityLabel: appPreferences.text("workbench.workspace.refresh"),
+                help: appPreferences.text("workbench.workspace.refresh")
+            ) {
+                Task { await workspaceReadiness.load(refresh: true) }
+            }
+        }
+        .padding(14)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    private func agentWorkspaceReadinessPanel(_ snapshot: AgentWorkspaceReadinessSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(appPreferences.text("workbench.workspace.title"))
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(textColor)
+                        StatusChip(
+                            status: snapshot.canCreateWorkspace ? "ready" : snapshot.status.rawValue,
+                            label: localizedWorkspaceStatus(snapshot)
+                        )
+                    }
+                    Text(appPreferences.text("workbench.workspace.subtitle"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                CommandToolbarButton(
+                    systemName: "arrow.clockwise",
+                    accessibilityLabel: appPreferences.text("workbench.workspace.refresh"),
+                    help: appPreferences.text("workbench.workspace.refresh"),
+                    isDisabled: workspaceReadiness.isLoading
+                ) {
+                    Task { await workspaceReadiness.load(refresh: true) }
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 138), spacing: 10)], spacing: 10) {
+                workspaceMetric(
+                    appPreferences.text("workbench.workspace.readyAgents"),
+                    "\(snapshot.readyAgentIds.count)/\(snapshot.agents.count)",
+                    snapshot.readyAgentIds.isEmpty ? "unavailable" : "ready"
+                )
+                workspaceMetric(
+                    appPreferences.text("workbench.workspace.isolation"),
+                    snapshot.workspaceIsolation.canCreateIsolatedWorkspaces ? appPreferences.text("workbench.status.ready") : appPreferences.text("workbench.status.not_implemented"),
+                    snapshot.workspaceIsolation.canCreateIsolatedWorkspaces ? "ready" : "attention"
+                )
+                workspaceMetric(
+                    appPreferences.text("workbench.workspace.routes"),
+                    "\(workspaceReadyRouteCount(snapshot))/3",
+                    snapshot.routes.hasRequiredRoutes ? "ready" : "attention"
+                )
+                workspaceMetric(
+                    appPreferences.text("workbench.workspace.strategy"),
+                    snapshot.executionStrategy ?? "-",
+                    "active"
+                )
+            }
+
+            if !snapshot.agents.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(appPreferences.text("workbench.workspace.agents"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(textColor)
+
+                    ForEach(snapshot.agents.prefix(5)) { agent in
+                        HStack(spacing: 8) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(statusColor(agent.available ? "ready" : "attention"))
+                                .frame(width: 18, height: 18)
+                            Text(agent.displayName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(textColor)
+                                .lineLimit(1)
+                            Spacer()
+                            if let reason = agent.reason, !reason.isEmpty {
+                                Text(reason)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            StatusChip(status: agent.status.rawValue)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            if !snapshot.canCreateWorkspace {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(appPreferences.text("workbench.workspace.blockers"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(textColor)
+
+                    ForEach(Array(snapshot.readinessIssues.prefix(5).enumerated()), id: \.offset) { _, issue in
+                        HStack(alignment: .top, spacing: 7) {
+                            Image(systemName: "smallcircle.filled.circle")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(statusColor("attention"))
+                                .padding(.top, 4)
+                            Text(displayKey(issue))
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(AcrossTheme.panelFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    private func workspaceMetric(_ title: String, _ value: String, _ status: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusColor(status))
+                    .frame(width: 7, height: 7)
+                Text(value)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
     }
 
     private func summaryGrid(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
@@ -404,6 +608,19 @@ struct AutopilotWorkbenchView: View {
 
     private func localizedStatus(_ status: String) -> String {
         appPreferences.text("workbench.status.\(status)")
+    }
+
+    private func localizedWorkspaceStatus(_ snapshot: AgentWorkspaceReadinessSnapshot) -> String {
+        if snapshot.canCreateWorkspace {
+            return appPreferences.text("workbench.workspace.ready")
+        }
+        return appPreferences.text("workbench.workspace.unavailable")
+    }
+
+    private func workspaceReadyRouteCount(_ snapshot: AgentWorkspaceReadinessSnapshot) -> Int {
+        [snapshot.routes.events, snapshot.routes.diff, snapshot.routes.evidence]
+            .filter { $0 != nil }
+            .count
     }
 
     private func displayKey(_ key: String) -> String {

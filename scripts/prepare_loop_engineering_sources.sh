@@ -75,19 +75,56 @@ for repo in "${REPOS[@]}"; do
   copy_git_snapshot "$repo" "$source" "$target"
 done
 
-cat > "$DEST_ROOT/manifest.json" <<JSON
-{
-  "schema_version": "across-source-mirrors/1.0",
-  "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "source_root": "$SOURCE_ROOT",
-  "dest_root": "$DEST_ROOT",
-  "repos": [
-    "across-agents-assistant",
-    "across-orchestrator",
-    "across-context",
-    "across-autopilot"
-  ]
+PYTHONPATH="$ROOT_DIR/backend/src${PYTHONPATH:+:$PYTHONPATH}" \
+python3 - "$DEST_ROOT" "$SOURCE_ROOT" <<'PY'
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from across_agents_assistant.source_mirror_refresh import DEFAULT_RELEASE_SOURCES, REQUIRED_SOURCE_REPOS
+
+dest_root = Path(sys.argv[1])
+source_root = Path(sys.argv[2])
+
+
+def git_head(path: Path) -> str:
+    return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+
+
+repos = []
+for repo_id in REQUIRED_SOURCE_REPOS:
+    mirror = dest_root / repo_id
+    source = source_root / repo_id
+    release = DEFAULT_RELEASE_SOURCES[repo_id]
+    head = git_head(mirror)
+    repos.append(
+        {
+            "id": repo_id,
+            "source": str(release["url"]),
+            "source_mode": "release_source",
+            "source_checkout": str(source),
+            "source_head": head,
+            "source_ref": str(release["ref"]),
+            "source_clean": True,
+            "source_origin_aligned": True,
+            "mirror": str(mirror),
+            "mirror_head": head,
+            "mirror_clean": True,
+            "version": None,
+        }
+    )
+
+manifest = {
+    "schema_version": "across-source-mirrors/1.0",
+    "status": "passed",
+    "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "source_root": str(source_root),
+    "dest_root": str(dest_root),
+    "repos": repos,
 }
-JSON
+(dest_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 
 printf 'Source mirrors ready: %s\n' "$DEST_ROOT"

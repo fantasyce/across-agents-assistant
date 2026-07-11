@@ -80,6 +80,22 @@ def test_release_evaluation_reports_no_evidence_without_quality_reports():
     assert summary["recommendation"] == "Run at least three quality-gated E2E tasks before release."
 
 
+def test_release_evaluation_redacts_and_bounds_historical_task_descriptions():
+    description = (
+        "Create output under /private/var/folders/aa/bb/T/release-e2e/project and inspect "
+        "/Users/example/Documents/private-repo before review. " + ("bounded evidence " * 30)
+    )
+    row = _task("task-private-path")
+    row["description"] = description
+
+    recent = build_release_evaluation_summary([row])["recent_evaluations"][0]
+
+    assert recent["description"].count("[redacted-local-path]") == 2
+    assert "/private/var" not in recent["description"]
+    assert "/Users/" not in recent["description"]
+    assert len(recent["description"]) <= 280
+
+
 def test_release_evaluation_marks_ready_when_recent_quality_is_clean():
     summary = build_release_evaluation_summary([
         _task("task-a", score=91, owner_agent="hermes", allowed_subtask_agents=["deepseek"]),

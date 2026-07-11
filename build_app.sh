@@ -15,6 +15,8 @@ if [ -z "$APP_VERSION" ]; then
     exit 1
 fi
 
+"$PROJECT_ROOT/scripts/build_app_icon.sh" >/dev/null
+
 echo "=== 1. Cleaning up previous builds ==="
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"

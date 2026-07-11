@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.10.0 - 2026-07-11
+
+### Added
+
+- Added isolated parallel agent workspaces with comparison, anchored line-level
+  review, bounded revision, selection, cleanup, and approval-gated promotion.
+- Added an approval-controlled GitHub quality-gate surface with exact feature
+  branch push, resumable draft PRs, CI heartbeat/wall budgets, verification
+  fallback, recovery evidence, and no credential entry or persistence.
+- Added governed Context distillation, explicit pending review, five-route
+  merged retrieval with provenance, approval, forgetting propagation, and rollback.
+- Added agent account, auth, model, usage, and rate-limit status together with
+  security-scoped repository access and the Operations Workbench UI redesign.
+
+### Changed
+
+- Updated managed producer pins to Autopilot `v0.3.0`, Orchestrator `v0.8.0`,
+  and Context `v0.9.0`.
+- Updated the supported backend dependency floors to Uvicorn `0.51.0`, FastAPI
+  `0.139.0`, and Anthropic `0.116.0` after their dedicated CI gates passed.
+
 ## 0.9.55 - 2026-07-09
 
 ### Changed

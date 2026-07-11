@@ -173,6 +173,8 @@ def test_autopilot_code_iteration_prompt_blocks_token_shaped_test_fixtures():
     assert "ghp_" in prompt
     assert "token=" in prompt
     assert "api_key=" in prompt
+    assert "dynamic gate, evidence, status, readiness, or Tool Pack outputs" in prompt
+    assert "Do not assert exact ordered full-list equality" in prompt
 
 
 class DispatchingFakeAutopilotClient:
@@ -1212,6 +1214,48 @@ def test_autopilot_review_decision_routes_codex_local_agent(monkeypatch):
     assert captured["project_dir"] is None
     assert captured["timeout"] == 900.0
     assert "independent acceptance reviewer" in captured["message"]
+
+
+def test_autopilot_review_decision_wraps_string_human_review_note(monkeypatch):
+    class LocalAgentClient:
+        def send(self, message, *, target_agent=None, project_dir=None, timeout=None, **_kwargs):
+            return SimpleNamespace(
+                text=json.dumps({
+                    "status": "passed",
+                    "recommendation": "review",
+                    "merge_recommendation": "open_review_pr",
+                    "product_value_score": 92,
+                    "maintainability_score": 91,
+                    "risk_score": 8,
+                    "blocking_reasons": [],
+                    "human_review_notes": "Validation passed; human approval is still required.",
+                }),
+                elapsed_sec=0.01,
+                requires_approval=False,
+            )
+
+    class UnusedGateway:
+        async def chat(self, **_kwargs):
+            raise AssertionError("codex local agent policy must not use the gateway")
+
+    monkeypatch.setattr(api_server, "get_local_agent_client", lambda: LocalAgentClient())
+    monkeypatch.setattr(api_server, "get_gateway", lambda: UnusedGateway())
+    response = TestClient(app).post("/api/autopilot/review-decision", json={
+        "goal": "Review a candidate with a string note",
+        "changed_files": ["across-agents-assistant/backend/src/across_agents_assistant/autopilot_product.py"],
+        "validation": {"status": "passed", "command_count": 2},
+        "builder_model": {"provider": "local-agent", "model": "codex"},
+        "model_policy": {
+            "required": True,
+            "agent_id": "codex",
+            "provider": "local-agent",
+            "model": "codex",
+            "require_distinct_from_builder": False,
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.json()["human_review_notes"] == ["Validation passed; human approval is still required."]
 
 
 def test_autopilot_research_decision_selects_catalog_target(monkeypatch, tmp_path):
