@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct WorkspaceDiffReviewView: View {
     let files: [WorkspaceDiffFile]
     let comments: [AgentWorkspaceLineReviewCommentMetadata]
@@ -7,7 +8,7 @@ struct WorkspaceDiffReviewView: View {
     let isSubmitting: Bool
     @Binding var selectedAnchor: WorkspaceDiffLineAnchor?
     @Binding var comment: String
-    let preferences: AppPreferences
+    @ObservedObject var preferences: AppPreferences
     let onSubmit: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
