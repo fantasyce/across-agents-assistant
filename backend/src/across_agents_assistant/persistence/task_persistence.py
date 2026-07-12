@@ -680,6 +680,55 @@ class TaskPersistenceService:
                 result.append(item)
             return result
 
+    def save_task_user_review(
+        self,
+        task_id: str,
+        review_status: str,
+        *,
+        accepted_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Persist the user's final review independently of task ownership."""
+        normalized_status = str(review_status or "").strip().lower()
+        if normalized_status not in {"pending", "accepted"}:
+            raise ValueError(f"Unsupported task review status: {review_status}")
+        now = datetime.now().timestamp()
+        confirmed_at = accepted_at if normalized_status == "accepted" else None
+        if normalized_status == "accepted" and confirmed_at is None:
+            confirmed_at = now
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                INSERT INTO task_user_reviews (task_id, review_status, accepted_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    review_status = excluded.review_status,
+                    accepted_at = excluded.accepted_at,
+                    updated_at = excluded.updated_at
+                ''',
+                (task_id, normalized_status, confirmed_at, now),
+            )
+        return self.get_task_user_review(task_id) or {
+            "task_id": task_id,
+            "review_status": normalized_status,
+            "accepted_at": confirmed_at,
+            "updated_at": now,
+        }
+
+    def get_task_user_review(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT task_id, review_status, accepted_at, updated_at
+                FROM task_user_reviews
+                WHERE task_id = ?
+                ''',
+                (task_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     # ── Requirement Manifest (Phase 1) ──
 
     def save_requirement_manifest(self, manifest: Dict[str, Any]) -> None:

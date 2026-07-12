@@ -6,15 +6,19 @@ struct QualityGateOperationsView: View {
     let activeProjectPath: String?
     let onOpenFullWorkflow: () -> Void
     let onOpenReviewQueue: () -> Void
+    var showsCommandBar = true
 
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var repositoryStore = SecurityScopedRepositoryStore.shared
+    @State private var showsAdvancedOptions = false
     private let repositoryAccessOwner = "quality-gate"
 
     var body: some View {
         VStack(spacing: 0) {
-            commandBar
-            Rectangle().fill(AcrossTheme.separator(for: colorScheme)).frame(height: 1)
+            if showsCommandBar {
+                commandBar
+                Rectangle().fill(AcrossTheme.separator(for: colorScheme)).frame(height: 1)
+            }
             HSplitView {
                 gateForm
                     .frame(minWidth: 285, idealWidth: 320, maxWidth: 380)
@@ -115,77 +119,73 @@ struct QualityGateOperationsView: View {
                 VStack(alignment: .leading, spacing: 13) {
                     repositorySelector
                     operationModeSelector
-                    HStack(spacing: 8) {
-                        gateTextField(preferences.text("gate.form.base"), text: $operations.draft.baseRef)
-                        gateTextField(preferences.text("gate.form.head"), text: $operations.draft.headRef)
-                    }
-                    gateTextField(preferences.text("gate.form.branch"), text: $operations.draft.branch)
-                    gateTextField(preferences.text("gate.form.commit"), text: $operations.draft.commit)
-                    gateTextField(preferences.text("gate.form.ciPath"), text: $operations.draft.ciPath)
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(preferences.text("gate.form.ciWait"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Stepper(value: $operations.draft.ciWaitSeconds, in: 0...900, step: 10) {
-                            Text(String(format: preferences.text("gate.form.seconds"), operations.draft.ciWaitSeconds))
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        }
-                        .accessibilityLabel(Text(preferences.text("gate.form.ciWait")))
-                    }
+                    DisclosureGroup(
+                        localized("Advanced settings", "高级设置"),
+                        isExpanded: $showsAdvancedOptions
+                    ) {
+                        VStack(alignment: .leading, spacing: 13) {
+                            HStack(spacing: 8) {
+                                gateTextField(preferences.text("gate.form.base"), text: $operations.draft.baseRef)
+                                gateTextField(preferences.text("gate.form.head"), text: $operations.draft.headRef)
+                            }
+                            gateTextField(preferences.text("gate.form.branch"), text: $operations.draft.branch)
+                            gateTextField(preferences.text("gate.form.commit"), text: $operations.draft.commit)
+                            gateTextField(preferences.text("gate.form.ciPath"), text: $operations.draft.ciPath)
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(preferences.text("gate.form.maxRepairs"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Stepper(value: $operations.draft.maxRepairs, in: 0...10) {
-                            HStack {
-                                Text("\(operations.draft.maxRepairs)")
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                Spacer()
-                                Text(preferences.text("gate.form.plannedOnly"))
-                                    .font(.system(size: 9))
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(preferences.text("gate.form.ciWait"))
+                                    .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(.secondary)
+                                Stepper(value: $operations.draft.ciWaitSeconds, in: 0...900, step: 10) {
+                                    Text(String(format: preferences.text("gate.form.seconds"), operations.draft.ciWaitSeconds))
+                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                }
+                                .accessibilityLabel(Text(preferences.text("gate.form.ciWait")))
+                            }
+
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(preferences.text("gate.form.maxRepairs"))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Stepper(value: $operations.draft.maxRepairs, in: 0...10) {
+                                    Text(operations.draft.maxRepairs == 0
+                                        ? preferences.text("gate.form.plannedOnly")
+                                        : "\(operations.draft.maxRepairs)")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .accessibilityLabel(Text(preferences.text("gate.form.maxRepairs")))
+                            }
+
+                            if operations.draft.operationMode == .localReadOnly {
+                                Toggle(preferences.text("gate.form.draftPR"), isOn: $operations.draft.draftPR)
+                                    .toggleStyle(.checkbox)
+                                    .font(.system(size: 11))
+                                    .help(preferences.text("gate.form.draftPRHelp"))
+                            } else {
+                                remoteSettings
+                            }
+
+                            EvidencePanel(
+                                title: preferences.text("gate.form.safety"),
+                                summary: preferences.text("gate.form.safetyDetail"),
+                                status: "ready",
+                                statusLabel: preferences.statusText("ready")
+                            ) {
+                                Text(preferences.text("gate.form.noRemoteMutation"))
+                                    .font(.system(size: 9))
                             }
                         }
-                        .accessibilityLabel(Text(preferences.text("gate.form.maxRepairs")))
+                        .padding(.top, 10)
                     }
-
-                    if operations.draft.operationMode == .localReadOnly {
-                        Toggle(preferences.text("gate.form.draftPR"), isOn: $operations.draft.draftPR)
-                            .toggleStyle(.checkbox)
-                            .font(.system(size: 11))
-                            .help(preferences.text("gate.form.draftPRHelp"))
-                    } else {
-                        remoteSettings
-                    }
+                    .font(.system(size: 11, weight: .medium))
 
                     if let validationError = operations.draft.validationError {
-                        Label(validationError, systemImage: "exclamationmark.triangle")
+                        Label(localizedValidationError(validationError), systemImage: "exclamationmark.triangle")
                             .font(.system(size: 10))
                             .foregroundStyle(StatusPalette.tone(for: "attention").foreground)
                     }
 
-                    EvidencePanel(
-                        title: preferences.text("gate.form.safety"),
-                        summary: preferences.text("gate.form.safetyDetail"),
-                        status: "ready"
-                    ) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Label(
-                                operations.draft.operationMode == .localReadOnly
-                                    ? preferences.text("gate.form.noRemoteMutation")
-                                    : localized("Remote changes require this run's confirmation", "远程变更需要本次运行单独确认"),
-                                systemImage: "lock.shield"
-                            )
-                            Label(preferences.text("gate.form.blockedIsResult"), systemImage: "checkmark.circle")
-                            Label(
-                                localized("No credential input or token persistence", "不提供凭据输入，也不持久化令牌"),
-                                systemImage: "key.slash"
-                            )
-                        }
-                        .font(.system(size: 9))
-                    }
                 }
                 .padding(12)
             }
@@ -336,6 +336,30 @@ struct QualityGateOperationsView: View {
 
     private func localized(_ english: String, _ simplifiedChinese: String) -> String {
         preferences.resolvedLocaleIdentifier == "zh-Hans" ? simplifiedChinese : english
+    }
+
+    private func localizedValidationError(_ error: String) -> String {
+        guard preferences.resolvedLocaleIdentifier == "zh-Hans" else { return error }
+        switch error {
+        case "Repository path is required.":
+            return "请选择代码仓库。"
+        case "CI wait must be between 0 and 900 seconds.":
+            return "CI 等待时间必须在 0 到 900 秒之间。"
+        case "Maximum repairs must be between 0 and 10.":
+            return "最大修复次数必须在 0 到 10 次之间。"
+        case "A named feature branch is required for remote mode.":
+            return "远程模式需要指定功能分支。"
+        case "Remote mode requires a feature branch distinct from the base branch.":
+            return "远程模式的功能分支必须与基础分支不同。"
+        case "CI idle timeout must be between 30 seconds and 2 hours.":
+            return "CI 空闲超时必须在 30 秒到 2 小时之间。"
+        case "CI maximum wall time must be between 1 and 4 hours.":
+            return "CI 最长总时长必须在 1 到 4 小时之间。"
+        case "CI idle timeout cannot exceed maximum wall time.":
+            return "CI 空闲超时不能超过最长总时长。"
+        default:
+            return error
+        }
     }
 
     private func gateTextField(_ title: String, text: Binding<String>) -> some View {

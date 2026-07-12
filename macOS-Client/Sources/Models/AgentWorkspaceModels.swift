@@ -33,7 +33,7 @@ enum AgentWorkspaceReadinessStatus: String, Codable, CaseIterable {
     }
 
     var allowsWorkspaceMutation: Bool {
-        self == .ready
+        self == .ready || self == .partial
     }
 
     var isActionableReadiness: Bool {

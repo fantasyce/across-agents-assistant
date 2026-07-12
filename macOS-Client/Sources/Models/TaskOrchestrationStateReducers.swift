@@ -10,6 +10,14 @@ struct TaskOrchestrationPollMergeResult {
     let summary: TaskOrchestrationTaskSummary
 }
 
+enum TaskOrchestrationUserPhase: Equatable {
+    case understanding
+    case working
+    case checking
+    case ready
+    case needsAttention
+}
+
 enum TaskOrchestrationStateReducers {
     private static let terminalStatuses: Set<String> = [
         "completed",
@@ -20,6 +28,50 @@ enum TaskOrchestrationStateReducers {
 
     static func isTerminalStatus(_ status: String) -> Bool {
         terminalStatuses.contains(status)
+    }
+
+    static func userPhase(for task: TaskOrchestrationTaskDetail) -> TaskOrchestrationUserPhase {
+        if isTerminalStatus(task.status) {
+            return isSuccessfulDelivery(task) ? .ready : .needsAttention
+        }
+
+        let businessSubtasks = task.subtasks.filter { isOriginalBusinessSubtaskId($0.subtaskId) }
+        if ["created", "decomposing"].contains(task.status) || businessSubtasks.isEmpty {
+            return .understanding
+        }
+
+        let hasActiveBusinessWork = businessSubtasks.contains {
+            ["pending", "dispatched", "running", "paused"].contains($0.status)
+        }
+        if hasActiveBusinessWork { return .working }
+
+        let hasQualityWork = task.subtasks.contains { $0.subtaskId.hasPrefix("st-quality-") }
+            || task.waves.contains(where: \.isRevalidating)
+            || task.qualityHealth?.orchestrationHealth == "recovering"
+            || !(task.qualityHealth?.activeRemediationSubtasks.isEmpty ?? true)
+            || !(task.deliveryReport?.nextAction?.isEmpty ?? true)
+        return hasQualityWork ? .checking : .working
+    }
+
+    static func isSuccessfulDelivery(_ task: TaskOrchestrationTaskDetail) -> Bool {
+        guard task.status == "completed" else { return false }
+        let health = task.qualityHealth
+        let report = task.deliveryReport
+        let gate = (report?.qualityGate ?? health?.qualityGate ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let blockingGates = Set(["failed", "failure", "blocked", "error", "partial", "inconsistent"])
+        let artifactFailure = task.artifacts.contains {
+            ["missing", "rejected", "failed", "cancelled"].contains(($0.status ?? "").lowercased())
+        }
+        return !blockingGates.contains(gate)
+            && report?.qualityReport?.canComplete != false
+            && (report?.missingRequired.isEmpty ?? true)
+            && (report?.failedConstraints.isEmpty ?? true)
+            && (health?.terminalInconsistencies.isEmpty ?? true)
+            && (health?.activeRemediationSubtasks.isEmpty ?? true)
+            && (report?.nextAction?.isEmpty ?? true)
+            && !artifactFailure
     }
 
     static func shouldContinueDetailPolling(
@@ -73,7 +125,9 @@ enum TaskOrchestrationStateReducers {
             projectDir: task.projectDir,
             ownerAgent: task.ownerAgent,
             deliveryMode: task.deliveryMode,
-            externalTask: task.externalTask
+            externalTask: task.externalTask,
+            reviewStatus: task.reviewStatus,
+            acceptedAt: task.acceptedAt
         )
     }
 
@@ -134,7 +188,9 @@ enum TaskOrchestrationStateReducers {
             projectDir: task.projectDir,
             ownerAgent: task.ownerAgent,
             deliveryMode: task.deliveryMode,
-            externalTask: task.externalTask
+            externalTask: task.externalTask,
+            reviewStatus: task.reviewStatus,
+            acceptedAt: task.acceptedAt
         )
         return TaskOrchestrationPollMergeResult(detail: detail, summary: summary)
     }

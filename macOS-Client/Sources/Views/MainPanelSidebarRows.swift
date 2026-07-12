@@ -5,6 +5,7 @@ struct ProjectSidebarRow: View {
     let activeProjectId: String?
     let currentSessionId: String
     let selectedSessionIds: Set<String>
+    let showsSessions: Bool
     let onSelectProject: () -> Void
     let onOpenTree: () -> Void
     let onNewChat: () -> Void
@@ -15,6 +16,8 @@ struct ProjectSidebarRow: View {
     let onPinSession: (SessionInfo) -> Void
 
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
 
     private var isActive: Bool {
@@ -26,13 +29,13 @@ struct ProjectSidebarRow: View {
             HStack(spacing: 8) {
                 Image(systemName: isActive ? "folder.fill" : "folder")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary.opacity(0.75))
+                    .foregroundStyle(isActive || isFocused ? AcrossTheme.accent : Color.secondary.opacity(0.75))
                     .frame(width: 16)
 
                 Text(project.name)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-                    .foregroundColor(.secondary.opacity(isHovered ? 0.95 : 0.86))
+                    .foregroundStyle(isActive || isFocused ? AcrossTheme.accent : Color.secondary.opacity(isHovered ? 0.95 : 0.86))
 
                 if project.is_pinned {
                     Image(systemName: "pin.fill")
@@ -77,10 +80,24 @@ struct ProjectSidebarRow: View {
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isHovered ? Color.white.opacity(0.05) : Color.clear)
+                    .fill(
+                        isActive || isFocused
+                            ? AcrossTheme.selectedFill(for: colorScheme)
+                            : isHovered ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear
+                    )
             )
             .contentShape(Rectangle())
             .onTapGesture(perform: onSelectProject)
+            .focusable()
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.return) {
+                onSelectProject()
+                return .handled
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, onSelectProject)
             .contextMenu {
                 Button(project.is_pinned ? appPreferences.text("project.unpin") : appPreferences.text("project.pin"), action: onPinProject)
                 Divider()
@@ -103,13 +120,13 @@ struct ProjectSidebarRow: View {
                     .padding(.bottom, 2)
             }
 
-            if project.sessions.isEmpty {
+            if showsSessions && project.sessions.isEmpty {
                 Text(appPreferences.text("project.noChats"))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.45))
                     .padding(.leading, 34)
                     .padding(.vertical, 4)
-            } else {
+            } else if showsSessions {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(project.sessions) { session in
                         CompactProjectSessionRow(
@@ -143,6 +160,7 @@ struct CompactProjectSessionRow: View {
     let onPin: () -> Void
 
     @State private var isHovered = false
+    @State private var showsDeleteConfirmation = false
 
     private var titleText: String {
         if let name = session.name, !name.isEmpty {
@@ -155,11 +173,11 @@ struct CompactProjectSessionRow: View {
     }
 
     private var selectedBackground: Color {
-        colorScheme == .dark ? Color.legacyTreeSelectedDark : Color.legacyTreeSelectedLight
+        AcrossTheme.selectedFill(for: colorScheme)
     }
 
     private var selectedAccent: Color {
-        colorScheme == .dark ? Color.legacyAccentDark : Color.legacyAccentLight
+        AcrossTheme.accent
     }
 
     private var titleColor: Color {
@@ -200,10 +218,23 @@ struct CompactProjectSessionRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? selectedBackground : (isSelected || isHovered ? Color.white.opacity(0.05) : Color.clear))
+                .fill(
+                    isActive
+                        ? selectedBackground
+                        : (isSelected || isHovered ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+                )
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .focusable()
+        .onKeyPress(.return) {
+            onSelect()
+            return .handled
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(Text(isActive ? appPreferences.text("operations.selected") : ""))
+        .accessibilityAction(.default, onSelect)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovered = hovering
@@ -213,7 +244,15 @@ struct CompactProjectSessionRow: View {
             Button(session.is_pinned ? appPreferences.text("conversation.unpin") : appPreferences.text("conversation.pin"), action: onPin)
             Button(appPreferences.text("conversation.rename"), action: onRename)
             Divider()
-            Button(appPreferences.text("conversation.deleteSession"), action: onDelete)
+            Button(appPreferences.text("conversation.deleteSession"), role: .destructive) {
+                showsDeleteConfirmation = true
+            }
+        }
+        .alert(appPreferences.text("conversation.deleteConfirmTitle"), isPresented: $showsDeleteConfirmation) {
+            Button(appPreferences.text("system.cancel"), role: .cancel) {}
+            Button(appPreferences.text("conversation.deleteSession"), role: .destructive, action: onDelete)
+        } message: {
+            Text(appPreferences.text("conversation.deleteConfirmMessage"))
         }
     }
 }
@@ -236,9 +275,11 @@ struct SessionRowView: View {
     @EnvironmentObject private var appPreferences: AppPreferences
     @FocusState private var isFocused: Bool
     @State private var isHovered = false
+    @State private var showsDeleteConfirmation = false
+    @State private var showsMultiDeleteConfirmation = false
 
     private var accent: Color {
-        colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight
+        AcrossTheme.accent
     }
 
     private var titleText: String {
@@ -341,12 +382,30 @@ struct SessionRowView: View {
             Button(appPreferences.text("conversation.rename")) { onRenameStart() }
             Divider()
             if isSelected && selectedCount > 1 {
-                Button(String(format: appPreferences.text("conversation.deleteSessions"), selectedCount)) { onMultiDelete() }
-                    .foregroundColor(.red)
+                Button(String(format: appPreferences.text("conversation.deleteSessions"), selectedCount), role: .destructive) {
+                    showsMultiDeleteConfirmation = true
+                }
             } else {
-                Button(appPreferences.text("conversation.deleteSession")) { onDelete() }
-                    .foregroundColor(.red)
+                Button(appPreferences.text("conversation.deleteSession"), role: .destructive) {
+                    showsDeleteConfirmation = true
+                }
             }
+        }
+        .alert(appPreferences.text("conversation.deleteConfirmTitle"), isPresented: $showsDeleteConfirmation) {
+            Button(appPreferences.text("system.cancel"), role: .cancel) {}
+            Button(appPreferences.text("conversation.deleteSession"), role: .destructive, action: onDelete)
+        } message: {
+            Text(appPreferences.text("conversation.deleteConfirmMessage"))
+        }
+        .alert(appPreferences.text("conversation.deleteMultipleConfirmTitle"), isPresented: $showsMultiDeleteConfirmation) {
+            Button(appPreferences.text("system.cancel"), role: .cancel) {}
+            Button(
+                String(format: appPreferences.text("conversation.deleteSessions"), selectedCount),
+                role: .destructive,
+                action: onMultiDelete
+            )
+        } message: {
+            Text(appPreferences.text("conversation.deleteConfirmMessage"))
         }
     }
 
@@ -413,5 +472,3 @@ struct SessionRowView: View {
         return f.string(from: date)
     }
 }
-
-

@@ -475,7 +475,13 @@ struct TaskEvidenceAudit: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         repairOrResumeTriggered = try container.decodeIfPresent(Bool.self, forKey: .repairOrResumeTriggered) ?? false
-        secretsRedacted = try container.decodeIfPresent(Bool.self, forKey: .secretsRedacted) ?? false
+        if let value = try? container.decode(Bool.self, forKey: .secretsRedacted) {
+            secretsRedacted = value
+        } else if (try? container.decode(String.self, forKey: .secretsRedacted)) != nil {
+            secretsRedacted = true
+        } else {
+            secretsRedacted = false
+        }
         expectedFiles = try container.decodeIfPresent([String].self, forKey: .expectedFiles) ?? []
         requiredProbes = try container.decodeIfPresent([String].self, forKey: .requiredProbes) ?? []
     }

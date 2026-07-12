@@ -4,65 +4,41 @@ import AppKit
 struct ModelSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var expandedCard: String? = nil
+    @State private var showingUnconfiguredProviders = false
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var appPreferences: AppPreferences
     var onClose: (() -> Void)? = nil
     var embeddedInHub: Bool = false
+    var onOpenCapabilities: (String) -> Void = { _ in }
 
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var footerButtonBackground: Color { colorScheme == .dark ? Color(hex: "2c2c2e") : Color.white }
-    private var footerButtonBorder: Color { colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.08) }
-    private var footerButtonText: Color { colorScheme == .dark ? Color(hex: "a0a0a5") : Color(hex: "4b5563") }
-    private var footerMutedText: Color { colorScheme == .dark ? Color(hex: "636366") : Color(hex: "9ca3af") }
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
+
+    private var configuredCloudLLMs: [LLMConfig] {
+        viewModel.cloudLLMs.filter { viewModel.isKeyConfigured($0.id) }
+    }
+
+    private var unconfiguredCloudLLMs: [LLMConfig] {
+        viewModel.cloudLLMs.filter { !viewModel.isKeyConfigured($0.id) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with traffic lights
             if !embeddedInHub {
-                HStack {
-                    CustomTrafficLights(onClose: onClose)
-
-                    Spacer()
-
-                    Text(appPreferences.text("models.title"))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(textColor)
-
-                    Spacer()
-
-                    Spacer().frame(width: 50)
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 56)
-                .background(
-                    ZStack {
-                        bgColor.opacity(0.8)
-                        WindowDragView()
-                            .contentShape(Rectangle())
-                    }
-                )
-
-                Divider().opacity(0.5)
+                MinimalSettingsWindowHeader(title: appPreferences.text("models.title"), onClose: onClose)
             }
 
-            // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
-                    pageTitle
-
-                    HStack(alignment: .top, spacing: 24) {
-                        localAgentColumn
-                        cloudLLMColumn
-                    }
+                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
+                    MinimalSettingsPageHeader(title: appPreferences.text("models.title"))
+                    localAgentSection
+                    cloudLLMSection
                 }
-                .padding(SettingsHubPageLayout.contentPadding)
-                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .padding(MinimalSettingsMetrics.contentPadding)
+                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .background(bgColor)
 
-            // Status footer
             statusFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -79,82 +55,118 @@ struct ModelSettingsView: View {
         }
     }
 
-    private var pageTitle: some View {
-        Text(appPreferences.text("models.title"))
-            .font(.system(size: 28, weight: .bold))
-            .foregroundColor(textColor)
-            .padding(.top, 2)
+    private var localAgentSection: some View {
+        MinimalSettingsSection(title: appPreferences.text("models.localAgent")) {
+            VStack(spacing: 10) {
+                ForEach(viewModel.localAgents) { agent in
+                    localAgentView(agent)
+                }
+            }
+            .padding(.vertical, 10)
+        }
     }
 
-    private var localAgentColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(appPreferences.text("models.localAgent"))
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1)
-                .foregroundColor(Color(hex: "d97757"))
-                .padding(.leading, 4)
-                .padding(.bottom, 8)
+    private var cloudLLMSection: some View {
+        MinimalSettingsSection(title: appPreferences.text("models.cloudLLM")) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(configuredCloudLLMs) { llm in
+                    cloudLLMView(llm)
+                }
 
-            ForEach(viewModel.localAgents) { agent in
-                LocalAgentCard(
-                    agent: agent,
-                    detectionFeedback: viewModel.localAgentDetectionFeedback[agent.id] ?? .idle,
-                    isExpanded: Binding(
-                        get: { expandedCard == agent.id },
-                        set: { expanded in
-                            expandedCard = expanded ? agent.id : nil
+                if configuredCloudLLMs.isEmpty {
+                    MinimalSettingsNotice(
+                        text: appPreferences.text("models.notConfigured"),
+                        color: .secondary,
+                        systemImage: "cloud"
+                    )
+                }
+
+                if !unconfiguredCloudLLMs.isEmpty {
+                    Button {
+                        showingUnconfiguredProviders.toggle()
+                    } label: {
+                        HStack {
+                            Label(
+                                "\(appPreferences.text("models.notConfigured")) (\(unconfiguredCloudLLMs.count))",
+                                systemImage: "plus.circle"
+                            )
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .rotationEffect(.degrees(showingUnconfiguredProviders ? 180 : 0))
                         }
-                    ),
-                    onSave: { config in
-                        viewModel.saveAgentConfig(config)
-                    },
-                    onAutoDetect: { agentId in
-                        viewModel.autoDetectAgent(agentId)
+                        .font(.system(size: 12, weight: .medium))
+                        .contentShape(Rectangle())
                     }
-                )
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 10)
+
+                    if showingUnconfiguredProviders {
+                        VStack(spacing: 10) {
+                            ForEach(unconfiguredCloudLLMs) { llm in
+                                cloudLLMView(llm)
+                            }
+                        }
+                        .padding(.bottom, 10)
+                    }
+                }
             }
+            .padding(.vertical, 10)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var cloudLLMColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(appPreferences.text("models.cloudLLM"))
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1)
-                .foregroundColor(Color(hex: "4d6bfe"))
-                .padding(.leading, 4)
-                .padding(.bottom, 8)
-
-            ForEach(viewModel.cloudLLMs) { llm in
-                CloudLLMCard(
-                    llm: llm,
-                    isConfigured: Binding(
-                        get: { viewModel.isKeyConfigured(llm.id) },
-                        set: { _ in }
-                    ),
-                    isExpanded: Binding(
-                        get: { expandedCard == llm.id },
-                        set: { expanded in
-                            expandedCard = expanded ? llm.id : nil
-                        }
-                    ),
-                    onSave: { config in
-                        viewModel.saveLLMConfig(config)
-                    },
-                    onDelete: {
-                        viewModel.deleteLLMConfig(llm.id)
-                    },
-                    onLoadAPIKey: {
-                        await viewModel.loadAPIKeyFromBackend(llm.id)
-                    },
-                    onRefreshModels: {
-                        await viewModel.refreshCloudModels(providerId: llm.id)
-                    }
-                )
-            }
+    private func localAgentView(_ agent: AgentConfig) -> some View {
+        LocalAgentCard(
+            agent: agent,
+            detectionFeedback: viewModel.localAgentDetectionFeedback[agent.id] ?? .idle,
+            isExpanded: Binding(
+                get: { expandedCard == agent.id },
+                set: { expandedCard = $0 ? agent.id : nil }
+            ),
+            onSave: viewModel.saveAgentConfig,
+            onAutoDetect: viewModel.autoDetectAgent
+        )
+        .overlay(alignment: .topTrailing) {
+            capabilitiesButton(agent.id)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cloudLLMView(_ llm: LLMConfig) -> some View {
+        CloudLLMCard(
+            llm: llm,
+            isConfigured: Binding(
+                get: { viewModel.isKeyConfigured(llm.id) },
+                set: { _ in }
+            ),
+            isExpanded: Binding(
+                get: { expandedCard == llm.id },
+                set: { expandedCard = $0 ? llm.id : nil }
+            ),
+            onSave: viewModel.saveLLMConfig,
+            onDelete: { viewModel.deleteLLMConfig(llm.id) },
+            onLoadAPIKey: { await viewModel.loadAPIKeyFromBackend(llm.id) },
+            onRefreshModels: { await viewModel.refreshCloudModels(providerId: llm.id) }
+        )
+        .overlay(alignment: .topTrailing) {
+            capabilitiesButton(llm.id)
+        }
+    }
+
+    private func capabilitiesButton(_ agentID: String) -> some View {
+        Button {
+            onOpenCapabilities(agentID)
+        } label: {
+            Image(systemName: "sparkles.rectangle.stack")
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.top, 18)
+        .padding(.trailing, 42)
+        .help(appPreferences.text("models.openCapabilities"))
+        .accessibilityLabel(Text(appPreferences.text("models.openCapabilities")))
     }
 
     // MARK: - Status Footer
@@ -164,7 +176,6 @@ struct ModelSettingsView: View {
             Divider().opacity(0.3)
 
             HStack(spacing: 0) {
-                // Status dots row
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
                         ForEach(statusIndicators, id: \.id) { indicator in
@@ -175,40 +186,22 @@ struct ModelSettingsView: View {
 
                 Spacer()
 
-                // Refresh button
                 Button(action: { viewModel.checkAll() }) {
-                    HStack(spacing: 5) {
-                        if viewModel.isCheckingKeys {
-                            ProgressView()
-                                .scaleEffect(0.55)
-                                .frame(width: 10, height: 10)
-                        }
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 10, weight: .medium))
-                        Text(appPreferences.text("models.refreshAll"))
-                            .font(.system(size: 10, weight: .medium))
+                    if viewModel.isCheckingKeys {
+                        ProgressView().controlSize(.small).frame(width: 24, height: 24)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 24, height: 24)
                     }
-                    .foregroundColor(viewModel.isCheckingKeys ? footerMutedText : footerButtonText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(footerButtonBackground)
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(footerButtonBorder, lineWidth: 1)
-                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .disabled(viewModel.isCheckingKeys)
-                .scaleEffect(viewModel.isCheckingKeys ? 0.97 : 1.0)
-                .animation(.easeInOut(duration: 0.15), value: viewModel.isCheckingKeys)
+                .help(appPreferences.text("models.refreshAll"))
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 10)
         }
-        .background(bgColor)
+        .background(.bar)
     }
 
     private var statusIndicators: [StatusIndicator] {
@@ -238,11 +231,11 @@ struct ModelSettingsView: View {
     private func statusDot(indicator: StatusIndicator) -> some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(indicator.isOK ? Color(hex: "30d158") : Color(hex: "ff9f0a"))
+                .fill(indicator.isOK ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange))
                 .frame(width: 5, height: 5)
             Text(indicator.label)
                 .font(.system(size: 10, weight: .regular))
-                .foregroundColor(colorScheme == .dark ? Color(hex: "8e8e93") : Color(hex: "6b7280"))
+                .foregroundColor(.secondary)
                 .lineLimit(1)
         }
     }

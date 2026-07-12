@@ -266,6 +266,7 @@ struct ReleaseEvaluationCard: View {
 
 struct ReleaseEvidenceCenterView: View {
     @ObservedObject var viewModel: TaskOrchestrationViewModel
+    @State private var showsReleaseE2EConfirmation = false
 
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
@@ -291,7 +292,7 @@ struct ReleaseEvidenceCenterView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button(action: { viewModel.startReleaseE2E() }) {
+                Button(action: { showsReleaseE2EConfirmation = true }) {
                     Label(
                         viewModel.isStartingReleaseE2E ? appPreferences.text("tasks.releaseE2E.starting") : appPreferences.text("tasks.releaseE2E.run"),
                         systemImage: "checklist.checked"
@@ -332,6 +333,18 @@ struct ReleaseEvidenceCenterView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .confirmationDialog(
+            appPreferences.text("tasks.releaseE2E.confirmTitle"),
+            isPresented: $showsReleaseE2EConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("tasks.releaseE2E.run")) {
+                viewModel.startReleaseE2E()
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {}
+        } message: {
+            Text(appPreferences.text("tasks.releaseE2E.confirmMessage"))
         }
         .background(theme.panelBackground)
     }
@@ -849,4 +862,3 @@ struct TaskEvidenceBundleSheet: View {
         }
     }
 }
-

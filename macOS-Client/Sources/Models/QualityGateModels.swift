@@ -396,7 +396,15 @@ struct QualityGateCIWatcher: Decodable, Equatable {
         maxWallTimeoutMilliseconds = try container.decodeIfPresent(Int.self, forKey: .maxWallTimeoutMilliseconds)
         elapsedMilliseconds = try container.decodeIfPresent(Int.self, forKey: .elapsedMilliseconds)
         lastHeartbeatAt = try container.decodeIfPresent(String.self, forKey: .lastHeartbeatAt)
-        errors = try container.decodeIfPresent([String].self, forKey: .errors) ?? []
+        if let structuredErrors = try? container.decode([String].self, forKey: .errors) {
+            errors = structuredErrors
+        } else if let encodedErrors = try? container.decode(String.self, forKey: .errors),
+                  let data = encodedErrors.data(using: .utf8),
+                  let decodedErrors = try? JSONDecoder().decode([String].self, from: data) {
+            errors = decodedErrors
+        } else {
+            errors = []
+        }
     }
 }
 

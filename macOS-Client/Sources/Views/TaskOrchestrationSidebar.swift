@@ -4,6 +4,7 @@ import AppKit
 struct TaskListSidebar: View {
     @ObservedObject var viewModel: TaskOrchestrationViewModel
     @State private var searchText = ""
+    @State private var showsReleaseE2EConfirmation = false
 
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
@@ -63,7 +64,7 @@ struct TaskListSidebar: View {
                 isOrchestratorUnavailable: viewModel.isOrchestratorPluginUnavailable,
                 onRefresh: { viewModel.loadReleaseEvaluation() },
                 onOpenCenter: { viewModel.openReleaseCenter() },
-                onRunE2E: { viewModel.startReleaseE2E() }
+                onRunE2E: { showsReleaseE2EConfirmation = true }
             )
             .padding(.horizontal, 12)
             .padding(.top, 10)
@@ -114,8 +115,19 @@ struct TaskListSidebar: View {
 
             Spacer()
         }
+        .confirmationDialog(
+            appPreferences.text("tasks.releaseE2E.confirmTitle"),
+            isPresented: $showsReleaseE2EConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("tasks.releaseE2E.run")) {
+                viewModel.startReleaseE2E()
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {}
+        } message: {
+            Text(appPreferences.text("tasks.releaseE2E.confirmMessage"))
+        }
         .frame(maxHeight: .infinity)
         .background(theme.background)
     }
 }
-

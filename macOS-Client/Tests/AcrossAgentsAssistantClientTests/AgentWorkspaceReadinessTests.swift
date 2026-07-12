@@ -104,6 +104,38 @@ struct AgentWorkspaceReadinessTests {
         #expect(snapshot.readinessIssues.isEmpty)
     }
 
+    @Test func optionalMissingAgentsDoNotBlockAnOtherwiseReadyWorkspace() throws {
+        let payload = """
+        {
+          "status": "partial",
+          "workspace_isolation": {
+            "status": "ready",
+            "supports_git_worktree": true,
+            "can_create_isolated_workspaces": true
+          },
+          "agents": [
+            {"agent_id": "codex", "status": "ready", "available": true},
+            {"agent_id": "openclaw", "status": "unavailable", "available": false}
+          ],
+          "routes": {
+            "events": "/events",
+            "diff": "/diff",
+            "evidence": "/evidence"
+          },
+          "missing_prerequisites": [
+            {"id": "local_agent_openclaw_unavailable", "severity": "warning", "required_for_future_mutation": false}
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try JSONDecoder().decode(AgentWorkspaceReadinessSnapshot.self, from: payload)
+
+        #expect(snapshot.status == .partial)
+        #expect(snapshot.readyAgentIds == ["codex"])
+        #expect(snapshot.canCreateWorkspace)
+        #expect(snapshot.readinessIssues.isEmpty)
+    }
+
     @Test func informationalPrerequisitesDoNotBlockWorkspaceReadiness() throws {
         let payload = """
         {

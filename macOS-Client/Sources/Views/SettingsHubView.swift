@@ -4,7 +4,7 @@ import AppKit
 
 enum SettingsHubTab: String, CaseIterable, Identifiable {
     case diagnostics
-    case workbench
+    case experience
     case models
     case capabilities
     case mcp
@@ -14,19 +14,10 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static let groupedNavigation: [SettingsHubTab] = [
-        .diagnostics,
-        .models,
-        .capabilities,
-        .plugins,
-        .tools,
-        .settings,
-    ]
-
     var iconName: String {
         switch self {
         case .diagnostics: return "stethoscope"
-        case .workbench: return "point.3.connected.trianglepath.dotted"
+        case .experience: return "waveform.and.person.filled"
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .mcp: return "square.grid.2x2"
@@ -40,13 +31,62 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     func title(preferences: AppPreferences) -> String {
         switch self {
         case .diagnostics: return preferences.text("settings.systemHealth")
-        case .workbench: return preferences.text("settings.workbench")
+        case .experience: return preferences.text("settings.experience")
         case .models: return preferences.text("settings.agentsModels")
         case .capabilities: return preferences.text("settings.capabilities")
         case .mcp: return preferences.text("settings.mcp")
-        case .plugins: return preferences.text("settings.pluginsMCP")
+        case .plugins: return preferences.text("settings.plugins")
         case .tools: return preferences.text("settings.toolPermissions")
         case .settings: return preferences.text("settings.preferences")
+        }
+    }
+}
+
+private enum SettingsHubCategory: String, CaseIterable, Identifiable {
+    case general
+    case agents
+    case capabilities
+    case plugins
+    case mcp
+    case tools
+    case diagnostics
+
+    var id: String { rawValue }
+
+    var iconName: String {
+        switch self {
+        case .general: return "gearshape"
+        case .agents: return "cpu"
+        case .capabilities: return "sparkles.rectangle.stack"
+        case .plugins: return "puzzlepiece.extension"
+        case .mcp: return "square.grid.2x2"
+        case .tools: return "wrench.and.screwdriver"
+        case .diagnostics: return "stethoscope"
+        }
+    }
+
+    @MainActor
+    func title(preferences: AppPreferences) -> String {
+        switch self {
+        case .general: return preferences.text("settings.category.general")
+        case .agents: return preferences.text("settings.agentsModels")
+        case .capabilities: return preferences.text("settings.capabilities")
+        case .plugins: return preferences.text("settings.plugins")
+        case .mcp: return preferences.text("settings.mcp")
+        case .tools: return preferences.text("settings.toolPermissions")
+        case .diagnostics: return preferences.text("settings.systemHealth")
+        }
+    }
+
+    var canonicalTab: SettingsHubTab {
+        switch self {
+        case .general: return .settings
+        case .agents: return .models
+        case .capabilities: return .capabilities
+        case .plugins: return .plugins
+        case .mcp: return .mcp
+        case .tools: return .tools
+        case .diagnostics: return .diagnostics
         }
     }
 }
@@ -55,14 +95,23 @@ struct SettingsHubView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @ObservedObject var preferences: AppPreferences
     @State var selectedTab: SettingsHubTab
+    @State private var selectedCapabilityAgentId: String?
     var onClose: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
 
     private var bgColor: Color { AcrossTheme.canvasFill(for: colorScheme) }
 
-    private var normalizedSelection: SettingsHubTab {
-        selectedTab == .mcp ? .plugins : selectedTab
+    private var selectedCategory: SettingsHubCategory {
+        switch selectedTab {
+        case .settings, .experience: return .general
+        case .models: return .agents
+        case .capabilities: return .capabilities
+        case .plugins: return .plugins
+        case .mcp: return .mcp
+        case .tools: return .tools
+        case .diagnostics: return .diagnostics
+        }
     }
 
     var body: some View {
@@ -116,190 +165,170 @@ struct SettingsHubView: View {
     }
 
     private var navigationSidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(preferences.text("settings.navigation"))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
-
-            ForEach(SettingsHubTab.groupedNavigation) { tab in
-                Button {
-                    selectedTab = tab
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: tab.iconName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 18, height: 18)
-                            .accessibilityHidden(true)
-                        Text(tab.title(preferences: preferences))
-                            .font(.system(size: 12, weight: normalizedSelection == tab ? .semibold : .medium))
-                            .lineLimit(2)
-                        Spacer()
-                    }
-                    .foregroundStyle(normalizedSelection == tab ? AcrossTheme.accent : Color.primary)
-                    .padding(.horizontal, 9)
-                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                    .background(normalizedSelection == tab ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
-                    .contentShape(Rectangle())
+        ScrollView {
+            VStack(spacing: 4) {
+                ForEach(SettingsHubCategory.allCases) { category in
+                    settingsNavigationRow(category)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .help(tab.title(preferences: preferences))
             }
-
-            Spacer()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
         }
         .background(AcrossTheme.sidebarFill(for: colorScheme))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(preferences.text("settings.navigation")))
     }
 
+    private func settingsNavigationRow(_ category: SettingsHubCategory) -> some View {
+        let isSelected = selectedCategory == category
+        return Button {
+            selectedTab = category.canonicalTab
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: category.iconName)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20, height: 20)
+                    .accessibilityHidden(true)
+                Text(category.title(preferences: preferences))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .foregroundStyle(isSelected ? AcrossTheme.accent : Color.primary)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .background(isSelected ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(category.title(preferences: preferences))
+        .accessibilityValue(Text(isSelected ? preferences.text("operations.selected") : ""))
+    }
+
     @ViewBuilder
     private var content: some View {
-        switch selectedTab {
-        case .diagnostics:
-            StartupDiagnosticsView(settingsViewModel: settingsViewModel)
-                .environmentObject(preferences)
-        case .workbench:
-            AutopilotWorkbenchView()
-                .environmentObject(preferences)
-        case .models:
-            ModelSettingsView(viewModel: settingsViewModel, onClose: nil, embeddedInHub: true)
-                .environmentObject(preferences)
+        switch selectedCategory {
+        case .general:
+            GlobalPreferencesContent(preferences: preferences)
+                .background(bgColor)
+        case .agents:
+            ModelSettingsView(
+                viewModel: settingsViewModel,
+                onClose: nil,
+                embeddedInHub: true,
+                onOpenCapabilities: { agentID in
+                    selectedCapabilityAgentId = agentID
+                    selectedTab = .capabilities
+                }
+            )
+            .environmentObject(preferences)
         case .capabilities:
-            AgentCapabilitiesView(settingsViewModel: settingsViewModel, onClose: nil, embeddedInHub: true)
+            AgentCapabilitiesView(
+                settingsViewModel: settingsViewModel,
+                initialAgentId: selectedCapabilityAgentId,
+                onClose: nil,
+                embeddedInHub: true
+            )
+            .environmentObject(preferences)
+        case .plugins:
+            PluginLifecycleView(onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)
         case .mcp:
             MCPPreferencesView(onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)
-        case .plugins:
-            PluginsAndMCPSettingsView()
-                .environmentObject(preferences)
         case .tools:
             ToolPermissionsView(onClose: nil, embeddedInHub: true)
                 .environmentObject(preferences)
-        case .settings:
-            GlobalPreferencesContent(preferences: preferences)
-                .background(bgColor)
+        case .diagnostics:
+            StartupDiagnosticsView(settingsViewModel: settingsViewModel)
+                .environmentObject(preferences)
         }
     }
 }
 
-private enum PluginsAndMCPSection: String, CaseIterable, Identifiable {
-    case plugins
-    case mcp
-
-    var id: String { rawValue }
-}
-
-private struct PluginsAndMCPSettingsView: View {
-    @EnvironmentObject private var preferences: AppPreferences
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var section: PluginsAndMCPSection = .plugins
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Picker("", selection: $section) {
-                    Text(preferences.text("settings.plugins")).tag(PluginsAndMCPSection.plugins)
-                    Text(preferences.text("settings.mcp")).tag(PluginsAndMCPSection.mcp)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 260)
-                .accessibilityLabel(Text(preferences.text("settings.pluginsMCP")))
-                Spacer()
-            }
-            .padding(.horizontal, SettingsHubPageLayout.contentPadding)
-            .frame(height: 50)
-            .background(AcrossTheme.panelFill(for: colorScheme))
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(AcrossTheme.separator(for: colorScheme))
-                    .frame(height: 1)
-            }
-
-            switch section {
-            case .plugins:
-                PluginLifecycleView(onClose: nil, embeddedInHub: true)
-                    .environmentObject(preferences)
-            case .mcp:
-                MCPPreferencesView(onClose: nil, embeddedInHub: true)
-                    .environmentObject(preferences)
-            }
-        }
-        .background(AcrossTheme.canvasFill(for: colorScheme))
-    }
+private enum PreferencesContentSection {
+    case all
+    case general
+    case experience
 }
 
 private struct GlobalPreferencesContent: View {
     @ObservedObject var preferences: AppPreferences
+    var section: PreferencesContentSection = .all
     @Environment(\.colorScheme) private var colorScheme
     @State private var availableVoices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()
     @State private var isVoicePickerPresented = false
 
     private var textColor: Color { .primary }
-    private var cardColor: Color { AcrossTheme.panelFill(for: colorScheme) }
-    private var fieldColor: Color { AcrossTheme.recessedFill(for: colorScheme) }
+    private var fieldColor: Color { Color(nsColor: .controlBackgroundColor) }
     private var accentColor: Color { AcrossTheme.accent }
     private let controlColumnWidth: CGFloat = 320
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(preferences.text("settings.title"))
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(textColor)
-                    Text(preferences.text("settings.subtitle"))
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 2)
+                MinimalSettingsPageHeader(
+                    title: preferences.text(section == .experience ? "settings.experience" : "settings.title"),
+                    subtitle: preferences.text(section == .experience ? "settings.experience.subtitle" : "settings.subtitle")
+                )
 
-                PreferenceSection(
-                    title: preferences.text("section.appearance"),
-                    description: preferences.text("appearance.scheme.help")
-                ) {
-                    settingRow(
-                        title: preferences.text("language.mode"),
-                        help: preferences.text("language.mode.help")
+                if section != .experience {
+                    PreferenceSection(
+                        title: preferences.text("settings.delivery.title"),
+                        description: preferences.text("settings.delivery.subtitle")
                     ) {
-                        Picker("", selection: $preferences.languageMode) {
-                            ForEach(AppLanguageMode.allCases) { mode in
-                                Text(mode.title(preferences: preferences)).tag(mode)
-                            }
+                        settingRow(
+                            title: preferences.text("work.automaticCheck"),
+                            help: preferences.text("work.automaticCheck.help")
+                        ) {
+                            Toggle("", isOn: $preferences.automaticDeliveryProtection)
+                                .labelsHidden()
                         }
-                        .labelsHidden()
-                        .frame(width: 190, alignment: .trailing)
                     }
 
-                    settingRow(
-                        title: preferences.text("appearance.scheme"),
-                        help: preferences.text("appearance.scheme.help")
+                    PreferenceSection(
+                        title: preferences.text("section.appearance"),
+                        description: preferences.text("appearance.scheme.help")
                     ) {
-                        Picker("", selection: $preferences.colorSchemeMode) {
-                            ForEach(AppColorSchemeMode.allCases) { mode in
-                                Text(mode.title(preferences: preferences)).tag(mode)
+                        settingRow(
+                            title: preferences.text("language.mode"),
+                            help: preferences.text("language.mode.help")
+                        ) {
+                            Picker("", selection: $preferences.languageMode) {
+                                ForEach(AppLanguageMode.allCases) { mode in
+                                    Text(mode.title(preferences: preferences)).tag(mode)
+                                }
                             }
-                        }
-                        .labelsHidden()
-                        .frame(width: 170, alignment: .trailing)
-                    }
-
-                    settingRow(
-                        title: preferences.text("appearance.reduceMotion"),
-                        help: preferences.text("appearance.reduceMotion.help")
-                    ) {
-                        Toggle("", isOn: $preferences.reduceMotion)
                             .labelsHidden()
+                            .frame(width: 190, alignment: .trailing)
+                        }
+
+                        settingRow(
+                            title: preferences.text("appearance.scheme"),
+                            help: preferences.text("appearance.scheme.help")
+                        ) {
+                            Picker("", selection: $preferences.colorSchemeMode) {
+                                ForEach(AppColorSchemeMode.allCases) { mode in
+                                    Text(mode.title(preferences: preferences)).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 170, alignment: .trailing)
+                        }
+
+                        settingRow(
+                            title: preferences.text("appearance.reduceMotion"),
+                            help: preferences.text("appearance.reduceMotion.help")
+                        ) {
+                            Toggle("", isOn: $preferences.reduceMotion)
+                                .labelsHidden()
+                        }
                     }
                 }
 
-                PreferenceSection(
+                if section != .general {
+                    PreferenceSection(
                     title: preferences.text("section.voice"),
                     description: preferences.text("voice.source.help")
                 ) {
@@ -391,7 +420,7 @@ private struct GlobalPreferencesContent: View {
                     }
                 }
 
-                PreferenceSection(
+                    PreferenceSection(
                     title: preferences.text("section.conversation"),
                     description: preferences.text("conversation.defaultProject.help")
                 ) {
@@ -416,7 +445,7 @@ private struct GlobalPreferencesContent: View {
                     }
                 }
 
-                PreferenceSection(
+                    PreferenceSection(
                     title: preferences.text("section.privacy"),
                     description: preferences.text("privacy.activeApp.help")
                 ) {
@@ -440,23 +469,9 @@ private struct GlobalPreferencesContent: View {
                             NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".across"))
                         }
                     }
+                    }
                 }
 
-                PreferenceSection(
-                    title: preferences.text("section.advanced"),
-                    description: preferences.text("advanced.socket")
-                ) {
-                    settingRow(title: preferences.text("advanced.socket"), help: "~/.across/run/across-agents-assistant/across-agents.sock") {
-                        Text(preferences.text("system.ready"))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color(hex: "30d158"))
-                    }
-                    settingRow(title: preferences.text("advanced.logs"), help: "~/.across/logs/across-agents-assistant") {
-                        Button(preferences.text("advanced.openLogs")) {
-                            NSWorkspace.shared.open(LocalAppPaths.logsDir)
-                        }
-                    }
-                }
             }
             .padding(SettingsHubPageLayout.contentPadding)
             .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
@@ -484,19 +499,14 @@ private struct GlobalPreferencesContent: View {
             Spacer()
             Text(preferences.text("voice.available"))
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Color(hex: "30d158"))
+                .foregroundColor(Color(nsColor: .systemGreen))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color(hex: "30d158").opacity(0.14))
+                .background(Color(nsColor: .systemGreen).opacity(0.14))
                 .cornerRadius(999)
         }
         .padding(12)
-        .background(cardColor)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
-        )
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private var currentVoice: AVSpeechSynthesisVoice? {
@@ -562,12 +572,7 @@ private struct GlobalPreferencesContent: View {
                 .frame(width: controlColumnWidth, alignment: .trailing)
         }
         .padding(12)
-        .background(cardColor)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
-        )
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func refreshVoices() {
@@ -677,11 +682,8 @@ private struct PreferenceSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.system(size: 14, weight: .bold))
-                .padding(.leading, 12)
-            VStack(spacing: 10) {
+        MinimalSettingsSection(title: title, subtitle: description) {
+            VStack(spacing: 0) {
                 content()
             }
         }

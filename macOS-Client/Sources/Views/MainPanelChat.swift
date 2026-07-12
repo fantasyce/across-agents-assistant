@@ -8,13 +8,16 @@ extension MainPanelView {
         } else {
             OperationsWorkbenchShell(
                 selection: $selectedOperationsSurface,
+                showsContextDrawer: $showsContextDrawer,
                 workspaces: workspaceOperationsViewModel,
                 qualityGate: qualityGateViewModel,
                 memorySearch: memorySearchViewModel,
                 lifecycle: pluginLifecycleViewModel,
                 tasks: taskOrchestrationViewModel,
+                settings: settingsViewModel,
                 preferences: appPreferences,
-                activeProjectPath: viewModel.activeProjectPath,
+                activeProjectPath: operationalProjectPath,
+                productProgress: productProgress,
                 reviewSnapshot: humanReviewSnapshot,
                 reviewIsLoading: pluginLifecycleViewModel.isLoadingPlugins
                     || pluginLifecycleViewModel.isLoadingMemories
@@ -25,6 +28,7 @@ extension MainPanelView {
                     showTaskOrchestration = true
                 },
                 onOpenPluginCenter: { openSettings(.plugins) },
+                onOpenModels: { openSettings(.models) },
                 onRefreshReviewQueue: refreshHumanReviewQueue,
                 onOpenReviewItem: openHumanReviewItem
             )
@@ -33,19 +37,28 @@ extension MainPanelView {
 
     var assistCenterArea: some View {
         VStack(spacing: 0) {
-            headerBar
-                .zIndex(1_000)
-            Divider().opacity(0.5)
-                .zIndex(900)
+            if shouldShowAssistHeader {
+                headerBar
+                    .zIndex(1_000)
+                Divider()
+                    .zIndex(900)
+            }
             contentArea
                 .zIndex(0)
-            inputArea
-                .zIndex(1_000)
+            if !isViewingAcceptedTask {
+                inputArea
+                    .zIndex(1_000)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(bgColor)
+        .background(Color(nsColor: .windowBackgroundColor))
         .contentShape(Rectangle())
         .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
+    }
+
+    private var shouldShowAssistHeader: Bool {
+        taskOrchestrationViewModel.selectedTask != nil
+            || !appPreferences.automaticDeliveryProtection
     }
 
 
@@ -57,157 +70,280 @@ extension MainPanelView {
         case .empty:
             onboardingView
         case .ready:
-            messageList
+            if appPreferences.automaticDeliveryProtection {
+                if taskOrchestrationViewModel.selectedTask != nil || taskOrchestrationViewModel.isSubmittingTask {
+                    protectedDeliveryContent
+                } else {
+                    unifiedWorkEmptyState
+                }
+            } else {
+                messageList
+            }
         }
+    }
+
+    private var protectedDeliveryContent: some View {
+        UnifiedDeliveryView(
+            task: taskOrchestrationViewModel.selectedTask,
+            isLoading: taskOrchestrationViewModel.isSubmittingTask || taskOrchestrationViewModel.isLoading,
+            errorMessage: taskOrchestrationViewModel.errorMessage,
+            preferences: appPreferences,
+            taskViewModel: taskOrchestrationViewModel,
+            settingsViewModel: settingsViewModel,
+            defaultProjectPath: operationalProjectPath,
+            showsTechnicalDetails: $showsSelectedTaskDetails,
+            onAccept: {
+                guard let taskID = taskOrchestrationViewModel.selectedTask?.taskId else { return }
+                taskOrchestrationViewModel.acceptTaskResult(taskID) {
+                    showsSelectedTaskDetails = false
+                    taskOrchestrationViewModel.enterWorkflowPicker()
+                    viewModel.inputText = ""
+                }
+            },
+            onContinue: {
+                let priorGoal = taskOrchestrationViewModel.selectedTask?.description ?? ""
+                viewModel.inputText = String(
+                    format: appPreferences.text("work.continuePrompt"),
+                    priorGoal
+                )
+            }
+        )
+    }
+
+    private var unifiedWorkEmptyState: some View {
+        UnifiedWorkEmptyState(
+            projectName: viewModel.activeProjectName,
+            recentTasks: taskOrchestrationViewModel.tasks,
+            preferences: appPreferences,
+            onChooseProject: viewModel.chooseExistingProjectFolder,
+            onUseSuggestion: { viewModel.inputText = $0 },
+            onOpenTask: { taskID in
+                showsSelectedTaskDetails = false
+                taskOrchestrationViewModel.selectTask(taskID)
+            }
+        )
     }
 
     var messageList: some View {
-        ScrollView {
-            ScrollViewReader { proxy in
-                VStack(alignment: .leading, spacing: 16) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if viewModel.hasMoreHistory {
-                        HStack {
-                            Spacer()
-                            if viewModel.isLoadingMoreHistory {
-                                ProgressView().controlSize(.small)
-                                    .padding(.vertical, 4)
-                            } else {
-                                Button(action: { viewModel.loadMoreHistory() }) {
-                                    Text(appPreferences.text("chat.loadEarlier"))
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.accentColor)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.vertical, 4)
-                            }
-                            Spacer()
-                        }
-                        .id("load-more")
+                        loadEarlierControl
+                            .id("load-more")
                     }
+
                     ForEach(viewModel.messages) { message in
-                        LegacyMessageBubble(
-                            message: message, userBgColor: userMsgBgColor,
-                            userTextColor: userMsgTextColor, agentTextColor: agentMsgTextColor
-                        ).id(message.id)
+                        AssistantMessageRow(
+                            message: message,
+                            agentName: currentAgentTitle,
+                            preferences: appPreferences
+                        )
+                            .id(message.id)
+                        Divider()
                     }
+
                     if viewModel.isProcessing {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text(appPreferences.text("chat.thinking")).font(.system(size: 11)).foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .offset(x: -2).padding(.vertical, 4)
-                        .id("processing")
+                        processingRow.id("processing")
                     }
                 }
-                .padding(EdgeInsets(top: 8, leading: 24, bottom: 24, trailing: 24))
-                .onChange(of: viewModel.messages.count) {
-                    if !viewModel.isLoadingMoreHistory {
-                        if let lastId = viewModel.messages.last?.id {
-                            proxy.scrollTo(lastId, anchor: .bottom)
-                        }
-                    }
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onChange(of: viewModel.messages.count) {
+                if !viewModel.isLoadingMoreHistory,
+                   let lastID = viewModel.messages.last?.id {
+                    proxy.scrollTo(lastID, anchor: .bottom)
                 }
-                .onChange(of: viewModel.isProcessing) {
-                    if viewModel.isProcessing { proxy.scrollTo("processing", anchor: .bottom) }
+            }
+            .onChange(of: viewModel.isProcessing) {
+                if viewModel.isProcessing {
+                    proxy.scrollTo("processing", anchor: .bottom)
                 }
             }
         }
     }
 
-    var inputArea: some View {
-        HStack(alignment: .center, spacing: 10) {
-            InteractiveIconButton(
-                systemName: "camera.viewfinder",
-                help: appPreferences.text("screenshot.ocr"),
-                iconSize: MainPanelIconMetrics.glyphSize,
-                foregroundColor: .secondary,
-                frameSize: MainPanelIconMetrics.buttonSize,
-                isDisabled: !canUseAgentFeatures
-            ) {
-                viewModel.requestManualScreenshot()
-            }
-
-            InteractiveIconButton(
-                systemName: "photo.badge.plus",
-                help: appPreferences.text("screenshot.attach"),
-                iconSize: MainPanelIconMetrics.glyphSize,
-                foregroundColor: .secondary,
-                frameSize: MainPanelIconMetrics.buttonSize,
-                isDisabled: !canUseAgentFeatures
-            ) {
-                viewModel.requestScreenshotAttachment()
-            }
-
-            InteractiveIconButton(
-                systemName: "plus",
-                help: appPreferences.text("attachment.addFiles"),
-                iconSize: MainPanelIconMetrics.glyphSize,
-                foregroundColor: .secondary,
-                frameSize: MainPanelIconMetrics.buttonSize,
-                isDisabled: !canUseAgentFeatures
-            ) {
-                viewModel.requestFileAttachment()
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                if let notice = viewModel.transientInputNotice {
-                    Text(notice)
+    private var loadEarlierControl: some View {
+        HStack {
+            Spacer()
+            if viewModel.isLoadingMoreHistory {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.vertical, 12)
+            } else {
+                Button {
+                    viewModel.loadMoreHistory()
+                } label: {
+                    Text(appPreferences.text("chat.loadEarlier"))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                        .transition(.opacity)
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(nsColor: .controlAccentColor))
+                .padding(.vertical, 12)
+            }
+            Spacer()
+        }
+    }
+
+    private var processingRow: some View {
+        HStack(alignment: .top, spacing: 18) {
+            Text(currentAgentTitle)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 92, alignment: .trailing)
+
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(appPreferences.text("chat.thinking"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 18)
+    }
+
+    var inputArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                if let notice = viewModel.transientInputNotice {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 1)
+                        Text(notice)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                }
+
                 if !viewModel.attachedFiles.isEmpty {
                     inputAttachmentShelf
                 }
-                HStack {
-                    ZStack(alignment: .topLeading) {
-                        MacEditorView(
-                            text: $viewModel.inputText, attachedFiles: $viewModel.attachedFiles,
-                            onSubmit: { if viewModel.pendingApproval == nil { submit() } },
-                            onNavigateHistory: { up in viewModel.navigateHistory(up: up) },
-                            textColor: NSColor(textColor)
-                        ).disabled(viewModel.pendingApproval != nil || !canUseAgentFeatures)
-                        if viewModel.inputText.isEmpty {
-                            Text(inputPlaceholder)
-                                .font(.system(size: 13)).foregroundColor(.secondary.opacity(0.5))
-                                .padding(.leading, 4).padding(.top, 2).allowsHitTesting(false)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.vertical, 6).padding(.horizontal, 8)
-            .background(Color.black.opacity(0.05)).cornerRadius(14)
-            .frame(minHeight: 32, alignment: .center)
 
-            if viewModel.isProcessing {
-                Button(action: { viewModel.cancelGeneration() }) {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 14)).foregroundColor(accentColor)
-                        .frame(width: 32, height: 32)
-                        .background(Color.black.opacity(0.05)).cornerRadius(6)
+                if automaticDeliveryNeedsSetup {
+                    UnifiedDeliverySetupNotice(
+                        isInstalling: taskOrchestrationViewModel.isInstallingOrchestratorPlugin,
+                        canInstall: taskOrchestrationViewModel.canInstallOrchestratorPlugin,
+                        errorMessage: taskOrchestrationViewModel.orchestratorPluginError,
+                        preferences: appPreferences,
+                        onInstall: taskOrchestrationViewModel.installOrchestratorPlugin,
+                        onUseDirectMode: { appPreferences.automaticDeliveryProtection = false }
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(appPreferences.text("chat.stop")))
-                .help(appPreferences.text("chat.stop"))
-            } else {
-                Button(action: submit) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(canSubmitInput ? accentColor : .secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Color.black.opacity(0.05)).cornerRadius(6)
+
+                ZStack(alignment: .topLeading) {
+                    MacEditorView(
+                        text: $viewModel.inputText,
+                        attachedFiles: $viewModel.attachedFiles,
+                        onSubmit: { if viewModel.pendingApproval == nil { submit() } },
+                        onNavigateHistory: { up in viewModel.navigateHistory(up: up) },
+                        font: .systemFont(ofSize: 13),
+                        textColor: .textColor
+                    )
+                    .disabled(viewModel.pendingApproval != nil || !canUseAgentFeatures)
+
+                    if viewModel.inputText.isEmpty {
+                        Text(inputPlaceholder)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .allowsHitTesting(false)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSubmitInput)
-                .accessibilityLabel(Text(appPreferences.text("chat.send")))
-                .help(appPreferences.text("chat.send"))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.top, viewModel.attachedFiles.isEmpty && viewModel.transientInputNotice == nil ? 12 : 8)
+                .padding(.bottom, 10)
+
+                Divider()
+                    .padding(.horizontal, 10)
+
+                HStack(spacing: 6) {
+                    MinimalAssistantAttachmentMenu(
+                        screenshotOCRTitle: appPreferences.text("screenshot.ocr"),
+                        screenshotAttachmentTitle: appPreferences.text("screenshot.attach"),
+                        fileAttachmentTitle: appPreferences.text("attachment.addFiles"),
+                        isDisabled: !canUseAgentFeatures || viewModel.pendingApproval != nil,
+                        onScreenshotOCR: viewModel.requestManualScreenshot,
+                        onScreenshotAttachment: viewModel.requestScreenshotAttachment,
+                        onFileAttachment: viewModel.requestFileAttachment
+                    )
+
+                    if !appPreferences.automaticDeliveryProtection {
+                        MinimalAssistantAgentPicker(
+                            agents: visibleAgentsForSelection,
+                            selectedAgentID: viewModel.selectedAgentId,
+                            title: currentAgentTitle,
+                            isDisabled: !canUseAgentFeatures || viewModel.pendingApproval != nil,
+                            onSelect: { viewModel.selectedAgentId = $0 }
+                        )
+                    }
+
+                    MinimalAssistantVoiceControls(
+                        isMuted: viewModel.isMuted,
+                        muteTitle: viewModel.isMuted
+                            ? appPreferences.text("toolbar.unmute")
+                            : appPreferences.text("toolbar.mute"),
+                        isDisabled: false,
+                        onToggleMute: { viewModel.isMuted.toggle() }
+                    )
+
+                    Toggle(isOn: $appPreferences.automaticDeliveryProtection) {
+                        Label(
+                            appPreferences.text("work.automaticCheck"),
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                    }
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+                    .help(appPreferences.text("work.automaticCheck.help"))
+
+                    Spacer(minLength: 8)
+
+                    MinimalAssistantSendButton(
+                        isProcessing: viewModel.isProcessing || taskOrchestrationViewModel.isSubmittingTask,
+                        canSubmit: canSubmitInput,
+                        sendTitle: appPreferences.text("chat.send"),
+                        stopTitle: appPreferences.text("chat.stop"),
+                        onSend: submit,
+                        onStop: viewModel.cancelGeneration
+                    )
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
             }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            )
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
         }
-        .padding(EdgeInsets(top: 12, leading: 24, bottom: 16, trailing: 24))
-        .background(bgColor)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     var inputAttachmentShelf: some View {
@@ -219,9 +355,11 @@ extension MainPanelView {
                     }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
         }
-        .frame(height: 62)
+        .frame(height: 66)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

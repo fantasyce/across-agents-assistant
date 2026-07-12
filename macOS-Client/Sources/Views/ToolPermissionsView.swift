@@ -27,6 +27,11 @@ private struct PermissionUpdateRequest: Encodable {
     let permission_type: String
 }
 
+private struct PendingToolPermissionChange {
+    let toolID: String
+    let state: ToolPermissionState
+}
+
 private enum ToolPermissionFilter: CaseIterable, Identifiable {
     case all
     case local
@@ -113,78 +118,33 @@ private struct PermissionDropdownButton: View {
     let isDisabled: Bool
     let onSelect: (ToolPermissionState) -> Void
 
-    @State private var isPresented = false
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "20222a") : .white }
-    private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10) }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : Color(hex: "151820") }
-
     var body: some View {
-        let chrome = ToolPermissionVisualStyle.permissionChrome(for: selectedState)
-
-        Button {
-            isPresented.toggle()
+        Menu {
+            ForEach(ToolPermissionState.allCases, id: \.rawValue) { state in
+                Button {
+                    onSelect(state)
+                } label: {
+                    if state == selectedState {
+                        Label(state.title(localeIdentifier: localeIdentifier), systemImage: "checkmark")
+                    } else {
+                        Text(state.title(localeIdentifier: localeIdentifier))
+                    }
+                }
+            }
         } label: {
             HStack(spacing: 5) {
                 Text(selectedState.title(localeIdentifier: localeIdentifier))
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: 8, weight: .semibold))
                     .frame(width: 7, height: 7, alignment: .center)
             }
-            .foregroundColor(tint.opacity(chrome.foregroundOpacity))
-            .frame(height: 24)
-            .padding(.horizontal, 7)
-            .background(tint.opacity(chrome.backgroundOpacity))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(tint.opacity(chrome.borderOpacity), lineWidth: 1)
-            )
+            .foregroundStyle(tint)
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isDisabled)
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(ToolPermissionState.allCases, id: \.rawValue) { state in
-                    Button {
-                        isPresented = false
-                        onSelect(state)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Group {
-                                if state == selectedState {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 10, weight: .bold))
-                                } else {
-                                    Color.clear
-                                }
-                            }
-                            .frame(width: 12)
-                            Text(state.title(localeIdentifier: localeIdentifier))
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundColor(state == .unavailable ? .secondary : textColor)
-                        .padding(.horizontal, 10)
-                        .frame(height: 30)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(6)
-            .frame(width: 150)
-            .background(cardColor)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(lineColor, lineWidth: 1)
-            )
-        }
     }
 }
 
@@ -202,16 +162,12 @@ struct ToolPermissionsView: View {
     @State private var errorMessage: String? = nil
     @State private var updatingTool: String? = nil
     @State private var selectedFilter: ToolPermissionFilter = .all
+    @State private var pendingPermissionChange: PendingToolPermissionChange?
 
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var headerColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "20222a") : .white }
-    private var softColor: Color { colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.04) }
-    private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10) }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var localColor: Color { colorScheme == .dark ? Color(hex: "4da3ff") : Color(hex: "0a84ff") }
-    private var mcpColor: Color { colorScheme == .dark ? Color(hex: "38d88b") : Color(hex: "29a36a") }
-    private var accentColor: Color { colorScheme == .dark ? Color(hex: "a58bff") : Color(hex: "8a6cff") }
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
+    private var localColor: Color { Color(nsColor: .systemBlue) }
+    private var mcpColor: Color { Color(nsColor: .systemGreen) }
+    private var accentColor: Color { AcrossTheme.accent }
 
     private var cards: [ToolPermissionCardModel] {
         ToolPermissionCatalog.makeCards(
@@ -237,17 +193,14 @@ struct ToolPermissionsView: View {
         selectedFilter == .local ? [] : mcpCards
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 14), count: 3)
-
     var body: some View {
         VStack(spacing: 0) {
             if !embeddedInHub {
-                standaloneHeader
-                Divider().opacity(0.35)
+                MinimalSettingsWindowHeader(title: appPreferences.text("tools.title"), onClose: onClose)
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
+                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                     titleRow
 
                     if let errorMessage {
@@ -272,8 +225,8 @@ struct ToolPermissionsView: View {
                         )
                     }
                 }
-                .padding(SettingsHubPageLayout.contentPadding)
-                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .padding(MinimalSettingsMetrics.contentPadding)
+                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .overlay {
@@ -281,9 +234,6 @@ struct ToolPermissionsView: View {
                     ProgressView()
                         .controlSize(.small)
                         .padding(18)
-                        .background(cardColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: Color.black.opacity(0.14), radius: 18, x: 0, y: 8)
                 }
             }
         }
@@ -304,60 +254,38 @@ struct ToolPermissionsView: View {
         .onChange(of: mcpManager.plugins) {
             Task { await loadToolData() }
         }
-    }
-
-    private var standaloneHeader: some View {
-        HStack {
-            CustomTrafficLights(onClose: onClose)
-            Spacer()
-            Text(appPreferences.text("tools.title"))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(textColor)
-            Spacer()
-            Spacer().frame(width: 50)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 56)
-        .background(
-            ZStack {
-                headerColor.opacity(colorScheme == .dark ? 0.84 : 0.96)
-                WindowDragView().contentShape(Rectangle())
+        .confirmationDialog(
+            appPreferences.text("tools.permission.confirmTitle"),
+            isPresented: Binding(
+                get: { pendingPermissionChange != nil },
+                set: { if !$0 { pendingPermissionChange = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("tools.permission.alwaysAllow")) {
+                if let change = pendingPermissionChange {
+                    updatePermission(change.toolID, to: change.state)
+                }
+                pendingPermissionChange = nil
             }
-        )
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                pendingPermissionChange = nil
+            }
+        } message: {
+            Text(appPreferences.text("tools.permission.confirmMessage"))
+        }
     }
 
     private var titleRow: some View {
-        HStack(alignment: .center, spacing: 18) {
-            Text(appPreferences.text("tools.title"))
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(textColor)
-
-            Spacer()
-
-            HStack(spacing: 3) {
+        MinimalSettingsPageHeader(title: appPreferences.text("tools.title")) {
+            Picker("", selection: $selectedFilter) {
                 ForEach(ToolPermissionFilter.allCases) { filter in
-                    Button {
-                        selectedFilter = filter
-                    } label: {
-                        Text(filter.title(preferences: appPreferences))
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(selectedFilter == filter ? textColor : .secondary)
-                            .frame(minWidth: 86, minHeight: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(selectedFilter == filter ? cardColor : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
+                    Text(filter.title(preferences: appPreferences)).tag(filter)
                 }
             }
-            .padding(3)
-            .background(softColor)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(lineColor, lineWidth: 1)
-            )
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 280)
         }
     }
 
@@ -376,13 +304,7 @@ struct ToolPermissionsView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(accentColor)
         }
-        .padding(10)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(lineColor, lineWidth: 1)
-        )
+        .padding(.vertical, 8)
     }
 
     private func toolSection(
@@ -391,94 +313,40 @@ struct ToolPermissionsView: View {
         scope: ToolPermissionScope,
         cards: [ToolPermissionCardModel]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                HStack(spacing: 9) {
-                    Circle()
-                        .fill(sectionColor(for: scope))
-                        .frame(width: 8, height: 8)
-                    Text(title)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(sectionColor(for: scope))
-                }
-                Spacer()
-                Text(meta)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 2)
-
-            LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(cards) { card in
+        MinimalSettingsSection(title: title, subtitle: meta) {
+            VStack(spacing: 0) {
+                ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
                     permissionCard(card)
+                    if index < cards.count - 1 {
+                        Divider().padding(.leading, 34)
+                    }
                 }
             }
         }
     }
 
     private func permissionCard(_ card: ToolPermissionCardModel) -> some View {
-        let metrics = ToolPermissionCardRhythm.metrics(localeIdentifier: appPreferences.resolvedLocaleIdentifier)
         let tint = sectionColor(for: card.scope)
 
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
+        return MinimalSettingsRow(
+            title: localizedToolName(card.name, preferences: appPreferences),
+            detail: localizedToolDescription(card, preferences: appPreferences),
+            leading: {
                 Image(systemName: iconForTool(card.id))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(colorScheme == .dark ? 0.16 : 0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(localizedToolName(card.name, preferences: appPreferences))
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(textColor)
-                        .lineLimit(1)
-                    Text(card.id)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary.opacity(0.78))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
+            },
+            trailing: {
+                HStack(spacing: 10) {
+                    Text(card.riskLevel.title(localeIdentifier: appPreferences.resolvedLocaleIdentifier))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    if updatingTool == card.id {
+                        ProgressView().controlSize(.mini)
+                    }
+                    permissionMenu(for: card)
                 }
-                .frame(height: metrics.titleBlockHeight, alignment: .center)
-
-                Spacer(minLength: 8)
-
-                permissionMenu(for: card)
             }
-
-            Text(localizedToolDescription(card, preferences: appPreferences))
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(height: metrics.descriptionHeight, alignment: .topLeading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, metrics.headerToDescriptionSpacing)
-
-            HStack(spacing: 6) {
-                Text(card.riskLevel.title(localeIdentifier: appPreferences.resolvedLocaleIdentifier))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(tint)
-                if updatingTool == card.id {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.55)
-                }
-                Spacer()
-            }
-            .frame(height: 18)
-            .padding(.top, metrics.descriptionToRiskSpacing)
-
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(height: metrics.cardHeight)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(lineColor, lineWidth: 1)
         )
     }
 
@@ -488,7 +356,13 @@ struct ToolPermissionsView: View {
             localeIdentifier: appPreferences.resolvedLocaleIdentifier,
             tint: permissionColor(for: card),
             isDisabled: updatingTool == card.id,
-            onSelect: { state in updatePermission(card.id, to: state) }
+            onSelect: { state in
+                if state == .alwaysAllow && card.state != .alwaysAllow {
+                    pendingPermissionChange = PendingToolPermissionChange(toolID: card.id, state: state)
+                } else {
+                    updatePermission(card.id, to: state)
+                }
+            }
         )
     }
 

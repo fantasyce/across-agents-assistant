@@ -104,6 +104,45 @@ struct TaskOrchestrationStateReducerTests {
         #expect(result.summary.externalTask)
     }
 
+    @Test func userPhaseCompressesTechnicalStatesIntoFourUnderstandableSteps() {
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(status: "decomposing")) == .understanding)
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(
+            status: "running",
+            subtasks: [makeSubtask("build-ui", status: "running")]
+        )) == .working)
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(
+            status: "running",
+            subtasks: [
+                makeSubtask("build-ui", status: "completed"),
+                makeSubtask("st-quality-ui", status: "running"),
+            ]
+        )) == .checking)
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(status: "completed")) == .ready)
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(status: "completed_with_failures")) == .needsAttention)
+        #expect(TaskOrchestrationStateReducers.userPhase(for: makeTask(status: "failed")) == .needsAttention)
+    }
+
+    private func makeTask(
+        status: String,
+        subtasks: [TaskOrchestrationSubtaskDetail] = []
+    ) -> TaskOrchestrationTaskDetail {
+        TaskOrchestrationTaskDetail(
+            taskId: "phase-task",
+            description: "Build and verify a feature",
+            status: status,
+            ownerAgent: "auto",
+            allowedSubtaskAgents: [],
+            projectDir: "/tmp/project",
+            subtasks: subtasks,
+            waves: [],
+            artifacts: [],
+            artifactVersions: nil,
+            ownerSessionId: nil,
+            lastOwnerDecision: nil,
+            error: nil
+        )
+    }
+
     private func makeSubtask(
         _ id: String,
         status: String = "running",

@@ -1,85 +1,64 @@
 import SwiftUI
 
-struct OperationsWorkbenchSidebar: View {
+struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
     @Binding var selection: OperationsWorkbenchSurface
     @ObservedObject var preferences: AppPreferences
     let reviewCount: Int
+    let capabilitySurfaces: [OperationsWorkbenchSurface]
     let activeProjectName: String?
     let activeProjectPath: String?
-    let onOpenAgents: () -> Void
-    let onOpenCapabilities: () -> Void
-    let onOpenPlugins: () -> Void
-    let onOpenSystem: () -> Void
+    let onOpenSettings: () -> Void
+    private let middleContent: MiddleContent
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var focusedSurface: OperationsWorkbenchSurface?
 
+    init(
+        selection: Binding<OperationsWorkbenchSurface>,
+        preferences: AppPreferences,
+        reviewCount: Int,
+        capabilitySurfaces: [OperationsWorkbenchSurface],
+        activeProjectName: String?,
+        activeProjectPath: String?,
+        onOpenSettings: @escaping () -> Void,
+        @ViewBuilder middleContent: () -> MiddleContent
+    ) {
+        _selection = selection
+        self.preferences = preferences
+        self.reviewCount = reviewCount
+        self.capabilitySurfaces = capabilitySurfaces
+        self.activeProjectName = activeProjectName
+        self.activeProjectPath = activeProjectPath
+        self.onOpenSettings = onOpenSettings
+        self.middleContent = middleContent()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionLabel(preferences.text("operations.primary"))
-
-            VStack(spacing: 2) {
+            VStack(spacing: 4) {
                 ForEach(OperationsWorkbenchSurface.primary) { surface in
                     navigationRow(surface)
                 }
+                if reviewCount > 0 {
+                    navigationRow(.humanReview, badge: reviewCount)
+                }
+                ForEach(capabilitySurfaces) { surface in
+                    navigationRow(surface)
+                }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 10)
 
-            Rectangle()
-                .fill(AcrossTheme.separator(for: colorScheme))
-                .frame(height: 1)
-                .padding(.vertical, 10)
+            middleContent
 
-            sectionLabel(preferences.text("operations.review"))
+            Spacer(minLength: 12)
 
-            navigationRow(.humanReview, badge: reviewCount)
-                .padding(.horizontal, 8)
-
-            Rectangle()
-                .fill(AcrossTheme.separator(for: colorScheme))
-                .frame(height: 1)
-                .padding(.vertical, 10)
-
-            sectionLabel(preferences.text("operations.manage"))
-
-            VStack(spacing: 2) {
-                secondaryRow(
-                    systemName: "person.2",
-                    title: preferences.text("operations.agents"),
-                    action: onOpenAgents
-                )
-                secondaryRow(
-                    systemName: "switch.2",
-                    title: preferences.text("operations.capabilities"),
-                    action: onOpenCapabilities
-                )
-                secondaryRow(
-                    systemName: "puzzlepiece.extension",
-                    title: preferences.text("operations.plugins"),
-                    action: onOpenPlugins
-                )
-                secondaryRow(
-                    systemName: "gearshape",
-                    title: preferences.text("operations.system"),
-                    action: onOpenSystem
-                )
-            }
-            .padding(.horizontal, 8)
-
-            navigationRow(.assist)
-                .padding(8)
+            settingsRow
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
         }
         .background(AcrossTheme.sidebarFill(for: colorScheme))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(preferences.text("operations.navigation")))
-    }
-
-    private func sectionLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 6)
     }
 
     private func navigationRow(_ surface: OperationsWorkbenchSurface, badge: Int? = nil) -> some View {
@@ -88,16 +67,16 @@ struct OperationsWorkbenchSidebar: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: surface.systemName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 18, height: 18)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20, height: 20)
                     .accessibilityHidden(true)
                 Text(preferences.text(surface.localizationKey))
-                    .font(.system(size: 12, weight: selection == surface ? .semibold : .medium))
+                    .font(.system(size: 13, weight: selection == surface ? .semibold : .regular))
                     .lineLimit(1)
                 Spacer()
                 if let badge, badge > 0 {
                     Text("\(badge)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(selection == surface ? AcrossTheme.accent : .secondary)
                         .frame(minWidth: 20, minHeight: 18)
                         .background(AcrossTheme.recessedFill(for: colorScheme))
@@ -105,8 +84,8 @@ struct OperationsWorkbenchSidebar: View {
                 }
             }
             .foregroundStyle(selection == surface ? AcrossTheme.accent : Color.primary)
-            .padding(.horizontal, 9)
-            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
             .background(selection == surface ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
@@ -117,29 +96,25 @@ struct OperationsWorkbenchSidebar: View {
         .help(preferences.text(surface.localizationKey))
     }
 
-    private func secondaryRow(systemName: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var settingsRow: some View {
+        Button(action: onOpenSettings) {
             HStack(spacing: 9) {
-                Image(systemName: systemName)
-                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 20, height: 20)
                     .accessibilityHidden(true)
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                Text(preferences.text("settings.title"))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 9)
-            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(title)
+        .help(preferences.text("settings.title"))
     }
 }

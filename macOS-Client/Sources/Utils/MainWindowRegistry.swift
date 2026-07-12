@@ -75,6 +75,22 @@ final class MainWindowRegistry {
         NSApp.hide(nil)
     }
 
+    func ensureMainWindowIsOnScreen() {
+        guard let window = reusableMainWindow(),
+              let screen = window.screen ?? NSScreen.main
+        else { return }
+
+        let visible = screen.visibleFrame
+        let width = min(window.frame.width, visible.width)
+        let height = min(window.frame.height, visible.height)
+        let x = min(max(window.frame.minX, visible.minX), visible.maxX - width)
+        let y = min(max(window.frame.minY, visible.minY), visible.maxY - height)
+        let frame = NSRect(x: x, y: y, width: width, height: height)
+        if frame != window.frame {
+            window.setFrame(frame, display: true, animate: false)
+        }
+    }
+
     func requestOpenMainWindow() {
         if let window = reusableMainWindow() {
             debugLog("requestOpenMainWindow reusing window title=\(window.title) visible=\(window.isVisible)")

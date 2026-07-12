@@ -100,6 +100,14 @@ struct QualityGateOperationsTests {
         #expect(result.draftPR?.mutationPerformed == false)
     }
 
+    @Test func qualityResultToleratesLegacySanitizedErrorArrayString() throws {
+        let data = Data(#"{"gate_verdict":"blocked","github_remote":{"status":"not_requested","errors":"[]"}}"#.utf8)
+
+        let result = try JSONDecoder().decode(QualityGateResult.self, from: data)
+
+        #expect(result.githubRemote?.errors == [])
+    }
+
     @MainActor
     @Test func viewModelKeepsBlockedHTTP200AsResultInsteadOfTransportError() async {
         let viewModel = QualityGateViewModel(dataLoader: { request in

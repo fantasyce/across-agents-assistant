@@ -3,40 +3,37 @@ import SwiftUI
 struct InputAttachmentPreview: View {
     let file: AttachedFile
     let onRemove: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var appPreferences: AppPreferences
 
-    private var tileBackground: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
-    }
-
-    private var tileBorder: Color {
-        colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.10)
-    }
+    @State private var isHovered = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             previewContent
-                .frame(width: 76, height: 54)
-                .background(tileBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: 76, height: 52)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(tileBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
                 )
 
             Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(colorScheme == .dark ? .white : .black.opacity(0.75))
-                    .frame(width: 16, height: 16)
-                    .background(colorScheme == .dark ? Color.black.opacity(0.55) : Color.white.opacity(0.92))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(tileBorder, lineWidth: 1))
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color.primary, Color(nsColor: .windowBackgroundColor))
+                    .font(.system(size: 15))
             }
             .buttonStyle(.plain)
             .offset(x: 5, y: -5)
+            .opacity(isHovered ? 1 : 0.72)
+            .accessibilityLabel(
+                Text(String(format: appPreferences.text("attachment.remove"), file.name))
+            )
         }
-        .frame(width: 82, height: 60)
+        .frame(width: 82, height: 58)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .help(file.path)
     }
 
@@ -50,18 +47,16 @@ struct InputAttachmentPreview: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 76, height: 54)
+                .frame(width: 76, height: 52)
                 .clipped()
         } else {
             VStack(spacing: 4) {
-                if file.isFolder {
-                    SVGIconView(name: "icon.14.explorer.folder.closed", size: 18)
-                } else {
-                    SVGIconView(name: getFileIconName(fileName: file.name), size: 18)
-                }
+                Image(systemName: file.isFolder ? "folder" : "doc")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
                 Text(file.name)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 64)
@@ -74,44 +69,93 @@ struct InputAttachmentPreview: View {
 struct AttachedFileChip: View {
     let file: AttachedFile
     let onRemove: (() -> Void)?
+    @EnvironmentObject private var appPreferences: AppPreferences
+
     @State private var isHovered = false
-    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        HStack(spacing: 4) {
-            if isHovered && onRemove != nil {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
-            } else {
-                if file.isFolder {
-                    SVGIconView(name: "icon.14.explorer.folder.closed", size: 12)
-                } else {
-                    SVGIconView(name: getFileIconName(fileName: file.name), size: 12)
+        Group {
+            if let onRemove {
+                Button(action: onRemove) {
+                    chipContent(isRemovable: true)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    Text(String(format: appPreferences.text("attachment.remove"), file.name))
+                )
+            } else {
+                chipContent(isRemovable: false)
             }
+        }
+        .onHover { isHovered = $0 }
+        .help(file.path)
+    }
+
+    private func chipContent(isRemovable: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: isRemovable && isHovered ? "xmark" : (file.isFolder ? "folder" : "doc"))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
 
             Text(file.name)
                 .font(.system(size: 11))
-                .foregroundColor(.gray)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08))
-        .cornerRadius(6)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isHovered = hovering
-            }
-        }
-        .onTapGesture {
-            if onRemove != nil {
-                onRemove?()
-            }
-        }
-        .help(file.path)
+        .padding(.horizontal, 7)
+        .frame(height: 24)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
     }
 }
 
+struct MessageAttachmentPreview: View {
+    let file: AttachedFile
+    let textColor: Color
+    var maxPreviewSize = NSSize(width: 132, height: 80)
 
+    var body: some View {
+        if let image = AttachmentImageSupport.previewImage(
+            filePath: file.path,
+            mimeType: file.mimeType,
+            fileName: file.name
+        ) {
+            let size = AttachmentImageSupport.fittingSize(for: image.size, maxSize: maxPreviewSize)
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+                .help(file.path)
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: file.isFolder ? "folder" : "doc")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(file.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(textColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 22)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            )
+        }
+    }
+}

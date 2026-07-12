@@ -16,6 +16,7 @@ swiftc -parse-as-library \
   macOS-Client/Sources/Models/AppPreferences.swift \
   macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
   macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/ProductCapabilityModels.swift \
   macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
   -o "$TMP_DIR/AppPreferencesBehavior"
 "$TMP_DIR/AppPreferencesBehavior"
@@ -23,7 +24,9 @@ swiftc -parse-as-library \
 echo "== PluginLifecycleBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/PluginLifecycleBehavior.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
   macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/ProductCapabilityModels.swift \
   macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
   -o "$TMP_DIR/PluginLifecycleBehavior"
 "$TMP_DIR/PluginLifecycleBehavior"
@@ -105,5 +108,23 @@ swiftc -parse-as-library \
   macOS-Client/Sources/Models/StartupDiagnosticsModels.swift \
   -o "$TMP_DIR/ReleaseVerificationBehavior"
 "$TMP_DIR/ReleaseVerificationBehavior"
+
+echo "== UnifiedWorkStateBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/UnifiedWorkStateBehavior.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationEventsModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationStateReducers.swift \
+  -o "$TMP_DIR/UnifiedWorkStateBehavior"
+"$TMP_DIR/UnifiedWorkStateBehavior"
+
+echo "== AppleMinimalUIBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/AppleMinimalUIBehavior.swift \
+  -o "$TMP_DIR/AppleMinimalUIBehavior"
+"$TMP_DIR/AppleMinimalUIBehavior"
 
 echo "Swift behavior checks passed."

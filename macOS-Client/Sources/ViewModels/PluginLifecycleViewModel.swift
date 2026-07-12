@@ -69,6 +69,20 @@ final class PluginLifecycleViewModel: ObservableObject {
         await loadMemories()
     }
 
+    func loadForProductShell(maxAttempts: Int = 4) async {
+        for attempt in 0..<max(1, maxAttempts) {
+            await loadPlugins()
+            if !plugins.isEmpty || Task.isCancelled {
+                break
+            }
+            if attempt < maxAttempts - 1 {
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        guard !Task.isCancelled else { return }
+        await loadMemories()
+    }
+
     func loadPlugins(probe: Bool = false) async {
         isLoadingPlugins = true
         errorMessage = nil
@@ -79,7 +93,10 @@ final class PluginLifecycleViewModel: ObservableObject {
             let (data, response) = try await URLSession.shared.data(from: url)
             try Self.validate(response)
             plugins = try JSONDecoder().decode(PluginListResponse.self, from: data).plugins
+            AcrossProductCapabilityStore.shared.update(plugins)
         } catch {
+            plugins = []
+            AcrossProductCapabilityStore.shared.clear()
             errorMessage = error.localizedDescription
         }
     }
@@ -112,19 +129,32 @@ final class PluginLifecycleViewModel: ObservableObject {
         defer { isLoadingMemories = false }
 
         do {
-            var components = URLComponents(string: "\(backendBase)/api/memory/memories")!
-            if !memoryStatusFilter.isEmpty {
-                components.queryItems = [URLQueryItem(name: "status", value: memoryStatusFilter)]
+            if memoryStatusFilter.isEmpty {
+                var combined: [AcrossMemoryEntry] = []
+                for status in ["active", "pinned", "pending"] {
+                    combined.append(contentsOf: try await fetchMemories(status: status))
+                }
+                var seen = Set<String>()
+                memories = combined
+                    .filter { seen.insert($0.id).inserted }
+                    .sorted { ($0.updatedAt ?? $0.createdAt ?? "") > ($1.updatedAt ?? $1.createdAt ?? "") }
+            } else {
+                memories = try await fetchMemories(status: memoryStatusFilter)
             }
-            let (data, response) = try await URLSession.shared.data(from: components.url!)
-            try Self.validate(response)
-            let decoded = try JSONDecoder().decode(AcrossMemoryListResponse.self, from: data)
-            memories = Array(decoded.memories.reversed())
             await loadAgentLoopMemoryMetrics()
         } catch {
             errorMessage = error.localizedDescription
             agentLoopMemoryMetrics = nil
         }
+    }
+
+    private func fetchMemories(status: String) async throws -> [AcrossMemoryEntry] {
+        var components = URLComponents(string: "\(backendBase)/api/memory/memories")!
+        components.queryItems = [URLQueryItem(name: "status", value: status)]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        try Self.validate(response)
+        let decoded = try JSONDecoder().decode(AcrossMemoryListResponse.self, from: data)
+        return Array(decoded.memories.reversed())
     }
 
     func loadAgentLoopMemoryMetrics() async {
@@ -172,25 +202,36 @@ final class PluginLifecycleViewModel: ObservableObject {
         }
     }
 
-    func updateMemory(_ memory: AcrossMemoryEntry, status: String) async {
+    @discardableResult
+    func updateMemory(_ memory: AcrossMemoryEntry, status: String) async -> Bool {
+        await updateMemories([memory], status: status)
+    }
+
+    @discardableResult
+    func updateMemories(_ memories: [AcrossMemoryEntry], status: String) async -> Bool {
+        guard !memories.isEmpty else { return false }
         isWorking = true
         message = nil
         errorMessage = nil
         defer { isWorking = false }
 
         do {
-            let escaped = memory.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? memory.id
-            let url = URL(string: "\(backendBase)/api/memory/memories/\(escaped)/status")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(AcrossMemoryStatusRequest(status: status))
-            let (_, response) = try await URLSession.shared.data(for: request)
-            try Self.validate(response)
-            message = "Memory marked \(status)"
+            for memory in memories {
+                let escaped = memory.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? memory.id
+                let url = URL(string: "\(backendBase)/api/memory/memories/\(escaped)/status")!
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONEncoder().encode(AcrossMemoryStatusRequest(status: status))
+                let (_, response) = try await URLSession.shared.data(for: request)
+                try Self.validate(response)
+            }
+            message = "\(memories.count) memories marked \(status)"
             await loadMemories()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

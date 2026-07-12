@@ -118,6 +118,7 @@ struct EvidencePanel<Content: View>: View {
     let title: String
     let summary: String
     var status: String
+    var statusLabel: String?
     var metadata: [EvidenceMetadata]
     @ViewBuilder let content: () -> Content
 
@@ -127,12 +128,14 @@ struct EvidencePanel<Content: View>: View {
         title: String,
         summary: String,
         status: String,
+        statusLabel: String? = nil,
         metadata: [EvidenceMetadata] = [],
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.summary = summary
         self.status = status
+        self.statusLabel = statusLabel
         self.metadata = metadata
         self.content = content
     }
@@ -150,7 +153,7 @@ struct EvidencePanel<Content: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                StatusChip(status: status)
+                StatusChip(status: status, label: statusLabel)
             }
 
             if !metadata.isEmpty {

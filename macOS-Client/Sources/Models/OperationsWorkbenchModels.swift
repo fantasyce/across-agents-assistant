@@ -56,16 +56,15 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
     case qualityGate
     case evidence
     case memory
+    case autopilot
+    case achievements
     case humanReview
     case assist
 
     var id: String { rawValue }
 
     static let primary: [OperationsWorkbenchSurface] = [
-        .workspaces,
-        .qualityGate,
-        .evidence,
-        .memory,
+        .assist,
     ]
 
     var localizationKey: String {
@@ -74,6 +73,8 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
         case .qualityGate: return "operations.qualityGate"
         case .evidence: return "operations.evidence"
         case .memory: return "operations.memory"
+        case .autopilot: return "operations.autopilot"
+        case .achievements: return "operations.achievements"
         case .humanReview: return "operations.reviewQueue"
         case .assist: return "operations.assist"
         }
@@ -81,12 +82,14 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
 
     var systemName: String {
         switch self {
-        case .workspaces: return "square.3.layers.3d"
-        case .qualityGate: return "checkmark.shield"
+        case .workspaces: return "folder"
+        case .qualityGate: return "play.circle"
         case .evidence: return "doc.text.magnifyingglass"
         case .memory: return "memorychip"
-        case .humanReview: return "person.crop.circle.badge.exclamationmark"
-        case .assist: return "command"
+        case .autopilot: return "arrow.triangle.2.circlepath"
+        case .achievements: return "flag.checkered"
+        case .humanReview: return "tray"
+        case .assist: return "checkmark.circle"
         }
     }
 }

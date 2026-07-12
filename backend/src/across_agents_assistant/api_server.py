@@ -85,7 +85,6 @@ _ERROR_DETAIL_KEYS = {
     "output_tail",
 }
 _ERROR_DETAIL_KEY_PARTS = ("error", "exception", "traceback", "stack_trace", "stacktrace", "output_tail")
-_STRUCTURED_PUBLIC_ERROR_KEYS = {"pre_release_gate_parse_errors"}
 _AGENT_LOOP_STREAM_CLOSING_EVENT_TYPES = {
     "loop.approval_required",
     "loop.completed",
@@ -122,21 +121,16 @@ def _sanitize_public_payload(value: Any, key: str = "") -> Any:
     lowered = key.lower()
     if isinstance(value, str) and ("Traceback (most recent call last)" in value or "\n  File " in value):
         return _sanitize_public_error_text(value)
-    if lowered in _STRUCTURED_PUBLIC_ERROR_KEYS:
-        if isinstance(value, dict):
-            return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_sanitize_public_payload(item, "") for item in value]
+    if isinstance(value, dict):
+        return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_public_payload(item, "") for item in value]
     if (
         lowered in _ERROR_DETAIL_KEYS
         or lowered in _PUBLIC_TEXT_DETAIL_KEYS
         or any(part in lowered for part in _ERROR_DETAIL_KEY_PARTS)
     ):
         return _sanitize_public_error_text(value)
-    if isinstance(value, dict):
-        return {str(k): _sanitize_public_payload(v, str(k)) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_public_payload(item, key) for item in value]
     return value
 
 
@@ -13597,6 +13591,24 @@ async def dispatch_task(task_id: str, req: TaskDispatchRequest):
     """Reject in-process task dispatch; external orchestrator owns execution."""
     raise HTTPException(status_code=410, detail=_removed_in_app_orchestration_detail(task_id, "dispatch"))
 
+
+def _task_user_review(task_id: str) -> Dict[str, Any]:
+    persistence = getattr(_task_state, "_persistence", None)
+    if not persistence or not hasattr(persistence, "get_task_user_review"):
+        return {"review_status": "pending", "accepted_at": None}
+    review = persistence.get_task_user_review(task_id) or {}
+    return {
+        "review_status": str(review.get("review_status") or "pending"),
+        "accepted_at": review.get("accepted_at"),
+    }
+
+
+def _attach_task_user_review(info: TaskInfo) -> TaskInfo:
+    review = _task_user_review(info.task_id)
+    info.review_status = review["review_status"]
+    info.accepted_at = review["accepted_at"]
+    return info
+
 @app.get("/api/tasks/page", response_model=TaskPageResponse)
 async def list_task_summaries(limit: int = 50, offset: int = 0):
     """List lightweight task summaries for the sidebar.
@@ -13644,6 +13656,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                 project_dir=task.project_dir,
                 owner_agent=task.owner_agent,
                 delivery_mode=getattr(task, "delivery_mode", "external") or "external",
+                **_task_user_review(task.task_id),
             )
 
         persistence = getattr(_task_state, "_persistence", None)
@@ -13706,6 +13719,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                 project_dir=row.get("project_dir"),
                 owner_agent=row.get("owner_agent"),
                 delivery_mode=row.get("delivery_mode") or "external",
+                **_task_user_review(str(task_id)),
             ))
 
         if not persistence:
@@ -13737,6 +13751,7 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
                     project_dir=row.get("project_dir"),
                     owner_agent=row.get("owner_agent"),
                     delivery_mode=row.get("delivery_mode") or "composite",
+                    **_task_user_review(str(task_id)),
                 ))
                 seen_summary_ids.add(str(task_id))
             if len(summaries) > total:
@@ -13814,7 +13829,7 @@ async def get_task(task_id: str):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-            return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
+            return _attach_task_user_review(TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence)))
 
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
         _repair_task_dispatch_if_possible(task_id, reason="api_detail_poll")
@@ -13826,20 +13841,55 @@ async def get_task(task_id: str):
             if _task_state._persistence:
                 full_task = _task_state._persistence.get_full_task(task_id)
                 if full_task:
-                    return _task_info_from_db(full_task)
+                    return _attach_task_user_review(_task_info_from_db(full_task))
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        return _task_to_info(task, _task_state)
+        return _attach_task_user_review(_task_to_info(task, _task_state))
     except HTTPException:
         raise
     except Exception as e:
         raise _safe_http_500("Get task")
 
+
+@app.post("/api/tasks/{task_id}/accept")
+async def accept_task_result(task_id: str):
+    """Persist a one-time user confirmation for a successfully completed task."""
+    try:
+        current = _task_user_review(task_id)
+        if current["review_status"] == "accepted":
+            return {"task_id": task_id, **current}
+
+        info = await get_task(task_id)
+        if info.status != TaskStatus.COMPLETED.value:
+            raise HTTPException(
+                status_code=409,
+                detail="Only successfully completed work can be accepted",
+            )
+
+        persistence = getattr(_task_state, "_persistence", None)
+        if not persistence or not hasattr(persistence, "save_task_user_review"):
+            raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
+
+        review = persistence.save_task_user_review(
+            task_id,
+            "accepted",
+            accepted_at=time.time(),
+        )
+        return {
+            "task_id": task_id,
+            "review_status": review["review_status"],
+            "accepted_at": review.get("accepted_at"),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise _safe_http_500("Accept task result")
+
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
     """List active in-memory tasks plus persisted task history."""
     try:
-        task_infos = [_task_to_info(t, _task_state) for t in _task_state.get_all_tasks()]
+        task_infos = [_attach_task_user_review(_task_to_info(t, _task_state)) for t in _task_state.get_all_tasks()]
         seen_task_ids = {info.task_id for info in task_infos}
         terminal_statuses = {
             TaskStatus.COMPLETED.value,
@@ -13857,7 +13907,7 @@ async def list_tasks():
                 full_task = persistence.get_full_task(task_id)
                 if not full_task:
                     continue
-                info = _task_info_from_db(full_task)
+                info = _attach_task_user_review(_task_info_from_db(full_task))
                 if info.status not in terminal_statuses and info.status != TaskStatus.PAUSED.value:
                     info.status = "suspended"
                 task_infos.append(info)
@@ -13870,7 +13920,7 @@ async def list_tasks():
                 if not task_id or task_id in seen_task_ids:
                     continue
                 task_payload = plugin.get_task(str(task_id))
-                task_infos.append(TaskInfo(**external_task_to_app_info(task_payload)))
+                task_infos.append(_attach_task_user_review(TaskInfo(**external_task_to_app_info(task_payload))))
                 seen_task_ids.add(str(task_id))
         except Exception as exc:
             logger.debug("Skipping external Orchestrator tasks: %s", exc)

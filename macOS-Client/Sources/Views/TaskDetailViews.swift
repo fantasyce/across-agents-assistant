@@ -9,6 +9,7 @@ struct TaskDetailPanel: View {
     @State private var isDescriptionExpanded = false
     @State private var isHealthExpanded = false
     @State private var isObservabilityExpanded = true
+    @State private var taskPendingCancellationID: String?
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
@@ -48,6 +49,26 @@ struct TaskDetailPanel: View {
                 }
             )
             .environmentObject(appPreferences)
+        }
+        .confirmationDialog(
+            appPreferences.text("tasks.cancelConfirmTitle"),
+            isPresented: Binding(
+                get: { taskPendingCancellationID != nil },
+                set: { if !$0 { taskPendingCancellationID = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("tasks.cancel"), role: .destructive) {
+                if let taskID = taskPendingCancellationID {
+                    viewModel.cancelTask(taskID)
+                }
+                taskPendingCancellationID = nil
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                taskPendingCancellationID = nil
+            }
+        } message: {
+            Text(appPreferences.text("tasks.cancelConfirmMessage"))
         }
     }
 
@@ -384,7 +405,7 @@ struct TaskDetailPanel: View {
                         && task.status != "cancelled"
                         && task.supportsHostLocalLifecycleControls
                         && !TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
-                        Button(action: { viewModel.cancelTask(task.taskId) }) {
+                        Button(action: { taskPendingCancellationID = task.taskId }) {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(Color(hex: "#FF453A"))
@@ -888,4 +909,3 @@ struct TaskDetailPanel: View {
         return truncated + "..."
     }
 }
-

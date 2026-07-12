@@ -39,6 +39,7 @@ _DELIVERABLE_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _DELIVERABLE_SEGMENT_STOP_RE = re.compile(r"[，,。；;]")
+_DELIVERABLE_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;]+|(?<=[.!?])\s+")
 _EXTERNAL_FILE_HINT_MAX_LINE_LENGTH = 4096
 
 
@@ -238,9 +239,12 @@ def external_file_hint_tokens(line: str) -> list[str]:
 def external_file_hints_from_description(description: str) -> list[str]:
     hints: list[str] = []
     for line in str(description or "").splitlines():
-        for path in external_file_hints_from_line(line):
-            if path not in hints:
-                hints.append(path)
+        # Negative guidance later in a sentence must not erase positive file
+        # requirements stated in an earlier clause on the same line.
+        for clause in _DELIVERABLE_CLAUSE_SPLIT_RE.split(line):
+            for path in external_file_hints_from_line(clause):
+                if path not in hints:
+                    hints.append(path)
     return hints
 
 

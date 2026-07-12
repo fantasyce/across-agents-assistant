@@ -4,26 +4,28 @@ struct MainPanelView: View {
     @ObservedObject var viewModel: SessionViewModel
     @Environment(\.colorScheme) var colorScheme
 
-    // Dynamic color helpers based on color scheme
-    var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    var sidebarBgColor: Color { bgColor }
-    var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    var accentColor: Color { colorScheme == .dark ? .legacyAccentDark : .legacyAccentLight }
-    var userMsgBgColor: Color { colorScheme == .dark ? .legacyUserMsgBgDark : .legacyUserMsgBgLight }
-    var userMsgTextColor: Color { colorScheme == .dark ? .white : .black }
-    var agentMsgTextColor: Color { colorScheme == .dark ? .white : .black }
+    var bgColor: Color { AcrossTheme.canvasFill(for: colorScheme) }
+    var sidebarBgColor: Color { AcrossTheme.sidebarFill(for: colorScheme) }
+    var textColor: Color { .primary }
+    var accentColor: Color { AcrossTheme.accent }
+    var userMsgBgColor: Color { AcrossTheme.selectedFill(for: colorScheme) }
+    var userMsgTextColor: Color { .primary }
+    var agentMsgTextColor: Color { .primary }
 
     // State for interactive buttons
-    @State var isContinuousMode = false
-    @State var selectedOperationsSurface: OperationsWorkbenchSurface = .workspaces
+    @State var selectedOperationsSurface: OperationsWorkbenchSurface = .assist
     @State var activeSettingsHubTab: SettingsHubTab? = nil
     @State var showTaskOrchestration = false
+    @State var showsSelectedTaskDetails = false
+    @State var showsContextDrawer = false
     @StateObject var taskOrchestrationViewModel = TaskOrchestrationViewModel()
     @StateObject var workspaceOperationsViewModel = AgentWorkspaceOperationsViewModel()
     @StateObject var qualityGateViewModel = QualityGateViewModel()
     @StateObject var memorySearchViewModel = MemorySearchViewModel()
     @StateObject var pluginLifecycleViewModel = PluginLifecycleViewModel()
+    @StateObject var productCapabilityStore = AcrossProductCapabilityStore.shared
     @StateObject var mcpPluginManager = MCPPluginManager.shared
+    @ObservedObject var repositoryStore = SecurityScopedRepositoryStore.shared
     @EnvironmentObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var appPreferences: AppPreferences
     @State var showProjectTree: Bool = false
@@ -59,6 +61,10 @@ struct MainPanelView: View {
         !canUseAgentFeatures
     }
 
+    var operationalProjectPath: String? {
+        repositoryStore.selectedPath ?? viewModel.activeProjectPath
+    }
+
     var currentAgentTitle: String {
         if settingsViewModel.availabilityBootstrapState == .loading {
             return appPreferences.text("chat.checkingAgents")
@@ -80,9 +86,9 @@ struct MainPanelView: View {
             return appPreferences.text("chat.placeholder.noAgent")
         case .ready:
             if let projectName = viewModel.activeProjectName {
-                return String(format: appPreferences.text("chat.placeholder.project"), projectName)
+                return String(format: appPreferences.text("work.placeholder.project"), projectName)
             }
-            return appPreferences.text("chat.placeholder.selectProject")
+            return appPreferences.text("work.placeholder.selectProject")
         }
     }
 
@@ -91,10 +97,36 @@ struct MainPanelView: View {
         return (hasText || !viewModel.attachedFiles.isEmpty)
             && viewModel.pendingApproval == nil
             && canUseAgentFeatures
+            && !isProtectedTaskRunning
+    }
+
+    var isProtectedTaskRunning: Bool {
+        guard appPreferences.automaticDeliveryProtection else { return false }
+        if taskOrchestrationViewModel.isSubmittingTask { return true }
+        guard let status = taskOrchestrationViewModel.selectedTask?.status else { return false }
+        return !TaskOrchestrationStateReducers.isTerminalStatus(status)
+    }
+
+    var isViewingAcceptedTask: Bool {
+        appPreferences.automaticDeliveryProtection
+            && taskOrchestrationViewModel.selectedTask?.reviewStatus == "accepted"
+    }
+
+    var automaticDeliveryNeedsSetup: Bool {
+        appPreferences.automaticDeliveryProtection
+            && taskOrchestrationViewModel.isOrchestratorPluginUnavailable
     }
 
     var humanReviewSnapshot: HumanReviewQueueSnapshot {
         HumanReviewQueueSnapshot(signals: humanReviewSignals)
+    }
+
+    var productProgress: AcrossProductProgressSnapshot {
+        AcrossProductCapabilityRegistry.snapshot(
+            plugins: productCapabilityStore.plugins,
+            hasAvailableAgent: settingsViewModel.hasAnyAvailableAgents,
+            acceptedDeliveryCount: taskOrchestrationViewModel.tasks.filter { $0.reviewStatus == "accepted" }.count
+        )
     }
 
     var humanReviewSignals: [HumanReviewSignal] {
@@ -139,62 +171,19 @@ struct MainPanelView: View {
             )
         }
 
-        for memory in pluginLifecycleViewModel.memories where memory.status == "pending" {
+        let pendingMemories = pluginLifecycleViewModel.memories.filter { $0.status == "pending" }
+        if !pendingMemories.isEmpty {
             signals.append(
                 HumanReviewSignal(
-                    id: "memory-\(memory.id)",
+                    id: "memory-review-batch",
                     kind: .pendingMemory,
-                    title: memory.projectName ?? appPreferences.text("review.memory.default"),
-                    detail: memory.text,
-                    status: memory.status,
+                    title: appPreferences.text("review.memory.batch.title"),
+                    detail: String(
+                        format: appPreferences.text("review.memory.batch.detail"),
+                        pendingMemories.count
+                    ),
+                    status: "pending",
                     source: "Context"
-                )
-            )
-        }
-
-        signals.append(contentsOf: workspaceOperationsViewModel.reviewSignals)
-        signals.append(contentsOf: qualityGateViewModel.reviewSignals)
-
-        if let evaluation = taskOrchestrationViewModel.releaseEvaluation {
-            if !["ready", "passed", "success"].contains(StatusPalette.normalized(evaluation.releaseReadiness)) {
-                signals.append(
-                    HumanReviewSignal(
-                        id: "promotion-release-readiness",
-                        kind: .promotion,
-                        title: appPreferences.text("review.releasePromotion"),
-                        detail: evaluation.recommendation ?? appPreferences.text("review.releasePromotion.detail"),
-                        status: evaluation.releaseReadiness,
-                        source: "Quality Gate"
-                    )
-                )
-            }
-
-            for check in evaluation.readinessChecks {
-                guard let kind = humanReviewKind(forGateStatus: check.status) else { continue }
-                signals.append(
-                    HumanReviewSignal(
-                        id: "gate-\(check.id)",
-                        kind: kind,
-                        title: check.label,
-                        detail: check.message,
-                        status: check.status,
-                        source: "Release Evaluation"
-                    )
-                )
-            }
-        }
-
-        for plugin in pluginLifecycleViewModel.plugins
-            where !plugin.installed || !plugin.available || StatusPalette.tone(for: plugin.status) == .danger
-        {
-            signals.append(
-                HumanReviewSignal(
-                    id: "plugin-\(plugin.pluginId)",
-                    kind: .pluginRepair,
-                    title: plugin.displayName,
-                    detail: appPreferences.text("review.plugin.detail"),
-                    status: plugin.status,
-                    source: "Plugin Lifecycle"
                 )
             )
         }
@@ -207,12 +196,15 @@ struct MainPanelView: View {
             leftSidebar
             centerResizer
             centerArea
-            if selectedOperationsSurface == .assist && settingsViewModel.shouldShowRightSidebar {
+            if selectedOperationsSurface == .assist
+                && !appPreferences.automaticDeliveryProtection
+                && settingsViewModel.shouldShowRightSidebar
+            {
                 rightResizer
                 rightSidebar
             }
         }
-        .frame(minWidth: 900, idealWidth: 1200, minHeight: 600, idealHeight: 800)
+        .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 820)
         .background(bgColor.ignoresSafeArea())
         .ignoresSafeArea(.all, edges: .top)
         .onAppear {
@@ -227,8 +219,8 @@ struct MainPanelView: View {
             syncSelectedAgentToAvailability()
         }
         .task {
-            async let lifecycleLoad: Void = pluginLifecycleViewModel.load()
-            taskOrchestrationViewModel.loadReleaseEvaluation()
+            async let lifecycleLoad: Void = pluginLifecycleViewModel.loadForProductShell()
+            taskOrchestrationViewModel.loadTasks()
             _ = await lifecycleLoad
         }
         .onDisappear {
@@ -236,6 +228,20 @@ struct MainPanelView: View {
         }
         .onChange(of: settingsViewModel.visibleAgentIds) {
             syncSelectedAgentToAvailability()
+        }
+        .onChange(of: selectedOperationsSurface) {
+            showsContextDrawer = false
+        }
+        .onChange(of: humanReviewSnapshot.totalCount) {
+            if humanReviewSnapshot.totalCount == 0, selectedOperationsSurface == .humanReview {
+                selectedOperationsSurface = .assist
+            }
+        }
+        .onChange(of: productProgress.unlockedSurfaces) {
+            let allowed = Set([OperationsWorkbenchSurface.assist, .humanReview] + productProgress.unlockedSurfaces)
+            if !allowed.contains(selectedOperationsSurface) {
+                selectedOperationsSurface = .assist
+            }
         }
         .onChange(of: settingsViewModel.availabilityBootstrapState) {
             syncSelectedAgentToAvailability()

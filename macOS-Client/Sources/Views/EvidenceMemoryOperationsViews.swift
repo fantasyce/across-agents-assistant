@@ -193,150 +193,264 @@ struct MemoryOperationsView: View {
     @ObservedObject var lifecycle: PluginLifecycleViewModel
     @ObservedObject var preferences: AppPreferences
     let activeProjectPath: String?
-    let onOpenFullMemory: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var searchFocused: Bool
+    @State private var pendingBulkAction: MemoryBulkAction?
 
     var body: some View {
-        VStack(spacing: 0) {
-            commandBar
-            Rectangle()
-                .fill(AcrossTheme.separator(for: colorScheme))
-                .frame(height: 1)
-            improveBar
-            Rectangle()
-                .fill(AcrossTheme.separator(for: colorScheme))
-                .frame(height: 1)
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AcrossTheme.canvasFill(for: colorScheme))
-        .onAppear { searchFocused = true }
-        .onChange(of: search.scope) {
-            if !search.isBusy && !search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Task { await search.search(projectRoot: activeProjectPath) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if !search.hasSearched && !search.hasImproved && !search.isSearching && !search.isImproving {
-            OperationalContentStateView(
-                state: .disabled(preferences.text("memory.searchRequired.detail")),
-                title: preferences.text("memory.searchRequired")
-            )
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    operationNotice
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                pageHeader
+                searchBar
+                operationNotice
+                if search.hasSearched || search.hasImproved || search.isSearching || search.isImproving {
                     suggestionsSection
                     retrievalSection
                 }
-                .padding(16)
+                librarySection
+            }
+            .minimalPageContentFrame()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AcrossTheme.canvasFill(for: colorScheme))
+        .task {
+            lifecycle.memoryStatusFilter = ""
+            search.scope = .ordinary
+            await lifecycle.loadMemories()
+        }
+        .confirmationDialog(
+            preferences.text("memory.bulk.confirmTitle"),
+            isPresented: Binding(
+                get: { pendingBulkAction != nil },
+                set: { if !$0 { pendingBulkAction = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingBulkAction
+        ) { action in
+            Button(
+                preferences.text(action == .approve ? "memory.bulk.approve" : "memory.bulk.archive"),
+                role: action == .archive ? .destructive : nil
+            ) {
+                performBulkAction(action)
+            }
+            Button(preferences.text("system.cancel"), role: .cancel) {
+                pendingBulkAction = nil
+            }
+        } message: { action in
+            Text(String(
+                format: preferences.text(
+                    action == .approve ? "memory.bulk.approveConfirm" : "memory.bulk.archiveConfirm"
+                ),
+                pendingMemories.count
+            ))
+        }
+    }
+
+    private var pageHeader: some View {
+        MinimalPageHeader(
+            title: preferences.text("memory.title"),
+            subtitle: preferences.text("memory.subtitle")
+        ) {
+            MinimalIconButton(
+                systemName: "wand.and.stars",
+                label: copy("Organize memory suggestions", "整理记忆建议"),
+                isDisabled: search.isBusy
+            ) {
+                Task { await search.improve(projectRoot: activeProjectPath) }
+            }
+
+            MinimalIconButton(
+                systemName: "arrow.clockwise",
+                label: preferences.text("memory.refresh"),
+                isDisabled: search.isBusy
+            ) {
+                Task { await refreshMemory() }
             }
         }
     }
 
-    private var commandBar: some View {
+    private var searchBar: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preferences.text("memory.title"))
-                    .font(.system(size: 16, weight: .semibold))
-                Text(preferences.text("memory.subtitle"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
             TextField(preferences.text("memory.searchPlaceholder"), text: $search.query)
                 .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 180, idealWidth: 250, maxWidth: 330)
                 .focused($searchFocused)
-                .onSubmit { Task { await search.search(projectRoot: activeProjectPath) } }
+                .onSubmit { Task { await searchMemory() } }
                 .accessibilityLabel(Text(preferences.text("memory.searchPlaceholder")))
 
-            Picker(preferences.text("memory.scope"), selection: $search.scope) {
-                Text(preferences.text("memory.scope.ordinary")).tag(MemorySearchScope.ordinary)
-                Text(preferences.text("memory.scope.pending")).tag(MemorySearchScope.pendingReview)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 210)
-            .accessibilityHint(Text(preferences.text("memory.pendingExplicit")))
-
-            CommandToolbarButton(
+            MinimalIconButton(
                 systemName: "magnifyingglass",
-                accessibilityLabel: preferences.text("memory.search"),
-                help: preferences.text("memory.search"),
+                label: preferences.text("memory.search"),
                 isDisabled: search.isSearching || search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ) {
-                Task { await search.search(projectRoot: activeProjectPath) }
+                Task { await searchMemory() }
             }
-
-            Spacer(minLength: 0)
 
             if search.hasSearched {
-                StatusChip(
-                    status: search.scope == .pendingReview ? "pending" : "active",
-                    label: String(format: preferences.text("memory.resultCount"), search.resultCount)
-                )
+                Text(String(format: preferences.text("memory.resultCount"), search.resultCount))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            CommandToolbarButton(
-                systemName: "arrow.clockwise",
-                accessibilityLabel: preferences.text("memory.refresh"),
-                help: preferences.text("memory.refresh"),
-                isDisabled: search.isBusy || !search.hasSearched
-            ) {
-                Task { await search.search(projectRoot: activeProjectPath) }
-            }
-            Button(preferences.text("memory.openCenter"), action: onOpenFullMemory)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
         }
-        .padding(.horizontal, 18)
-        .frame(height: 64)
-        .background(AcrossTheme.panelFill(for: colorScheme))
+        .frame(maxWidth: 520, alignment: .leading)
     }
 
-    private var improveBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                Task { await search.improve(projectRoot: activeProjectPath) }
-            } label: {
-                Label(copy("Prepare suggestions", "整理建议"), systemImage: "wand.and.stars")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(search.isBusy)
-            .help(copy("Find repeated memories and prepare a shorter version for review.", "查找重复记忆，并生成更精简的待评审版本。"))
+    private func searchMemory() async {
+        search.scope = .ordinary
+        await search.search(projectRoot: activeProjectPath)
+    }
 
-            Text(copy("Suggestions stay pending until you approve them.", "建议会保持待评审，直到你明确批准。"))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 12)
-
-            HStack(spacing: 5) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .accessibilityHidden(true)
-                Text(copy("5-source search", "五路检索"))
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
+    private func refreshMemory() async {
+        await lifecycle.loadMemories()
+        if !search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await searchMemory()
         }
-        .padding(.horizontal, 18)
-        .frame(height: 42)
-        .background(AcrossTheme.recessedFill(for: colorScheme))
     }
 
     @ViewBuilder
     private var operationNotice: some View {
-        if let error = search.mutationErrorMessage {
+        if let error = lifecycle.errorMessage ?? search.mutationErrorMessage {
             notice(icon: "exclamationmark.triangle", text: error, status: "failed")
-        } else if let message = search.actionMessage {
+        } else if let message = lifecycle.message ?? search.actionMessage {
             notice(icon: "checkmark.circle", text: message, status: "success")
         }
+    }
+
+    @ViewBuilder
+    private var librarySection: some View {
+        HStack(spacing: 8) {
+            Text(copy("Your memory", "你的记忆"))
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if !pendingMemories.isEmpty {
+                Button {
+                    pendingBulkAction = .approve
+                } label: {
+                    Label(preferences.text("memory.bulk.approve"), systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(lifecycle.isWorking)
+
+                Button {
+                    pendingBulkAction = .archive
+                } label: {
+                    Label(preferences.text("memory.bulk.archive"), systemImage: "archivebox")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(lifecycle.isWorking)
+            }
+            Text(String(format: preferences.text("memory.resultCount"), visibleMemories.count))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+
+        if lifecycle.isLoadingMemories && lifecycle.memories.isEmpty {
+            sectionState(state: .loading, title: preferences.text("memory.loading"))
+        } else if visibleMemories.isEmpty {
+            sectionState(
+                state: .empty,
+                title: copy("No memory yet", "还没有记忆"),
+                message: copy(
+                    "Approved project context will appear here as you complete work.",
+                    "完成工作后，经过确认的项目上下文会出现在这里。"
+                )
+            )
+        } else {
+            listSurface {
+                ForEach(visibleMemories) { memory in
+                    libraryMemoryRow(memory)
+                }
+            }
+        }
+    }
+
+    private var visibleMemories: [AcrossMemoryEntry] {
+        Array(
+            lifecycle.memories
+                .filter { $0.status != "archived" && $0.status != "expired" }
+                .prefix(40)
+        )
+    }
+
+    private var pendingMemories: [AcrossMemoryEntry] {
+        lifecycle.memories.filter { $0.status == "pending" }
+    }
+
+    private func performBulkAction(_ action: MemoryBulkAction) {
+        let memories = pendingMemories
+        pendingBulkAction = nil
+        guard !memories.isEmpty else { return }
+        Task {
+            await lifecycle.updateMemories(
+                memories,
+                status: action == .approve ? "active" : "archived"
+            )
+        }
+    }
+
+    private func libraryMemoryRow(_ memory: AcrossMemoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "memorychip")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(StatusPalette.tone(for: memory.status).foreground)
+                .frame(width: 22, height: 22)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    StatusChip(status: memory.status)
+                    Text(memory.scope)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    if let projectName = memory.projectName {
+                        Text(projectName)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(MemoryReviewTextFormatter.summary(
+                    for: memory.text,
+                    fallback: preferences.text("review.memory.structured")
+                ))
+                .font(.system(size: 12))
+                .lineLimit(4)
+                .textSelection(.enabled)
+            }
+
+            Spacer(minLength: 12)
+
+            if memory.status == "pending" {
+                Button {
+                    Task { await lifecycle.updateMemory(memory, status: "active") }
+                } label: {
+                    Label(preferences.text("review.memory.approve.short"), systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(lifecycle.isWorking)
+            }
+
+            Button {
+                Task { await lifecycle.updateMemory(memory, status: "archived") }
+            } label: {
+                Image(systemName: "archivebox")
+            }
+            .buttonStyle(.borderless)
+            .disabled(lifecycle.isWorking)
+            .help(preferences.text("review.memory.archive"))
+            .accessibilityLabel(Text(preferences.text("review.memory.archive")))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AcrossTheme.separator(for: colorScheme))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -621,4 +735,9 @@ struct MemoryOperationsView: View {
     private func copy(_ english: String, _ chinese: String) -> String {
         preferences.resolvedLocaleIdentifier == "zh-Hans" ? chinese : english
     }
+}
+
+private enum MemoryBulkAction {
+    case approve
+    case archive
 }

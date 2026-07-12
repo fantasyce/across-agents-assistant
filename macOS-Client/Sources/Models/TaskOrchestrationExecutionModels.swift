@@ -22,6 +22,8 @@ struct TaskOrchestrationTaskDetail: Decodable {
     let qualityHealth: TaskOrchestrationQualityHealth?
     let deliveryReport: TaskOrchestrationDeliveryReport?
     let observability: TaskOrchestrationTaskObservability?
+    let reviewStatus: String
+    let acceptedAt: Double?
 
     enum CodingKeys: String, CodingKey {
         case taskId = "task_id"
@@ -45,6 +47,8 @@ struct TaskOrchestrationTaskDetail: Decodable {
         case qualityHealth = "quality_health"
         case deliveryReport = "delivery_report"
         case observability
+        case reviewStatus = "review_status"
+        case acceptedAt = "accepted_at"
     }
 
     init(
@@ -68,7 +72,9 @@ struct TaskOrchestrationTaskDetail: Decodable {
         hasRequirementManifest: Bool = false,
         qualityHealth: TaskOrchestrationQualityHealth? = nil,
         deliveryReport: TaskOrchestrationDeliveryReport? = nil,
-        observability: TaskOrchestrationTaskObservability? = nil
+        observability: TaskOrchestrationTaskObservability? = nil,
+        reviewStatus: String = "pending",
+        acceptedAt: Double? = nil
     ) {
         self.taskId = taskId
         self.description = description
@@ -91,6 +97,8 @@ struct TaskOrchestrationTaskDetail: Decodable {
         self.qualityHealth = qualityHealth
         self.deliveryReport = deliveryReport
         self.observability = observability
+        self.reviewStatus = reviewStatus
+        self.acceptedAt = acceptedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -118,6 +126,8 @@ struct TaskOrchestrationTaskDetail: Decodable {
         qualityHealth = try container.decodeIfPresent(TaskOrchestrationQualityHealth.self, forKey: .qualityHealth)
         deliveryReport = try container.decodeIfPresent(TaskOrchestrationDeliveryReport.self, forKey: .deliveryReport)
         observability = try container.decodeIfPresent(TaskOrchestrationTaskObservability.self, forKey: .observability)
+        reviewStatus = try container.decodeIfPresent(String.self, forKey: .reviewStatus) ?? "pending"
+        acceptedAt = try container.decodeIfPresent(Double.self, forKey: .acceptedAt)
     }
 
     func replacing(
@@ -126,7 +136,9 @@ struct TaskOrchestrationTaskDetail: Decodable {
         waves: [TaskOrchestrationWaveDetail]? = nil,
         artifacts: [TaskOrchestrationArtifact]? = nil,
         ownerSessionId: String? = nil,
-        lastOwnerDecision: TaskOrchestrationOwnerDecisionSummary? = nil
+        lastOwnerDecision: TaskOrchestrationOwnerDecisionSummary? = nil,
+        reviewStatus: String? = nil,
+        acceptedAt: Double? = nil
     ) -> TaskOrchestrationTaskDetail {
         TaskOrchestrationTaskDetail(
             taskId: taskId,
@@ -149,7 +161,9 @@ struct TaskOrchestrationTaskDetail: Decodable {
             hasRequirementManifest: hasRequirementManifest,
             qualityHealth: qualityHealth,
             deliveryReport: deliveryReport,
-            observability: observability
+            observability: observability,
+            reviewStatus: reviewStatus ?? self.reviewStatus,
+            acceptedAt: acceptedAt ?? self.acceptedAt
         )
     }
 

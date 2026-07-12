@@ -2,26 +2,30 @@ import SwiftUI
 
 struct OperationsWorkbenchShell: View {
     @Binding var selection: OperationsWorkbenchSurface
+    @Binding var showsContextDrawer: Bool
     @ObservedObject var workspaces: AgentWorkspaceOperationsViewModel
     @ObservedObject var qualityGate: QualityGateViewModel
     @ObservedObject var memorySearch: MemorySearchViewModel
     @ObservedObject var lifecycle: PluginLifecycleViewModel
     @ObservedObject var tasks: TaskOrchestrationViewModel
+    @ObservedObject var settings: SettingsViewModel
     @ObservedObject var preferences: AppPreferences
 
     let activeProjectPath: String?
+    let productProgress: AcrossProductProgressSnapshot
     let reviewSnapshot: HumanReviewQueueSnapshot
     let reviewIsLoading: Bool
     let reviewErrorMessage: String?
     let onOpenTaskOrchestration: () -> Void
     let onOpenPluginCenter: () -> Void
+    let onOpenModels: () -> Void
     let onRefreshReviewQueue: () -> Void
     let onOpenReviewItem: (HumanReviewSignal) -> Void
 
     var body: some View {
         switch selection {
         case .workspaces:
-            WorkspaceOperationsView(
+            MinimalProjectWorkspaceView(
                 operations: workspaces,
                 preferences: preferences,
                 activeProjectPath: activeProjectPath,
@@ -29,11 +33,13 @@ struct OperationsWorkbenchShell: View {
             )
             .environmentObject(preferences)
         case .qualityGate:
-            QualityGateOperationsView(
-                operations: qualityGate,
+            MinimalRunsOverviewView(
+                viewModel: tasks,
+                qualityGate: qualityGate,
+                settingsViewModel: settings,
                 preferences: preferences,
-                activeProjectPath: activeProjectPath,
-                onOpenFullWorkflow: onOpenTaskOrchestration,
+                showsRunHistory: $showsContextDrawer,
+                defaultProjectPath: activeProjectPath,
                 onOpenReviewQueue: { selection = .humanReview }
             )
         case .evidence:
@@ -48,17 +54,34 @@ struct OperationsWorkbenchShell: View {
                 search: memorySearch,
                 lifecycle: lifecycle,
                 preferences: preferences,
-                activeProjectPath: activeProjectPath,
-                onOpenFullMemory: onOpenPluginCenter
+                activeProjectPath: activeProjectPath
+            )
+        case .autopilot:
+            AutopilotWorkbenchView()
+                .environmentObject(preferences)
+        case .achievements:
+            CapabilityProgressView(
+                progress: productProgress,
+                preferences: preferences,
+                onOpenModels: onOpenModels,
+                onOpenPlugins: onOpenPluginCenter
             )
         case .humanReview:
-            HumanReviewQueueView(
+            MinimalReviewInboxView(
                 snapshot: reviewSnapshot,
+                pendingMemories: lifecycle.memories.filter { $0.status == "pending" },
                 preferences: preferences,
+                showsInbox: $showsContextDrawer,
                 isLoading: reviewIsLoading,
                 errorMessage: reviewErrorMessage,
                 onRefresh: onRefreshReviewQueue,
-                onOpen: onOpenReviewItem
+                onOpen: onOpenReviewItem,
+                onApproveMemories: { memories in
+                    await lifecycle.updateMemories(memories, status: "active")
+                },
+                onArchiveMemories: { memories in
+                    await lifecycle.updateMemories(memories, status: "archived")
+                }
             )
         case .assist:
             EmptyView()

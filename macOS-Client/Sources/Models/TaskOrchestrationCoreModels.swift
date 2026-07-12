@@ -48,6 +48,8 @@ struct TaskOrchestrationTaskSummary: Identifiable, Codable {
     let ownerAgent: String?
     let deliveryMode: String?
     let externalTask: Bool
+    let reviewStatus: String
+    let acceptedAt: Double?
 
     var id: String { taskId }
 
@@ -62,9 +64,11 @@ struct TaskOrchestrationTaskSummary: Identifiable, Codable {
         case ownerAgent = "owner_agent"
         case deliveryMode = "delivery_mode"
         case externalTask = "external_task"
+        case reviewStatus = "review_status"
+        case acceptedAt = "accepted_at"
     }
 
-    init(taskId: String, description: String, status: String, progress: Double, completedCount: Int, totalCount: Int, projectDir: String? = nil, ownerAgent: String? = nil, deliveryMode: String? = nil, externalTask: Bool = false) {
+    init(taskId: String, description: String, status: String, progress: Double, completedCount: Int, totalCount: Int, projectDir: String? = nil, ownerAgent: String? = nil, deliveryMode: String? = nil, externalTask: Bool = false, reviewStatus: String = "pending", acceptedAt: Double? = nil) {
         self.taskId = taskId
         self.description = description
         self.status = status
@@ -75,6 +79,8 @@ struct TaskOrchestrationTaskSummary: Identifiable, Codable {
         self.ownerAgent = ownerAgent
         self.deliveryMode = deliveryMode
         self.externalTask = externalTask
+        self.reviewStatus = reviewStatus
+        self.acceptedAt = acceptedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -89,6 +95,8 @@ struct TaskOrchestrationTaskSummary: Identifiable, Codable {
         ownerAgent = try container.decodeIfPresent(String.self, forKey: .ownerAgent)
         deliveryMode = try container.decodeIfPresent(String.self, forKey: .deliveryMode)
         externalTask = try container.decodeIfPresent(Bool.self, forKey: .externalTask) ?? false
+        reviewStatus = try container.decodeIfPresent(String.self, forKey: .reviewStatus) ?? "pending"
+        acceptedAt = try container.decodeIfPresent(Double.self, forKey: .acceptedAt)
     }
 }
 
@@ -102,6 +110,18 @@ struct TaskOrchestrationTaskPageResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case tasks, total, limit, offset
         case hasMore = "has_more"
+    }
+}
+
+struct TaskOrchestrationTaskReviewResponse: Decodable {
+    let taskId: String
+    let reviewStatus: String
+    let acceptedAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case taskId = "task_id"
+        case reviewStatus = "review_status"
+        case acceptedAt = "accepted_at"
     }
 }
 

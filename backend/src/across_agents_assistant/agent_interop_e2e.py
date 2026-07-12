@@ -1111,7 +1111,15 @@ def _context_remember_evidence(context_root: Path, env: Mapping[str, str], graph
 
 def _context_recall_evidence(context_root: Path, env: Mapping[str, str], run_id: str) -> dict[str, Any]:
     return _run_json(
-        _context_cli(context_root, "recall-evidence", "--run-id", run_id or "run-unknown", "--json"),
+        _context_cli(
+            context_root,
+            "recall-evidence",
+            "--run-id",
+            run_id or "run-unknown",
+            "--status",
+            "pending",
+            "--json",
+        ),
         cwd=context_root,
         env=env,
     )
@@ -1139,7 +1147,15 @@ def _context_remember_agent_team_receipt(context_root: Path, env: Mapping[str, s
 
 def _context_recall_agent_team_receipt(context_root: Path, env: Mapping[str, str], pack_id: str) -> dict[str, Any]:
     return _run_json(
-        _context_cli(context_root, "recall-agent-team-receipts", "--pack-id", pack_id, "--json"),
+        _context_cli(
+            context_root,
+            "recall-agent-team-receipts",
+            "--pack-id",
+            pack_id,
+            "--status",
+            "pending",
+            "--json",
+        ),
         cwd=context_root,
         env=env,
     )

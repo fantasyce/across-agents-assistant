@@ -475,6 +475,26 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
         artifacts=artifacts,
         quality=quality,
     )
+    quality_status = str(quality.get("status") or quality.get("quality_gate") or status)
+    quality_failures = [str(item) for item in quality.get("failures") or [] if str(item).strip()]
+    missing_required = [
+        str(item.get("name") or item.get("path_hint") or item.get("path") or "")
+        for item in artifacts
+        if str(item.get("status") or "").lower() == "missing"
+    ]
+    accepted_required = sum(
+        1 for item in artifacts
+        if str(item.get("status") or "").lower() == "accepted"
+    )
+    quality_report = quality.get("quality_report") or {
+        "quality_gate": quality_status,
+        "can_complete": quality_status == "passed" and not quality_failures and not missing_required,
+        "generated_quality_score": quality.get("quality_score"),
+        "final_quality_score": quality.get("quality_score"),
+        "required_failed_count": len(quality_failures) + len(missing_required),
+        "manual_required_count": 0,
+        "skipped_required_count": 0,
+    }
     return {
         "task_id": task_id,
         "description": str(task.get("goal") or task.get("description") or ""),
@@ -514,18 +534,35 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
         },
         "quality_health": {
             "manifest_total": len(required_files),
-            "manifest_accepted": len(required_files) if quality["status"] == "passed" else 0,
-            "quality_gate": quality["status"],
-            "delivery_quality": quality["status"],
-            "delivery_quality_report": quality,
+            "manifest_required": len(required_files),
+            "manifest_accepted": len(required_files) if quality_status == "passed" else 0,
+            "manifest_missing": len(missing_required),
+            "quality_gate": quality_status,
+            "delivery_quality": quality_status,
+            "delivery_quality_report": {
+                "missing_required": missing_required,
+                "failed_constraints": quality_failures,
+            },
             "orchestration_health": "passed" if status == "completed" else status,
         },
         "delivery_report": {
-            "status": quality["status"],
+            "quality_gate": quality_status,
+            "final_status": status,
+            "summary": (
+                "All required deliverables were produced and accepted."
+                if quality_status == "passed"
+                else "Required delivery checks still need attention."
+            ),
+            "required_total": len(required_files),
+            "accepted_total": accepted_required,
+            "missing_required": missing_required,
+            "failed_constraints": quality_failures,
+            "quality_report": quality_report,
+            "status": quality_status,
             "source": "across_orchestrator",
             "required_files": required_files,
             "checks": quality.get("checks", {}),
-            "failures": quality.get("failures", []),
+            "failures": quality_failures,
         },
         "observability": {
             "orchestrator_plugin": {

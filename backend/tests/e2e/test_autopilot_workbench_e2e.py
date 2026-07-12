@@ -223,7 +223,13 @@ def test_autopilot_workbench_api_e2e(monkeypatch, tmp_path):
 
     ensured = client.post(
         "/api/autopilot/self-iteration-plan/ensure",
-        json={"spec": "aaa-autonomous-self-iteration", "interval_seconds": 60, "actor": "e2e"},
+        json={
+            "spec": "aaa-autonomous-self-iteration",
+            "interval_seconds": 60,
+            "daily_time": "00:00",
+            "timezone": "UTC",
+            "actor": "e2e",
+        },
     )
     assert ensured.status_code == 200
     assert ensured.json()["status"] == "active"
