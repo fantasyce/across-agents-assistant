@@ -999,6 +999,7 @@ def test_external_expected_artifacts_compute_size_from_project_file(tmp_path):
     assert artifact["file_path"].endswith("README.md")
     assert artifact["file_size"] == "6 B"
     assert artifact["status"] == "expected"
+    assert app_task["delivery_report"]["accepted_total"] == 0
 
 
 def test_external_generic_artifact_task_quality_does_not_require_release_probes(tmp_path):
@@ -1022,7 +1023,15 @@ def test_external_generic_artifact_task_quality_does_not_require_release_probes(
     app_task = external_task_to_app_info(task)
 
     assert app_task["quality_health"]["delivery_quality"] == "passed"
+    assert app_task["quality_health"]["manifest_required"] == 1
+    assert app_task["quality_health"]["delivery_quality_report"] == {
+        "missing_required": [],
+        "failed_constraints": [],
+    }
     assert app_task["delivery_report"]["status"] == "passed"
+    assert app_task["delivery_report"]["quality_gate"] == "passed"
+    assert app_task["delivery_report"]["quality_report"]["can_complete"] is True
+    assert app_task["delivery_report"]["missing_required"] == []
     assert app_task["delivery_report"]["checks"] == {"artifact_integrity": True}
 
 

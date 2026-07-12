@@ -205,25 +205,25 @@ enum SettingsHubPageLayout {
 
 struct CustomTrafficLights: View {
     @State private var isHovered = false
+    @EnvironmentObject private var appPreferences: AppPreferences
     var onClose: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
-            TrafficLightButton(colorHex: "#FF5F56", defaultHex: "#FFBFBB", iconName: "xmark", isGroupHovered: isHovered) {
+            TrafficLightButton(colorHex: "#FF5F56", defaultHex: "#FFBFBB", iconName: "xmark", accessibilityLabel: appPreferences.text("window.close"), isGroupHovered: isHovered) {
                 if let onClose = onClose {
                     onClose()
                 } else {
                     WindowVisibilityController.closeMainWindow()
                 }
             }
-            TrafficLightButton(colorHex: "#FFBD2E", defaultHex: "#FFE4AB", iconName: "minus", isGroupHovered: isHovered) {
-                if onClose == nil {
-                    NSApplication.shared.keyWindow?.miniaturize(nil)
-                }
+            TrafficLightButton(colorHex: "#FFBD2E", defaultHex: "#FFE4AB", iconName: "minus", accessibilityLabel: appPreferences.text("window.minimize"), isGroupHovered: isHovered) {
+                NSApplication.shared.keyWindow?.miniaturize(nil)
             }
-            TrafficLightButton(colorHex: "#27C93F", defaultHex: "#A8E9B2", iconName: "arrow.up.left.and.arrow.down.right", isGroupHovered: isHovered) {
-                if onClose == nil {
-                    NSApplication.shared.keyWindow?.zoom(nil)
+            TrafficLightButton(colorHex: "#27C93F", defaultHex: "#A8E9B2", iconName: "arrow.up.left.and.arrow.down.right", accessibilityLabel: appPreferences.text("window.zoom"), isGroupHovered: isHovered) {
+                NSApplication.shared.keyWindow?.zoom(nil)
+                DispatchQueue.main.async {
+                    MainWindowRegistry.shared.ensureMainWindowIsOnScreen()
                 }
             }
         }
@@ -240,33 +240,28 @@ struct TrafficLightButton: View {
     let colorHex: String
     let defaultHex: String
     let iconName: String
+    let accessibilityLabel: String
     let isGroupHovered: Bool
     let action: () -> Void
 
-    @State private var isPressed = false
     @State private var isSelfHovered = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 3)
-            .fill(Color(hex: isSelfHovered ? colorHex : defaultHex))
-            .frame(width: 12, height: 12)
-            .overlay(
-                Image(systemName: iconName)
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.black.opacity(isGroupHovered ? 0.5 : 0))
-            )
-            .scaleEffect(isPressed ? 0.9 : 1.0)
-            .onHover { hovering in
-                isSelfHovered = hovering
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isPressed = true }
-                    .onEnded { _ in
-                        isPressed = false
-                        action()
-                    }
-            )
+        Button(action: action) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color(hex: isSelfHovered ? colorHex : defaultHex))
+                .frame(width: 12, height: 12)
+                .overlay(
+                    Image(systemName: iconName)
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.black.opacity(isGroupHovered ? 0.5 : 0))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .onHover { hovering in
+            isSelfHovered = hovering
+        }
     }
 }
 

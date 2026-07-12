@@ -54,19 +54,33 @@ struct AgentCapabilitiesView: View {
     @State private var nativeSkillDescription = ""
     @State private var nativeSkillBody = ""
     @State private var nativeSkillForce = false
+    @State private var customSkillPendingDeletion: AgentSkillDefinition?
+    @State private var nativeSkillPendingUninstall: NativeSkillDefinition?
+    @State private var nativeSkillPendingAgentID: String?
 
     var onClose: (() -> Void)? = nil
     var embeddedInHub: Bool = false
 
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var headerColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "20222a") : .white }
+    init(
+        settingsViewModel: SettingsViewModel,
+        initialAgentId: String? = nil,
+        onClose: (() -> Void)? = nil,
+        embeddedInHub: Bool = false
+    ) {
+        self.settingsViewModel = settingsViewModel
+        self.onClose = onClose
+        self.embeddedInHub = embeddedInHub
+        _selectedAgentId = State(initialValue: initialAgentId.flatMap { AgentIDs.normalized($0) ?? $0 })
+    }
+
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
+    private var cardColor: Color { Color(nsColor: .controlBackgroundColor) }
     private var softColor: Color { colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.04) }
     private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10) }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
     private var accentColor: Color { AcrossTheme.accent }
-    private var mcpColor: Color { colorScheme == .dark ? Color(hex: "38d88b") : Color(hex: "29a36a") }
-    private var toolColor: Color { colorScheme == .dark ? Color(hex: "4da3ff") : Color(hex: "0a84ff") }
+    private var mcpColor: Color { Color(nsColor: .systemGreen) }
+    private var toolColor: Color { Color(nsColor: .systemBlue) }
 
     private var agentOptions: [CapabilityAgentOption] {
         let local = settingsViewModel.localAgents.map { agent in
@@ -116,11 +130,10 @@ struct AgentCapabilitiesView: View {
         VStack(spacing: 0) {
             if !embeddedInHub {
                 standaloneHeader
-                Divider().opacity(0.35)
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
+                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                     titleRow
 
                     if let errorMessage = viewModel.errorMessage {
@@ -141,8 +154,8 @@ struct AgentCapabilitiesView: View {
                         }
                     }
                 }
-                .padding(SettingsHubPageLayout.contentPadding)
-                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .padding(MinimalSettingsMetrics.contentPadding)
+                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .overlay {
@@ -150,9 +163,6 @@ struct AgentCapabilitiesView: View {
                     ProgressView()
                         .controlSize(.small)
                         .padding(18)
-                        .background(cardColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: Color.black.opacity(0.14), radius: 18, x: 0, y: 8)
                 }
             }
         }
@@ -176,52 +186,73 @@ struct AgentCapabilitiesView: View {
         .onChange(of: agentOptions) {
             ensureSelectedAgent()
         }
+        .confirmationDialog(
+            appPreferences.text("capabilities.deleteSkillConfirmTitle"),
+            isPresented: Binding(
+                get: { customSkillPendingDeletion != nil },
+                set: { if !$0 { customSkillPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("capabilities.deleteSkill"), role: .destructive) {
+                if let skill = customSkillPendingDeletion {
+                    Task { await viewModel.deleteCustomSkill(skill.id) }
+                }
+                customSkillPendingDeletion = nil
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                customSkillPendingDeletion = nil
+            }
+        } message: {
+            Text(appPreferences.text("capabilities.deleteSkillConfirmMessage"))
+        }
+        .confirmationDialog(
+            appPreferences.text("capabilities.nativeSkills.uninstallConfirmTitle"),
+            isPresented: Binding(
+                get: { nativeSkillPendingUninstall != nil && nativeSkillPendingAgentID != nil },
+                set: {
+                    if !$0 {
+                        nativeSkillPendingUninstall = nil
+                        nativeSkillPendingAgentID = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("capabilities.nativeSkills.uninstall"), role: .destructive) {
+                if let skill = nativeSkillPendingUninstall,
+                   let agentID = nativeSkillPendingAgentID {
+                    Task { await viewModel.uninstallNativeSkill(skill.id, for: agentID) }
+                }
+                nativeSkillPendingUninstall = nil
+                nativeSkillPendingAgentID = nil
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                nativeSkillPendingUninstall = nil
+                nativeSkillPendingAgentID = nil
+            }
+        } message: {
+            Text(appPreferences.text("capabilities.nativeSkills.uninstallConfirmMessage"))
+        }
     }
 
     private var standaloneHeader: some View {
-        HStack {
-            CustomTrafficLights(onClose: onClose)
-            Spacer()
-            Text(appPreferences.text("capabilities.title"))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(textColor)
-            Spacer()
-            Spacer().frame(width: 50)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 56)
-        .background(
-            ZStack {
-                headerColor.opacity(colorScheme == .dark ? 0.84 : 0.96)
-                WindowDragView().contentShape(Rectangle())
-            }
-        )
+        MinimalSettingsWindowHeader(title: appPreferences.text("capabilities.title"), onClose: onClose)
     }
 
     private var titleRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(appPreferences.text("capabilities.title"))
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(textColor)
-                Text(appPreferences.text("capabilities.subtitle"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
+        MinimalSettingsPageHeader(
+            title: appPreferences.text("capabilities.title"),
+            subtitle: appPreferences.text("capabilities.subtitle")
+        ) {
             Button {
                 Task { await viewModel.load(refresh: true) }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 32, height: 30)
+                    .frame(width: 24, height: 24)
             }
-            .buttonStyle(.plain)
-            .foregroundColor(textColor)
-            .background(softColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.borderless)
             .help(appPreferences.text("settings.refresh"))
         }
     }
@@ -251,8 +282,6 @@ struct AgentCapabilitiesView: View {
             HStack(spacing: 10) {
                 agentIcon(agent.iconName, size: 32)
                     .frame(width: 32, height: 32)
-                    .background((isSelected ? accentColor : Color.secondary).opacity(colorScheme == .dark ? 0.16 : 0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(agent.name)
@@ -277,16 +306,11 @@ struct AgentCapabilitiesView: View {
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(isSelected ? accentColor : .secondary)
                     .frame(width: 24, height: 22)
-                    .background((isSelected ? accentColor : Color.secondary).opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            .padding(10)
-            .background(isSelected ? accentColor.opacity(0.12) : cardColor)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? accentColor.opacity(0.35) : lineColor, lineWidth: 1)
-            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
@@ -294,7 +318,7 @@ struct AgentCapabilitiesView: View {
     private func nativeHealthChip(_ health: AgentCapabilityNativeSkillHealth) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(health.unavailable == 0 ? Color(hex: "30d158") : Color(hex: "ff9f0a"))
+                .fill(health.unavailable == 0 ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange))
                 .frame(width: 5, height: 5)
             Text("\(health.available)/\(health.total)")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -302,8 +326,6 @@ struct AgentCapabilitiesView: View {
         }
         .padding(.horizontal, 6)
         .frame(height: 22)
-        .background(softColor)
-        .clipShape(RoundedRectangle(cornerRadius: 7))
         .help(appPreferences.text("capabilities.nativeSkills.health"))
     }
 
@@ -554,12 +576,7 @@ struct AgentCapabilitiesView: View {
             .disabled(viewModel.isSaving)
         }
         .padding(14)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(lineColor, lineWidth: 1)
-        )
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func skillsSection(agentId: String, profile: AgentCapabilityProfile) -> some View {
@@ -594,7 +611,7 @@ struct AgentCapabilitiesView: View {
                     .help(appPreferences.text("capabilities.addSkill"))
                 }
 
-                LazyVGrid(columns: skillColumns, spacing: 12) {
+                VStack(spacing: 0) {
                     ForEach(viewModel.skillCatalog) { skill in
                         skillCard(skill, agentId: agentId, profile: profile)
                     }
@@ -645,7 +662,7 @@ struct AgentCapabilitiesView: View {
 
                 if skill.isCustom {
                     Button {
-                        Task { await viewModel.deleteCustomSkill(skill.id) }
+                        customSkillPendingDeletion = skill
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 11, weight: .semibold))
@@ -668,14 +685,8 @@ struct AgentCapabilitiesView: View {
                 .controlSize(.mini)
             }
         }
-        .padding(10)
-        .frame(height: 78)
-        .background(softColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isOn ? accentColor.opacity(0.30) : lineColor, lineWidth: 1)
-        )
+        .padding(.vertical, 9)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func nativeSkillsSection(agent: CapabilityAgentOption) -> some View {
@@ -683,7 +694,7 @@ struct AgentCapabilitiesView: View {
         return capabilitySection(
             title: appPreferences.text("capabilities.nativeSkills"),
             iconName: "square.stack.3d.up.fill",
-            tint: Color(hex: colorScheme == .dark ? "f0b35a" : "c77700")
+            tint: Color(nsColor: .systemOrange)
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
@@ -719,7 +730,7 @@ struct AgentCapabilitiesView: View {
                 }
 
                 if let state, !state.skills.isEmpty {
-                    LazyVGrid(columns: toolColumns, spacing: 10) {
+                    VStack(spacing: 0) {
                         ForEach(state.skills) { skill in
                             nativeSkillCard(skill, agent: agent, state: state)
                         }
@@ -777,7 +788,8 @@ struct AgentCapabilitiesView: View {
 
             if state.supportsUninstall && skill.supportsUninstall {
                 Button {
-                    Task { await viewModel.uninstallNativeSkill(skill.id, for: agent.id) }
+                    nativeSkillPendingUninstall = skill
+                    nativeSkillPendingAgentID = agent.id
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 11, weight: .bold))
@@ -791,14 +803,8 @@ struct AgentCapabilitiesView: View {
                 .help(appPreferences.text("capabilities.nativeSkills.uninstall"))
             }
         }
-        .padding(10)
-        .frame(height: 58)
-        .background(softColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(skill.isActive ? lineColor : Color.orange.opacity(0.30), lineWidth: 1)
-        )
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) { Divider() }
         .help(nativeSkillHelp(skill))
     }
 
@@ -910,7 +916,7 @@ struct AgentCapabilitiesView: View {
             iconName: "square.grid.2x2",
             tint: mcpColor
         ) {
-            LazyVGrid(columns: toolColumns, spacing: 10) {
+            VStack(spacing: 0) {
                 ForEach(mcpManager.plugins) { plugin in
                     pluginCard(plugin, agentId: agentId, profile: profile)
                 }
@@ -953,14 +959,8 @@ struct AgentCapabilitiesView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
         }
-        .padding(10)
-        .frame(height: 58)
-        .background(softColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isOn ? mcpColor.opacity(0.30) : lineColor, lineWidth: 1)
-        )
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func toolsSection(agentId: String, profile: AgentCapabilityProfile) -> some View {
@@ -987,7 +987,7 @@ struct AgentCapabilitiesView: View {
                         .stroke(lineColor, lineWidth: 1)
                 )
 
-                LazyVGrid(columns: toolColumns, spacing: 10) {
+                VStack(spacing: 0) {
                     ForEach(filteredTools) { tool in
                         toolCard(tool, agentId: agentId, profile: profile)
                     }
@@ -1032,14 +1032,8 @@ struct AgentCapabilitiesView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
         }
-        .padding(9)
-        .frame(height: 54)
-        .background(softColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isOn ? toolColor.opacity(0.30) : lineColor, lineWidth: 1)
-        )
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func instructionsSection(agentId: String, profile: AgentCapabilityProfile) -> some View {
@@ -1099,28 +1093,14 @@ struct AgentCapabilitiesView: View {
         title: String,
         iconName: String,
         tint: Color,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: iconName)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(tint)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(tint)
-                Spacer()
-            }
+        MinimalSettingsSection(title: title) {
+            VStack(alignment: .leading, spacing: 12) {
             content()
+            }
+            .padding(.vertical, 10)
         }
-        .padding(14)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(lineColor, lineWidth: 1)
-        )
     }
 
     private var emptyPanel: some View {
@@ -1133,12 +1113,6 @@ struct AgentCapabilitiesView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: 180)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(lineColor, lineWidth: 1)
-        )
     }
 
     private func warningBanner(_ message: String) -> some View {
@@ -1156,13 +1130,7 @@ struct AgentCapabilitiesView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(accentColor)
         }
-        .padding(10)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(lineColor, lineWidth: 1)
-        )
+        .padding(.vertical, 8)
     }
 
     private func ensureSelectedAgent() {
@@ -1313,7 +1281,7 @@ struct AgentCapabilitiesView: View {
         if !skill.isActive {
             return Color.orange
         }
-        return Color(hex: colorScheme == .dark ? "f0b35a" : "c77700")
+        return Color(nsColor: .systemOrange)
     }
 
     private func submitNativeSkillInstall(for agent: CapabilityAgentOption) async {

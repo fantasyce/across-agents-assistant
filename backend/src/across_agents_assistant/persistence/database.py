@@ -314,6 +314,17 @@ class Database:
                 )
             ''')
 
+            # User-facing completion confirmation is separate from automated
+            # acceptance records and also supports externally-owned tasks.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS task_user_reviews (
+                    task_id TEXT PRIMARY KEY,
+                    review_status TEXT NOT NULL DEFAULT 'pending',
+                    accepted_at REAL,
+                    updated_at REAL NOT NULL
+                )
+            ''')
+
             # Requirement manifests for delivery-quality tracking (Phase 1)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS requirement_manifests (
@@ -494,6 +505,10 @@ class Database:
             cursor.execute(
                 'CREATE INDEX IF NOT EXISTS idx_acceptance_records_task_created '
                 'ON acceptance_records(task_id, created_at)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_task_user_reviews_status '
+                'ON task_user_reviews(review_status, updated_at DESC)'
             )
             cursor.execute(
                 'CREATE INDEX IF NOT EXISTS idx_requirement_manifests_task '

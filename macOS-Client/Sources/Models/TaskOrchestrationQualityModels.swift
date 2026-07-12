@@ -13,7 +13,18 @@ struct TaskOrchestrationQualityHealth: Decodable {
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             missingRequired = (try? container.decode([String].self, forKey: .missingRequired)) ?? []
-            failedConstraints = (try? container.decode([String].self, forKey: .failedConstraints)) ?? []
+            failedConstraints = Self.decodeStrings(container, forKey: .failedConstraints)
+        }
+
+        private static func decodeStrings(
+            _ container: KeyedDecodingContainer<CodingKeys>,
+            forKey key: CodingKeys
+        ) -> [String] {
+            if let strings = try? container.decode([String].self, forKey: key) { return strings }
+            if let values = try? container.decode([OperationsJSONValue].self, forKey: key) {
+                return values.map(\.displayText)
+            }
+            return []
         }
     }
 
@@ -34,6 +45,7 @@ struct TaskOrchestrationQualityHealth: Decodable {
         case qualityGate = "quality_gate"
         case nextRepairAction = "next_repair_action"
         case manifestRequired = "manifest_required"
+        case manifestTotal = "manifest_total"
         case manifestAccepted = "manifest_accepted"
         case manifestMissing = "manifest_missing"
         case terminalInconsistencies = "terminal_inconsistencies"
@@ -72,6 +84,7 @@ struct TaskOrchestrationQualityHealth: Decodable {
         qualityGate = try container.decodeIfPresent(String.self, forKey: .qualityGate)
         nextRepairAction = try container.decodeIfPresent(String.self, forKey: .nextRepairAction)
         manifestRequired = try container.decodeIfPresent(Int.self, forKey: .manifestRequired)
+            ?? container.decodeIfPresent(Int.self, forKey: .manifestTotal)
         manifestAccepted = try container.decodeIfPresent(Int.self, forKey: .manifestAccepted)
         manifestMissing = try container.decodeIfPresent(Int.self, forKey: .manifestMissing)
         terminalInconsistencies = (try? container.decode([String].self, forKey: .terminalInconsistencies)) ?? []
@@ -169,7 +182,13 @@ struct TaskOrchestrationDeliveryReport: Decodable {
         requiredTotal = try container.decodeIfPresent(Int.self, forKey: .requiredTotal)
         acceptedTotal = try container.decodeIfPresent(Int.self, forKey: .acceptedTotal)
         missingRequired = (try? container.decode([String].self, forKey: .missingRequired)) ?? []
-        failedConstraints = (try? container.decode([String].self, forKey: .failedConstraints)) ?? []
+        if let strings = try? container.decode([String].self, forKey: .failedConstraints) {
+            failedConstraints = strings
+        } else if let values = try? container.decode([OperationsJSONValue].self, forKey: .failedConstraints) {
+            failedConstraints = values.map(\.displayText)
+        } else {
+            failedConstraints = []
+        }
         nextAction = try container.decodeIfPresent(String.self, forKey: .nextAction)
         consistency = try container.decodeIfPresent(Consistency.self, forKey: .consistency)
         qualityReport = try container.decodeIfPresent(QualityReport.self, forKey: .qualityReport)

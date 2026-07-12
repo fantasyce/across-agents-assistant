@@ -5,15 +5,19 @@ struct StartupDiagnosticsView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showingPassedChecks = false
+    @State private var showingPaths = false
+    @State private var showingRuntime = false
+    @State private var showingReleaseDetails = false
 
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "202227") : Color(hex: "fafbfc") }
-    private var fieldColor: Color { colorScheme == .dark ? Color(hex: "15171b") : Color.black.opacity(0.045) }
+    private var textColor: Color { .primary }
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
+    private var cardColor: Color { Color(nsColor: .controlBackgroundColor) }
+    private var fieldColor: Color { Color(nsColor: .controlBackgroundColor) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                 header
 
                 if let report = settingsViewModel.startupDiagnostics {
@@ -29,8 +33,8 @@ struct StartupDiagnosticsView: View {
 
                 releaseVerificationSection
             }
-            .padding(SettingsHubPageLayout.contentPadding)
-            .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+            .padding(MinimalSettingsMetrics.contentPadding)
+            .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .background(bgColor)
@@ -42,18 +46,10 @@ struct StartupDiagnosticsView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(appPreferences.text("diagnostics.title"))
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(textColor)
-                Text(appPreferences.text("diagnostics.subtitle"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
+        MinimalSettingsPageHeader(
+            title: appPreferences.text("diagnostics.title"),
+            subtitle: appPreferences.text("diagnostics.subtitle")
+        ) {
             HStack(spacing: 8) {
                 Button {
                     Task { await settingsViewModel.runReleaseVerification() }
@@ -98,7 +94,6 @@ struct StartupDiagnosticsView: View {
                 .disabled(settingsViewModel.isLoadingStartupDiagnostics)
             }
         }
-        .padding(.top, 2)
     }
 
     private func overview(_ report: StartupDiagnosticsReport) -> some View {
@@ -118,7 +113,7 @@ struct StartupDiagnosticsView: View {
                 Text(localizedHeadline(report))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(textColor)
-                Text(report.providerSummary)
+                Text(localizedProviderSummary(report))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                 if let error = settingsViewModel.startupDiagnosticsError {
@@ -128,23 +123,38 @@ struct StartupDiagnosticsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(cardColor)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(statusColor(report.status).opacity(0.28), lineWidth: 1)
-        )
+        .padding(.vertical, 4)
     }
 
     private func checksSection(_ report: StartupDiagnosticsReport) -> some View {
-        diagnosticsSection(
+        let attentionChecks = report.checks.filter { !isNormal($0.status) }
+        let normalChecks = report.checks.filter { isNormal($0.status) }
+        return diagnosticsSection(
             title: appPreferences.text("diagnostics.checks"),
             subtitle: appPreferences.text("diagnostics.checks.subtitle")
         ) {
-            VStack(spacing: 10) {
-                ForEach(report.checks) { check in
+            VStack(spacing: 0) {
+                ForEach(attentionChecks) { check in
                     checkRow(check)
+                }
+
+                if !normalChecks.isEmpty {
+                    DisclosureGroup(isExpanded: $showingPassedChecks) {
+                        VStack(spacing: 0) {
+                            ForEach(normalChecks) { check in
+                                checkRow(check)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Label(appPreferences.text("diagnostics.passed"), systemImage: "checkmark.circle")
+                            Spacer()
+                            Text("\(normalChecks.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.vertical, 10)
+                    }
                 }
             }
         }
@@ -155,12 +165,18 @@ struct StartupDiagnosticsView: View {
             title: appPreferences.text("diagnostics.paths"),
             subtitle: appPreferences.text("diagnostics.paths.subtitle")
         ) {
-            VStack(spacing: 10) {
-                pathRow(title: "App Home", path: report.paths.appHome, canOpen: true)
-                pathRow(title: "Logs", path: report.paths.logsDir, canOpen: true)
-                pathRow(title: "Evidence", path: report.paths.evidenceDir, canOpen: true)
-                pathRow(title: "Socket", path: report.paths.socketPath, canOpen: false)
-                pathRow(title: "Database", path: report.paths.databasePath, canOpen: false)
+            DisclosureGroup(isExpanded: $showingPaths) {
+                VStack(spacing: 0) {
+                    pathRow(title: "App Home", path: report.paths.appHome, canOpen: true)
+                    pathRow(title: "Logs", path: report.paths.logsDir, canOpen: true)
+                    pathRow(title: "Evidence", path: report.paths.evidenceDir, canOpen: true)
+                    pathRow(title: "Socket", path: report.paths.socketPath, canOpen: false)
+                    pathRow(title: "Database", path: report.paths.databasePath, canOpen: false)
+                }
+            } label: {
+                Label(appPreferences.text("diagnostics.paths"), systemImage: "folder")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.vertical, 10)
             }
         }
     }
@@ -170,15 +186,22 @@ struct StartupDiagnosticsView: View {
             title: appPreferences.text("diagnostics.runtime"),
             subtitle: appPreferences.text("diagnostics.runtime.subtitle")
         ) {
-            HStack(spacing: 12) {
-                metricTile(title: "PID", value: "\(report.runtime.pid)", color: .blue)
-                metricTile(title: appPreferences.text("diagnostics.tasks"), value: "\(report.runtime.knownTasks)", color: .purple)
-                metricTile(
-                    title: appPreferences.text("diagnostics.persistence"),
-                    value: appPreferences.text(report.runtime.persistenceInitialized ? "system.yes" : "system.no"),
-                    color: report.runtime.persistenceInitialized ? .green : .orange
-                )
-                metricTile(title: appPreferences.text("diagnostics.uptime"), value: uptimeString(report.runtime.uptimeSec), color: .blue)
+            DisclosureGroup(isExpanded: $showingRuntime) {
+                HStack(spacing: 12) {
+                    metricTile(title: "PID", value: "\(report.runtime.pid)", color: .blue)
+                    metricTile(title: appPreferences.text("diagnostics.tasks"), value: "\(report.runtime.knownTasks)", color: .blue)
+                    metricTile(
+                        title: appPreferences.text("diagnostics.persistence"),
+                        value: appPreferences.text(report.runtime.persistenceInitialized ? "system.yes" : "system.no"),
+                        color: report.runtime.persistenceInitialized ? .green : .orange
+                    )
+                    metricTile(title: appPreferences.text("diagnostics.uptime"), value: uptimeString(report.runtime.uptimeSec), color: .blue)
+                }
+                .padding(.bottom, 10)
+            } label: {
+                Label(appPreferences.text("diagnostics.runtime"), systemImage: "waveform.path.ecg")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.vertical, 10)
             }
         }
     }
@@ -188,7 +211,8 @@ struct StartupDiagnosticsView: View {
             title: appPreferences.text("releaseVerification.title"),
             subtitle: appPreferences.text("releaseVerification.subtitle")
         ) {
-            VStack(spacing: 10) {
+            DisclosureGroup(isExpanded: $showingReleaseDetails) {
+                VStack(spacing: 10) {
                 if let report = settingsViewModel.releaseVerificationReport {
                     releaseVerificationOverview(report)
                     if let latest = report.latestReleaseE2E {
@@ -211,6 +235,21 @@ struct StartupDiagnosticsView: View {
                         .foregroundColor(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                }
+                .padding(.bottom, 10)
+            } label: {
+                HStack {
+                    Label(appPreferences.text("releaseVerification.latest"), systemImage: "checkmark.seal")
+                    Spacer()
+                    if let report = settingsViewModel.releaseVerificationReport {
+                        MinimalStatusLabel(
+                            text: localizedStatus(report.status),
+                            color: statusColor(report.status)
+                        )
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .padding(.vertical, 10)
             }
         }
     }
@@ -236,7 +275,7 @@ struct StartupDiagnosticsView: View {
                 metricTile(
                     title: appPreferences.text("diagnostics.tasks"),
                     value: "\(report.releaseEvaluation.evaluatedTaskCount)",
-                    color: .purple
+                    color: .blue
                 )
             }
 
@@ -398,7 +437,7 @@ struct StartupDiagnosticsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(appPreferences.text("releaseVerification.missingGatePaths"))
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Color(hex: "ff453a"))
+                .foregroundColor(Color(nsColor: .systemRed))
             ForEach(paths.prefix(5), id: \.self) { path in
                 Text(path)
                     .font(.system(size: 9, design: .monospaced))
@@ -421,7 +460,7 @@ struct StartupDiagnosticsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(appPreferences.text("releaseVerification.gateParseErrors"))
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Color(hex: "ff9f0a"))
+                .foregroundColor(Color(nsColor: .systemOrange))
             ForEach(errors.prefix(4)) { error in
                 Text("\(error.evidencePath): \(error.errorType)")
                     .font(.system(size: 9, design: .monospaced))
@@ -592,8 +631,6 @@ struct StartupDiagnosticsView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardColor)
-        .cornerRadius(8)
     }
 
     private var emptyState: some View {
@@ -609,24 +646,14 @@ struct StartupDiagnosticsView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardColor)
-        .cornerRadius(8)
     }
 
     private func diagnosticsSection<Content: View>(
         title: String,
         subtitle: String,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(textColor)
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+        MinimalSettingsSection(title: title, subtitle: subtitle) {
             content()
         }
     }
@@ -670,12 +697,7 @@ struct StartupDiagnosticsView: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(cardColor)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func pathRow(title: String, path: String, canOpen: Bool) -> some View {
@@ -704,8 +726,7 @@ struct StartupDiagnosticsView: View {
             }
         }
         .padding(12)
-        .background(fieldColor)
-        .cornerRadius(8)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func statusTile(title: String, value: String, status: StartupDiagnosticStatus) -> some View {
@@ -723,27 +744,29 @@ struct StartupDiagnosticsView: View {
                 .foregroundColor(textColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
-            Rectangle()
+            Circle()
                 .fill(color)
-                .frame(height: 3)
-                .cornerRadius(2)
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-        .background(fieldColor)
-        .cornerRadius(8)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+    }
+
+    private func isNormal(_ status: StartupDiagnosticStatus) -> Bool {
+        status == .ready || status == .passed
     }
 
     private func statusColor(_ status: StartupDiagnosticStatus) -> Color {
         switch status {
         case .ready, .passed:
-            return Color(hex: "30d158")
+            return Color(nsColor: .systemGreen)
         case .attention, .warning:
-            return Color(hex: "ff9f0a")
+            return Color(nsColor: .systemOrange)
         case .blocked, .failed:
-            return Color(hex: "ff453a")
+            return Color(nsColor: .systemRed)
         case .info:
-            return Color(hex: "64d2ff")
+            return Color(nsColor: .systemTeal)
         }
     }
 
@@ -771,6 +794,18 @@ struct StartupDiagnosticsView: View {
         return value
     }
 
+    private func localizedProviderSummary(_ report: StartupDiagnosticsReport) -> String {
+        [
+            ("deepseek", "DeepSeek"),
+            ("minimax", "MiniMax"),
+            ("agnes", "Agnes"),
+        ]
+        .map { id, title in
+            "\(title): \(appPreferences.statusText(report.keys.providers[id] ?? "unknown"))"
+        }
+        .joined(separator: " · ")
+    }
+
     private func statusColorValue(_ value: String) -> Color {
         if let status = StartupDiagnosticStatus(rawValue: value) {
             return statusColor(status)
@@ -781,11 +816,11 @@ struct StartupDiagnosticsView: View {
     private func gateStatusColor(_ value: String) -> Color {
         switch value {
         case "configured", "passed":
-            return Color(hex: "30d158")
+            return Color(nsColor: .systemGreen)
         case "manual_required", "attention", "warning":
-            return Color(hex: "ff9f0a")
+            return Color(nsColor: .systemOrange)
         case "missing", "failed", "blocked":
-            return Color(hex: "ff453a")
+            return Color(nsColor: .systemRed)
         default:
             return .secondary
         }
@@ -793,12 +828,12 @@ struct StartupDiagnosticsView: View {
 
     private func gateSummaryColor(_ summary: ReleaseVerificationPreReleaseGateSummary) -> Color {
         if summary.requiredFailed > 0 || summary.failed > 0 || summary.requiredMissing > 0 || summary.missing > 0 {
-            return Color(hex: "ff453a")
+            return Color(nsColor: .systemRed)
         }
         if summary.requiredManual > 0 || summary.manualRequired > 0 {
-            return Color(hex: "ff9f0a")
+            return Color(nsColor: .systemOrange)
         }
-        return Color(hex: "30d158")
+        return Color(nsColor: .systemGreen)
     }
 
     private func gateIconName(_ value: String) -> String {

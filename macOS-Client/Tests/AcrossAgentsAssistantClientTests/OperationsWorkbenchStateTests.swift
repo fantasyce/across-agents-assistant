@@ -4,10 +4,15 @@ import Testing
 
 struct OperationsWorkbenchStateTests {
     @Test func primaryInformationArchitectureIsStable() {
-        #expect(OperationsWorkbenchSurface.primary == [.workspaces, .qualityGate, .evidence, .memory])
+        #expect(OperationsWorkbenchSurface.primary == [.assist])
         #expect(OperationsWorkbenchSurface.allCases.contains(.humanReview))
         #expect(OperationsWorkbenchSurface.allCases.contains(.assist))
-        #expect(SettingsHubTab.groupedNavigation == [.diagnostics, .models, .capabilities, .plugins, .tools, .settings])
+        #expect(OperationsWorkbenchSurface.allCases.contains(.autopilot))
+        #expect(OperationsWorkbenchSurface.allCases.contains(.achievements))
+        #expect(SettingsHubTab.allCases.contains(.models))
+        #expect(SettingsHubTab.allCases.contains(.capabilities))
+        #expect(SettingsHubTab.allCases.contains(.plugins))
+        #expect(SettingsHubTab.allCases.contains(.mcp))
     }
 
     @Test func boundedWorkspaceLogKeepsLatestChunksAndReportsTruncation() {

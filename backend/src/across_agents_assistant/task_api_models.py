@@ -69,6 +69,8 @@ class TaskInfo(BaseModel):
     quality_health: Dict[str, Any] = Field(default_factory=dict)
     delivery_report: Dict[str, Any] = Field(default_factory=dict)
     observability: Dict[str, Any] = Field(default_factory=dict)
+    review_status: str = "pending"
+    accepted_at: Optional[float] = None
 
 
 class TaskSummaryInfo(BaseModel):
@@ -84,6 +86,8 @@ class TaskSummaryInfo(BaseModel):
     project_dir: Optional[str] = None
     owner_agent: Optional[str] = None
     delivery_mode: str = "external"
+    review_status: str = "pending"
+    accepted_at: Optional[float] = None
 
 
 class TaskPageResponse(BaseModel):

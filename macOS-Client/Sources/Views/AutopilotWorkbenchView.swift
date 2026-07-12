@@ -50,9 +50,7 @@ struct AutopilotWorkbenchView: View {
                     loadingRow
                 }
             }
-            .padding(SettingsHubPageLayout.contentPadding)
-            .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .minimalPageContentFrame()
         }
         .overlay {
             if viewModel.isWorking {
@@ -74,41 +72,75 @@ struct AutopilotWorkbenchView: View {
     }
 
     private var titleRow: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(appPreferences.text("workbench.title"))
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(textColor)
-                Text(appPreferences.text("workbench.subtitle"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        MinimalPageHeader(
+            title: appPreferences.text("workbench.title"),
+            subtitle: appPreferences.text("workbench.subtitle")
+        ) {
+            MinimalIconButton(
+                systemName: "arrow.clockwise",
+                label: appPreferences.text("workbench.refresh"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading
+            ) {
+                Task {
+                    async let workbenchLoad: Void = viewModel.load(refresh: true)
+                    async let readinessLoad: Void = workspaceReadiness.load(refresh: true)
+                    _ = await (workbenchLoad, readinessLoad)
+                }
             }
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                iconButton("arrow.clockwise", help: appPreferences.text("workbench.refresh")) {
-                    Task {
-                        async let workbenchLoad: Void = viewModel.load(refresh: true)
-                        async let readinessLoad: Void = workspaceReadiness.load(refresh: true)
-                        _ = await (workbenchLoad, readinessLoad)
-                    }
+            MinimalIconButton(
+                systemName: "checkmark.seal",
+                label: appPreferences.text("workbench.ensure"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading
+            ) {
+                Task {
+                    await viewModel.ensureSelfIterationPlan(
+                        successMessage: appPreferences.text("workbench.action.ensure.success")
+                    )
                 }
-                iconButton("checkmark.seal", help: appPreferences.text("workbench.ensure")) {
-                    Task { await viewModel.ensureSelfIterationPlan() }
+            }
+            MinimalIconButton(
+                systemName: "timer",
+                label: appPreferences.text("workbench.tick"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading
+            ) {
+                Task {
+                    await viewModel.tickTriggers(
+                        successMessage: appPreferences.text("workbench.action.tick.success")
+                    )
                 }
-                iconButton("timer", help: appPreferences.text("workbench.tick")) {
-                    Task { await viewModel.tickTriggers() }
+            }
+            MinimalIconButton(
+                systemName: "play.circle",
+                label: appPreferences.text("workbench.scheduler.start"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading || viewModel.snapshot?.summary.schedulerRunning == true
+            ) {
+                Task {
+                    await viewModel.startScheduler(
+                        successMessage: appPreferences.text("workbench.action.schedulerStarted.success")
+                    )
                 }
-                iconButton("play.circle", help: appPreferences.text("workbench.scheduler.start")) {
-                    Task { await viewModel.startScheduler() }
+            }
+            MinimalIconButton(
+                systemName: "stop.circle",
+                label: appPreferences.text("workbench.scheduler.stop"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading || viewModel.snapshot?.summary.schedulerRunning != true
+            ) {
+                Task {
+                    await viewModel.stopScheduler(
+                        successMessage: appPreferences.text("workbench.action.schedulerStopped.success")
+                    )
                 }
-                iconButton("stop.circle", help: appPreferences.text("workbench.scheduler.stop")) {
-                    Task { await viewModel.stopScheduler() }
-                }
-                iconButton("point.3.connected.trianglepath.dotted", help: appPreferences.text("workbench.interopE2E.run")) {
-                    Task { await viewModel.runAgentInteropE2E() }
+            }
+            MinimalIconButton(
+                systemName: "point.3.connected.trianglepath.dotted",
+                label: appPreferences.text("workbench.interopE2E.run"),
+                isDisabled: viewModel.isWorking || viewModel.isLoading
+            ) {
+                Task {
+                    await viewModel.runAgentInteropE2E(
+                        successMessage: appPreferences.text("workbench.action.interop.success"),
+                        failureMessage: appPreferences.text("workbench.action.interop.failed")
+                    )
                 }
             }
         }
@@ -262,7 +294,7 @@ struct AutopilotWorkbenchView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "terminal")
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(statusColor(agent.available ? "ready" : "attention"))
+                                .foregroundColor(agent.available ? statusColor("ready") : .secondary)
                                 .frame(width: 18, height: 18)
                             Text(agent.displayName)
                                 .font(.system(size: 12, weight: .medium))
@@ -275,7 +307,12 @@ struct AutopilotWorkbenchView: View {
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
-                            StatusChip(status: agent.status.rawValue)
+                            StatusChip(
+                                status: agent.available ? "ready" : "not_installed",
+                                label: agent.available
+                                    ? appPreferences.text("workbench.status.ready")
+                                    : appPreferences.text("workbench.agent.optionalNotInstalled")
+                            )
                         }
                         .padding(.vertical, 2)
                     }
@@ -418,7 +455,11 @@ struct AutopilotWorkbenchView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(statusColor(section.status))
                     .frame(width: 18, height: 18)
-                Text(section.title)
+                Text(
+                    section.id == "self_iteration"
+                        ? appPreferences.text("workbench.section.loopEngineering")
+                        : section.title
+                )
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(textColor)
                     .lineLimit(1)
@@ -439,7 +480,9 @@ struct AutopilotWorkbenchView: View {
                         Text(pair.value.description)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(textColor)
-                            .lineLimit(2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(pair.value.description)
                         Spacer(minLength: 0)
                     }
                 }
@@ -452,8 +495,10 @@ struct AutopilotWorkbenchView: View {
                         Text(item.objectValue.map(compactObjectSummary) ?? item.description)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
-                            .lineLimit(2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(item.objectValue.map(compactObjectSummary) ?? item.description)
                     }
                 }
             }
@@ -467,8 +512,8 @@ struct AutopilotWorkbenchView: View {
             }
         }
         .padding(14)
-        .frame(minHeight: 190, alignment: .topLeading)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 220, alignment: .topLeading)
+        .clipped()
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
@@ -495,11 +540,11 @@ struct AutopilotWorkbenchView: View {
                 .sorted { $0.key < $1.key }
                 .prefix(max(0, 7 - prioritized.count))
                 .map { (key: $0.key, value: $0.value) }
-            return Array((prioritized + remaining).prefix(7))
+            return Array((prioritized + remaining).prefix(4))
         }
         return section.summary
             .sorted { $0.key < $1.key }
-            .prefix(5)
+            .prefix(4)
             .map { (key: $0.key, value: $0.value) }
     }
 
@@ -541,20 +586,6 @@ struct AutopilotWorkbenchView: View {
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
-    }
-
-    private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 32, height: 30)
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(textColor)
-        .background(fieldColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .help(help)
-        .disabled(viewModel.isWorking || viewModel.isLoading)
     }
 
     private func banner(_ text: String, color: Color) -> some View {

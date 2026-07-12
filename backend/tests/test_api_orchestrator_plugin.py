@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.api_server import app
+from across_agents_assistant.persistence.database import Database
+from across_agents_assistant.persistence.task_persistence import TaskPersistenceService
 from across_agents_assistant.task_review.release_e2e import RELEASE_E2E_SCENARIO_ID
 
 
@@ -549,9 +551,44 @@ def test_release_e2e_uses_external_orchestrator_slot_for_full_task_lifecycle(mon
     assert status["quality_health"]["delivery_quality"] == "passed"
     assert evidence["benchmark"]["status"] == "passed"
     assert evidence["audit"]["expected_files"] == REQUIRED_FILES
+    assert evidence["audit"]["secrets_redacted"] is True
     assert ("POST", "/release-e2e") in server.requests
     assert ("POST", "/tasks/task-api-external/run") in server.requests
     assert ("GET", "/tasks/task-api-external/evidence-bundle") in server.requests
+
+
+def test_completed_external_task_acceptance_is_persistent_and_idempotent(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+    persistence = TaskPersistenceService(Database(str(tmp_path / "reviews.db")))
+    persistence.db.init_schema()
+    monkeypatch.setattr(api_server._task_state, "_persistence", persistence)
+    monkeypatch.setattr(api_server, "_task_persistence_initialized", True)
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        client = TestClient(app)
+        created = client.post(
+            "/api/release/e2e/tasks",
+            json={"project_dir": str(tmp_path / "project"), "run_label": "acceptance"},
+        )
+        task_id = created.json()["task_id"]
+        assert client.post(f"/api/tasks/{task_id}/run").status_code == 200
+
+        accepted = client.post(f"/api/tasks/{task_id}/accept")
+        accepted_again = client.post(f"/api/tasks/{task_id}/accept")
+        detail = client.get(f"/api/tasks/{task_id}").json()
+        page = client.get("/api/tasks/page").json()
+
+    assert accepted.status_code == 200
+    assert accepted.json()["review_status"] == "accepted"
+    assert accepted.json()["accepted_at"] is not None
+    assert accepted_again.json() == accepted.json()
+    assert detail["review_status"] == "accepted"
+    summary = next(item for item in page["tasks"] if item["task_id"] == task_id)
+    assert summary["review_status"] == "accepted"
 
 
 def test_external_orchestrator_tasks_reject_legacy_lifecycle_controls(monkeypatch, tmp_path):

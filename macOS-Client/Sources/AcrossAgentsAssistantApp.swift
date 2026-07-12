@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -25,7 +26,7 @@ struct AcrossAgentsAssistantApp: App {
             )
             let controller = NSHostingController(rootView: rootView)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+                contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -48,7 +49,7 @@ struct AcrossAgentsAssistantApp: App {
             )
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1200, height: 800)
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(after: .appSettings) {
                 Button(appPreferences.text("menubar.showWindow")) {
@@ -62,7 +63,7 @@ struct AcrossAgentsAssistantApp: App {
                 settingsViewModel: settingsViewModel,
                 preferences: appPreferences,
                 selectedTab: .settings,
-                onClose: nil
+                onClose: { NSApplication.shared.keyWindow?.performClose(nil) }
             )
             .environmentObject(appPreferences)
             .frame(minWidth: 760, idealWidth: 920, minHeight: 560, idealHeight: 700)
@@ -70,6 +71,11 @@ struct AcrossAgentsAssistantApp: App {
             .onChange(of: appPreferences.colorSchemeMode) {
                 AppAppearanceController.apply(appPreferences.colorSchemeMode)
             }
+            .overlay(
+                TrafficLightHider(resetsRestoredZoomedFrame: false)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+            )
         }
     }
 
@@ -84,7 +90,7 @@ private struct MainPanelRootView: View {
         MainPanelView(viewModel: viewModel)
             .environmentObject(settingsViewModel)
             .environmentObject(appPreferences)
-            .frame(minWidth: 900, idealWidth: 1200, minHeight: 600, idealHeight: 800)
+            .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 820)
             .background(MainWindowLifecycleBridge())
             .onAppear { AppAppearanceController.apply(appPreferences.colorSchemeMode) }
             .onChange(of: appPreferences.colorSchemeMode) {

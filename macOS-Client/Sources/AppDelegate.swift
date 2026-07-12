@@ -99,6 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        MainWindowRegistry.shared.ensureMainWindowIsOnScreen()
+    }
+
     private func setupStatusMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 

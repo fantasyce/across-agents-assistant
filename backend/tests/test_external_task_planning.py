@@ -42,6 +42,27 @@ def test_parallel_planning_leaves_dependencies_empty():
     assert subtasks == []
 
 
+def test_negative_guidance_does_not_erase_explicit_artifact_in_prior_clause():
+    req = ExternalTaskPlanningRequest(
+        description=(
+            "修复发现的高优先级问题；最终生成 DELIVERY_AUDIT.md，记录实际变更；"
+            "不要只写报告，必须实际修复至少一个可验证问题。"
+        ),
+        task_types=["functional", "artifact"],
+    )
+
+    assert deliverables_for_external_task(req) == ["DELIVERY_AUDIT.md"]
+
+
+def test_negative_file_clause_is_not_treated_as_required_delivery():
+    req = ExternalTaskPlanningRequest(
+        description="Create app.py. Do not create package.json or node_modules.",
+        task_types=["functional", "artifact"],
+    )
+
+    assert deliverables_for_external_task(req) == ["app.py"]
+
+
 def test_owner_and_subtask_agent_defaults_are_host_controlled():
     req = ExternalTaskPlanningRequest(description="Build a dashboard")
 

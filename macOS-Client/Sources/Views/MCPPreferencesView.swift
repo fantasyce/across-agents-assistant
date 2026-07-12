@@ -8,53 +8,31 @@ struct MCPPreferencesView: View {
     var onClose: (() -> Void)? = nil
     var embeddedInHub: Bool = false
 
-    // Dynamic colors
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Custom Header
             if !embeddedInHub {
-                HStack {
-                    CustomTrafficLights(onClose: onClose)
-
-                    Spacer()
-
-                    Text(appPreferences.text("mcp.title"))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(textColor)
-
-                    Spacer()
-
-                    // Balance the traffic lights width
-                    Spacer().frame(width: 50)
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 56)
-                .background(
-                    ZStack {
-                        bgColor.opacity(0.8)
-                        WindowDragView()
-                            .contentShape(Rectangle())
-                    }
-                )
-
-                Divider().opacity(0.5)
+                MinimalSettingsWindowHeader(title: appPreferences.text("mcp.title"), onClose: onClose)
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
-                    pageTitle
+                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
+                    MinimalSettingsPageHeader(title: appPreferences.text("mcp.title"))
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3), spacing: 16) {
-                        ForEach($manager.plugins) { $plugin in
-                            MCPCardView(plugin: $plugin)
+                    VStack(spacing: 0) {
+                        Divider()
+                        ForEach(manager.plugins.indices, id: \.self) { index in
+                            MCPCardView(plugin: $manager.plugins[index])
+                            if index < manager.plugins.count - 1 {
+                                Divider().padding(.leading, 34)
+                            }
                         }
+                        Divider()
                     }
                 }
-                .padding(SettingsHubPageLayout.contentPadding)
-                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .padding(MinimalSettingsMetrics.contentPadding)
+                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .background(bgColor)
@@ -70,94 +48,67 @@ struct MCPPreferencesView: View {
         .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
     }
 
-    private var pageTitle: some View {
-        Text(appPreferences.text("mcp.title"))
-            .font(.system(size: 28, weight: .bold))
-            .foregroundColor(textColor)
-            .padding(.top, 2)
-    }
 }
 
 struct MCPCardView: View {
     @Binding var plugin: MCPPlugin
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
-    @State private var showingFilePicker = false
-    @State private var isHoveringBrowse = false
-    private let implementationRowHeight: CGFloat = 14
-    private let configurationRowHeight: CGFloat = 26
-    private let minimumCardHeight: CGFloat = 160
+    @State private var isExpanded = false
 
-    // Dynamic colors
-    private var sidebarBgColor: Color { colorScheme == .dark ? .legacySidebarDark : .legacySidebarLight }
     private var accentColor: Color { AcrossTheme.accent }
-    private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Top Row: Icon, Title, Toggle
-            HStack(alignment: .top) {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(pluginDisplayDescription)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                implementationRow
+
+                if plugin.status == "error", let errorMsg = plugin.errorMessage {
+                    MinimalSettingsNotice(
+                        text: errorMsg,
+                        color: .red,
+                        systemImage: "exclamationmark.circle.fill"
+                    )
+                }
+
+                configurationRow
+            }
+            .padding(.leading, 28)
+            .padding(.bottom, 10)
+        } label: {
+            HStack(spacing: 10) {
                 Image(systemName: iconName(for: plugin.id))
-                    .font(.system(size: 16))
-                    .foregroundColor(accentColor)
-                    .frame(width: 32, height: 32)
-                    .background(accentColor.opacity(0.15))
-                    .cornerRadius(8)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(pluginDisplayName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(textColor)
-                        .lineLimit(1)
-
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(statusColor(for: plugin.status))
-                            .frame(width: 6, height: 6)
-                        Text(statusText(for: plugin))
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                    }
+                        .font(.system(size: 12, weight: .medium))
+                    MinimalStatusLabel(
+                        text: statusText(for: plugin),
+                        color: statusColor(for: plugin.status)
+                    )
                 }
 
-                Spacer()
+                Spacer(minLength: 12)
 
                 Toggle("", isOn: Binding(
                     get: { plugin.isEnabled },
                     set: { _ in MCPPluginManager.shared.togglePlugin(id: plugin.id) }
                 ))
-                .toggleStyle(SwitchToggleStyle(tint: accentColor))
+                .labelsHidden()
                 .controlSize(.small)
             }
-
-            Text(pluginDisplayDescription)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(minHeight: 28, alignment: .topLeading)
-
-            implementationRow
-
-            if plugin.status == "error", let errorMsg = plugin.errorMessage {
-                Text(errorMsg)
-                    .font(.system(size: 10))
-                    .foregroundColor(.red.opacity(0.8))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            configurationRow
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
-        .padding(14)
-        .frame(minHeight: minimumCardHeight, alignment: .topLeading)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(sidebarBgColor)
-        .cornerRadius(10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-        )
+        .disclosureGroupStyle(.automatic)
     }
 
     @ViewBuilder
@@ -165,15 +116,7 @@ struct MCPCardView: View {
         if let implementationLabelKey = plugin.implementationLabelKey {
             Text(appPreferences.text(implementationLabelKey))
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(accentColor.opacity(0.9))
-                .lineLimit(1)
-                .frame(height: implementationRowHeight, alignment: .leading)
-        } else {
-            Text(" ")
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-                .frame(height: implementationRowHeight, alignment: .leading)
-                .hidden()
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -193,44 +136,26 @@ struct MCPCardView: View {
                         MCPPluginManager.shared.updatePluginArgs(id: plugin.id, args: newArgs)
                     }
                 ))
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11))
-                .foregroundColor(textColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.05))
-                .cornerRadius(4)
                 .disabled(!plugin.allowsDirectConfigurationEditing)
 
                 if plugin.canBrowseConfiguration {
                     Button(action: openFilePicker) {
-                        Text(appPreferences.text("system.browse"))
-                            .font(.system(size: 11))
-                            .foregroundColor(textColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.black.opacity(isHoveringBrowse ? 0.1 : 0.05))
-                            .cornerRadius(4)
+                        Image(systemName: "folder")
                     }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        withAnimation(.easeInOut(duration: 0.1)) {
-                            isHoveringBrowse = hovering
-                        }
-                    }
+                    .buttonStyle(.borderless)
+                    .help(appPreferences.text("system.browse"))
                 }
             }
-            .frame(height: configurationRowHeight, alignment: .leading)
         } else if plugin.isBuiltIn {
             Text(appPreferences.text("mcp.noConfigurationRequired"))
                 .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(height: configurationRowHeight, alignment: .leading)
+                .foregroundStyle(.secondary)
         } else {
             Text(appPreferences.text("mcp.customConfiguration"))
                 .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(height: configurationRowHeight, alignment: .leading)
+                .foregroundStyle(.secondary)
         }
     }
 

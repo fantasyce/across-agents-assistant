@@ -35,6 +35,22 @@ def test_agent_interop_prefers_managed_plugins_for_packaged_app(tmp_path, monkey
     assert roots["autopilot"] == (managed / "across-autopilot").resolve()
 
 
+def test_agent_interop_recalls_the_pending_memories_it_just_created(tmp_path, monkeypatch):
+    commands = []
+
+    def fake_run_json(command, **_kwargs):
+        commands.append(command)
+        return {"result_count": 1}
+
+    monkeypatch.setattr(interop, "_run_json", fake_run_json)
+
+    interop._context_recall_evidence(tmp_path, {}, "run-test")
+    interop._context_recall_agent_team_receipt(tmp_path, {}, "pack-test")
+
+    assert commands[0][-3:] == ["--status", "pending", "--json"]
+    assert commands[1][-3:] == ["--status", "pending", "--json"]
+
+
 def test_agent_interop_sandbox_evidence_e2e(tmp_path, monkeypatch):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "aaa-home"))
     payload = run_agent_interop_e2e(

@@ -38,6 +38,22 @@ def test_public_payload_sanitizer_redacts_traceback_text_under_neutral_keys():
     assert "See local backend logs for details" in encoded
 
 
+def test_public_payload_sanitizer_preserves_structured_error_collections():
+    payload = api_server._sanitize_public_payload(
+        {
+            "errors": [],
+            "operation_errors": ["retry later", TRACEBACK_TEXT],
+            "error_details": {"message": TRACEBACK_TEXT, "recoverable": True},
+        }
+    )
+
+    assert payload["errors"] == []
+    assert payload["operation_errors"][0] == "retry later"
+    assert payload["operation_errors"][1] == "Internal operation failed. See local backend logs for details."
+    assert payload["error_details"]["recoverable"] is True
+    assert payload["error_details"]["message"] == "Internal operation failed. See local backend logs for details."
+
+
 def test_startup_diagnostics_endpoint_sanitizes_traceback_payload(monkeypatch):
     monkeypatch.setattr(
         api_server,

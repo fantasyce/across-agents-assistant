@@ -59,16 +59,7 @@ final class AgentWorkspaceOperationsViewModel: ObservableObject {
     }
 
     var reviewSignals: [HumanReviewSignal] {
-        var signals = (readiness?.readinessIssues ?? []).map { issue in
-            HumanReviewSignal(
-                id: "workspace-readiness-\(issue)",
-                kind: .blockingGate,
-                title: issue.replacingOccurrences(of: "_", with: " "),
-                detail: "Workspace creation prerequisite",
-                status: "blocked",
-                source: "Workspace Readiness"
-            )
-        }
+        var signals: [HumanReviewSignal] = []
         if let workspace {
             for candidate in workspace.candidates
                 where ["blocked", "cancelled", "completed", "failed", "interrupted"].contains(candidate.status)

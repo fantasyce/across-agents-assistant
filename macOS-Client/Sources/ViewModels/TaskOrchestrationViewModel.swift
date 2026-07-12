@@ -6,6 +6,8 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var selectedTask: TaskDetail?
     @Published var viewMode: ViewMode = .empty
     @Published var isLoading = false
+    @Published var isSubmittingTask = false
+    @Published var isAcceptingTask = false
     @Published var isLoadingMoreTasks = false
     @Published var hasMoreTasks = false
     @Published var searchText = ""
@@ -80,6 +82,7 @@ class TaskOrchestrationViewModel: ObservableObject {
     typealias AutoTaskSubmitResponse = TaskOrchestrationAutoTaskSubmitResponse
     typealias TaskSummary = TaskOrchestrationTaskSummary
     typealias TaskPageResponse = TaskOrchestrationTaskPageResponse
+    typealias TaskReviewResponse = TaskOrchestrationTaskReviewResponse
     typealias OrchestratorPluginStatus = TaskOrchestrationOrchestratorPluginStatus
     typealias QualityHealth = TaskOrchestrationQualityHealth
     typealias DeliveryReport = TaskOrchestrationDeliveryReport
@@ -125,6 +128,68 @@ class TaskOrchestrationViewModel: ObservableObject {
         loadTaskPage(reset: true)
         loadReleaseEvaluation()
         loadReleaseE2EScenarios()
+    }
+
+    func acceptTaskResult(_ taskId: String, onAccepted: @escaping () -> Void) {
+        Task { @MainActor in
+            guard !isAcceptingTask else { return }
+            guard selectedTask?.taskId == taskId else { return }
+            isAcceptingTask = true
+            errorMessage = nil
+
+            guard let baseURL else {
+                errorMessage = "Server URL not configured"
+                isAcceptingTask = false
+                return
+            }
+
+            do {
+                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/accept")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
+                    throw NSError(
+                        domain: "TaskReview",
+                        code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                        userInfo: [NSLocalizedDescriptionKey: detail ?? "Unable to accept this result"]
+                    )
+                }
+
+                let review = try JSONDecoder().decode(TaskReviewResponse.self, from: data)
+                if let task = selectedTask, task.taskId == review.taskId {
+                    selectedTask = task.replacing(
+                        reviewStatus: review.reviewStatus,
+                        acceptedAt: review.acceptedAt
+                    )
+                }
+                tasks = tasks.map { summary in
+                    guard summary.taskId == review.taskId else { return summary }
+                    return TaskSummary(
+                        taskId: summary.taskId,
+                        description: summary.description,
+                        status: summary.status,
+                        progress: summary.progress,
+                        completedCount: summary.completedCount,
+                        totalCount: summary.totalCount,
+                        projectDir: summary.projectDir,
+                        ownerAgent: summary.ownerAgent,
+                        deliveryMode: summary.deliveryMode,
+                        externalTask: summary.externalTask,
+                        reviewStatus: review.reviewStatus,
+                        acceptedAt: review.acceptedAt
+                    )
+                }
+                isAcceptingTask = false
+                onAccepted()
+            } catch {
+                errorMessage = error.localizedDescription
+                isAcceptingTask = false
+            }
+        }
     }
 
     func loadOrchestratorPluginStatus() {
@@ -587,15 +652,18 @@ class TaskOrchestrationViewModel: ObservableObject {
         strictDependency: Bool = true
     ) {
         Task { @MainActor in
+            guard !isSubmittingTask else { return }
             guard !isOrchestratorPluginUnavailable else {
                 errorMessage = orchestratorPluginUnavailableMessage
                 return
             }
+            isSubmittingTask = true
             isLoading = true
             errorMessage = nil
 
             guard let baseURL = baseURL else {
                 errorMessage = "Server URL not configured"
+                isSubmittingTask = false
                 isLoading = false
                 return
             }
@@ -606,6 +674,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 60
 
                 var body: [String: Any] = [
                     "description": description,
@@ -627,6 +696,7 @@ class TaskOrchestrationViewModel: ObservableObject {
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     errorMessage = "Invalid response"
+                    isSubmittingTask = false
                     isLoading = false
                     return
                 }
@@ -657,9 +727,11 @@ class TaskOrchestrationViewModel: ObservableObject {
                     }
                 }
 
+                isSubmittingTask = false
                 isLoading = false
             } catch {
                 errorMessage = error.localizedDescription
+                isSubmittingTask = false
                 isLoading = false
             }
         }
@@ -813,6 +885,14 @@ class TaskOrchestrationViewModel: ObservableObject {
         simpleStartDraft = nil
         viewMode = .createForm
         selectedTask = nil
+        stopSSE()
+    }
+
+    func enterWorkflowPicker() {
+        errorMessage = nil
+        simpleStartDraft = nil
+        selectedTask = nil
+        viewMode = .empty
         stopSSE()
     }
 

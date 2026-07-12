@@ -137,7 +137,8 @@ def _redact_sensitive_evidence(value: Any) -> Any:
         sanitized: Dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
-            if SENSITIVE_EVIDENCE_KEY_RE.search(key_text):
+            is_redaction_flag = key_text.lower().endswith("_redacted") and isinstance(item, bool)
+            if SENSITIVE_EVIDENCE_KEY_RE.search(key_text) and not is_redaction_flag:
                 sanitized[key_text] = "[redacted]"
             else:
                 sanitized[key_text] = _redact_sensitive_evidence(item)

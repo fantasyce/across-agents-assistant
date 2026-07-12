@@ -1,0 +1,378 @@
+import SwiftUI
+
+struct MinimalPageHeader<Actions: View>: View {
+    let title: String
+    let subtitle: String?
+    private let actions: Actions
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.actions = actions()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 28, weight: .bold))
+                    .lineLimit(1)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 18)
+            HStack(spacing: 8) {
+                actions
+            }
+        }
+    }
+}
+
+private struct MinimalPageContentFrameModifier: ViewModifier {
+    let topPadding: CGFloat
+    let bottomPadding: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+            .padding(.horizontal, SettingsHubPageLayout.contentPadding)
+            .padding(.top, topPadding)
+            .padding(.bottom, bottomPadding)
+            .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+extension View {
+    func minimalPageContentFrame(
+        topPadding: CGFloat = SettingsHubPageLayout.contentPadding,
+        bottomPadding: CGFloat = SettingsHubPageLayout.contentPadding
+    ) -> some View {
+        modifier(MinimalPageContentFrameModifier(
+            topPadding: topPadding,
+            bottomPadding: bottomPadding
+        ))
+    }
+}
+
+struct MinimalWorkflowHeader<Actions: View>: View {
+    let title: String
+    let subtitle: String?
+    let status: String?
+    private let actions: Actions
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        status: String? = nil,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.status = status
+        self.actions = actions()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            if let status {
+                MinimalWorkflowStatusLabel(status: status)
+            }
+
+            actions
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+}
+
+struct MinimalWorkflowStatusLabel: View {
+    let status: String
+    let label: String?
+    @EnvironmentObject private var preferences: AppPreferences
+
+    init(status: String, label: String? = nil) {
+        self.status = status
+        self.label = label
+    }
+
+    var body: some View {
+        Label {
+            Text(label ?? preferences.statusText(status))
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: StatusPalette.systemImage(for: status))
+                .accessibilityHidden(true)
+        }
+        .font(.caption)
+        .foregroundStyle(StatusPalette.tone(for: status).foreground)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct MinimalWorkflowStateView: View {
+    enum State {
+        case loading
+        case empty
+        case error
+        case unavailable
+    }
+
+    let state: State
+    let title: String
+    let detail: String?
+    let actionTitle: String?
+    let action: (() -> Void)?
+
+    init(
+        state: State,
+        title: String,
+        detail: String? = nil,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        self.state = state
+        self.title = title
+        self.detail = detail
+        self.actionTitle = actionTitle
+        self.action = action
+    }
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemName)
+        } description: {
+            if let detail, !detail.isEmpty {
+                Text(detail)
+            }
+        } actions: {
+            if state == .loading {
+                ProgressView()
+                    .controlSize(.small)
+            } else if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var systemName: String {
+        switch state {
+        case .loading: return "arrow.triangle.2.circlepath"
+        case .empty: return "tray"
+        case .error: return "exclamationmark.triangle"
+        case .unavailable: return "slash.circle"
+        }
+    }
+}
+
+struct MinimalSectionHeader: View {
+    let title: String
+    let detail: String?
+
+    init(_ title: String, detail: String? = nil) {
+        self.title = title
+        self.detail = detail
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct MinimalKeyValueRow: View {
+    let title: String
+    let value: String
+    let monospaced: Bool
+
+    init(_ title: String, value: String, monospaced: Bool = false) {
+        self.title = title
+        self.value = value
+        self.monospaced = monospaced
+    }
+
+    var body: some View {
+        LabeledContent(title) {
+            Text(value)
+                .font(monospaced ? .system(.caption, design: .monospaced) : .caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .font(.caption)
+    }
+}
+
+struct MinimalNoticeBar: View {
+    let message: String
+    let status: String
+
+    init(message: String, status: String) {
+        self.message = message
+        self.status = status
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: StatusPalette.systemImage(for: status))
+                .foregroundStyle(StatusPalette.tone(for: status).foreground)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.caption)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 32)
+        .background(.quaternary.opacity(0.35))
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct MinimalIconButton: View {
+    let systemName: String
+    let label: String
+    let isDisabled: Bool
+    let action: () -> Void
+
+    @State private var showsTooltip = false
+    @State private var tooltipTask: Task<Void, Never>?
+
+    init(
+        systemName: String,
+        label: String,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.systemName = systemName
+        self.label = label
+        self.isDisabled = isDisabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 32, height: 30)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.primary)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .opacity(isDisabled ? 0.45 : 1)
+        .disabled(isDisabled)
+        .accessibilityLabel(Text(label))
+        .overlay(alignment: .bottomTrailing) {
+            if showsTooltip {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 3)
+                    .offset(y: 36)
+                    .allowsHitTesting(false)
+                    .zIndex(100)
+            }
+        }
+        .onHover(perform: updateTooltip)
+        .onDisappear {
+            tooltipTask?.cancel()
+            tooltipTask = nil
+            showsTooltip = false
+        }
+    }
+
+    private func updateTooltip(isHovering: Bool) {
+        tooltipTask?.cancel()
+        tooltipTask = nil
+        showsTooltip = false
+
+        guard isHovering else { return }
+        tooltipTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            showsTooltip = true
+        }
+    }
+}
+
+struct MinimalFloatingDrawer<Content: View>: View {
+    let width: CGFloat
+    private let content: Content
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(width: CGFloat = 310, @ViewBuilder content: () -> Content) {
+        self.width = width
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
+            .background(AcrossTheme.panelFill(for: colorScheme))
+            .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                    .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+            }
+            .shadow(
+                color: .black.opacity(colorScheme == .dark ? 0.28 : 0.14),
+                radius: 18,
+                y: 8
+            )
+    }
+}

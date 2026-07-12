@@ -498,7 +498,7 @@ func testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter() throws {
       "audit": {
         "read_only": true,
         "repair_or_resume_triggered": false,
-        "secrets_redacted": true,
+        "secrets_redacted": "[redacted]",
         "expected_files": ["README.md", "web/index.html"],
         "required_probes": ["browser_e2e"]
       }

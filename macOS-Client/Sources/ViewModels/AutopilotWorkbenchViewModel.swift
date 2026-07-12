@@ -36,8 +36,8 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
         }
     }
 
-    func ensureSelfIterationPlan() async {
-        await runAction(message: "Self-iteration plan ensured") {
+    func ensureSelfIterationPlan(successMessage: String = "Self-iteration plan ensured") async {
+        await runAction(message: successMessage) {
             try await request(
                 path: "/api/autopilot/self-iteration-plan/ensure",
                 method: "POST",
@@ -46,14 +46,14 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
         }
     }
 
-    func tickTriggers() async {
-        await runAction(message: "Trigger tick completed") {
+    func tickTriggers(successMessage: String = "Trigger tick completed") async {
+        await runAction(message: successMessage) {
             try await request(path: "/api/autopilot/trigger-configs/tick", method: "POST")
         }
     }
 
-    func startScheduler() async {
-        await runAction(message: "Trigger scheduler started") {
+    func startScheduler(successMessage: String = "Trigger scheduler started") async {
+        await runAction(message: successMessage) {
             try await request(
                 path: "/api/autopilot/trigger-scheduler/start",
                 method: "POST",
@@ -62,30 +62,49 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
         }
     }
 
-    func stopScheduler() async {
-        await runAction(message: "Trigger scheduler stopped") {
+    func stopScheduler(successMessage: String = "Trigger scheduler stopped") async {
+        await runAction(message: successMessage) {
             try await request(path: "/api/autopilot/trigger-scheduler/stop", method: "POST")
         }
     }
 
-    func runAgentInteropE2E() async {
-        await runAction(message: "Agent interop E2E passed") {
+    func runAgentInteropE2E(
+        successMessage: String = "Agent interop E2E passed",
+        failureMessage: String = "Agent interop E2E failed"
+    ) async {
+        await runAction(message: successMessage, validate: { data in
+            let payload = try JSONDecoder().decode(AgentInteropActionResponse.self, from: data)
+            guard payload.status == "passed" else {
+                throw NSError(
+                    domain: "AutopilotWorkbench",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: failureMessage]
+                )
+            }
+        }) {
             try await request(path: "/api/autopilot/agent-interop-e2e", method: "POST")
         }
     }
 
-    private func runAction(message successMessage: String, _ action: () async throws -> Data) async {
+    private func runAction(
+        message successMessage: String,
+        validate: ((Data) throws -> Void)? = nil,
+        _ action: () async throws -> Data
+    ) async {
         isWorking = true
         message = nil
         errorMessage = nil
         defer { isWorking = false }
 
         do {
-            _ = try await action()
+            let data = try await action()
+            try validate?(data)
             message = successMessage
             await load(refresh: true)
         } catch {
-            errorMessage = error.localizedDescription
+            let actionError = error.localizedDescription
+            await load(refresh: true)
+            errorMessage = actionError
         }
     }
 
@@ -122,4 +141,8 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
             throw NSError(domain: "AutopilotWorkbench", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
         }
     }
+}
+
+private struct AgentInteropActionResponse: Decodable {
+    let status: String
 }

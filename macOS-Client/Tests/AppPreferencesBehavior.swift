@@ -98,11 +98,11 @@ func testLocalizedStringsFallbackToEnglish() {
         "Task toolbar help should present the workflow entrypoint in Simplified Chinese"
     )
     assert(
-        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "en") == "Start with a workflow",
+        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "en") == "Choose the work to run",
         "Simple Start title should be localized in English"
     )
     assert(
-        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "zh-Hans") == "从工作流开始",
+        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "zh-Hans") == "选择要完成的工作",
         "Simple Start title should be localized in Simplified Chinese"
     )
     assert(

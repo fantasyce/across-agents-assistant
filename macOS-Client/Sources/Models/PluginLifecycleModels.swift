@@ -157,6 +157,61 @@ struct AcrossMemoryEntry: Decodable, Identifiable, Equatable {
     let updatedAt: String?
 }
 
+enum MemoryReviewTextFormatter {
+    static func summary(for text: String, fallback: String = "Structured memory proposal") -> String {
+        let compact = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+
+        let looksStructured = compact.hasPrefix("{") || compact.hasPrefix("[")
+        guard let data = compact.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return looksStructured ? fallback : String(compact.prefix(280))
+        }
+
+        var preferred: [String] = []
+        var actions: [String] = []
+        collect(object, preferred: &preferred, actions: &actions)
+
+        if let value = preferred.first(where: { !$0.isEmpty }) {
+            return String(value.prefix(280))
+        }
+
+        let uniqueActions = actions.reduce(into: [String]()) { result, action in
+            let readable = action.replacingOccurrences(of: "_", with: " ")
+            if !result.contains(readable) {
+                result.append(readable)
+            }
+        }
+        if !uniqueActions.isEmpty {
+            return uniqueActions.prefix(5).joined(separator: "  ->  ")
+        }
+        return fallback
+    }
+
+    private static func collect(_ value: Any, preferred: inout [String], actions: inout [String]) {
+        if let object = value as? [String: Any] {
+            for key in ["summary", "title", "goal", "decision", "reason", "message", "text"] {
+                if let text = object[key] as? String, !text.isEmpty {
+                    preferred.append(text)
+                }
+            }
+            if let action = object["action_type"] as? String, !action.isEmpty {
+                actions.append(action)
+            }
+            for child in object.values {
+                collect(child, preferred: &preferred, actions: &actions)
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                collect(child, preferred: &preferred, actions: &actions)
+            }
+        }
+    }
+}
+
 struct AgentLoopMemoryMetricsResponse: Decodable, Equatable {
     let schemaVersion: String?
     let candidateSchema: String?

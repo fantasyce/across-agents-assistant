@@ -39,14 +39,6 @@ enum SimpleStartWorkflowPreset: String, CaseIterable, Identifiable {
         }
     }
 
-    var accentHex: String {
-        switch self {
-        case .repositoryQuality: return "#2F80ED"
-        case .pluginCompatibility: return "#16A085"
-        case .releaseCaptain: return "#C06C20"
-        }
-    }
-
     var targetPlaceholderKey: String? {
         switch self {
         case .pluginCompatibility:

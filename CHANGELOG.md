@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.0 - 2026-07-13
+
+### Added
+
+- Added a capability-driven desktop home that remains useful without optional
+  plugins and reveals shared memory, quality workflows, and Loop Engineering as
+  their managed plugins become available.
+- Added a visual Growth area with unlockable capabilities and achievements,
+  including earned and locked states backed by real product activity.
+- Added task-specific delivery review, accept-once completion, in-place
+  revision, compact action tooltips, one-click memory approval, and clearer
+  empty, unavailable, and error states.
+- Added stronger agent interoperability evidence, workspace readiness checks,
+  and end-to-end coverage for sandboxed delegation and Autopilot workbench
+  health.
+
+### Changed
+
+- Rebuilt the macOS interface around a borderless, minimal project workspace
+  with consistent navigation, page spacing, compact icon actions, and simpler
+  Work, Memory, Workflows, Loop Engineering, Growth, Plugins, MCP, and Settings
+  surfaces.
+- Separated Plugin Center from MCP connections, removed duplicate settings
+  pages, and kept advanced quality and runtime details behind focused actions.
+- Replaced the old README screenshot matrix with current formal-app screenshots
+  and updated the public product framing to match the plugin-host architecture.
+
+### Fixed
+
+- Hardened orchestration request planning, task persistence, public error
+  sanitization, release verification, and Autopilot status handling across
+  restart, completion, review, and compatibility-check paths.
+
 ## 0.10.0 - 2026-07-11
 
 ### Added

@@ -8,8 +8,8 @@ func assert(_ condition: @autoclosure () -> Bool, _ message: String) {
 
 func testOperationsWorkbenchPrimarySurfaces() {
     assert(
-        OperationsWorkbenchSurface.primary == [.workspaces, .qualityGate, .evidence, .memory],
-        "The first screen must keep the four vNext primary surfaces in stable order"
+        OperationsWorkbenchSurface.primary == [.assist],
+        "The first screen must expose one clear work surface"
     )
     assert(
         OperationsWorkbenchSurface.allCases.contains(.humanReview),
@@ -17,7 +17,7 @@ func testOperationsWorkbenchPrimarySurfaces() {
     )
     assert(
         OperationsWorkbenchSurface.allCases.contains(.assist),
-        "Assist must remain reachable without dominating the first screen"
+        "Work must remain the default product surface"
     )
 }
 

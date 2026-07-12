@@ -9,29 +9,40 @@ extension MainPanelView {
 
     func refreshHumanReviewQueue() {
         Task {
-            async let workspaceLoad: Void = workspaceOperationsViewModel.load(
-                activeProjectPath: viewModel.activeProjectPath,
-                refreshReadiness: true
-            )
             async let lifecycleLoad: Void = pluginLifecycleViewModel.load(probe: true)
-            taskOrchestrationViewModel.loadReleaseEvaluation()
             if memorySearchViewModel.hasSearched {
-                await memorySearchViewModel.search(projectRoot: viewModel.activeProjectPath)
+                await memorySearchViewModel.search(projectRoot: operationalProjectPath)
             }
-            _ = await (workspaceLoad, lifecycleLoad)
+            _ = await lifecycleLoad
         }
     }
 
     func openHumanReviewItem(_ item: HumanReviewSignal) {
+        let source = item.source.lowercased()
+        let identifier = item.id.lowercased()
+
         switch item.kind {
         case .pendingMemory:
-            selectedOperationsSurface = .memory
+            selectedOperationsSurface = .humanReview
         case .pluginRepair:
             openSettings(.plugins)
         case .permission:
-            openSettings(.tools)
+            if source == "assist" || identifier.hasPrefix("permission-") {
+                selectedOperationsSurface = .assist
+            } else {
+                openSettings(.tools)
+            }
         case .promotion, .blockingGate, .manualGate, .skippedGate:
-            selectedOperationsSurface = .qualityGate
+            if source.contains("agent loop")
+                || (identifier.hasPrefix("promotion-") && !identifier.contains("release"))
+            {
+                activeSettingsHubTab = nil
+                showTaskOrchestration = false
+                selectedOperationsSurface = .autopilot
+            } else {
+                activeSettingsHubTab = nil
+                showTaskOrchestration = true
+            }
         }
     }
 
@@ -90,11 +101,16 @@ extension MainPanelView {
     }
 
     func submit() {
-        guard !viewModel.isProcessing else { return }
+        guard !viewModel.isProcessing, !isProtectedTaskRunning else { return }
         let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachedFiles = viewModel.attachedFiles
         guard !text.isEmpty || !attachedFiles.isEmpty else { return }
         guard canUseAgentFeatures else { return }
+
+        if appPreferences.automaticDeliveryProtection {
+            submitProtectedTask(text: text, attachedFiles: attachedFiles)
+            return
+        }
 
         Task {
             if let errorMessage = await settingsViewModel.ensureChatAgentReady(agentId: viewModel.selectedAgentId) {
@@ -110,6 +126,46 @@ extension MainPanelView {
                 viewModel.attachedFiles = []
             }
         }
+    }
+
+    private func submitProtectedTask(text: String, attachedFiles: [AttachedFile]) {
+        guard let projectPath = operationalProjectPath, !projectPath.isEmpty else {
+            viewModel.showErrorMessage(appPreferences.text("work.projectRequired"))
+            return
+        }
+        guard !taskOrchestrationViewModel.isOrchestratorPluginUnavailable else {
+            viewModel.showErrorMessage(appPreferences.text("work.setupRequired"))
+            return
+        }
+
+        let ownerAgent = settingsViewModel.preferredAgentId(current: viewModel.selectedAgentId) ?? "auto"
+        let description = protectedTaskDescription(text: text, attachedFiles: attachedFiles)
+
+        Task {
+            if let errorMessage = await settingsViewModel.ensureTaskSubmissionReady(ownerAgentId: ownerAgent) {
+                await MainActor.run { handleChatEnsureFailure(errorMessage) }
+                return
+            }
+
+            await MainActor.run {
+                taskOrchestrationViewModel.submitTask(
+                    description: description,
+                    taskTypes: ["functional", "artifact"],
+                    ownerAgent: ownerAgent,
+                    projectDir: projectPath,
+                    strictDependency: true
+                )
+                viewModel.inputText = ""
+                viewModel.attachedFiles = []
+            }
+        }
+    }
+
+    private func protectedTaskDescription(text: String, attachedFiles: [AttachedFile]) -> String {
+        let goal = text.isEmpty ? appPreferences.text("work.attachmentOnlyGoal") : text
+        guard !attachedFiles.isEmpty else { return goal }
+        let references = attachedFiles.map { "- \($0.name): \($0.path)" }.joined(separator: "\n")
+        return "\(goal)\n\n\(appPreferences.text("work.references"))\n\(references)"
     }
 
     func removeAttachedFile(_ file: AttachedFile) {
@@ -137,4 +193,3 @@ extension MainPanelView {
         }
     }
 }
-

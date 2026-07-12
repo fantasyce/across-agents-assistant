@@ -15,22 +15,12 @@
 </p>
 
 <p align="center">
-  Turn repo audits, release checks, plugin evaluations, and candidate product
-  iterations into repeatable AI workflows with local evidence, memory, and
-  human approval across Codex, Kimi Code, Claude Code, Claude Desktop,
-  AAA, and other MCP-capable hosts.
+  A simple macOS workspace for getting agent work done, then adding memory,
+  quality workflows, and supervised engineering loops only when you need them.
 </p>
 
 <p align="center">
-  <img src="assets/readme/zh-dark-main-chat.png" alt="Across Agents Assistant dark main chat with project tree, local agents, and cloud LLMs">
-</p>
-
-<p align="center">
-  <img src="assets/readme/zh-dark-task-orchestration.png" alt="Across Agents Assistant dark workflows panel with release readiness, run list, and guided workflow entry">
-</p>
-
-<p align="center">
-  <img src="assets/readme/zh-dark-new-task.png" alt="Across Agents Assistant expert task form with function and product delivery modes, owner agent, subtask agents, and strict dependency mode">
+  <img src="assets/readme/product-work.png" alt="Across Agents Assistant work home with project navigation, recent work, and a focused task composer">
 </p>
 
 ## Try This First
@@ -63,16 +53,15 @@ Agent-readable entrypoints:
 
 ## Why It Exists
 
-Across Agents Assistant is built for developers who want more than a single chat
-box. It brings local agents, cloud LLMs, project chat, voice, MCP context, tool
-permissions, guided workflow starts, owner-led task orchestration, and Loop
-Engineering evidence into one macOS workbench.
+Most agent products expose their internal machinery and make users configure it
+before useful work can begin. Across keeps the first experience small: open a
+project, describe the result you want, and review the delivery.
 
-The first screen is workflow-first: Repository Quality Copilot, Plugin
-Compatibility Lab, and Release Captain prepare the task contract and evidence
-targets before submission. Expert users can still open the full task form, pick
-an owner agent, keep local agents and cloud LLMs visible, break a complex
-request into waves, and inspect the final delivery.
+The desktop app is also a host for optional Across capabilities. Installing
+Context adds shared memory, Orchestrator adds quality-controlled workflows, and
+Autopilot adds supervised Loop Engineering. The navigation grows with the
+installed capabilities, while detailed evidence and policy stay available when
+they are needed instead of dominating every task.
 
 ## Loop Engineering Use Cases
 
@@ -138,147 +127,50 @@ not trigger macOS Documents permission prompts just because a plugin exists.
 
 ## Product Tour
 
-### Current Dark Theme
+The current interface uses one consistent, borderless desktop shell. Every
+primary page starts with the same title rhythm, compact icon actions, and
+project-aware navigation.
 
-The current product screenshots show the refreshed dark interface,
-agent/provider icon catalog, workflows, model settings, MCP plugins,
-tool permissions, and preferences.
-
-| Project chat | Workflows and runs |
+| Work | Memory |
 | --- | --- |
-| <img src="assets/readme/zh-dark-main-chat.png" alt="Dark project chat with directory tree and refreshed agent sidebar icons"> | <img src="assets/readme/zh-dark-task-orchestration.png" alt="Dark workflows panel with release readiness and run list"> |
+| <img src="assets/readme/product-work.png" alt="Work home with project navigation, recent work, and a focused task composer"> | <img src="assets/readme/product-memory.png" alt="Shared memory page with search, review tools, and an empty state"> |
 
-| Expert task creation |
+| Workflows | Loop Engineering |
+| --- | --- |
+| <img src="assets/readme/product-workflows.png" alt="Quality workflow home with guided starts and recent runs"> | <img src="assets/readme/product-loop-engineering.png" alt="Loop Engineering status with agent readiness, health signals, and compact actions"> |
+
+| Growth |
 | --- |
-| <img src="assets/readme/zh-dark-new-task.png" alt="Expert task form with selectable delivery type, owner agent, subtask agents, and dependency blocking"> |
-
-| Models | MCP plugins |
-| --- | --- |
-| <img src="assets/readme/zh-dark-model-settings.png" alt="Dark model settings with local agents, cloud LLMs, and refreshed provider icons"> | <img src="assets/readme/zh-dark-mcp-plugins.png" alt="Dark MCP plugin settings with local knowledge, RAG, SQLite, and filesystem plugins"> |
-
-| Tool permissions | Voice and preferences |
-| --- | --- |
-| <img src="assets/readme/zh-dark-tool-permissions.png" alt="Dark tool permission management with native and MCP tool policies"> | <img src="assets/readme/zh-dark-settings.png" alt="Dark settings with language, theme, voice, and auto-read controls"> |
-
-### Agent And Provider Catalog
-
-The `0.4.1` icon refresh keeps third-party marks as descriptive compatibility
-labels inside Across-owned neutral tiles. Codex reads the installed
-OpenAI-signed `Codex.app` icon at runtime when available and falls back to the
-bundled OpenAI tile when it is not installed.
-
-| Live model catalog | Icon source preview |
-| --- | --- |
-| <img src="assets/readme/zh-dark-model-settings.png" alt="Model catalog with local agents and cloud providers"> | <img src="assets/agent-icons/agent-icon-preview.png" alt="Dark and light agent icon preview with local agents and cloud providers"> |
-
-### Light Chinese Theme
-
-The app also includes a light Simplified Chinese interface.
-
-| 项目对话 | 工作流和运行记录 |
-| --- | --- |
-| <img src="assets/readme/zh-light-main-chat.png" alt="浅色中文项目对话、目录树、本地 Agent 和云端 LLM"> | <img src="assets/readme/zh-light-task-orchestration.png" alt="浅色中文工作流、Owner Agent、Wave 和子任务"> |
-
-| 模型 | MCP 插件 |
-| --- | --- |
-| <img src="assets/readme/zh-light-model-settings.png" alt="浅色中文模型设置"> | <img src="assets/readme/zh-light-mcp-plugins.png" alt="浅色中文 MCP 插件"> |
-
-| 工具权限 | 设置 |
-| --- | --- |
-| <img src="assets/readme/zh-light-tool-permissions.png" alt="浅色中文工具权限"> | <img src="assets/readme/zh-light-settings.png" alt="浅色中文语音和偏好设置"> |
-
-### Release Quality Surfaces
-
-Recent releases added visible quality and readiness workflows directly inside the app, so users can inspect complex task delivery instead of trusting a text-only status.
-
-| Release evidence center | Release evaluation and E2E gate |
-| --- | --- |
-| <img src="assets/readme/zh-dark-release-evidence-center.png" alt="Dark release evidence center with readiness status, risks, checklist, and quality trend"> | <img src="assets/readme/zh-dark-release-evaluation.png" alt="Dark task orchestration release evaluation card with quality-gated tasks and complex E2E action"> |
-
-| Startup diagnostics and RC check | Agent capabilities and native skills |
-| --- | --- |
-| <img src="assets/readme/zh-dark-startup-diagnostics.png" alt="Dark startup diagnostics with backend, provider, path, and packaged app readiness checks"> | <img src="assets/readme/zh-dark-agent-capabilities.png" alt="Dark agent capability settings with local agents, cloud LLMs, native skills, MCP plugins, and tool scope"> |
+| <img src="assets/readme/product-growth.png" alt="Capability growth page with unlocked skills and visual achievements"> |
 
 ## Recent Product Highlights
 
-The screenshots above are still the primary entry points: project chat, task
-workflows, expert task creation, model settings, MCP plugins, tool
-permissions, and preferences. This README keeps the product shape current; the
-full release chronology lives in [CHANGELOG.md](CHANGELOG.md).
+This README keeps only the current product shape. The full release chronology
+lives in [CHANGELOG.md](CHANGELOG.md).
 
 | Version | User-visible capability |
 | --- | --- |
-| `0.10.0` | Adds parallel isolated agent workspaces, anchored line review, approval-controlled GitHub delivery, governed five-route memory, agent account/rate-limit status, security-scoped repository access, and the Operations Workbench UI. |
-| `0.9.55` | Updates the managed Across Orchestrator pin and release source mirror to `v0.7.13`, keeping AAA on the latest lockfile-aligned, CodeQL-clean Orchestrator patch release. |
-| `0.9.54` | Pins Autopilot `v0.2.30`, uses locally smoke-tested `gpt-5.5`, and records builder/reviewer timeout-recovery evidence for stalled local agent calls. |
-| `0.9.53` | Pins Autopilot `v0.2.29`, removing `codex-auto-review` from self-iteration model candidates and allowing longer silent Codex research/review work. |
-| `0.9.52` | Pins Autopilot `v0.2.28`, keeping self-iteration research and review on `gpt-5.3-codex-spark` first with `codex-auto-review` only as fallback. |
-| `0.9.51` | Reuses fresh release source mirrors during self-iteration refreshes and terminates timed-out git process groups. |
-| `0.9.50` | Pins Autopilot `v0.2.27`, filters generated pytest validation commands, and keeps AAA runtime dependency smoke stable on older system Python runtimes. |
-| `0.9.49` | Pins Autopilot `v0.2.26` and refreshes local-agent wall-timeout windows while CLI output is still streaming. |
-| `0.9.48` | Pins Autopilot `v0.2.25`, collapses duplicate candidate marker repairs, and validates AAA workbench/capability-pack entrypoints before independent review. |
-| `0.9.47` | Pins Autopilot `v0.2.24`, uses smoke-tested local Codex models for self-iteration roles, and terminates timed-out local agent process groups. |
-| `0.9.46` | Pins Autopilot `v0.2.23`, adding hard source-discovery deadlines even when an underlying fetch/body stream ignores abort signals. |
-| `0.9.45` | Pins Autopilot `v0.2.22`, so autonomous URL source timeouts cover stalled response body reads as well as response headers during source discovery. |
-| `0.9.44` | Pins Autopilot `v0.2.21`, terminates cancelled Autopilot executor process trees, and records per-model research-decision progress evidence before builder work starts. |
-| `0.9.43` | Pins Autopilot `v0.2.20`, propagates code-iteration timeout policy into builder model calls, and gives complex local Codex builder runs a longer bounded idle window with per-model progress evidence. |
-| `0.9.42` | Replaces Autopilot research-decision timeout and invalid-model fallback reasons with fixed public reason codes. |
-| `0.9.41` | Sanitizes Autopilot research-decision public payloads and 422 details so internal traceback content stays in local logs. |
-| `0.9.40` | Pins Autopilot `v0.2.19`, refreshes long-running self-iteration timeouts on real local-agent activity, records non-secret host CLI progress evidence, filters unavailable Codex models, and skips stale pending trigger queue items. |
-| `0.9.39` | Pins Autopilot `v0.2.18`, applies local Codex fallback model overrides during self-iteration, and returns structured local-agent timeout failures for platform self-repair. |
-| `0.9.38` | Keeps only the latest two self-iteration candidate artifact sets by default and stops maintaining the legacy `~/.across/source-mirrors` copy unless explicitly enabled. |
-| `0.9.37` | Adds automatic lifecycle retention for self-iteration B candidates so old workspaces, candidate app artifacts, runtime homes, and failed run records do not accumulate indefinitely. |
-| `0.9.36` | Moves self-iteration candidate app bundles into Autopilot-managed candidate artifacts under `~/.across` instead of leaving B apps in `~/Applications`. |
-| `0.9.35` | Pins Autopilot `v0.2.17` so autonomous self-iteration uses Node-fetchable OpenAI Agents SDK source signals instead of a docs HTML page that Node fetch can receive as 403. |
-| `0.9.34` | Aligns the self-iteration release-source mirror with the managed Autopilot `v0.2.16` plugin pin, keeping user-machine candidate workspaces on the same released producer version they execute. |
-| `0.9.33` | Hardens autonomous research-decision timeout handling with structured local Codex fallback diagnostics and pins Autopilot `v0.2.16` for more reliable source intake. |
-| `0.9.32` | Hardens public release-source bootstrap for user machines without development checkouts by retrying failed clones and falling back to Git HTTP/1.1. |
-| `0.9.31` | Removes implicit development-checkout source discovery from self-iteration, bootstraps source mirrors from public release tags, pins Autopilot `v0.2.15`, and finishes Codex defaults for self-repair LoopSpecs. |
-| `0.9.30` | Routes autonomous self-iteration through local Codex, pins Autopilot `v0.2.14`, adds reviewable tool/A2A integration surfaces, and removes development-checkout fallback from Live E2E. |
-| `0.9.29` | Removes exception-object text from the public self-iteration source-mirror status payload while preserving local diagnostics. |
-| `0.9.28` | Adds true daily 10:00 local-time autonomous self-iteration scheduling and restores the scheduler after packaged-app restarts. |
-| `0.9.27` | Adds a pre-run source mirror refresh gate so autonomous B candidates start from a fresh, clean A baseline instead of a stale mirror. |
-| `0.9.26` | Adds bounded AI-Ready Context synthesis for loop source signals and pins Autopilot `v0.2.13` for stronger self-iteration validation. |
-| `0.9.25` | Keeps Workbench trigger actions focused on actionable queued triggers instead of terminal queue history. |
-| `0.9.24` | Keeps Loop Engineering ops health focused on unresolved current failures while preserving recovered and historical failure evidence for audit. |
-| `0.9.23` | Enables queued self-iteration dispatch by default, expands deterministic host repair fallbacks, and pins Autopilot `v0.2.12` for stricter candidate/platform failure routing. |
-| `0.9.22` | Updates the managed Autopilot pin to `v0.2.11`, keeping platform self-repair focused on platform gaps instead of ordinary candidate validation failures. |
-| `0.9.21` | Hardens candidate app lifecycle isolation so self-iteration validation installs managed plugins only inside the candidate runtime home. |
-| `0.9.20` | Adds supervised loop-engineering self-repair: eligible platform failures enqueue an isolated B candidate repair, run validation and self-hosting evidence, and stop at human-review promotion. |
-| `0.9.19` | Consolidates backend dependency hygiene updates for FastAPI, MCP, OpenAI, and Anthropic SDK lower bounds. |
-| `0.9.18` | Updates the managed Across Orchestrator pin to `v0.7.10`, keeping Autopilot at `v0.2.8` and Context at `v0.8.8`. |
-| `0.9.17` | Updates the managed Across Orchestrator pin to `v0.7.9`, keeping Autopilot at `v0.2.8` and Context at `v0.8.8`. |
-| `0.9.16` | Makes Workflows the task entry point: Repository Quality Copilot, Plugin Compatibility Lab, and Release Captain now create editable task drafts while the expert task form remains available. |
-| `0.9.15` | Completes the P0-P3 frontier interop release gate with MCP Tasks projection, LF A2A v2, AG-UI task-card projection, Remote MCP/OAuth v1, OTel export, Skills bridge, optional sandbox evidence, memory backend projections, local agent protocol bridges, and managed pins for Autopilot `v0.2.8`, Orchestrator `v0.7.8`, and Context `v0.8.8`. |
-| `0.9.13`-`0.9.14` | Consolidates public Markdown entrypoints, keeps removed planning docs out of agent-readable surfaces, and verifies producer-first source sync. |
-| `0.9.11`-`0.9.12` | Adds Kimi Code and refreshes local-agent icon provenance, packaged assets, and backend icon loading. |
-| `0.9.6` | Adds the frontier agent-team interop release gate, including workbench status, E2E evidence, stricter RC verification, and unified pre-release gate evidence. |
-| `0.9.0` | Ships the four-product Loop Engineering platform with managed Autopilot, candidate workspaces, model lease checks, distinct-model review, and human-review promotion packages. |
-| `0.8.0` | Moves Agent Loop execution into the external Orchestrator runtime while AAA stays the host UI, approval proxy, Plugin Center, and memory review surface. |
-| `0.5.0` | Standardizes Across-owned runtime paths under `~/.across`, including plugin wrappers, plugin runtime code, and durable product data. |
-| `0.4.0` | Adds Release Evidence Center, Startup Diagnostics, one-click RC Verification, local release reports, packaged-app checks, Release E2E proof, and open-source guards. |
-| `0.2.0` | Introduces delivery quality benchmarks, exact deliverable contracts, workspace hygiene checks, static web/browser probes, and quality score reporting. |
+| `0.11.0` | Rebuilds the desktop experience around a minimal Work home, capability-based navigation, unified Memory, Workflows, and Loop Engineering pages, visual growth and achievements, and clearer review and delivery actions. |
+| `0.10.0` | Adds isolated agent workspaces, anchored review, approval-controlled GitHub delivery, governed memory, and security-scoped repository access. |
 
 ## Core Capabilities
 
-- Guided workflow start for Repository Quality Copilot, Plugin Compatibility
-  Lab, and Release Captain, with editable task drafts before submission.
-- Cross-agent task orchestration through the external Across Orchestrator plugin, with an owner agent, subtask agents, waves, status tracking, delivery health, and acceptance-oriented review.
-- Per-agent capability profiles for tuning built-in skills, custom skills, native local-agent skills, MCP plugin scope, tool scope, and execution instructions before tasks are decomposed.
-- Native skill management for local agents: create directory-based Claude Code skills, inspect installed OpenClaw/Hermes skills, and use each agent's own skill commands for install, update, and validation where supported.
-- Native skill readiness checks mark missing binaries, environment variables, or config as unavailable; unavailable native skills stay visible for repair but are not used as strong routing signals.
-- Task capability preflight that recommends the best-fit agent mix before submission and shows which skills matched the request.
-- Delivery quality gates for exact file contracts, workspace hygiene, runnable probes, and static web feature evidence when UI behavior is requested.
-- Release E2E gate in the AAA host that submits and inspects an app-grade scenario through the external orchestration runtime, covering exact artifact delivery, Web UI, Node API, CLI checks, browser verification, quality-gate evidence, and host-visible remediation.
-- Unified model surface for local agents such as OpenClaw, Hermes, Claude Code,
-  Claude Desktop, Codex, Kimi Code, OpenCode, and Cursor Agent, plus cloud LLMs such as
-  DeepSeek, MiniMax, and Agnes.
-- Project-scoped chat with a real directory tree, session history, file attachments, screenshots, and context-aware prompts.
-- Single-agent mode for sending a complex task to one chosen agent when collaboration is unnecessary.
-- Voice and continuous conversation features that let you talk through work, auto-read assistant replies, and reduce keyboard time.
-- Local tool approval for file search/read/write/edit, browser URL context, Finder context, Xcode context, image OCR, screenshot OCR, Mail drafts, Notes drafts, system volume, dark mode, and MCP-backed tools.
-- MCP plugin settings for host-managed MCP defaults. Across Context is the external shared-memory plugin; local knowledge, external retrieval, SQLite, and filesystem entries remain host-configured MCP integrations.
-- Local runtime state under `~/.across`, kept outside the source tree.
+- A useful base app without optional plugins: project work, local/cloud agents,
+  attachments, voice, session history, and scoped tools.
+- Capability-driven navigation that adds Memory, Workflows, and Loop Engineering
+  when their plugins are installed and healthy.
+- Guided starts for Repository Quality Copilot, Plugin Compatibility Lab, and
+  Release Captain without exposing orchestration internals up front.
+- Delivery review with accept-once completion, in-place revision, task-specific
+  technical evidence, and human-controlled promotion.
+- Governed memory search, pending approval, one-click review, provenance, and
+  forgetting through Across Context.
+- Multi-agent execution, quality gates, evidence bundles, and repair through
+  Across Orchestrator.
+- Trigger supervision, candidate workspaces, health signals, and bounded repair
+  through Across Autopilot.
+- Local runtime state under `~/.across`, with credentials and approvals owned by
+  the host.
 
 ## Local macOS Swiss Army Knife
 
@@ -296,7 +188,7 @@ Across Agents Assistant is not just a model launcher. Its local backend can conn
 
 ## Current Status
 
-This project is under active development. The current release is `0.10.0` and
+This project is under active development. The current release is `0.11.0` and
 source-first: the repository is intended for local building and inspection, not
 notarized binary distribution. See [CHANGELOG.md](CHANGELOG.md) for detailed
 release notes.
@@ -307,25 +199,12 @@ Current managed producer pins:
 - Across Orchestrator `v0.8.0`
 - Across Context `v0.9.0`
 
-The current release makes parallel agent workspaces, repository quality gates,
-evidence, governed memory, and human review first-class Operations Workbench
-flows. It also keeps autonomous Loop Engineering reviewable while routing the
-researcher, builder, and reviewer through the local Codex agent. Long-running
-host model calls now expose non-secret activity and watchdog progress, refresh
-idle timeouts on real stdout/stderr activity, give complex builder code
-generation a longer bounded idle window, and retain max-wall timeouts as the
-final stuck-run guardrail. AAA restores an already configured daily scheduler on
-startup, dispatches the default self-iteration trigger at `10:00` in
-`Asia/Shanghai`, and validates candidates through managed plugin runtimes under
-`~/.across`.
-
-Autonomous Product Iteration uses
-`~/.across/data/across-autopilot/source-mirrors` as the primary source-mirror
-root for controlled snapshots, not as editable working copies. The legacy
-`~/.across/source-mirrors` root is not maintained unless explicitly enabled for
-compatibility. Before candidate B workspaces run, AAA refreshes source mirrors
-from clean A checkouts and exposes mirror freshness in the self-iteration plan;
-drifted mirrors block the loop before any candidate mutation starts.
+The current release replaces the dense Operations Workbench shell with a
+minimal project-first experience. Optional plugin capabilities appear as clear
+destinations, review actions stay close to the item being reviewed, and
+advanced evidence remains available without becoming the default interface.
+Loop Engineering keeps activity-aware idle timeouts, bounded wall-time limits,
+candidate isolation, managed source mirrors, and human-reviewed promotion.
 
 The formal local A app is `/Applications/Across Agents Assistant.app`. Local
 development and release validation should refresh that app through

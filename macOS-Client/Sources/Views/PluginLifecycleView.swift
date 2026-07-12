@@ -4,41 +4,45 @@ struct PluginLifecycleView: View {
     @StateObject private var viewModel = PluginLifecycleViewModel()
     @State private var showingLoopHealthDetails = false
     @State private var showingLoopEvidenceDetails = false
+    @State private var expandedPluginIds: Set<String> = []
+    @State private var pluginPendingUninstall: AcrossPluginStatus?
+    @State private var memoryPendingForget: AcrossMemoryEntry?
     @EnvironmentObject private var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
 
     var onClose: (() -> Void)? = nil
     var embeddedInHub: Bool = false
 
-    private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
-    private var cardColor: Color { colorScheme == .dark ? Color(hex: "202227") : Color(hex: "fafbfc") }
-    private var fieldColor: Color { colorScheme == .dark ? Color(hex: "15171b") : Color.black.opacity(0.045) }
+    private var bgColor: Color { Color(nsColor: .windowBackgroundColor) }
+    private var cardColor: Color { Color(nsColor: .controlBackgroundColor) }
+    private var fieldColor: Color { Color(nsColor: .controlBackgroundColor) }
     private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10) }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
     private var accentColor: Color { AcrossTheme.accent }
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
 
     var body: some View {
         VStack(spacing: 0) {
             if !embeddedInHub {
                 standaloneHeader
-                Divider().opacity(0.35)
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
+                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                     titleRow
                     feedbackRows
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(viewModel.plugins) { plugin in
+                    VStack(spacing: 0) {
+                        Divider()
+                        ForEach(Array(viewModel.plugins.enumerated()), id: \.element.id) { index, plugin in
                             pluginCard(plugin)
+                            if index < viewModel.plugins.count - 1 {
+                                Divider().padding(.leading, 30)
+                            }
                         }
+                        Divider()
                     }
-                    memorySection
                 }
-                .padding(SettingsHubPageLayout.contentPadding)
-                .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
+                .padding(MinimalSettingsMetrics.contentPadding)
+                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .overlay {
@@ -46,9 +50,6 @@ struct PluginLifecycleView: View {
                     ProgressView()
                         .controlSize(.small)
                         .padding(18)
-                        .background(cardColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 8)
                 }
             }
         }
@@ -63,54 +64,72 @@ struct PluginLifecycleView: View {
         )
         .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
         .task {
-            await viewModel.load()
+            await viewModel.loadPlugins()
+            expandedPluginIds = Set(
+                viewModel.plugins
+                    .filter { !$0.installed || !$0.available }
+                    .map(\.pluginId)
+            )
+        }
+        .confirmationDialog(
+            appPreferences.text("plugins.action.uninstallConfirmTitle"),
+            isPresented: Binding(
+                get: { pluginPendingUninstall != nil },
+                set: { if !$0 { pluginPendingUninstall = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("plugins.action.uninstall"), role: .destructive) {
+                if let plugin = pluginPendingUninstall {
+                    Task { await viewModel.runAction("uninstall", for: plugin) }
+                }
+                pluginPendingUninstall = nil
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                pluginPendingUninstall = nil
+            }
+        } message: {
+            Text(appPreferences.text("plugins.action.uninstallConfirmMessage"))
+        }
+        .confirmationDialog(
+            appPreferences.text("plugins.memory.forgetConfirmTitle"),
+            isPresented: Binding(
+                get: { memoryPendingForget != nil },
+                set: { if !$0 { memoryPendingForget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("plugins.memory.forget"), role: .destructive) {
+                if let memory = memoryPendingForget {
+                    Task { await viewModel.forgetMemory(memory) }
+                }
+                memoryPendingForget = nil
+            }
+            Button(appPreferences.text("system.cancel"), role: .cancel) {
+                memoryPendingForget = nil
+            }
+        } message: {
+            Text(appPreferences.text("plugins.memory.forgetConfirmMessage"))
         }
     }
 
     private var standaloneHeader: some View {
-        HStack {
-            CustomTrafficLights(onClose: onClose)
-            Spacer()
-            Text(appPreferences.text("plugins.title"))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(textColor)
-            Spacer()
-            Spacer().frame(width: 50)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 56)
-        .background(
-            ZStack {
-                bgColor.opacity(colorScheme == .dark ? 0.84 : 0.96)
-                WindowDragView().contentShape(Rectangle())
-            }
-        )
+        MinimalSettingsWindowHeader(title: appPreferences.text("plugins.title"), onClose: onClose)
     }
 
     private var titleRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(appPreferences.text("plugins.title"))
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(textColor)
-                Text(appPreferences.text("plugins.subtitle"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
+        MinimalSettingsPageHeader(
+            title: appPreferences.text("plugins.title"),
+            subtitle: appPreferences.text("plugins.subtitle")
+        ) {
             Button {
                 Task { await viewModel.load(probe: true) }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 32, height: 30)
+                    .frame(width: 24, height: 24)
             }
-            .buttonStyle(.plain)
-            .foregroundColor(textColor)
-            .background(fieldColor)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.borderless)
             .help(appPreferences.text("settings.refresh"))
         }
     }
@@ -118,10 +137,10 @@ struct PluginLifecycleView: View {
     @ViewBuilder
     private var feedbackRows: some View {
         if let message = viewModel.message {
-            banner(message, color: Color(hex: "30d158"))
+            banner(message, color: Color(nsColor: .systemGreen))
         }
         if let error = viewModel.errorMessage {
-            banner(error, color: Color(hex: "ff453a"))
+            banner(error, color: Color(nsColor: .systemRed))
         }
     }
 
@@ -142,20 +161,68 @@ struct PluginLifecycleView: View {
     }
 
     private func pluginCard(_ plugin: AcrossPluginStatus) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
+        DisclosureGroup(isExpanded: Binding(
+            get: { expandedPluginIds.contains(plugin.pluginId) },
+            set: { expanded in
+                if expanded {
+                    expandedPluginIds.insert(plugin.pluginId)
+                } else {
+                    expandedPluginIds.remove(plugin.pluginId)
+                }
+            }
+        )) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    metadataChip(plugin.version?.isEmpty == false ? "v\(plugin.version!)" : appPreferences.text("plugins.versionUnknown"))
+                    metadataChip(plugin.commandExists ? appPreferences.text("plugins.commandReady") : appPreferences.text("plugins.commandMissing"))
+                    metadataChip(plugin.manifestExists ? appPreferences.text("plugins.manifestReady") : appPreferences.text("plugins.manifestMissing"))
+                }
+
+                capabilityTagRow(plugin)
+
+                pathRow(appPreferences.text("plugins.path.runtime"), plugin.paths.plugin)
+                pathRow(appPreferences.text("plugins.path.data"), plugin.paths.data)
+                compatibilityRow(plugin)
+
+                HStack(spacing: 8) {
+                    actionButton("probe", icon: "waveform.path.ecg", title: appPreferences.text("plugins.action.probe"), plugin: plugin)
+                    if plugin.installed {
+                        actionButton("repair", icon: "cross.case", title: appPreferences.text("plugins.action.repair"), plugin: plugin)
+                        actionButton("uninstall", icon: "trash", title: appPreferences.text("plugins.action.uninstall"), plugin: plugin)
+                    } else {
+                        actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
+                    }
+                    if plugin.pluginId == "across-orchestrator" && plugin.available {
+                        agentLoopTimelineModePicker()
+                        Button {
+                            Task { await viewModel.runAgentLoopProbe() }
+                        } label: {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 12, weight: .semibold))
+                                .frame(width: 30, height: 28)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(appPreferences.text("plugins.loop.probe"))
+                        .disabled(viewModel.isWorking)
+                    }
+                }
+
+                agentLoopProbeRow(plugin)
+            }
+            .padding(.leading, 28)
+            .padding(.bottom, 12)
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
                 pluginIcon(for: plugin.pluginId)
-                    .frame(width: 34, height: 34)
-                    .background(accentColor.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 24, height: 24)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(plugin.displayName)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(textColor)
                         .lineLimit(1)
                     Text(plugin.kind)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -164,53 +231,9 @@ struct PluginLifecycleView: View {
 
                 statusChip(plugin)
             }
-
-            HStack(spacing: 8) {
-                metadataChip(plugin.version?.isEmpty == false ? "v\(plugin.version!)" : appPreferences.text("plugins.versionUnknown"))
-                metadataChip(plugin.commandExists ? appPreferences.text("plugins.commandReady") : appPreferences.text("plugins.commandMissing"))
-                metadataChip(plugin.manifestExists ? appPreferences.text("plugins.manifestReady") : appPreferences.text("plugins.manifestMissing"))
-            }
-
-            capabilityTagRow(plugin)
-
-            pathRow(appPreferences.text("plugins.path.runtime"), plugin.paths.plugin)
-            pathRow(appPreferences.text("plugins.path.data"), plugin.paths.data)
-            compatibilityRow(plugin)
-
-            HStack(spacing: 8) {
-                actionButton("probe", icon: "waveform.path.ecg", title: appPreferences.text("plugins.action.probe"), plugin: plugin)
-                if plugin.installed {
-                    actionButton("repair", icon: "cross.case", title: appPreferences.text("plugins.action.repair"), plugin: plugin)
-                    actionButton("uninstall", icon: "trash", title: appPreferences.text("plugins.action.uninstall"), plugin: plugin)
-                } else {
-                    actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
-                }
-                if plugin.pluginId == "across-orchestrator" && plugin.available {
-                    agentLoopTimelineModePicker()
-                    Button {
-                        Task { await viewModel.runAgentLoopProbe() }
-                    } label: {
-                        Image(systemName: "play.circle")
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 30, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(textColor)
-                    .background(fieldColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .help(appPreferences.text("plugins.loop.probe"))
-                    .disabled(viewModel.isWorking)
-                }
-            }
-
-            agentLoopProbeRow(plugin)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
-        .padding(14)
-        .frame(minHeight: 286, alignment: .topLeading)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(lineColor, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -307,7 +330,7 @@ struct PluginLifecycleView: View {
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.plain)
-        .foregroundColor(health.needsAttention ? Color(hex: "ff9f0a") : .secondary)
+        .foregroundColor(health.needsAttention ? Color(nsColor: .systemOrange) : .secondary)
         .background(fieldColor)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .help(appPreferences.text("plugins.loop.healthDetails"))
@@ -824,23 +847,25 @@ struct PluginLifecycleView: View {
     private func agentLoopEventColor(_ event: AgentLoopEventResponse) -> Color {
         let type = event.type
         if type.contains("failed") || type.contains("stopped") || type.contains("cancelled") || type.contains("rejected") {
-            return Color(hex: "ff453a")
+            return Color(nsColor: .systemRed)
         }
         if type.contains("approval") || type.contains("retry") {
-            return Color(hex: "ff9f0a")
+            return Color(nsColor: .systemOrange)
         }
         if type.contains("completed") {
-            return Color(hex: "30d158")
+            return Color(nsColor: .systemGreen)
         }
         if type.contains("heartbeat") || type.contains("started") {
-            return Color(hex: "0a84ff")
+            return Color(nsColor: .systemBlue)
         }
         return .secondary
     }
 
     private func statusChip(_ plugin: AcrossPluginStatus) -> some View {
         let ready = plugin.installed && plugin.available
-        let color = ready ? Color(hex: "30d158") : plugin.installed ? Color(hex: "ff9f0a") : Color.secondary
+        let color = ready
+            ? Color(nsColor: .systemGreen)
+            : plugin.installed ? Color(nsColor: .systemOrange) : Color.secondary
         return HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(statusText(plugin))
@@ -880,7 +905,11 @@ struct PluginLifecycleView: View {
 
     private func actionButton(_ action: String, icon: String, title: String, plugin: AcrossPluginStatus) -> some View {
         Button {
-            Task { await viewModel.runAction(action, for: plugin) }
+            if action == "uninstall" {
+                pluginPendingUninstall = plugin
+            } else {
+                Task { await viewModel.runAction(action, for: plugin) }
+            }
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
@@ -1071,7 +1100,7 @@ struct PluginLifecycleView: View {
                 memoryAction(memory, status: "active", icon: "checkmark", title: appPreferences.text("plugins.memory.approve"))
                 memoryAction(memory, status: "archived", icon: "archivebox", title: appPreferences.text("plugins.memory.archive"))
                 Button {
-                    Task { await viewModel.forgetMemory(memory) }
+                    memoryPendingForget = memory
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 11, weight: .semibold))

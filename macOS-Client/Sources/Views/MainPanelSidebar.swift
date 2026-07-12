@@ -3,31 +3,16 @@ import SwiftUI
 extension MainPanelView {
     var leftSidebar: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 CustomTrafficLights()
                 Spacer()
-
-                if !viewModel.activeMCPContexts.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(viewModel.activeMCPContexts) { context in
-                            HStack(spacing: 3) {
-                                Image(systemName: "externaldrive.fill")
-                                    .font(.system(size: 9))
-                                Text(context.name)
-                                    .font(.system(size: 9))
-                                if let dbPath = context.dbPath {
-                                    Text("(\(URL(fileURLWithPath: dbPath).lastPathComponent))")
-                                        .font(.system(size: 8))
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.15))
-                            .cornerRadius(4)
-                        }
-                    }
-                    .padding(.leading, 8)
+                if let label = contextDrawerLabel {
+                    MinimalIconButton(
+                        systemName: "sidebar.left",
+                        label: label,
+                        action: { setContextDrawerVisible(!showsContextDrawer) }
+                    )
+                    .frame(width: MainPanelIconMetrics.buttonSize, height: MainPanelIconMetrics.buttonSize)
                 }
             }
             .padding(.horizontal, 16)
@@ -40,29 +25,39 @@ extension MainPanelView {
                 selection: $selectedOperationsSurface,
                 preferences: appPreferences,
                 reviewCount: humanReviewSnapshot.totalCount,
+                capabilitySurfaces: productProgress.unlockedSurfaces,
                 activeProjectName: viewModel.activeProjectName,
                 activeProjectPath: viewModel.activeProjectPath,
-                onOpenAgents: { openSettings(.models) },
-                onOpenCapabilities: { openSettings(.capabilities) },
-                onOpenPlugins: { openSettings(.plugins) },
-                onOpenSystem: { openSettings(.diagnostics) }
-            )
-
-            if selectedOperationsSurface == .assist {
-                Divider().opacity(0.5)
+                onOpenSettings: { openSettings(.settings) }
+            ) {
+                Divider()
+                    .padding(.top, 8)
 
                 if showProjectTree {
                     projectTreeSidebar
                 } else {
                     projectChatSidebar
                 }
-            } else {
-                Spacer(minLength: 0)
             }
         }
-        .frame(width: CGFloat(sidebarWidth))
+        .frame(width: CGFloat(min(max(sidebarWidth, 220), 320)))
         .frame(maxHeight: .infinity)
         .background(sidebarBgColor)
+    }
+
+    private var contextDrawerLabel: String? {
+        switch selectedOperationsSurface {
+        case .humanReview:
+            return appPreferences.text("review.title")
+        default:
+            return nil
+        }
+    }
+
+    private func setContextDrawerVisible(_ isVisible: Bool) {
+        withAnimation(appPreferences.reduceMotion ? nil : .easeOut(duration: 0.18)) {
+            showsContextDrawer = isVisible
+        }
     }
 
     var projectChatSidebar: some View {
@@ -119,6 +114,7 @@ extension MainPanelView {
                                 activeProjectId: viewModel.activeProjectId,
                                 currentSessionId: viewModel.currentSessionId,
                                 selectedSessionIds: selectedSessionIds,
+                                showsSessions: !appPreferences.automaticDeliveryProtection,
                                 onSelectProject: {
                                     if let firstSession = project.sessions.first {
                                         selectedSessionIds = [firstSession.session_id]
@@ -127,6 +123,7 @@ extension MainPanelView {
                                         selectedSessionIds.removeAll()
                                         viewModel.startNewSession(in: project)
                                     }
+                                    selectedOperationsSurface = .assist
                                 },
                                 onOpenTree: {
                                     viewModel.loadProjectDirectory(project)
@@ -137,11 +134,15 @@ extension MainPanelView {
                                 onNewChat: {
                                     activeSettingsHubTab = nil
                                     showTaskOrchestration = false
+                                    appPreferences.automaticDeliveryProtection = false
                                     viewModel.startNewSession(in: project)
+                                    selectedOperationsSurface = .assist
                                 },
                                 onSelectSession: { session in
+                                    appPreferences.automaticDeliveryProtection = false
                                     selectedSessionIds = [session.session_id]
                                     viewModel.switchToSession(session, in: project)
+                                    selectedOperationsSurface = .assist
                                 },
                                 onDeleteSession: { session in
                                     viewModel.deleteSession(session.session_id)
@@ -245,8 +246,10 @@ extension MainPanelView {
                     .gesture(
                         DragGesture(coordinateSpace: .global)
                             .onChanged { value in
-                                if dragStartWidth == 0 { dragStartWidth = sidebarWidth }
-                                sidebarWidth = max(150, min(dragStartWidth + Double(value.translation.width), 600))
+                                if dragStartWidth == 0 {
+                                    dragStartWidth = min(max(sidebarWidth, 220), 320)
+                                }
+                                sidebarWidth = max(220, min(dragStartWidth + Double(value.translation.width), 320))
                             }
                             .onEnded { _ in
                                 dragStartWidth = 0
@@ -296,33 +299,12 @@ extension MainPanelView {
     }
 
     var onboardingView: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "sparkles.rectangle.stack")
-                .font(.system(size: 34))
-                .foregroundColor(.secondary.opacity(0.8))
-            Text(appPreferences.text("onboarding.noAgent"))
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(textColor)
-            Text(appPreferences.text("onboarding.noAgent.help"))
-                .font(.system(size: 14))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-            Button(action: { activeSettingsHubTab = .models }) {
-                Text(appPreferences.text("onboarding.openModels"))
-                    .font(.system(size: 14, weight: .medium))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(accentColor.opacity(0.15))
-                    .foregroundColor(accentColor)
-                    .cornerRadius(10)
-            }
-            .buttonStyle(.plain)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 24)
+        StarterJourneyView(
+            progress: productProgress,
+            preferences: appPreferences,
+            onOpenModels: { openSettings(.models) },
+            onOpenPlugins: { openSettings(.plugins) }
+        )
     }
 
     var availabilityLoadingView: some View {
@@ -339,4 +321,3 @@ extension MainPanelView {
     }
 
 }
-
