@@ -1013,6 +1013,7 @@ class OrchestratorPluginManager:
         status = self.installer.install()
         self._transport = None
         self._endpoint = None
+        self._sidecar_retry_after = 0.0
         return status
 
     def uninstall_plugin(self) -> Dict[str, Any]:
@@ -1020,6 +1021,7 @@ class OrchestratorPluginManager:
         status = self.installer.uninstall()
         self._transport = None
         self._endpoint = None
+        self._sidecar_retry_after = 0.0
         return status
 
     def should_use_external(self) -> bool:
@@ -1418,8 +1420,12 @@ class OrchestratorPluginManager:
 
     def _ensure_sidecar_locked(self, command_path: str) -> str:
         if self._endpoint:
-            self._http_get("/health")
-            return self._endpoint
+            try:
+                self._http_get("/health")
+                return self._endpoint
+            except Exception:
+                logger.info("Cached Across Orchestrator sidecar endpoint is stale; restarting it")
+                self.shutdown()
 
         self._cleanup_stale_aaa_sidecars()
 

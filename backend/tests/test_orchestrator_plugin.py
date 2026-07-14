@@ -125,6 +125,47 @@ def test_managed_orchestrator_sidecar_allows_client_project_roots(monkeypatch, t
     assert captured["kwargs"]["cwd"] == "/"
 
 
+def test_managed_orchestrator_restarts_a_stale_cached_sidecar(monkeypatch, tmp_path):
+    captured = {"starts": 0, "health": 0}
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    def fake_popen(_command, **_kwargs):
+        captured["starts"] += 1
+        return FakeProcess()
+
+    def fake_health(_path):
+        captured["health"] += 1
+        if captured["health"] == 1:
+            raise OSError("stale endpoint")
+        return {"ok": True}
+
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(tmp_path / "across-orchestrator"),
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+    manager._endpoint = "http://127.0.0.1:43122"
+    endpoints = iter((None, "http://127.0.0.1:43123"))
+    monkeypatch.setattr(manager, "shutdown", lambda: setattr(manager, "_endpoint", None))
+    monkeypatch.setattr(manager, "_cleanup_stale_aaa_sidecars", lambda: None)
+    monkeypatch.setattr(manager, "_sidecar_runtime_info_path", lambda: tmp_path / "sidecar.json")
+    monkeypatch.setattr(manager, "_runtime_info_endpoint", lambda: next(endpoints))
+    monkeypatch.setattr(manager, "_http_get", fake_health)
+    monkeypatch.setattr(orchestrator_plugin.subprocess, "Popen", fake_popen)
+
+    endpoint = manager._ensure_sidecar(str(tmp_path / "across-orchestrator"))
+    manager._sidecar_process = None
+
+    assert endpoint == "http://127.0.0.1:43123"
+    assert captured == {"starts": 1, "health": 2}
+
+
 def test_managed_orchestrator_does_not_fall_back_to_cli_when_sidecar_is_incompatible(monkeypatch, tmp_path):
     manager = OrchestratorPluginManager(
         OrchestratorPluginConfig(
