@@ -38,6 +38,11 @@ struct MainPanelView: View {
     @State var scrollAnchorId: String? = nil
     @State var mcpPollingTimer: Timer? = nil
     @State var isNewProjectMenuHovered = false
+    @State var windowContentWidth: CGFloat = 1280
+
+    var windowLayoutSize: AcrossWindowLayoutSize {
+        windowContentWidth >= 1400 ? .expanded : .regular
+    }
 
     var visibleLocalAgents: [AgentModel] {
         let ids = Set(settingsViewModel.availableLocalAgents.map(\.id))
@@ -191,7 +196,7 @@ struct MainPanelView: View {
         return signals
     }
 
-    var body: some View {
+    private var panelLayout: some View {
         HStack(spacing: 0) {
             leftSidebar
             centerResizer
@@ -204,9 +209,33 @@ struct MainPanelView: View {
                 rightSidebar
             }
         }
-        .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 820)
+        .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 800)
+        .environment(\.acrossWindowLayoutSize, windowLayoutSize)
         .background(bgColor.ignoresSafeArea())
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { windowContentWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, newWidth in
+                        windowContentWidth = newWidth
+                    }
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: CGFloat(min(max(sidebarWidth, 220), 320)), height: 30)
+                    .allowsHitTesting(false)
+                WindowDragView()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+            }
+        }
         .ignoresSafeArea(.all, edges: .top)
+    }
+
+    private var synchronizedPanel: some View {
+        panelLayout
         .onAppear {
             AppAppearanceController.apply(appPreferences.colorSchemeMode)
             _ = mcpPluginManager.plugins.count
@@ -220,6 +249,10 @@ struct MainPanelView: View {
         }
         .task {
             async let lifecycleLoad: Void = pluginLifecycleViewModel.loadForProductShell()
+            taskOrchestrationViewModel.updateProjectDirectoryFilter(
+                viewModel.activeProjectPath,
+                reload: false
+            )
             taskOrchestrationViewModel.loadTasks()
             _ = await lifecycleLoad
         }
@@ -232,6 +265,17 @@ struct MainPanelView: View {
         .onChange(of: selectedOperationsSurface) {
             showsContextDrawer = false
         }
+        .onChange(of: viewModel.activeProjectPath) { _, projectPath in
+            taskOrchestrationViewModel.updateProjectDirectoryFilter(projectPath)
+        }
+        .onChange(of: taskOrchestrationViewModel.selectedTask?.projectDir) { _, projectPath in
+            guard let projectPath else { return }
+            _ = viewModel.activateProject(matchingDirectory: projectPath)
+        }
+    }
+
+    var body: some View {
+        synchronizedPanel
         .onChange(of: humanReviewSnapshot.totalCount) {
             if humanReviewSnapshot.totalCount == 0, selectedOperationsSurface == .humanReview {
                 selectedOperationsSurface = .assist
@@ -266,6 +310,7 @@ struct MainPanelView: View {
                 transaction.animation = nil
             }
         }
+        .accessibilityHidden(activeSettingsHubTab != nil || showTaskOrchestration)
         .overlay(TrafficLightHider().frame(width: 0, height: 0).allowsHitTesting(false))
         .overlay(
             MainPanelOverlayHost(

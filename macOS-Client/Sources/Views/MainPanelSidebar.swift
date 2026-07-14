@@ -19,8 +19,6 @@ extension MainPanelView {
             .frame(height: 56)
             .background(WindowDragView().contentShape(Rectangle()))
 
-            Divider().opacity(0.5)
-
             OperationsWorkbenchSidebar(
                 selection: $selectedOperationsSurface,
                 preferences: appPreferences,
@@ -30,9 +28,6 @@ extension MainPanelView {
                 activeProjectPath: viewModel.activeProjectPath,
                 onOpenSettings: { openSettings(.settings) }
             ) {
-                Divider()
-                    .padding(.top, 8)
-
                 if showProjectTree {
                     projectTreeSidebar
                 } else {
@@ -42,7 +37,7 @@ extension MainPanelView {
         }
         .frame(width: CGFloat(min(max(sidebarWidth, 220), 320)))
         .frame(maxHeight: .infinity)
-        .background(sidebarBgColor)
+        .background(.bar)
     }
 
     private var contextDrawerLabel: String? {
@@ -116,6 +111,7 @@ extension MainPanelView {
                                 selectedSessionIds: selectedSessionIds,
                                 showsSessions: !appPreferences.automaticDeliveryProtection,
                                 onSelectProject: {
+                                    taskOrchestrationViewModel.updateProjectDirectoryFilter(project.path)
                                     if let firstSession = project.sessions.first {
                                         selectedSessionIds = [firstSession.session_id]
                                         viewModel.switchToSession(firstSession, in: project)
@@ -295,7 +291,7 @@ extension MainPanelView {
         }
         .frame(width: visibleLocalAgents.isEmpty || visibleCloudAgents.isEmpty ? 76 : 160)
         .frame(maxHeight: .infinity)
-        .background(sidebarBgColor)
+        .background(.bar)
     }
 
     var onboardingView: some View {

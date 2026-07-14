@@ -76,6 +76,32 @@ def _write_fake_context_memory_command(across_home: Path) -> Path:
     return path
 
 
+def _write_capability_manifest(across_home: Path, plugin_id: str, **overrides) -> Path:
+    plugin_dir = across_home / "plugins" / plugin_id
+    command = plugin_dir / "bin" / plugin_id
+    command.parent.mkdir(parents=True)
+    command.write_text("#!/bin/sh\nprintf '{}\\n'\n", encoding="utf-8")
+    command.chmod(0o755)
+    manifest = {
+        "schema_version": "across-capability-manifest/1.0",
+        "id": plugin_id,
+        "display_name": "Example Capability",
+        "version": "1.0.0",
+        "kind": "quality-provider",
+        "capabilities": [{"id": "repository_review"}],
+        "entrypoints": {"cli": {"command": plugin_id, "args": ["review"]}},
+        "permissions": {"filesystem": "read"},
+        "trust": {"level": "verified"},
+        "health": {"status": "ready"},
+        "contributed_workflows": ["repo-quality"],
+        "optional_ui": None,
+    }
+    manifest.update(overrides)
+    path = plugin_dir / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path
+
+
 def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     across_home = tmp_path / "across"
     manifest_path = _write_plugin_manifest(across_home, "across-context", "memory-provider")
@@ -98,6 +124,94 @@ def test_discover_across_plugins_reads_manifests_without_probe(tmp_path):
     assert autopilot["installed"] is False
     assert autopilot["kind"] == "autonomous-workflow"
     assert autopilot["paths"]["data"] == str(across_home / "data" / "across-autopilot")
+    assert context["manifest"]["schema_version"] == "across-capability-manifest/1.0"
+    assert set(("id", "display_name", "version", "kind", "capabilities", "entrypoints", "permissions", "trust", "health", "contributed_workflows", "optional_ui")) <= set(context["manifest"])
+
+
+def test_discover_across_plugins_finds_unknown_valid_capability_manifest(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    manifest_path = _write_capability_manifest(across_home, "example-review")
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
+
+    plugins = discover_across_plugins(env={"ACROSS_HOME": str(across_home), "PATH": ""})
+    plugin = next(item for item in plugins if item["plugin_id"] == "example-review")
+
+    assert plugin["manifest_path"] == str(manifest_path)
+    assert plugin["available"] is True
+    assert plugin["install"]["installable"] is False
+    assert plugin["capabilities"] == [{"id": "repository_review"}]
+    assert plugin["trust"] == {"level": "verified"}
+    assert plugin["capability_manifest"] == plugin["manifest"]
+
+    response = TestClient(app).get("/api/plugins")
+    assert response.status_code == 200
+    api_plugin = next(item for item in response.json()["plugins"] if item["plugin_id"] == "example-review")
+    assert api_plugin["capability_manifest"]["schema_version"] == "across-capability-manifest/1.0"
+    assert api_plugin["capability_manifest"] == api_plugin["manifest"]
+
+
+def test_discovery_rejects_invalid_manifest_paths_and_commands(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    _write_capability_manifest(across_home, "unsafe-path", optional_ui={"path": "../../private.html"})
+    _write_capability_manifest(
+        across_home,
+        "unsafe-command",
+        entrypoints={"cli": {"command": "sh -c", "args": ["echo unsafe"]}},
+    )
+    env = {"ACROSS_HOME": str(across_home), "PATH": ""}
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
+
+    ids = {item["plugin_id"] for item in discover_across_plugins(env=env)}
+
+    assert "unsafe-path" not in ids
+    assert "unsafe-command" not in ids
+    for plugin_id in ("unsafe-path", "unsafe-command"):
+        response = TestClient(app).get(f"/api/plugins/{plugin_id}")
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Unknown Across plugin"}
+
+
+def test_managed_manifest_accepts_command_from_shared_across_bin(tmp_path):
+    across_home = tmp_path / ".across"
+    command = across_home / "bin" / "across-context"
+    command.parent.mkdir(parents=True)
+    command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    command.chmod(0o755)
+    plugin_dir = across_home / "plugins" / "across-context"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "manifest.json").write_text(json.dumps({
+        "schemaVersion": "1.0",
+        "id": "across-context",
+        "displayName": "Across Context",
+        "kind": "memory-provider",
+        "entrypoints": {"cli": {"command": "~/.across/bin/across-context"}},
+        "capabilities": {"memory": True},
+        "permissions": {},
+    }), encoding="utf-8")
+
+    status = inspect_across_plugin(
+        "across-context",
+        env={"ACROSS_HOME": str(across_home), "HOME": str(tmp_path), "PATH": ""},
+    )
+
+    assert status["integrity_ok"] is True
+    assert status["capabilities"]["memory"] is True
+
+
+def test_invalid_first_party_manifest_keeps_managed_plugin_in_repair_state(tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-context", "memory-provider")
+    manifest_path = across_home / "plugins" / "across-context" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["entrypoints"] = {"cli": {"command": "sh -c"}}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    plugins = discover_across_plugins(env={"ACROSS_HOME": str(across_home), "PATH": ""})
+    context = next(item for item in plugins if item["plugin_id"] == "across-context")
+
+    assert context["status"] == "needs_repair"
+    assert context["integrity_ok"] is False
+    assert context["manifest"]["schema_version"] == "across-capability-manifest/1.0"
 
 
 def test_inspect_across_plugin_probe_uses_command_status(tmp_path):
@@ -377,6 +491,30 @@ def test_plugins_action_api_rejects_unsupported_action(monkeypatch, tmp_path):
     response = TestClient(app).post("/api/plugins/across-context/actions", json={"action": "explode"})
 
     assert response.status_code == 400
+
+
+def test_plugins_action_api_runs_one_click_context_install(monkeypatch):
+    calls: list[str] = []
+
+    def install(action: str):
+        calls.append(action)
+        return {
+            "plugin_id": "across-context",
+            "status": "installed",
+            "installed": True,
+            "available": True,
+        }
+
+    monkeypatch.setattr(api_server, "run_context_plugin_lifecycle_action", install)
+
+    response = TestClient(app).post(
+        "/api/plugins/across-context/actions",
+        json={"action": "install"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert calls == ["install"]
 
 
 def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, tmp_path):

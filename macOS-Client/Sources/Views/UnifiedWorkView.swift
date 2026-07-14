@@ -5,8 +5,9 @@ struct UnifiedWorkEmptyState: View {
     let recentTasks: [TaskOrchestrationTaskSummary]
     @ObservedObject var preferences: AppPreferences
     let onChooseProject: () -> Void
-    let onUseSuggestion: (String) -> Void
-    let onOpenTask: (String) -> Void
+    let onOpenTask: (TaskOrchestrationTaskSummary) -> Void
+
+    @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -16,7 +17,7 @@ struct UnifiedWorkEmptyState: View {
                 Text(projectName == nil
                     ? preferences.text("work.chooseProject.title")
                     : preferences.text("work.empty.title"))
-                    .font(.system(size: 30, weight: .semibold))
+                    .font(.system(size: windowLayoutSize == .expanded ? 34 : 30, weight: .semibold))
                 Text(projectName == nil
                     ? preferences.text("work.chooseProject.subtitle")
                     : String(format: preferences.text("work.empty.subtitle"), projectName ?? ""))
@@ -32,11 +33,7 @@ struct UnifiedWorkEmptyState: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    suggestionButton(preferences.text("work.suggestion.fix"))
-                    suggestionButton(preferences.text("work.suggestion.feature"))
-                    suggestionButton(preferences.text("work.suggestion.release"))
-                }
+                Color.clear.frame(height: 18)
             }
 
             if !recentTasks.isEmpty {
@@ -48,7 +45,7 @@ struct UnifiedWorkEmptyState: View {
 
                     ForEach(Array(recentTasks.prefix(3))) { task in
                         let isAccepted = task.reviewStatus == "accepted"
-                        Button { onOpenTask(task.taskId) } label: {
+                        Button { onOpenTask(task) } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: isAccepted
                                     ? "checkmark.circle.fill"
@@ -80,29 +77,9 @@ struct UnifiedWorkEmptyState: View {
 
             Spacer(minLength: 80)
         }
-        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: windowLayoutSize == .expanded ? 860 : 720, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 44)
-    }
-
-    private func suggestionButton(_ title: String) -> some View {
-        Button {
-            onUseSuggestion(title)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                Spacer()
-            }
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.horizontal, windowLayoutSize == .expanded ? 56 : 44)
     }
 }
 
@@ -157,11 +134,15 @@ struct UnifiedDeliveryView: View {
     let task: TaskOrchestrationTaskDetail?
     let isLoading: Bool
     let errorMessage: String?
+    let capabilityContract: AcrossTaskCapabilityContract? = nil
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var taskViewModel: TaskOrchestrationViewModel
     @ObservedObject var settingsViewModel: SettingsViewModel
     let defaultProjectPath: String?
     @Binding var showsTechnicalDetails: Bool
+    let onBack: () -> Void
+    let onChooseProject: () -> Void
+    let onNewWork: () -> Void
     let onAccept: () -> Void
     let onContinue: () -> Void
 
@@ -246,10 +227,7 @@ struct UnifiedDeliveryView: View {
                         .id("current-workflow-details")
                     }
                 }
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 36)
-                .padding(.vertical, 42)
+                .minimalPageContentFrame()
             }
             .onChange(of: showsTechnicalDetails) {
                 guard showsTechnicalDetails else { return }
@@ -261,13 +239,22 @@ struct UnifiedDeliveryView: View {
     }
 
     private var statusHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(headline)
-                .font(.system(size: 28, weight: .semibold))
-            Text(subheadline)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        MinimalPageHeader(title: headline, subtitle: subheadline) {
+            MinimalIconButton(
+                systemName: "chevron.left",
+                label: preferences.text("work.back"),
+                action: onBack
+            )
+            MinimalIconButton(
+                systemName: "folder",
+                label: preferences.text("project.useExisting"),
+                action: onChooseProject
+            )
+            MinimalIconButton(
+                systemName: "plus",
+                label: preferences.text("work.new"),
+                action: onNewWork
+            )
         }
     }
 
@@ -303,6 +290,16 @@ struct UnifiedDeliveryView: View {
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let summaryLine = AcrossTaskCapabilityPresentation(
+                task: task,
+                capabilityContract: capabilityContract
+            ).summaryLine {
+                Text(summaryLine)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
 
@@ -324,15 +321,18 @@ struct UnifiedDeliveryView: View {
     }
 
     private func resultSummary(_ task: TaskOrchestrationTaskDetail) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let presentation = AcrossTaskCapabilityPresentation(
+            task: task,
+            capabilityContract: capabilityContract
+        )
+        return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: isSuccessful ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(isSuccessful ? Color.green : Color.orange)
+                Image(systemName: StatusPalette.systemImage(for: presentation.resultState?.status ?? "attention"))
+                    .font(.system(size: 18))
+                    .foregroundStyle(StatusPalette.tone(for: presentation.resultState?.status ?? "attention").foreground)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(isSuccessful
-                        ? preferences.text(isAccepted ? "work.result.accepted" : "work.result.ready")
-                        : preferences.text("work.result.needsAttention"))
+                    Text(presentation.resultState?.title
+                        ?? preferences.text("work.result.needsAttention"))
                         .font(.system(size: 16, weight: .semibold))
                     Text(resultDetail(task))
                         .font(.system(size: 12))
@@ -342,9 +342,7 @@ struct UnifiedDeliveryView: View {
             }
 
             HStack(spacing: 10) {
-                if isAccepted {
-                    detailsButton
-                } else {
+                if !isAccepted, presentation.requiredDecisions.isEmpty {
                     if isSuccessful {
                         Button(action: onAccept) {
                             if taskViewModel.isAcceptingTask {
@@ -355,11 +353,12 @@ struct UnifiedDeliveryView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(taskViewModel.isAcceptingTask)
+                    } else {
+                        Button(preferences.text("work.repair"), action: onContinue)
+                            .buttonStyle(.borderedProminent)
                     }
-                    Button(preferences.text(isSuccessful ? "work.continue" : "work.repair"), action: onContinue)
-                        .buttonStyle(.bordered)
-                    detailsButton
                 }
+                detailsButton
             }
         }
     }

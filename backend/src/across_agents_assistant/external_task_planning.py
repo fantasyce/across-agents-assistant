@@ -41,6 +41,18 @@ _DELIVERABLE_ACTION_RE = re.compile(
 _DELIVERABLE_SEGMENT_STOP_RE = re.compile(r"[，,。；;]")
 _DELIVERABLE_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;]+|(?<=[.!?])\s+")
 _EXTERNAL_FILE_HINT_MAX_LINE_LENGTH = 4096
+_HOST_AGENT_RUNTIME_STATE_ROOTS = {
+    "kimi": [
+        "~/.kimi-code/logs",
+        "~/.kimi-code/sessions",
+        "~/.kimi-code/telemetry",
+        "~/.kimi-code/updates",
+        "~/.kimi-code/user-history",
+    ],
+}
+_HOST_AGENT_RUNTIME_STATE_FILES = {
+    "kimi": ["~/.kimi-code/session_index.jsonl"],
+}
 
 
 def deliverables_for_external_task(req: ExternalTaskPlanningRequest) -> list[str]:
@@ -90,30 +102,51 @@ def agent_adapters_for_external_task(req: ExternalTaskPlanningRequest) -> dict[s
         agent_id = _normalize_external_agent_id(agent)
         if not agent_id or agent_id == "demo" or agent_id in specs:
             continue
-        specs[agent_id] = {
+        spec = {
             "type": "command",
             "command": host_agent_adapter_command(agent_id),
             "description": "AAA host-provided agent execution adapter.",
         }
+        runtime_state_roots = _HOST_AGENT_RUNTIME_STATE_ROOTS.get(agent_id)
+        runtime_state_files = _HOST_AGENT_RUNTIME_STATE_FILES.get(agent_id)
+        if runtime_state_roots or runtime_state_files:
+            spec["sandboxPolicy"] = {
+                "network_policy": "adapter_scoped",
+                "execution": {
+                    "timeout_seconds": 90,
+                    "refresh_timeout_on_output": True,
+                    "max_wall_timeout_seconds": 1200,
+                },
+                "filesystem_policy": {
+                    "mode": "run_scoped",
+                    "runtime_state_roots": list(runtime_state_roots or []),
+                    "runtime_state_files": list(runtime_state_files or []),
+                }
+            }
+        specs[agent_id] = spec
     return specs
 
 
 def host_agent_adapter_command(agent_id: str) -> list[str]:
     clean_agent_id = _normalize_external_agent_id(agent_id) or str(agent_id or "").strip()
     if getattr(sys, "frozen", False):
-        return [
+        command = [
             sys.executable,
             "orchestrator-agent-adapter",
             "--agent",
             clean_agent_id,
         ]
-    return [
-        sys.executable,
-        "-m",
-        "across_agents_assistant.orchestrator_agent_adapter",
-        "--agent",
-        clean_agent_id,
-    ]
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "across_agents_assistant.orchestrator_agent_adapter",
+            "--agent",
+            clean_agent_id,
+        ]
+    if clean_agent_id == "kimi":
+        command.extend(["--timeout", "1200"])
+    return command
 
 
 def _normalize_external_agent_id(agent_id: Any) -> str:
@@ -131,7 +164,7 @@ def planned_subtasks_for_external_task(req: ExternalTaskPlanningRequest, deliver
     if not req.strict_dependency:
         return []
 
-    wave_specs: list[tuple[int, str, str, list[str]]] = []
+    wave_specs: dict[int, list[tuple[str, str, str]]] = {}
     for line in str(req.description or "").splitlines():
         parsed_wave = parse_external_wave_line(line)
         if parsed_wave is None:
@@ -139,16 +172,16 @@ def planned_subtasks_for_external_task(req: ExternalTaskPlanningRequest, deliver
         wave_number, parsed_title, _body = parsed_wave
         title = parsed_title or f"Wave {wave_number}"
         files = external_deliverable_hints_from_wave_line(line)
-        if files:
-            wave_specs.append((wave_number, title, line.strip(), files))
+        for path in files:
+            wave_specs.setdefault(wave_number, []).append((title, line.strip(), path))
 
     subtask_agents = external_subtask_agents(req)
     subtasks: list[dict[str, Any]] = []
     previous_wave_ids: list[str] = []
     if wave_specs:
-        for wave_number, title, source_line, files in wave_specs:
+        for wave_number, entries in wave_specs.items():
             current_ids: list[str] = []
-            for index, path in enumerate(files, start=1):
+            for index, (title, source_line, path) in enumerate(entries, start=1):
                 spec_id = f"wave-{wave_number}-{index}"
                 subtasks.append(
                     {

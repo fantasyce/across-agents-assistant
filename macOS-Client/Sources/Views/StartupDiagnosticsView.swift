@@ -33,9 +33,7 @@ struct StartupDiagnosticsView: View {
 
                 releaseVerificationSection
             }
-            .padding(MinimalSettingsMetrics.contentPadding)
-            .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .minimalPageContentFrame()
         }
         .background(bgColor)
         .task {

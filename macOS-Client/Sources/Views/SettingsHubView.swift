@@ -115,22 +115,32 @@ struct SettingsHubView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                windowControls
+                navigationSidebar
+            }
+            .frame(width: AcrossTheme.Metrics.sidebarWidth)
+            .background(.bar)
+
             Rectangle()
                 .fill(AcrossTheme.separator(for: colorScheme))
-                .frame(height: 1)
-            HStack(spacing: 0) {
-                navigationSidebar
-                    .frame(width: AcrossTheme.Metrics.sidebarWidth)
-                Rectangle()
-                    .fill(AcrossTheme.separator(for: colorScheme))
-                    .frame(width: 1)
-                content
-            }
+                .frame(width: 1)
+
+            content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(VisualEffectView().ignoresSafeArea())
+        .background(bgColor.ignoresSafeArea())
+        .overlay(alignment: .topLeading) {
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: AcrossTheme.Metrics.sidebarWidth, height: 30)
+                    .allowsHitTesting(false)
+                WindowDragView()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+            }
+        }
         .transaction { transaction in
             if preferences.reduceMotion {
                 transaction.disablesAnimations = true
@@ -140,28 +150,15 @@ struct SettingsHubView: View {
         .ignoresSafeArea(.all, edges: .top)
     }
 
-    private var header: some View {
-        HStack(spacing: 0) {
+    private var windowControls: some View {
+        HStack {
             CustomTrafficLights(onClose: onClose)
                 .frame(width: 120, alignment: .leading)
-
             Spacer()
-
-            Text(preferences.text("settings.title"))
-                .font(.system(size: 14, weight: .semibold))
-
-            Spacer()
-
-            Spacer().frame(width: 120)
         }
         .padding(.horizontal, 16)
         .frame(height: 56)
-        .background(
-            ZStack {
-                AcrossTheme.panelFill(for: colorScheme)
-                WindowDragView().contentShape(Rectangle())
-            }
-        )
+        .background(WindowDragView().contentShape(Rectangle()))
     }
 
     private var navigationSidebar: some View {
@@ -174,7 +171,6 @@ struct SettingsHubView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 10)
         }
-        .background(AcrossTheme.sidebarFill(for: colorScheme))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(preferences.text("settings.navigation")))
     }
@@ -473,9 +469,7 @@ private struct GlobalPreferencesContent: View {
                 }
 
             }
-            .padding(SettingsHubPageLayout.contentPadding)
-            .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .minimalPageContentFrame()
         }
     }
 

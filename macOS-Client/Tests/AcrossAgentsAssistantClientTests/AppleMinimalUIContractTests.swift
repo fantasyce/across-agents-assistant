@@ -48,7 +48,7 @@ struct AppleMinimalUIContractTests {
         #expect(settings.contains("ForEach(SettingsHubCategory.allCases)"))
         #expect(settings.contains("switch selectedCategory"))
         #expect(settings.contains("settingsNavigationRow(category)"))
-        #expect(settings.contains("AcrossTheme.sidebarFill(for: colorScheme)"))
+        #expect(settings.contains(".background(.bar)"))
         #expect(settings.contains("AcrossTheme.selectedFill(for: colorScheme)"))
         #expect(!settings.contains("List(selection:"))
 
@@ -57,6 +57,78 @@ struct AppleMinimalUIContractTests {
             Self.slice(plugins, from: "var body: some View", to: "private var standaloneHeader")
         )
         #expect(!pluginBody.contains("memorySection"))
+        #expect(plugins.contains("plugins.action.get"))
+        #expect(plugins.contains("viewModel.runAction(\"install\", for: plugin)"))
+        #expect(plugins.contains("viewModel.activePluginID == plugin.pluginId"))
+        #expect(plugins.contains("ProgressView()"))
+        #expect(!plugins.contains(".filter { !$0.installed || !$0.available }"))
+    }
+
+    @Test
+    func settingsAndWorkDetailsShareTheMainPageChrome() throws {
+        let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
+        let settingsHeader = try Self.source("macOS-Client/Sources/Views/MinimalSettingsComponents.swift")
+        let chat = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let assistHeaderCondition = try #require(
+            Self.slice(chat, from: "private var shouldShowAssistHeader", to: "@ViewBuilder\n    var contentArea")
+        )
+
+        #expect(settings.contains("private var windowControls"))
+        #expect(!settings.contains("private var header: some View"))
+        #expect(settings.contains(".background(.bar)"))
+        #expect(settings.contains("WindowDragView()"))
+        #expect(settings.contains(".minimalPageContentFrame()"))
+        #expect(settingsHeader.contains("windowLayoutSize == .expanded ? 32 : 28"))
+        #expect(!assistHeaderCondition.contains("selectedTask"))
+        #expect(work.contains("MinimalPageHeader(title: headline, subtitle: subheadline)"))
+        #expect(work.contains("systemName: \"chevron.left\""))
+        #expect(work.contains("systemName: \"folder\""))
+        #expect(work.contains("systemName: \"plus\""))
+
+        for path in [
+            "macOS-Client/Sources/Views/ModelSettingsView.swift",
+            "macOS-Client/Sources/Views/PluginLifecycleView.swift",
+            "macOS-Client/Sources/Views/MCPPreferencesView.swift",
+            "macOS-Client/Sources/Views/AgentCapabilitiesView.swift",
+            "macOS-Client/Sources/Views/ToolPermissionsView.swift",
+            "macOS-Client/Sources/Views/StartupDiagnosticsView.swift",
+        ] {
+            #expect(try Self.source(path).contains(".minimalPageContentFrame()"))
+        }
+    }
+
+    @Test
+    func sidebarsUseSpacingInsteadOfHorizontalSectionRules() throws {
+        let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+        let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
+        let mainSidebar = try #require(
+            Self.slice(sidebar, from: "var leftSidebar: some View", to: "private var contextDrawerLabel")
+        )
+        let settingsShell = try #require(
+            Self.slice(settings, from: "var body: some View", to: "private var windowControls")
+        )
+
+        #expect(!mainSidebar.contains("Divider()"))
+        #expect(!settingsShell.contains("Divider()"))
+        #expect(mainSidebar.contains("projectChatSidebar"))
+        #expect(settingsShell.contains("navigationSidebar"))
+    }
+
+    @Test
+    func selectedWorkTracksTheActiveProject() throws {
+        let mainPanel = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+        let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+        let session = try Self.source("macOS-Client/Sources/ViewModels/SessionViewModel.swift")
+        let tasks = try Self.source("macOS-Client/Sources/ViewModels/TaskOrchestrationViewModel.swift")
+
+        #expect(mainPanel.contains("onChange(of: viewModel.activeProjectPath)"))
+        #expect(mainPanel.contains("onChange(of: taskOrchestrationViewModel.selectedTask?.projectDir)"))
+        #expect(sidebar.contains("updateProjectDirectoryFilter(project.path)"))
+        #expect(session.contains("func activateProject(matchingDirectory directory: String?)"))
+        #expect(tasks.contains("func updateProjectDirectoryFilter"))
+        #expect(tasks.contains("enterWorkflowPicker()"))
+        #expect(tasks.contains("URLQueryItem(name: \"project_dir\""))
     }
 
     @Test
@@ -98,6 +170,35 @@ struct AppleMinimalUIContractTests {
     }
 
     @Test
+    func mainWindowAndDetailPagesShareTheIntendedGeometry() throws {
+        let app = try Self.source("macOS-Client/Sources/AcrossAgentsAssistantApp.swift")
+        let mainPanel = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+        let windowSupport = try Self.source("macOS-Client/Sources/Views/MainPanelWindowSupport.swift")
+        let shared = try Self.source("macOS-Client/Sources/Views/SharedUIComponents.swift")
+        let workflowComponents = try Self.source("macOS-Client/Sources/Views/MinimalWorkflowComponents.swift")
+        let workflows = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let simpleStart = try Self.source("macOS-Client/Sources/Views/TaskWorkflowStartViews.swift")
+
+        #expect(app.contains("contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800)"))
+        #expect(app.contains(".defaultSize(width: 1280, height: 800)"))
+        #expect(mainPanel.contains("idealWidth: 1280, minHeight: 640, idealHeight: 800"))
+        #expect(windowSupport.contains("height: min(800, screenFrame.height)"))
+        #expect(windowSupport.contains("isLegacyDefaultSize"))
+        #expect(windowSupport.contains("abs(window.frame.height - 820) <= 2"))
+        #expect(!app.contains("height: 820"))
+
+        #expect(shared.contains("static let topContentPadding: CGFloat = 36"))
+        #expect(workflowComponents.contains("topPadding: CGFloat = SettingsHubPageLayout.topContentPadding"))
+        #expect(workflowComponents.contains("if let backLabel"))
+        #expect(workflows.contains("backLabel: destination == .home ? nil"))
+        #expect(workflows.contains(".minimalPageContentFrame(topPadding: 12)"))
+        #expect(work.contains(".minimalPageContentFrame()"))
+        #expect(!work.contains(".frame(maxWidth: 760"))
+        #expect(simpleStart.contains(".minimalPageContentFrame(topPadding: 12)"))
+    }
+
+    @Test
     func systemTrafficLightsAreHidden() throws {
         let source = try Self.source("macOS-Client/Sources/Views/MainPanelWindowSupport.swift")
         for button in ["closeButton", "miniaturizeButton", "zoomButton"] {
@@ -106,6 +207,22 @@ struct AppleMinimalUIContractTests {
                 "System \(button) must be hidden"
             )
         }
+    }
+
+    @Test
+    func memoryBatchActionsExposeProgressAndSemanticColors() throws {
+        let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
+        let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
+        let lifecycle = try Self.source("macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift")
+
+        #expect(memory.contains("memoryBatchCompletedCount"))
+        #expect(memory.contains("memory.bulk.archiving"))
+        #expect(memory.contains(".tint(AcrossTheme.accent)"))
+        #expect(memory.contains(".tint(.red)"))
+        #expect(review.contains(".tint(.red)"))
+        #expect(lifecycle.contains("memoryBatchTotalCount = memories.count"))
+        #expect(lifecycle.contains("memoryBatchCompletedCount = index + 1"))
+        #expect(lifecycle.contains("AcrossMemoryMutationResponse.self"))
     }
 
     @Test

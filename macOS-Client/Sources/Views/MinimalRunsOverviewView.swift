@@ -43,7 +43,9 @@ struct MinimalRunsOverviewView: View {
         VStack(spacing: 0) {
             MinimalPageHeader(
                 title: headerTitle,
-                subtitle: destination == .home ? preferences.text("tasks.overview.subtitle") : nil
+                subtitle: destination == .home ? preferences.text("tasks.overview.subtitle") : nil,
+                backLabel: destination == .home ? nil : preferences.text("tasks.overview.back"),
+                onBack: { destination = .home }
             ) {
                 headerActions
             }
@@ -136,14 +138,6 @@ struct MinimalRunsOverviewView: View {
 
     @ViewBuilder
     private var headerActions: some View {
-        if destination != .home {
-            MinimalIconButton(
-                systemName: "chevron.left",
-                label: preferences.text("tasks.overview.back"),
-                action: { destination = .home }
-            )
-        }
-
         switch destination {
         case .home:
             MinimalIconButton(
@@ -495,9 +489,7 @@ struct MinimalRunsOverviewView: View {
                         MinimalNoticeBar(message: error, status: "error")
                     }
                 }
-                .padding(24)
-                .frame(maxWidth: 820, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .top)
+                .minimalPageContentFrame(topPadding: 12)
             }
         } else {
             MinimalWorkflowStateView(
@@ -708,11 +700,11 @@ struct MinimalRunsOverviewView: View {
     }
 
     private func selectedRun(_ task: TaskOrchestrationViewModel.TaskDetail) -> some View {
-        VStack(spacing: 0) {
-            runHeader(task)
-            Divider()
+        ScrollView {
+            VStack(spacing: 0) {
+                runHeader(task)
+                Divider()
 
-            ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     DisclosureGroup(preferences.text("tasks.description"), isExpanded: .constant(true)) {
                         Text(task.description)
@@ -754,9 +746,9 @@ struct MinimalRunsOverviewView: View {
                         observabilitySection(observability)
                     }
                 }
-                .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .minimalPageContentFrame(topPadding: 12)
         }
     }
 

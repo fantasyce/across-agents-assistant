@@ -30,6 +30,8 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var simpleStartDraft: SimpleStartWorkflowDraft?
     private let taskPageSize = 50
     private var taskListOffset = 0
+    private var projectDirectoryFilter: String?
+    private var taskListRequestGeneration = 0
 
     enum ViewMode {
         case empty
@@ -128,6 +130,39 @@ class TaskOrchestrationViewModel: ObservableObject {
         loadTaskPage(reset: true)
         loadReleaseEvaluation()
         loadReleaseE2EScenarios()
+    }
+
+    func updateProjectDirectoryFilter(_ directory: String?, reload: Bool = true) {
+        let normalizedDirectory = normalizedProjectDirectory(directory)
+        guard normalizedDirectory != projectDirectoryFilter else { return }
+        projectDirectoryFilter = normalizedDirectory
+        tasks = []
+        taskListOffset = 0
+        hasMoreTasks = false
+
+        if let selectedTask,
+           !projectDirectory(selectedTask.projectDir, belongsTo: normalizedDirectory) {
+            enterWorkflowPicker()
+        }
+
+        if reload {
+            loadTaskPage(reset: true)
+        }
+    }
+
+    private func normalizedProjectDirectory(_ directory: String?) -> String? {
+        guard let directory = directory?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !directory.isEmpty else { return nil }
+        return URL(fileURLWithPath: directory)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private func projectDirectory(_ directory: String?, belongsTo projectRoot: String?) -> Bool {
+        guard let projectRoot else { return directory == nil }
+        guard let directory = normalizedProjectDirectory(directory) else { return false }
+        return directory == projectRoot || directory.hasPrefix(projectRoot + "/")
     }
 
     func acceptTaskResult(_ taskId: String, onAccepted: @escaping () -> Void) {
@@ -515,6 +550,9 @@ class TaskOrchestrationViewModel: ObservableObject {
     }
 
     private func loadTaskPage(reset: Bool) {
+        taskListRequestGeneration += 1
+        let requestGeneration = taskListRequestGeneration
+        let requestedProjectDirectory = projectDirectoryFilter
         Task { @MainActor in
             if reset {
                 isLoading = true
@@ -541,10 +579,14 @@ class TaskOrchestrationViewModel: ObservableObject {
                         url: baseURL.appendingPathComponent("api/tasks/page"),
                         resolvingAgainstBaseURL: false
                     )
-                    components?.queryItems = [
+                    var queryItems = [
                         URLQueryItem(name: "limit", value: "\(taskPageSize)"),
                         URLQueryItem(name: "offset", value: "\(offset)")
                     ]
+                    if let requestedProjectDirectory {
+                        queryItems.append(URLQueryItem(name: "project_dir", value: requestedProjectDirectory))
+                    }
+                    components?.queryItems = queryItems
                     guard let url = components?.url else {
                         throw URLError(.badURL)
                     }
@@ -562,6 +604,8 @@ class TaskOrchestrationViewModel: ObservableObject {
 
                     let decoder = JSONDecoder()
                     let page = try decoder.decode(TaskPageResponse.self, from: data)
+                    guard requestGeneration == taskListRequestGeneration,
+                          requestedProjectDirectory == projectDirectoryFilter else { return }
 
                     if reset {
                         tasks = page.tasks
@@ -577,6 +621,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                     isLoadingMoreTasks = false
                     return
                 } catch {
+                    guard requestGeneration == taskListRequestGeneration else { return }
                     if attempt == 4 {
                         errorMessage = error.localizedDescription
                         backendConnectionState = .unavailable(error.localizedDescription)

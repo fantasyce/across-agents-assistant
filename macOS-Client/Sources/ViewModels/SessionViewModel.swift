@@ -528,6 +528,35 @@ class SessionViewModel: ObservableObject {
         return projects.first(where: { $0.id == activeProjectId })
     }
 
+    @discardableResult
+    func activateProject(matchingDirectory directory: String?) -> Bool {
+        guard let directory else { return false }
+        let taskPath = normalizedProjectPath(directory)
+        guard !taskPath.isEmpty else { return false }
+
+        let project = projects
+            .filter { candidate in
+                let projectPath = normalizedProjectPath(candidate.path)
+                return taskPath == projectPath || taskPath.hasPrefix(projectPath + "/")
+            }
+            .max { lhs, rhs in
+                normalizedProjectPath(lhs.path).count < normalizedProjectPath(rhs.path).count
+            }
+
+        guard let project else { return false }
+        activeProjectId = project.id
+        activeProjectName = project.name
+        activeProjectPath = project.path
+        return true
+    }
+
+    private func normalizedProjectPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
     func switchToSession(_ session: SessionInfo, in project: ProjectInfo? = nil) {
         if let project {
             activeProjectId = project.id

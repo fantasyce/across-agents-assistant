@@ -419,7 +419,7 @@ struct TaskNewTaskForm: View {
                 }
                 .padding(.top, 8)
             }
-            .padding(20)
+            .minimalPageContentFrame(topPadding: 12)
         }
         .onAppear {
             applyDefaultProjectPathIfNeeded()

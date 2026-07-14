@@ -373,7 +373,7 @@ struct AutopilotWorkbenchView: View {
 
     private func summaryGrid(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
         LazyVGrid(columns: summaryColumns, spacing: 12) {
-            summaryTile(appPreferences.text("workbench.status"), value: localizedStatus(snapshot.status), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
+            summaryTile(appPreferences.text("workbench.status"), value: localizedWorkbenchStatus(snapshot), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
             summaryTile(appPreferences.text("workbench.runs"), value: "\(snapshot.summary.completedRunCount)/\(snapshot.summary.runCount)", systemName: "checklist", color: statusColor(snapshot.summary.failedRunCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.triggers"), value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)", systemName: "timer", color: statusColor(snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.capabilities"), value: "\(snapshot.summary.capabilityReadyCount)", systemName: "sparkles.rectangle.stack", color: statusColor(snapshot.summary.registryHealthStatus))
@@ -639,6 +639,27 @@ struct AutopilotWorkbenchView: View {
 
     private func localizedStatus(_ status: String) -> String {
         appPreferences.text("workbench.status.\(status)")
+    }
+
+    private func localizedWorkbenchStatus(_ snapshot: AutopilotWorkbenchSnapshot) -> String {
+        let reasonsAreMemoryReviewOnly = !snapshot.statusReasons.isEmpty
+            && snapshot.statusReasons.allSatisfy {
+                $0.lowercased().contains("pending memory")
+            }
+        let summary = snapshot.summary
+        if snapshot.status == "attention",
+           reasonsAreMemoryReviewOnly,
+           summary.pendingMemoryCount > 0,
+           summary.failedRunCount == 0,
+           summary.pendingTriggerCount == 0,
+           summary.promotionReadyCount == 0,
+           summary.schedulerRunning,
+           summary.selfIterationStatus == "active",
+           summary.registryHealthStatus == "passed",
+           summary.agentInteropE2EStatus == "passed" {
+            return appPreferences.text("workbench.status.review")
+        }
+        return localizedStatus(snapshot.status)
     }
 
     private func localizedWorkspaceStatus(_ snapshot: AgentWorkspaceReadinessSnapshot) -> String {

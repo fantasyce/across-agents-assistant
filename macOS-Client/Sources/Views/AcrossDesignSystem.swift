@@ -3,17 +3,17 @@ import SwiftUI
 
 enum AcrossTheme {
     enum Spacing {
-        static let compact: CGFloat = 6
+        static let compact: CGFloat = 4
         static let control: CGFloat = 8
-        static let content: CGFloat = 12
-        static let section: CGFloat = 20
-        static let page: CGFloat = 24
+        static let content: CGFloat = 16
+        static let section: CGFloat = 24
+        static let page: CGFloat = 32
     }
 
     enum Metrics {
-        static let controlCornerRadius: CGFloat = 7
-        static let chipCornerRadius: CGFloat = 6
-        static let cardCornerRadius: CGFloat = 8
+        static let controlCornerRadius: CGFloat = 8
+        static let chipCornerRadius: CGFloat = 8
+        static let cardCornerRadius: CGFloat = 12
         static let toolbarButtonSize = CGSize(width: 32, height: 30)
         static let sidebarWidth: CGFloat = 232
         static let inspectorWidth: CGFloat = 300
@@ -24,11 +24,11 @@ enum AcrossTheme {
     static let accent = Color(nsColor: .systemBlue)
 
     static func canvasFill(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .underPageBackgroundColor)
+        Color(nsColor: .windowBackgroundColor)
     }
 
     static func sidebarFill(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor)
+        .clear
     }
 
     static func panelFill(for colorScheme: ColorScheme) -> Color {
@@ -36,23 +36,39 @@ enum AcrossTheme {
     }
 
     static func recessedFill(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.045)
+        colorScheme == .dark ? Color.white.opacity(0.075) : Color.black.opacity(0.04)
     }
 
     static func separator(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color.white.opacity(Metrics.hairlineOpacity) : Color.black.opacity(Metrics.hairlineOpacity)
+        colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.10)
     }
 
     static func selectedFill(for colorScheme: ColorScheme) -> Color {
-        accent.opacity(colorScheme == .dark ? 0.22 : 0.12)
+        accent.opacity(colorScheme == .dark ? 0.20 : 0.11)
     }
 
     static func hoverFill(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.055)
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.045)
     }
 
     static func focusRing(for colorScheme: ColorScheme) -> Color {
         accent.opacity(colorScheme == .dark ? 0.9 : 0.72)
+    }
+}
+
+enum AcrossWindowLayoutSize: Equatable {
+    case regular
+    case expanded
+}
+
+private struct AcrossWindowLayoutSizeKey: EnvironmentKey {
+    static let defaultValue: AcrossWindowLayoutSize = .regular
+}
+
+extension EnvironmentValues {
+    var acrossWindowLayoutSize: AcrossWindowLayoutSize {
+        get { self[AcrossWindowLayoutSizeKey.self] }
+        set { self[AcrossWindowLayoutSizeKey.self] = newValue }
     }
 }
 

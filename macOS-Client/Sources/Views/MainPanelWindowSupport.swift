@@ -31,11 +31,13 @@ class TrafficLightHiderView: NSView {
         let screenFrame = screen.visibleFrame
         let isRestoredZoomed = window.frame.width >= screenFrame.width * 0.95
             && window.frame.height >= screenFrame.height * 0.95
-        if isRestoredZoomed {
+        let isLegacyDefaultSize = abs(window.frame.width - 1280) <= 2
+            && abs(window.frame.height - 820) <= 2
+        if isRestoredZoomed || isLegacyDefaultSize {
             DispatchQueue.main.async {
                 let size = NSSize(
                     width: min(1280, screenFrame.width),
-                    height: min(820, screenFrame.height)
+                    height: min(800, screenFrame.height)
                 )
                 let origin = NSPoint(
                     x: screenFrame.midX - size.width / 2,

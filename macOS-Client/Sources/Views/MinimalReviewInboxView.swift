@@ -47,14 +47,18 @@ struct MinimalReviewInboxView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MinimalWorkflowHeader(
+            MinimalPageHeader(
                 title: preferences.text("review.title"),
-                subtitle: preferences.text("review.subtitle"),
-                status: nil
+                subtitle: preferences.text("review.subtitle")
             ) {
                 Text(String(format: preferences.text("review.count"), snapshot.totalCount))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                MinimalIconButton(
+                    systemName: "tray.full",
+                    label: preferences.text("review.title"),
+                    action: { setInboxVisible(!showsInbox) }
+                )
                 MinimalIconButton(
                     systemName: "sidebar.right",
                     label: preferences.text("review.inspector"),
@@ -67,10 +71,12 @@ struct MinimalReviewInboxView: View {
                     action: onRefresh
                 )
             }
+            .minimalPageContentFrame(bottomPadding: 8)
 
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AcrossTheme.canvasFill(for: colorScheme))
         .onAppear { selectFirstIfNeeded() }
         .onChange(of: snapshot.items.map(\.id)) {
             selectFirstIfNeeded()
@@ -223,65 +229,70 @@ struct MinimalReviewInboxView: View {
     @ViewBuilder
     private var reviewDetail: some View {
         if let item = selectedItem {
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Label(item.title, systemImage: icon(for: item.kind))
-                        .font(.headline)
-                        .lineLimit(2)
-                    Spacer(minLength: 10)
-                    MinimalWorkflowStatusLabel(status: item.status)
-                }
-                .padding(.horizontal, 16)
-                .frame(minHeight: 54)
-
-                Divider()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if item.kind == .pendingMemory {
-                            memoryBatchDetail
-                        } else {
-                            Text(item.detail)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 10) {
-                                MinimalSectionHeader(preferences.text("review.inspector"))
-                                MinimalKeyValueRow(preferences.text("review.source"), value: localizedSource(item.source))
-                                MinimalKeyValueRow(
-                                    preferences.text("review.type"),
-                                    value: preferences.text(item.kind.localizationKey)
-                                )
-                                MinimalKeyValueRow(
-                                    preferences.text("review.status"),
-                                    value: preferences.statusText(item.status)
-                                )
-                            }
-
-                            Divider()
-
-                            Label(
-                                preferences.text("review.humanBoundary"),
-                                systemImage: "hand.raised"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                            Button {
-                                onOpen(item)
-                            } label: {
-                                Label(preferences.text("review.open"), systemImage: "arrow.up.right.square")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .keyboardShortcut(.return, modifiers: [])
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .top, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(preferences.text(item.kind.localizationKey))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Label(item.title, systemImage: icon(for: item.kind))
+                                .font(.system(size: 18, weight: .semibold))
+                                .lineLimit(2)
                         }
+                        Spacer(minLength: 16)
+                        MinimalWorkflowStatusLabel(
+                            status: item.status,
+                            label: item.kind == .pendingMemory
+                                ? preferences.text("memory.status.pendingReview")
+                                : nil
+                        )
                     }
-                    .padding(18)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Divider()
+
+                    if item.kind == .pendingMemory {
+                        memoryBatchDetail
+                    } else {
+                        Text(item.detail)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            MinimalSectionHeader(preferences.text("review.inspector"))
+                            MinimalKeyValueRow(preferences.text("review.source"), value: localizedSource(item.source))
+                            MinimalKeyValueRow(
+                                preferences.text("review.type"),
+                                value: preferences.text(item.kind.localizationKey)
+                            )
+                            MinimalKeyValueRow(
+                                preferences.text("review.status"),
+                                value: preferences.statusText(item.status)
+                            )
+                        }
+
+                        Divider()
+
+                        Label(
+                            preferences.text("review.humanBoundary"),
+                            systemImage: "hand.raised"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Button {
+                            onOpen(item)
+                        } label: {
+                            Label(preferences.text("review.open"), systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.return, modifiers: [])
+                    }
                 }
+                .minimalPageContentFrame(topPadding: 16)
             }
         } else {
             MinimalWorkflowStateView(
@@ -368,6 +379,7 @@ struct MinimalReviewInboxView: View {
                         Label(preferences.text("review.memory.approve.short"), systemImage: "checkmark")
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(AcrossTheme.accent)
                     .controlSize(.small)
                     .help(preferences.text("review.memory.approve"))
                 }
@@ -377,7 +389,8 @@ struct MinimalReviewInboxView: View {
                 } label: {
                     Label(preferences.text("review.memory.archive.short"), systemImage: "archivebox")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
                 .controlSize(.small)
                 .disabled(processingGroupID != nil)
                 .help(preferences.text("review.memory.archive"))

@@ -34,6 +34,21 @@ enum AgentLoopTimelineSource: String, CaseIterable, Equatable {
     }
 }
 
+struct PluginLifecycleFeedback: Equatable {
+    let pluginID: String
+    let displayName: String
+    let action: String
+    let succeeded: Bool
+}
+
+private enum PluginLifecycleVerificationError: LocalizedError {
+    case actionDidNotComplete
+
+    var errorDescription: String? {
+        "The plugin did not reach the expected state."
+    }
+}
+
 @MainActor
 final class PluginLifecycleViewModel: ObservableObject {
     @Published var plugins: [AcrossPluginStatus] = []
@@ -55,6 +70,12 @@ final class PluginLifecycleViewModel: ObservableObject {
     @Published var agentLoopTimelineMode: AgentLoopTimelineMode = .live
     @Published var agentLoopTimelineSource: AgentLoopTimelineSource?
     @Published var highlightedMemoryId: String?
+    @Published private(set) var memoryBatchTargetStatus: String?
+    @Published private(set) var memoryBatchCompletedCount = 0
+    @Published private(set) var memoryBatchTotalCount = 0
+    @Published private(set) var activePluginID: String?
+    @Published private(set) var activePluginAction: String?
+    @Published private(set) var pluginFeedback: PluginLifecycleFeedback?
     @Published var message: String?
     @Published var errorMessage: String?
 
@@ -83,7 +104,8 @@ final class PluginLifecycleViewModel: ObservableObject {
         await loadMemories()
     }
 
-    func loadPlugins(probe: Bool = false) async {
+    @discardableResult
+    func loadPlugins(probe: Bool = false) async -> Bool {
         isLoadingPlugins = true
         errorMessage = nil
         defer { isLoadingPlugins = false }
@@ -94,18 +116,29 @@ final class PluginLifecycleViewModel: ObservableObject {
             try Self.validate(response)
             plugins = try JSONDecoder().decode(PluginListResponse.self, from: data).plugins
             AcrossProductCapabilityStore.shared.update(plugins)
+            return true
         } catch {
-            plugins = []
-            AcrossProductCapabilityStore.shared.clear()
+            if plugins.isEmpty {
+                AcrossProductCapabilityStore.shared.clear()
+            }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
     func runAction(_ action: String, for plugin: AcrossPluginStatus) async {
+        let normalizedAction = Self.normalizedPluginAction(action)
         isWorking = true
+        activePluginID = plugin.pluginId
+        activePluginAction = normalizedAction
+        pluginFeedback = nil
         message = nil
         errorMessage = nil
-        defer { isWorking = false }
+        defer {
+            isWorking = false
+            activePluginID = nil
+            activePluginAction = nil
+        }
 
         do {
             let escaped = plugin.pluginId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? plugin.pluginId
@@ -113,14 +146,75 @@ final class PluginLifecycleViewModel: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(PluginActionRequest(action: action))
-            let (_, response) = try await URLSession.shared.data(for: request)
-            try Self.validate(response)
-            message = "\(plugin.displayName): \(action)"
-            await loadPlugins(probe: action == "probe")
+            request.httpBody = try JSONEncoder().encode(PluginActionRequest(action: normalizedAction))
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try OperationsHTTP.validate(response, data: data)
+            guard await refreshPluginAfterAction(
+                pluginID: plugin.pluginId,
+                action: normalizedAction
+            ) else {
+                throw PluginLifecycleVerificationError.actionDidNotComplete
+            }
+            pluginFeedback = PluginLifecycleFeedback(
+                pluginID: plugin.pluginId,
+                displayName: plugin.displayName,
+                action: normalizedAction,
+                succeeded: true
+            )
         } catch {
             errorMessage = error.localizedDescription
+            pluginFeedback = PluginLifecycleFeedback(
+                pluginID: plugin.pluginId,
+                displayName: plugin.displayName,
+                action: normalizedAction,
+                succeeded: false
+            )
         }
+    }
+
+    func isRunningPluginAction(_ action: String, for plugin: AcrossPluginStatus) -> Bool {
+        activePluginID == plugin.pluginId
+            && activePluginAction == Self.normalizedPluginAction(action)
+    }
+
+    nonisolated static func normalizedPluginAction(_ action: String) -> String {
+        let normalized = action.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        return normalized == "refresh" ? "probe" : normalized
+    }
+
+    nonisolated static func actionReachedExpectedState(
+        _ action: String,
+        plugin: AcrossPluginStatus
+    ) -> Bool {
+        switch normalizedPluginAction(action) {
+        case "install", "repair", "upgrade":
+            return plugin.installed && plugin.available
+        case "uninstall":
+            return !plugin.installed
+        default:
+            return true
+        }
+    }
+
+    private func refreshPluginAfterAction(
+        pluginID: String,
+        action: String,
+        maxAttempts: Int = 3
+    ) async -> Bool {
+        for attempt in 0..<max(1, maxAttempts) {
+            let refreshed = await loadPlugins(probe: true)
+            if refreshed,
+               let current = plugins.first(where: { $0.pluginId == pluginID }),
+               Self.actionReachedExpectedState(action, plugin: current) {
+                return true
+            }
+            if attempt < maxAttempts - 1 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+        return false
     }
 
     func loadMemories() async {
@@ -211,26 +305,42 @@ final class PluginLifecycleViewModel: ObservableObject {
     func updateMemories(_ memories: [AcrossMemoryEntry], status: String) async -> Bool {
         guard !memories.isEmpty else { return false }
         isWorking = true
+        memoryBatchTargetStatus = status
+        memoryBatchCompletedCount = 0
+        memoryBatchTotalCount = memories.count
         message = nil
         errorMessage = nil
-        defer { isWorking = false }
+        defer {
+            isWorking = false
+            memoryBatchTargetStatus = nil
+            memoryBatchCompletedCount = 0
+            memoryBatchTotalCount = 0
+        }
 
         do {
-            for memory in memories {
+            for (index, memory) in memories.enumerated() {
                 let escaped = memory.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? memory.id
                 let url = URL(string: "\(backendBase)/api/memory/memories/\(escaped)/status")!
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.httpBody = try JSONEncoder().encode(AcrossMemoryStatusRequest(status: status))
-                let (_, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.shared.data(for: request)
                 try Self.validate(response)
+                let updated = try JSONDecoder().decode(AcrossMemoryMutationResponse.self, from: data).memory
+                if status == "archived" || status == "expired" {
+                    self.memories.removeAll { $0.id == updated.id }
+                } else if let existingIndex = self.memories.firstIndex(where: { $0.id == updated.id }) {
+                    self.memories[existingIndex] = updated
+                }
+                memoryBatchCompletedCount = index + 1
             }
             message = "\(memories.count) memories marked \(status)"
             await loadMemories()
             return true
         } catch {
             errorMessage = error.localizedDescription
+            await loadMemories()
             return false
         }
     }

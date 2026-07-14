@@ -108,6 +108,27 @@ private func checkNavigationShape() {
     check(settings.contains("MCPPreferencesView"), "MCP settings must render directly")
     check(settings.contains("ForEach(SettingsHubCategory.allCases)"), "Settings must render the flat navigation")
     check(settings.contains("switch selectedCategory"), "Settings content must follow the visible category selection")
+    check(settings.contains("private var windowControls"), "Settings must integrate controls into the sidebar")
+    check(!settings.contains("private var header: some View"), "Settings must not restore a visible title bar")
+    check(settings.contains(".background(.bar)"), "Settings sidebar must share the main sidebar material")
+    check(settings.contains(".minimalPageContentFrame()"), "Settings content must share the primary page geometry")
+    check(settings.contains("WindowDragView()"), "Settings must retain a hidden drag region")
+    let settingsShell = slice(settings, from: "var body: some View", to: "private var windowControls")
+    check(!settingsShell.contains("Divider()"), "Settings sidebar must not be split by a top rule")
+
+    let settingsHeader = source("macOS-Client/Sources/Views/MinimalSettingsComponents.swift")
+    check(settingsHeader.contains("windowLayoutSize == .expanded ? 32 : 28"), "Settings titles must share primary page typography")
+
+    for path in [
+        "macOS-Client/Sources/Views/ModelSettingsView.swift",
+        "macOS-Client/Sources/Views/PluginLifecycleView.swift",
+        "macOS-Client/Sources/Views/MCPPreferencesView.swift",
+        "macOS-Client/Sources/Views/AgentCapabilitiesView.swift",
+        "macOS-Client/Sources/Views/ToolPermissionsView.swift",
+        "macOS-Client/Sources/Views/StartupDiagnosticsView.swift",
+    ] {
+        check(source(path).contains(".minimalPageContentFrame()"), "Every settings destination must share primary page geometry")
+    }
 
     let plugins = source("macOS-Client/Sources/Views/PluginLifecycleView.swift")
     let pluginBody = slice(plugins, from: "var body: some View", to: "private var standaloneHeader")
@@ -133,6 +154,12 @@ private func checkWindowChrome() {
     let draggableChrome = source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
         + source("macOS-Client/Sources/Views/MainPanelToolbar.swift")
     check(draggableChrome.contains("WindowDragView()"), "Integrated title bar must retain a drag region")
+    let mainSidebar = slice(
+        source("macOS-Client/Sources/Views/MainPanelSidebar.swift"),
+        from: "var leftSidebar: some View",
+        to: "private var contextDrawerLabel"
+    )
+    check(!mainSidebar.contains("Divider()"), "Main sidebar must use spacing instead of horizontal section rules")
 }
 
 private func checkCustomTrafficLights() {
@@ -260,6 +287,12 @@ private func checkCriticalInteractionContracts() {
     check(!chat.contains("isContinuousMode"), "Assistant must not expose a state-only continuous mode")
     check(toolbar.contains("work.back"), "Completed work must provide an explicit back action")
     check(toolbar.contains("!appPreferences.automaticDeliveryProtection"), "Direct conversations must provide a return to Work")
+    let assistHeaderCondition = slice(chat, from: "private var shouldShowAssistHeader", to: "@ViewBuilder\n    var contentArea")
+    check(!assistHeaderCondition.contains("selectedTask"), "Protected work details must not restore the legacy title bar")
+    check(unifiedWork.contains("MinimalPageHeader(title: headline, subtitle: subheadline)"), "Work details must use the shared page header")
+    check(unifiedWork.contains("systemName: \"chevron.left\""), "Work details must expose Back as an icon action")
+    check(unifiedWork.contains("systemName: \"folder\""), "Work details must expose Workspace as an icon action")
+    check(unifiedWork.contains("systemName: \"plus\""), "Work details must expose New Work as an icon action")
     check(unifiedWork.contains("TaskDetailPanel("), "Technical details must be embedded for the selected task")
     check(!protectedDelivery.contains("showTaskOrchestration = true"), "Technical details must not open the all-workflows overlay")
     check(protectedDelivery.contains("acceptTaskResult"), "Accepting a result must persist through the task API")
@@ -276,6 +309,15 @@ private func checkCriticalInteractionContracts() {
         app.contains("TrafficLightHider(resetsRestoredZoomedFrame: false)"),
         "Settings must not reuse main-window frame recovery"
     )
+
+    let session = source("macOS-Client/Sources/ViewModels/SessionViewModel.swift")
+    let tasks = source("macOS-Client/Sources/ViewModels/TaskOrchestrationViewModel.swift")
+    let mainSidebar = source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+    check(mainPanel.contains("onChange(of: viewModel.activeProjectPath)"), "Project changes must refresh work scope")
+    check(mainPanel.contains("onChange(of: taskOrchestrationViewModel.selectedTask?.projectDir)"), "Selected work must activate its owning project")
+    check(mainSidebar.contains("updateProjectDirectoryFilter(project.path)"), "Sidebar project selection must exit stale work details")
+    check(session.contains("func activateProject(matchingDirectory directory: String?)"), "Sessions must support project activation from work ownership")
+    check(tasks.contains("URLQueryItem(name: \"project_dir\""), "Recent work must request the active project only")
 
     let review = source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
     let project = source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")

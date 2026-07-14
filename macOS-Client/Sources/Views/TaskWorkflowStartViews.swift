@@ -66,9 +66,7 @@ struct SimpleStartWorkflowView: View {
                 .buttonStyle(.borderless)
                 .help(appPreferences.text("tasks.simpleStart.expert.help"))
             }
-            .padding(28)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
+            .minimalPageContentFrame(topPadding: 12)
         }
     }
 

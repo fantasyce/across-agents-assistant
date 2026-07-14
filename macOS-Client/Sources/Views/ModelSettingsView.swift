@@ -33,9 +33,7 @@ struct ModelSettingsView: View {
                     localAgentSection
                     cloudLLMSection
                 }
-                .padding(MinimalSettingsMetrics.contentPadding)
-                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .minimalPageContentFrame()
             }
             .background(bgColor)
 

@@ -63,6 +63,12 @@ Autopilot adds supervised Loop Engineering. The navigation grows with the
 installed capabilities, while detailed evidence and policy stay available when
 they are needed instead of dominating every task.
 
+Routine work is zero-configuration: AAA discovers capability manifests, checks
+health and trust, and selects one safe plan internally. It asks only when a
+credential, material security choice, or external promotion really requires a
+decision. Third-party capabilities can appear without adding navigation or
+exposing provider and retry settings in the normal workflow.
+
 ## Loop Engineering Use Cases
 
 Across is now packaged as a Loop Engineering workspace: a way to turn repeat
@@ -370,6 +376,7 @@ ACROSS_AGENTS_ORCHESTRATOR_MODE=external    # default and only supported product
 ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT=http://127.0.0.1:8765
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=across-orchestrator
 ACROSS_AGENTS_ORCHESTRATOR_PLUGIN_HOME="$HOME/.across/plugins"
+# Development/source-build fallbacks; packaged builds use signed-in-app payloads.
 ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE=git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0
 ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE=git+https://github.com/fantasyce/across-autopilot.git#v0.3.0
 ACROSS_AGENTS_ORCHESTRATOR_PYTHON=/opt/homebrew/bin/python3
@@ -400,17 +407,17 @@ no endpoint is configured, it discovers the wrapper at
 `~/.across/bin/across-orchestrator`, starts a local sidecar with
 `across-orchestrator serve --host 127.0.0.1 --port 0`, and reads runtime
 metadata from `~/.across/run/across-orchestrator`. The UI calls
-`/api/orchestrator/plugin/install` to create the managed virtualenv under
-`~/.across/plugins/across-orchestrator` and install the external product from
-the configured source.
+the plugin lifecycle API to copy the verified, self-contained Orchestrator
+executable into `~/.across/plugins/across-orchestrator`. The configured source
+and Python virtualenv path remain a development/source-build fallback.
 
-Packaged builds cannot use the backend binary itself to create Python
-virtualenvs. The managed Across Orchestrator installer requires Python
-`>=3.11,<3.14` and auto-discovers a supported interpreter from common
-locations; set `ACROSS_AGENTS_ORCHESTRATOR_PYTHON` only when you need to force a
-specific interpreter. Product mode rejects interpreters under protected user
-project locations unless developer mode is explicitly enabled. The AAA backend source runtime remains Python
-`>=3.10,<3.14`.
+Packaged builds include everything required by the three first-party plugins:
+a fixed Node runtime, verified Context and Autopilot source archives, and a
+self-contained Orchestrator executable. Plugin Center installation therefore
+does not require npm, Git, Node, or Python to be preinstalled on the user's
+Mac. Source builds without these bundled payloads retain the previous npm and
+Python installer paths for development. The AAA backend source runtime remains
+Python `>=3.10,<3.14`.
 
 External task state stays in `~/.across/data/across-orchestrator`; the app only
 keeps a thin task-id index in
@@ -428,8 +435,11 @@ Managed installs place runtime code under
 `~/.across/plugins/across-context`, create the wrapper at
 `~/.across/bin/across-context`, and keep durable memory under
 `~/.across/data/across-context`. The packaged app should discover and repair
-that managed runtime instead of pointing at `npm link`, a source checkout, or a
-path under `~/Documents/projects`.
+that managed runtime using its bundled Node executable instead of pointing at
+`npm link`, a source checkout, or a path under `~/Documents/projects`. Across
+Autopilot follows the same managed runtime contract. Uninstall removes plugin
+runtime code and wrappers while preserving each component's durable data under
+`~/.across/data`.
 
 AAA no longer packages an in-app task orchestration runtime. Task execution,
 loop state, checkpoints, remediation, and final evidence are owned by the

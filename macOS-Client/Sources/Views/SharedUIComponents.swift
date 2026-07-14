@@ -1,6 +1,7 @@
 import SwiftUI
 
 import AppKit
+import ObjectiveC
 
 
 
@@ -200,6 +201,10 @@ extension Color {
 enum SettingsHubPageLayout {
     static let contentMaxWidth: CGFloat = 980
     static let contentPadding: CGFloat = 28
+    static let topContentPadding: CGFloat = 36
+    static let horizontalContentPadding: CGFloat = 44
+    static let expandedContentMaxWidth: CGFloat = 1280
+    static let expandedHorizontalContentPadding: CGFloat = 56
     static let sectionSpacing: CGFloat = 28
 }
 
@@ -284,10 +289,55 @@ class DraggableNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 {
-            self.window?.zoom(nil)
+            toggleMaximizedWindowSize()
         } else {
             self.window?.performDrag(with: event)
         }
+    }
+
+    private func toggleMaximizedWindowSize() {
+        guard let window, let screen = window.screen else { return }
+        let visibleFrame = screen.visibleFrame
+        let isMaximized = window.frame.isNearlyEqual(to: visibleFrame)
+
+        if isMaximized, let restoreFrame = window.acrossRestoreFrame {
+            window.setFrame(
+                window.constrainFrameRect(restoreFrame, to: screen),
+                display: true,
+                animate: true
+            )
+            window.acrossRestoreFrame = nil
+        } else {
+            window.acrossRestoreFrame = window.frame
+            window.setFrame(visibleFrame, display: true, animate: true)
+        }
+    }
+}
+
+private var acrossRestoreFrameKey: UInt8 = 0
+
+private extension NSWindow {
+    var acrossRestoreFrame: NSRect? {
+        get {
+            (objc_getAssociatedObject(self, &acrossRestoreFrameKey) as? NSValue)?.rectValue
+        }
+        set {
+            objc_setAssociatedObject(
+                self,
+                &acrossRestoreFrameKey,
+                newValue.map(NSValue.init(rect:)),
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
+    }
+}
+
+private extension NSRect {
+    func isNearlyEqual(to other: NSRect, tolerance: CGFloat = 2) -> Bool {
+        abs(minX - other.minX) <= tolerance
+            && abs(minY - other.minY) <= tolerance
+            && abs(width - other.width) <= tolerance
+            && abs(height - other.height) <= tolerance
     }
 }
 

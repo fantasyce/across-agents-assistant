@@ -53,6 +53,21 @@ func testPluginStatusDecodesAgentLoopCapabilities() throws {
     assert(plugin.supportsMemoryHooks, "Orchestrator should decode memory hook capability")
     assert(plugin.supportsDynamicLoopPlanning, "Orchestrator should decode dynamic loop planning capability")
     assert(plugin.supportsRemediationDispatch, "Orchestrator should decode remediation dispatch capability")
+
+    var listPayload = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+    listPayload["plugin_id"] = "community-security"
+    listPayload["display_name"] = "Community Security"
+    listPayload["capabilities"] = [[
+        "id": "dependency_audit",
+        "display_name": "Dependency Audit",
+        "description": "Checks dependency provenance."
+    ]]
+    let listPlugin = try JSONDecoder().decode(
+        AcrossPluginStatus.self,
+        from: JSONSerialization.data(withJSONObject: listPayload)
+    )
+    assert(listPlugin.capabilities?["dependency_audit"] == true, "Capability lists should normalize to the legacy map")
+    assert(listPlugin.capabilityManifest?.capabilities.first?.displayName == "Dependency Audit", "Capability display metadata should survive decoding")
 }
 
 func testAgentLoopRunResponseDecodesProbeResult() throws {
@@ -578,6 +593,63 @@ func testAgentLoopEventURLsCarryResumeCursor() throws {
     assert(streamURL.absoluteString == "http://backend/api/orchestrator/loops/loop-ui/events/stream?follow=true&after_sequence=7", "Stream event URL should carry follow and after_sequence")
 }
 
+func testOneClickPluginActionVerification() throws {
+    func decodePlugin(installed: Bool, available: Bool) throws -> AcrossPluginStatus {
+        let data = Data("""
+        {
+          "plugin_id": "across-context",
+          "display_name": "Across Context",
+          "kind": "memory-provider",
+          "version": "0.9.0",
+          "status": "\(installed ? "installed" : "not_installed")",
+          "installed": \(installed),
+          "available": \(available),
+          "probe": true,
+          "manifest_exists": \(installed),
+          "manifest_path": "/tmp/manifest.json",
+          "command": "/tmp/across-context",
+          "command_exists": \(available),
+          "paths": {
+            "home": "/tmp/across",
+            "plugin": "/tmp/across/plugins/across-context",
+            "bin": "/tmp/across/bin",
+            "data": "/tmp/across/data/across-context",
+            "config": "/tmp/across/config/across-context",
+            "run": "/tmp/across/run/across-context",
+            "logs": "/tmp/across/logs/across-context",
+            "cache": "/tmp/across/cache/across-context"
+          }
+        }
+        """.utf8)
+        return try JSONDecoder().decode(AcrossPluginStatus.self, from: data)
+    }
+
+    let ready = try decodePlugin(installed: true, available: true)
+    let missing = try decodePlugin(installed: false, available: false)
+
+    assert(PluginLifecycleViewModel.normalizedPluginAction("refresh") == "probe", "Refresh should normalize to the probe action")
+    assert(PluginLifecycleViewModel.actionReachedExpectedState("install", plugin: ready), "Install should succeed only when the plugin is ready")
+    assert(!PluginLifecycleViewModel.actionReachedExpectedState("install", plugin: missing), "Install must not report success while the plugin is missing")
+    assert(PluginLifecycleViewModel.actionReachedExpectedState("uninstall", plugin: missing), "Uninstall should succeed when the runtime is absent")
+
+    let beforeInstall = AcrossProductCapabilityRegistry.snapshot(
+        plugins: [missing],
+        hasAvailableAgent: true,
+        acceptedDeliveryCount: 0
+    )
+    let afterInstall = AcrossProductCapabilityRegistry.snapshot(
+        plugins: [ready],
+        hasAvailableAgent: true,
+        acceptedDeliveryCount: 0
+    )
+    assert(!beforeInstall.isUnlocked(.sharedMemory), "A missing plugin must not expose its main module")
+    assert(afterInstall.isUnlocked(.sharedMemory), "A ready plugin should expose its main module immediately")
+    assert(
+        afterInstall.achievements.first(where: { $0.id == "memory-connected" })?.isUnlocked == true,
+        "Installing Across Context should unlock its ecosystem achievement"
+    )
+}
+
 @main
 struct PluginLifecycleBehavior {
     static func main() throws {
@@ -592,6 +664,7 @@ struct PluginLifecycleBehavior {
         try testAgentLoopEventMergingDeduplicatesStreamUpdates()
         try testAgentLoopTimelineModeAndSourceContracts()
         try testAgentLoopEventURLsCarryResumeCursor()
+        try testOneClickPluginActionVerification()
         print("PluginLifecycleBehavior passed")
     }
 }

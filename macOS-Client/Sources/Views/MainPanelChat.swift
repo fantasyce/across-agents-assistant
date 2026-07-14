@@ -57,8 +57,7 @@ extension MainPanelView {
     }
 
     private var shouldShowAssistHeader: Bool {
-        taskOrchestrationViewModel.selectedTask != nil
-            || !appPreferences.automaticDeliveryProtection
+        !appPreferences.automaticDeliveryProtection
     }
 
 
@@ -92,6 +91,9 @@ extension MainPanelView {
             settingsViewModel: settingsViewModel,
             defaultProjectPath: operationalProjectPath,
             showsTechnicalDetails: $showsSelectedTaskDetails,
+            onBack: returnToWorkHome,
+            onChooseProject: viewModel.chooseExistingProjectFolder,
+            onNewWork: startNewProtectedWork,
             onAccept: {
                 guard let taskID = taskOrchestrationViewModel.selectedTask?.taskId else { return }
                 taskOrchestrationViewModel.acceptTaskResult(taskID) {
@@ -116,12 +118,25 @@ extension MainPanelView {
             recentTasks: taskOrchestrationViewModel.tasks,
             preferences: appPreferences,
             onChooseProject: viewModel.chooseExistingProjectFolder,
-            onUseSuggestion: { viewModel.inputText = $0 },
-            onOpenTask: { taskID in
+            onOpenTask: { task in
                 showsSelectedTaskDetails = false
-                taskOrchestrationViewModel.selectTask(taskID)
+                if viewModel.activateProject(matchingDirectory: task.projectDir) {
+                    taskOrchestrationViewModel.updateProjectDirectoryFilter(viewModel.activeProjectPath)
+                }
+                taskOrchestrationViewModel.selectTask(task.taskId)
             }
         )
+    }
+
+    private func returnToWorkHome() {
+        showsSelectedTaskDetails = false
+        taskOrchestrationViewModel.enterWorkflowPicker()
+        appPreferences.automaticDeliveryProtection = true
+    }
+
+    private func startNewProtectedWork() {
+        returnToWorkHome()
+        viewModel.inputText = ""
     }
 
     var messageList: some View {
@@ -147,10 +162,7 @@ extension MainPanelView {
                         processingRow.id("processing")
                     }
                 }
-                .frame(maxWidth: 820)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+                .minimalPageContentFrame(topPadding: 0, bottomPadding: 24)
             }
             .background(Color(nsColor: .windowBackgroundColor))
             .onChange(of: viewModel.messages.count) {
@@ -213,8 +225,6 @@ extension MainPanelView {
 
     var inputArea: some View {
         VStack(spacing: 0) {
-            Divider()
-
             VStack(alignment: .leading, spacing: 0) {
                 if let notice = viewModel.transientInputNotice {
                     HStack(alignment: .top, spacing: 7) {
@@ -337,10 +347,10 @@ extension MainPanelView {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
-            .frame(maxWidth: 820)
+            .frame(maxWidth: windowLayoutSize == .expanded ? 860 : 720)
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
+            .padding(.horizontal, windowLayoutSize == .expanded ? 56 : 44)
+            .padding(.top, 8)
             .padding(.bottom, 16)
         }
         .background(Color(nsColor: .windowBackgroundColor))

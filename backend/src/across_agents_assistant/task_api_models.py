@@ -128,6 +128,7 @@ class AutoTaskRequest(BaseModel):
     project_dir: Optional[str] = None
     strict_dependency: bool = True
     enable_wave_gate: bool = True
+    project_signals: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AutoTaskResponse(BaseModel):
@@ -136,6 +137,21 @@ class AutoTaskResponse(BaseModel):
     message: str
     implementation: str = "external"
     external_task: bool = False
+
+
+class TaskCapabilityPlanRequest(BaseModel):
+    user_goal: str = Field(min_length=1, max_length=20000)
+    project_signals: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskCapabilityPlanResponse(BaseModel):
+    schema_version: str
+    goal: str
+    chosen_capabilities: List[Dict[str, Any]] = Field(default_factory=list)
+    chosen_providers: List[str] = Field(default_factory=list)
+    hidden_defaults: Dict[str, Any] = Field(default_factory=dict)
+    required_user_decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    automatic: bool
 
 
 class ReleaseE2EScenarioListResponse(BaseModel):

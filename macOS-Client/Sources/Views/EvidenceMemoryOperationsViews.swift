@@ -310,7 +310,26 @@ struct MemoryOperationsView: View {
 
     @ViewBuilder
     private var operationNotice: some View {
-        if let error = lifecycle.errorMessage ?? search.mutationErrorMessage {
+        if lifecycle.isWorking,
+           let status = lifecycle.memoryBatchTargetStatus,
+           lifecycle.memoryBatchTotalCount > 0 {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(String(
+                    format: preferences.text(
+                        status == "archived" ? "memory.bulk.archiving" : "memory.bulk.approving"
+                    ),
+                    lifecycle.memoryBatchCompletedCount,
+                    lifecycle.memoryBatchTotalCount
+                ))
+                .font(.system(size: 11, weight: .medium))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 34)
+            .background(AcrossTheme.recessedFill(for: colorScheme))
+        } else if let error = lifecycle.errorMessage ?? search.mutationErrorMessage {
             notice(icon: "exclamationmark.triangle", text: error, status: "failed")
         } else if let message = lifecycle.message ?? search.actionMessage {
             notice(icon: "checkmark.circle", text: message, status: "success")
@@ -329,7 +348,8 @@ struct MemoryOperationsView: View {
                 } label: {
                     Label(preferences.text("memory.bulk.approve"), systemImage: "checkmark.circle")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(AcrossTheme.accent)
                 .controlSize(.small)
                 .disabled(lifecycle.isWorking)
 
@@ -338,7 +358,8 @@ struct MemoryOperationsView: View {
                 } label: {
                     Label(preferences.text("memory.bulk.archive"), systemImage: "archivebox")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
                 .controlSize(.small)
                 .disabled(lifecycle.isWorking)
             }
@@ -401,7 +422,12 @@ struct MemoryOperationsView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
-                    StatusChip(status: memory.status)
+                    StatusChip(
+                        status: memory.status,
+                        label: memory.status == "pending"
+                            ? preferences.text("memory.status.pendingReview")
+                            : preferences.statusText(memory.status)
+                    )
                     Text(memory.scope)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -429,6 +455,7 @@ struct MemoryOperationsView: View {
                     Label(preferences.text("review.memory.approve.short"), systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(AcrossTheme.accent)
                 .controlSize(.small)
                 .disabled(lifecycle.isWorking)
             }
@@ -439,6 +466,7 @@ struct MemoryOperationsView: View {
                 Image(systemName: "archivebox")
             }
             .buttonStyle(.borderless)
+            .foregroundStyle(.red)
             .disabled(lifecycle.isWorking)
             .help(preferences.text("review.memory.archive"))
             .accessibilityLabel(Text(preferences.text("review.memory.archive")))
@@ -586,7 +614,12 @@ struct MemoryOperationsView: View {
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
-                    StatusChip(status: memory.status)
+                    StatusChip(
+                        status: memory.status,
+                        label: memory.status == "pending"
+                            ? preferences.text("memory.status.pendingReview")
+                            : preferences.statusText(memory.status)
+                    )
                     Text(memory.scope)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)

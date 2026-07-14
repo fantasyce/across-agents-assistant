@@ -37,6 +37,7 @@ extension MainPanelView {
         }
         .padding(.horizontal, 20)
         .frame(height: 56)
-        .background(ZStack { bgColor; WindowDragView().contentShape(Rectangle()) })
+        .background(.bar)
+        .background(WindowDragView().contentShape(Rectangle()))
     }
 }
