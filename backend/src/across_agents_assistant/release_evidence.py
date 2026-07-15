@@ -23,6 +23,7 @@ from typing import Any, Mapping
 UI_SCHEMA = "across-vnext-ui-manual-evidence/1.0"
 VOICE_SCHEMA = "across-vnext-voice-hardware-evidence/1.2"
 BEGINNER_SCHEMA = "across-vnext-beginner-study-evidence/1.0"
+RELEASE_DECISION_SCHEMA = "across-vnext-release-decision/1.0"
 PACKAGED_APP_PATH = "/Applications/Across Agents Assistant.app"
 PACKAGED_APP_BUNDLE_ID = "app.acrossagents.assistant"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -920,4 +921,54 @@ def validate_manual_evidence(
         return "failed", f"unknown manual gate: {gate_id}"
     if error := validator():
         return "failed", error
+    return "passed", None
+
+
+def validate_release_decision(
+    candidate: Mapping[str, Any],
+    *,
+    expected_version: str | None = None,
+    verify_installed_candidate: bool = False,
+) -> tuple[str, str | None]:
+    """Validate an explicit product-owner release decision and bounded waiver.
+
+    A waiver records accepted residual coverage; it never converts an untested
+    microphone path into a claimed hardware-test pass.
+    """
+
+    if not isinstance(candidate, Mapping):
+        return "failed", "release decision must be a JSON object"
+    if candidate.get("schema_version") != RELEASE_DECISION_SCHEMA:
+        return "failed", f"schema_version must be {RELEASE_DECISION_SCHEMA}"
+    if candidate.get("decision") != "authorized":
+        return "failed", "release decision must be authorized"
+    if not _is_iso8601(candidate.get("authorized_at")):
+        return "failed", "authorized_at must be an ISO-8601 timestamp"
+    summary = candidate.get("summary")
+    if not isinstance(summary, str) or len(summary.strip()) < 20:
+        return "failed", "release decision summary is required"
+    if error := _validate_candidate(
+        candidate,
+        expected_version=expected_version,
+        verify_installed_candidate=verify_installed_candidate,
+    ):
+        return "failed", error
+
+    voice = candidate.get("voice_hardware_gate")
+    if not isinstance(voice, Mapping):
+        return "failed", "voice_hardware_gate decision is required"
+    required = {
+        "status": "waived",
+        "scope": "remaining-real-microphone-edge-paths",
+        "reason_code": "product-owner-accepted-residual-hardware-risk",
+        "core_chinese_observed": True,
+        "core_english_observed": True,
+        "remaining_edges_not_tested": True,
+        "no_full_coverage_claim": True,
+    }
+    for key, expected in required.items():
+        if voice.get(key) != expected:
+            return "failed", f"voice_hardware_gate {key} must be {expected!r}"
+    if _contains_forbidden_voice_key(voice):
+        return "failed", "release decision must not contain audio or transcript data"
     return "passed", None

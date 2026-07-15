@@ -12,9 +12,11 @@ import plistlib
 
 from across_agents_assistant.release_evidence import (
     BEGINNER_SCHEMA,
+    RELEASE_DECISION_SCHEMA,
     UI_SCHEMA,
     VOICE_SCHEMA,
     validate_manual_evidence,
+    validate_release_decision,
 )
 
 
@@ -194,6 +196,25 @@ def voice_payload():
         "summary": "Observed two real microphone sessions without retained speech data.",
         "candidate": APP,
         "sessions": [session("zh-Hans", 1), session("en-US", 2)],
+    }
+
+
+def release_decision_payload():
+    return {
+        "schema_version": RELEASE_DECISION_SCHEMA,
+        "decision": "authorized",
+        "authorized_at": stamp(240),
+        "summary": "The product owner authorized this release and accepted the bounded residual microphone hardware risk.",
+        "candidate": APP,
+        "voice_hardware_gate": {
+            "status": "waived",
+            "scope": "remaining-real-microphone-edge-paths",
+            "reason_code": "product-owner-accepted-residual-hardware-risk",
+            "core_chinese_observed": True,
+            "core_english_observed": True,
+            "remaining_edges_not_tested": True,
+            "no_full_coverage_claim": True,
+        },
     }
 
 
@@ -472,6 +493,24 @@ def test_complete_real_voice_sessions_pass(tmp_path):
     assert validate("voice_hardware_smoke", voice_payload(), tmp_path) == ("passed", None)
 
 
+def test_release_decision_accepts_only_a_bounded_voice_waiver():
+    assert validate_release_decision(
+        release_decision_payload(), expected_version="0.11.0"
+    ) == ("passed", None)
+
+    overclaim = release_decision_payload()
+    overclaim["voice_hardware_gate"]["no_full_coverage_claim"] = False
+    assert "no_full_coverage_claim" in validate_release_decision(
+        overclaim, expected_version="0.11.0"
+    )[1]
+
+    private = release_decision_payload()
+    private["voice_hardware_gate"]["transcript"] = "private speech"
+    assert "audio or transcript" in validate_release_decision(
+        private, expected_version="0.11.0"
+    )[1]
+
+
 def test_voice_evidence_rejects_transcripts_and_missing_hardware(tmp_path):
     with_transcript = voice_payload()
     with_transcript["sessions"][0]["transcript"] = "must not be retained"
@@ -625,3 +664,4 @@ def test_acceptance_runner_cannot_report_success_when_summary_generation_fails()
     assert 'if [[ "$SUMMARY_GENERATION_EXIT" -ne 0 ]]' in script
     assert 'exit "$SUMMARY_GENERATION_EXIT"' in script
     assert "import tomllib" not in script
+    assert '"waived"' in script

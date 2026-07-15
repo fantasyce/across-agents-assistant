@@ -151,7 +151,10 @@ from pathlib import Path
 root_dir = Path(os.environ["ROOT_DIR"])
 sys.path.insert(0, str(root_dir / "backend/src"))
 sys.path.insert(0, str(root_dir / "scripts"))
-from across_agents_assistant.release_evidence import validate_manual_evidence
+from across_agents_assistant.release_evidence import (
+    validate_manual_evidence,
+    validate_release_decision,
+)
 from validate_vnext_synthetic_beginner_evidence import validate_synthetic_beginner_evidence
 
 
@@ -187,6 +190,22 @@ if version_match is None:
     raise RuntimeError("Could not read the candidate version from backend/pyproject.toml")
 expected_version = version_match.group(1)
 
+release_decision_path = report_root / "vnext-release-decision.json"
+release_decision = None
+release_decision_status = "missing"
+release_decision_error = None
+if release_decision_path.exists():
+    try:
+        release_decision = json.loads(release_decision_path.read_text(encoding="utf-8"))
+        release_decision_status, release_decision_error = validate_release_decision(
+            release_decision,
+            expected_version=expected_version,
+            verify_installed_candidate=True,
+        )
+    except (OSError, json.JSONDecodeError):
+        release_decision_status = "failed"
+        release_decision_error = "release decision is unreadable"
+
 
 manual_gates = []
 for gate_id, filename, missing_status in manual_definitions:
@@ -218,17 +237,41 @@ for gate_id, filename, missing_status in manual_definitions:
             }
         except (OSError, json.JSONDecodeError):
             status = "failed"
+    if (
+        gate_id == "voice_hardware_smoke"
+        and status != "passed"
+        and release_decision_status == "passed"
+    ):
+        status = "waived"
+        validation_error = None
+        evidence = {
+            "completed_at": release_decision.get("authorized_at"),
+            "summary": release_decision.get("summary"),
+            "validation_error": None,
+            "scope": release_decision.get("voice_hardware_gate", {}).get("scope"),
+            "no_full_coverage_claim": True,
+        }
     manual_gates.append({"gate_id": gate_id, "status": status, "evidence": evidence})
 
 automated_passed = bool(gates) and all(item.get("status") == "passed" for item in gates)
-manual_passed = all(item.get("status") == "passed" for item in manual_gates)
+manual_passed = all(item.get("status") in {"passed", "waived"} for item in manual_gates)
+release_authorized = (
+    automated_passed
+    and manual_passed
+    and release_decision_status == "passed"
+)
 payload = {
     "schema_version": "across-vnext-single-release-acceptance/1.0",
     "generated_at": datetime.now(timezone.utc).isoformat(),
     "status": "passed" if automated_passed and manual_passed else (
         "failed" if not automated_passed else "manual_required"
     ),
-    "release_authorized": False,
+    "release_authorized": release_authorized,
+    "release_decision": {
+        "status": release_decision_status,
+        "validation_error": release_decision_error,
+        "authorized_at": release_decision.get("authorized_at") if release_decision else None,
+    },
     "automated_passed": automated_passed,
     "manual_passed": manual_passed,
     "packaged_app_included": os.environ["INCLUDE_PACKAGED_APP"] == "1",
@@ -264,4 +307,9 @@ if [[ "$AUTOMATED_ONLY" -eq 0 ]]; then
   fi
 fi
 
-echo "vNext single-release acceptance passed. Release remains unauthorized."
+RELEASE_AUTHORIZED="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["release_authorized"]).lower())' "$SUMMARY_PATH")"
+if [[ "$RELEASE_AUTHORIZED" == "true" ]]; then
+  echo "vNext single-release acceptance passed and release is explicitly authorized."
+else
+  echo "vNext single-release acceptance passed. Release remains unauthorized."
+fi
