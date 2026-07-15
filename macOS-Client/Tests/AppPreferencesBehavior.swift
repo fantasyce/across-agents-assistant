@@ -69,13 +69,14 @@ func testLocalizedStringsFallbackToEnglish() {
         )
     }
 
-    let visualAndLearningKeys = AcrossTrustDimension.allCases.map(\.titleKey)
-        + AcrossEvidenceState.allCases.map(\.accessibilityKey)
-        + AcrossLoopStage.allCases.map(\.titleKey)
-        + AcrossEvidenceNodeKind.allCases.map(\.titleKey)
-        + AcrossLearningMissionKind.allCases.flatMap { [$0.titleKey, $0.detailKey] }
-        + AcrossMasteryLevel.allCases.map(\.titleKey)
-        + [
+    var visualAndLearningKeys: [String] = []
+    visualAndLearningKeys.append(contentsOf: AcrossTrustDimension.allCases.map(\.titleKey))
+    visualAndLearningKeys.append(contentsOf: AcrossEvidenceState.allCases.map(\.accessibilityKey))
+    visualAndLearningKeys.append(contentsOf: AcrossLoopStage.allCases.map(\.titleKey))
+    visualAndLearningKeys.append(contentsOf: AcrossEvidenceNodeKind.allCases.map(\.titleKey))
+    visualAndLearningKeys.append(contentsOf: AcrossLearningMissionKind.allCases.flatMap { [$0.titleKey, $0.detailKey] })
+    visualAndLearningKeys.append(contentsOf: AcrossMasteryLevel.allCases.map(\.titleKey))
+    visualAndLearningKeys.append(contentsOf: [
             "result.accessibility.summary",
             "result.details",
             "result.fallback.unavailable",
@@ -87,7 +88,7 @@ func testLocalizedStringsFallbackToEnglish() {
             "growth.path.title",
             "growth.path.next",
             "growth.challenge.title",
-        ]
+        ])
     for key in visualAndLearningKeys {
         assert(
             AppPreferences.localizedString(key, localeIdentifier: "en") != key,
