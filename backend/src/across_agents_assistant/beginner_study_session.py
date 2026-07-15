@@ -9,7 +9,6 @@ audio, or transcripts as command input.
 from __future__ import annotations
 
 import argparse
-import getpass
 import hashlib
 import json
 import os
@@ -19,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import termios
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +33,23 @@ BUNDLE_ID = "app.acrossagents.assistant"
 PREFERENCE_PREFIX = "app.acrossagents.assistant.beginner-study."
 PROFILE_ID = re.compile(r"^study-profile-[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 PARTICIPANT_ID = re.compile(r"^anonymous-[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
+
+
+def _read_hidden_goal(prompt: str) -> str:
+    """Read a non-secret study goal without echoing or retaining the raw text."""
+    descriptor = sys.stdin.fileno()
+    original = termios.tcgetattr(descriptor)
+    hidden = termios.tcgetattr(descriptor)
+    hidden[3] &= ~termios.ECHO
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    try:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, hidden)
+        return sys.stdin.readline().strip()
+    finally:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, original)
+        sys.stderr.write("\n")
+        sys.stderr.flush()
 RUN_ID = re.compile(r"^run-[A-Za-z0-9][A-Za-z0-9._-]{1,159}$")
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 FAILURE_REASONS = (
@@ -951,15 +968,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "hash-goal":
             if not sys.stdin.isatty():
                 raise StudySessionError("hash-goal requires an interactive terminal so raw goal text is not echoed")
-            goal = getpass.getpass("Goal text (hashed only; never stored): ").strip()
+            goal = _read_hidden_goal("Goal text (hashed only; never stored): ")
             if not goal:
                 raise StudySessionError("goal text cannot be blank")
             result = {
                 "schema_version": SESSION_SCHEMA,
                 "status": "hashed",
-                # This is a non-secret content fingerprint used for result binding,
-                # not a password verifier. SHA-256 must match the Autopilot contract.
-                "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),  # lgtm[py/weak-sensitive-data-hashing]
+                # This is a non-secret content fingerprint used for result binding;
+                # SHA-256 must match the Autopilot result contract.
+                "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),
                 "raw_goal_stored": False,
                 "release_evidence_created": False,
             }

@@ -109,7 +109,7 @@ struct AcrossCapabilitySource: Equatable {
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
         return separated
-            .split(whereSeparator: \Character.isWhitespace)
+            .split(whereSeparator: { $0.isWhitespace })
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
     }
