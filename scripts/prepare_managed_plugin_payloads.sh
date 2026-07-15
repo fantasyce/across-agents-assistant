@@ -138,13 +138,13 @@ AUTOPILOT_ARCHIVE="$BUILD_CACHE/downloads/across-autopilot-$AUTOPILOT_VERSION.ta
 ORCHESTRATOR_ARCHIVE="$BUILD_CACHE/downloads/across-orchestrator-$ORCHESTRATOR_VERSION.tar.gz"
 if [[ -n "$CONTEXT_LOCAL_SOURCE" ]]; then
     rm -f "$CONTEXT_ARCHIVE"
-    COPYFILE_DISABLE=1 tar -czf "$CONTEXT_ARCHIVE" \
-        --exclude='.git' \
-        --exclude='node_modules' \
-        --exclude='build' \
-        --exclude='dist' \
-        -C "$(dirname "$CONTEXT_LOCAL_SOURCE")" \
-        "$(basename "$CONTEXT_LOCAL_SOURCE")"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_deterministic_source_archive.py" \
+        --source "$CONTEXT_LOCAL_SOURCE" \
+        --output "$CONTEXT_ARCHIVE" \
+        --exclude '.git' \
+        --exclude 'node_modules' \
+        --exclude 'build' \
+        --exclude 'dist'
     CONTEXT_SHA256=$(shasum -a 256 "$CONTEXT_ARCHIVE" | awk '{print $1}')
 else
     download_verified \
@@ -154,13 +154,13 @@ else
 fi
 if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
     rm -f "$AUTOPILOT_ARCHIVE"
-    COPYFILE_DISABLE=1 tar -czf "$AUTOPILOT_ARCHIVE" \
-        --exclude='.git' \
-        --exclude='node_modules' \
-        --exclude='build' \
-        --exclude='dist' \
-        -C "$(dirname "$AUTOPILOT_LOCAL_SOURCE")" \
-        "$(basename "$AUTOPILOT_LOCAL_SOURCE")"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_deterministic_source_archive.py" \
+        --source "$AUTOPILOT_LOCAL_SOURCE" \
+        --output "$AUTOPILOT_ARCHIVE" \
+        --exclude '.git' \
+        --exclude 'node_modules' \
+        --exclude 'build' \
+        --exclude 'dist'
     AUTOPILOT_SHA256=$(shasum -a 256 "$AUTOPILOT_ARCHIVE" | awk '{print $1}')
 else
     download_verified \
@@ -170,14 +170,14 @@ else
 fi
 if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
     rm -f "$ORCHESTRATOR_ARCHIVE"
-    COPYFILE_DISABLE=1 tar -czf "$ORCHESTRATOR_ARCHIVE" \
-        --exclude='.git' \
-        --exclude='.venv' \
-        --exclude='build' \
-        --exclude='dist' \
-        --exclude='__pycache__' \
-        -C "$(dirname "$ORCHESTRATOR_LOCAL_SOURCE")" \
-        "$(basename "$ORCHESTRATOR_LOCAL_SOURCE")"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_deterministic_source_archive.py" \
+        --source "$ORCHESTRATOR_LOCAL_SOURCE" \
+        --output "$ORCHESTRATOR_ARCHIVE" \
+        --exclude '.git' \
+        --exclude '.venv' \
+        --exclude 'build' \
+        --exclude 'dist' \
+        --exclude '__pycache__'
     ORCHESTRATOR_SHA256=$(shasum -a 256 "$ORCHESTRATOR_ARCHIVE" | awk '{print $1}')
 else
     download_verified \
@@ -209,7 +209,12 @@ fi
 ORCHESTRATOR_BUILD_ROOT="$PROJECT_ROOT/build/managed-plugin-orchestrator"
 rm -rf "$ORCHESTRATOR_BUILD_ROOT"
 mkdir -p "$ORCHESTRATOR_BUILD_ROOT/dist" "$ORCHESTRATOR_BUILD_ROOT/work" "$ORCHESTRATOR_BUILD_ROOT/spec"
-PYTHONPATH= "$BUILD_PYTHON" -m PyInstaller \
+# PyInstaller serializes hash-backed Python collections into the embedded PKG
+# archive. Keep the hash seed and build epoch fixed so rebuilding the same
+# Orchestrator source produces the same PKG hash, Mach-O UUID, and executable
+# checksum. This prevents a same-version local candidate rebuild from looking
+# like a tampered managed runtime.
+PYTHONHASHSEED=1 SOURCE_DATE_EPOCH=0 PYTHONPATH= "$BUILD_PYTHON" -m PyInstaller \
     --onefile \
     --clean \
     --noconfirm \

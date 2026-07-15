@@ -1,0 +1,32 @@
+{
+  "schema_version": "across-speech-fixture/1.0",
+  "fixtures": [
+    {
+      "file": "zh-Hans-release-evidence.wav",
+      "locale": "zh-Hans",
+      "recognition_locale": "zh-CN",
+      "partial_transcript": "检查发布证据",
+      "final_transcript": "检查发布证据并说明风险",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sha256": "492f0b2709291abc0f41b3f342958524e318512ab61bd6878f5d15e45fbba8c1"
+    },
+    {
+      "file": "en-US-release-evidence.wav",
+      "locale": "en-US",
+      "recognition_locale": "en-US",
+      "partial_transcript": "Review the release evidence",
+      "final_transcript": "Review the release evidence and explain the risk",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sha256": "abfc8b64298950ee1f7cb2d2bb22fe01c56f7012e5ae4e3faed0ba05640175b5"
+    }
+  ],
+  "provenance": {
+    "kind": "synthetic-test-audio",
+    "generator": "macOS say plus afconvert",
+    "contains_user_audio": false,
+    "contains_private_transcript": false,
+    "distribution": "test-fixture-only"
+  }
+}

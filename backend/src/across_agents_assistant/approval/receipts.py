@@ -1,0 +1,391 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+from contextlib import contextmanager
+import hashlib
+import json
+import re
+import sqlite3
+import time
+import uuid
+
+
+APPROVAL_RECEIPT_SCHEMA = "across-approval-receipt/1.0"
+APPROVAL_CHAIN_SCHEMA = "across-approval-receipt-chain/1.0"
+SENSITIVE_SCOPES = {"workspace_promotion", "release", "release_promotion", "replay_external_side_effects"}
+
+
+class ApprovalReceiptError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ApprovalReceiptSubject:
+    subject_type: str
+    subject_id: str
+    payload: dict[str, Any]
+    subject_sha256: str | None = None
+
+
+class ApprovalReceiptStore:
+    """Append-only, hash-chained approval decision receipts in the AAA database."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._init_schema()
+
+    def record(
+        self,
+        *,
+        subject: ApprovalReceiptSubject,
+        scope: str,
+        decision: str,
+        proposer_id: str,
+        approver_id: str,
+        risk_level: str = "unknown",
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        clean_scope = _identifier(scope, "scope")
+        clean_decision = _decision(decision)
+        proposer = _actor(proposer_id, "proposer_id")
+        approver = _actor(approver_id, "approver_id")
+        if clean_scope in SENSITIVE_SCOPES and clean_decision == "approved" and proposer == approver:
+            raise ApprovalReceiptError("promotion, release, and external-side-effect approval require separate proposer and approver identities")
+        subject_type = _identifier(subject.subject_type, "subject_type")
+        subject_id_hash = _sha256_text(_bounded_text(subject.subject_id, 500))
+        subject_sha256 = (
+            _sha256_digest(subject.subject_sha256, "subject_sha256")
+            if subject.subject_sha256
+            else _sha256_json(_secret_free_subject(subject.payload))
+        )
+        dedupe_key = _sha256_json({
+            "scope": clean_scope,
+            "decision": clean_decision,
+            "proposer_id": proposer,
+            "approver_id": approver,
+            "subject_type": subject_type,
+            "subject_id_sha256": subject_id_hash,
+            "subject_sha256": subject_sha256,
+            "idempotency_key": _bounded_text(idempotency_key or request_id or "", 500),
+        })
+        with self._connection(write=True) as conn:
+            existing = conn.execute(
+                "SELECT * FROM approval_receipts WHERE dedupe_key = ?",
+                (dedupe_key,),
+            ).fetchone()
+            if existing:
+                return self._public(existing, integrity_status=self._verify_row(conn, existing))
+
+            previous = conn.execute(
+                "SELECT receipt_id, receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM approval_receipts").fetchone()[0])
+            created_at = time.time()
+            receipt_id = f"approval-{uuid.uuid4().hex}"
+            payload = {
+                "schema_version": APPROVAL_RECEIPT_SCHEMA,
+                "receipt_id": receipt_id,
+                "sequence": sequence,
+                "request_id_sha256": _sha256_text(_bounded_text(request_id or "", 500)) if request_id else None,
+                "subject_type": subject_type,
+                "subject_id_sha256": subject_id_hash,
+                "subject_sha256": subject_sha256,
+                "scope": clean_scope,
+                "decision": clean_decision,
+                "proposer_id": proposer,
+                "approver_id": approver,
+                "risk_level": _bounded_text(risk_level, 40) or "unknown",
+                "previous_receipt_id": previous["receipt_id"] if previous else None,
+                "previous_hash": previous["receipt_hash"] if previous else "0" * 64,
+                "created_at": created_at,
+                "privacy": {
+                    "subject_payload_stored": False,
+                    "credentials_included": False,
+                    "absolute_paths_included": False,
+                    "raw_transcripts_included": False,
+                },
+            }
+            receipt_hash = _sha256_json(payload)
+            conn.execute(
+                """INSERT INTO approval_receipts
+                   (receipt_id, sequence, dedupe_key, subject_type, subject_id_sha256,
+                    subject_sha256, scope, decision, proposer_id, approver_id, risk_level,
+                    previous_receipt_id, previous_hash, receipt_hash, payload_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    receipt_id, sequence, dedupe_key, subject_type, subject_id_hash,
+                    subject_sha256, clean_scope, clean_decision, proposer, approver,
+                    payload["risk_level"], payload["previous_receipt_id"], payload["previous_hash"],
+                    receipt_hash, _canonical(payload), created_at,
+                ),
+            )
+            conn.execute(
+                "UPDATE approval_receipt_chain_state SET receipt_count = ?, chain_tip = ? WHERE id = 1",
+                (sequence, receipt_hash),
+            )
+            row = conn.execute("SELECT * FROM approval_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
+            return self._public(row, integrity_status="verified")
+
+    def get(self, receipt_id: str) -> dict[str, Any]:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM approval_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
+            if not row:
+                raise KeyError(receipt_id)
+            return self._public(row, integrity_status=self._verify_row(conn, row))
+
+    def list(self, *, limit: int = 100, offset: int = 0, scope: str | None = None) -> dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        safe_offset = max(0, int(offset))
+        where = "WHERE scope = ?" if scope else ""
+        params: list[Any] = [scope] if scope else []
+        with self._connection() as conn:
+            total = int(conn.execute(f"SELECT COUNT(*) FROM approval_receipts {where}", params).fetchone()[0])
+            rows = conn.execute(
+                f"SELECT * FROM approval_receipts {where} ORDER BY sequence DESC LIMIT ? OFFSET ?",
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+            receipts = [self._public(row, integrity_status=self._verify_row(conn, row)) for row in rows]
+            chain_failures = self._chain_failures(conn)
+        page_status = "verified" if all(item["integrity_status"] == "verified" for item in receipts) else "tampered"
+        chain_status = "verified" if not chain_failures else "tampered"
+        return {
+            "schema_version": APPROVAL_CHAIN_SCHEMA,
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "receipts": receipts,
+            "page_integrity_status": page_status,
+            "chain_integrity_status": chain_status,
+            "integrity_status": chain_status,
+        }
+
+    def verify_chain(self) -> dict[str, Any]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM approval_receipts ORDER BY sequence ASC").fetchall()
+            failures = self._chain_failures(conn, rows=rows)
+            anchor = conn.execute(
+                "SELECT receipt_count, chain_tip FROM approval_receipt_chain_state WHERE id = 1"
+            ).fetchone()
+            observed_tip = rows[-1]["receipt_hash"] if rows else "0" * 64
+            return {
+                "schema_version": APPROVAL_CHAIN_SCHEMA,
+                "receipt_count": len(rows),
+                "integrity_status": "verified" if not failures else "tampered",
+                "failures": failures,
+                "chain_tip": anchor["chain_tip"] if anchor else observed_tip,
+                "observed_chain_tip": observed_tip,
+            }
+
+    def _verify_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return "tampered"
+        if _sha256_json(payload) != row["receipt_hash"]:
+            return "tampered"
+        payload_columns = {
+            "receipt_id": "receipt_id",
+            "sequence": "sequence",
+            "subject_type": "subject_type",
+            "subject_id_sha256": "subject_id_sha256",
+            "subject_sha256": "subject_sha256",
+            "scope": "scope",
+            "decision": "decision",
+            "proposer_id": "proposer_id",
+            "approver_id": "approver_id",
+            "risk_level": "risk_level",
+            "previous_receipt_id": "previous_receipt_id",
+            "previous_hash": "previous_hash",
+            "created_at": "created_at",
+        }
+        if any(payload.get(payload_key) != row[column] for payload_key, column in payload_columns.items()):
+            return "tampered"
+        previous_id = row["previous_receipt_id"]
+        if previous_id:
+            previous = conn.execute(
+                "SELECT receipt_hash, sequence FROM approval_receipts WHERE receipt_id = ?",
+                (previous_id,),
+            ).fetchone()
+            if (
+                not previous
+                or previous["receipt_hash"] != row["previous_hash"]
+                or int(previous["sequence"]) != int(row["sequence"]) - 1
+            ):
+                return "tampered"
+        elif row["previous_hash"] != "0" * 64 or int(row["sequence"]) != 1:
+            return "tampered"
+        return "verified"
+
+    def _chain_failures(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        rows: list[sqlite3.Row] | None = None,
+    ) -> list[dict[str, str]]:
+        chain_rows = rows
+        if chain_rows is None:
+            chain_rows = conn.execute("SELECT * FROM approval_receipts ORDER BY sequence ASC").fetchall()
+        failures = []
+        for row in chain_rows:
+            status = self._verify_row(conn, row)
+            if status != "verified":
+                failures.append({"receipt_id": row["receipt_id"], "status": status})
+        anchor = conn.execute(
+            "SELECT receipt_count, chain_tip FROM approval_receipt_chain_state WHERE id = 1"
+        ).fetchone()
+        observed_tip = chain_rows[-1]["receipt_hash"] if chain_rows else "0" * 64
+        if (
+            not anchor
+            or int(anchor["receipt_count"]) != len(chain_rows)
+            or anchor["chain_tip"] != observed_tip
+        ):
+            failures.append({"receipt_id": "chain-anchor", "status": "truncated_or_replaced"})
+        return failures
+
+    def _public(self, row: sqlite3.Row, *, integrity_status: str) -> dict[str, Any]:
+        payload = json.loads(row["payload_json"])
+        return {
+            **payload,
+            "receipt_hash": row["receipt_hash"],
+            "integrity_status": integrity_status,
+        }
+
+    @contextmanager
+    def _connection(self, *, write: bool = False):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            if write:
+                conn.execute("BEGIN IMMEDIATE")
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _init_schema(self) -> None:
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS approval_receipts (
+                    receipt_id TEXT PRIMARY KEY,
+                    sequence INTEGER NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    subject_type TEXT NOT NULL,
+                    subject_id_sha256 TEXT NOT NULL,
+                    subject_sha256 TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    proposer_id TEXT NOT NULL,
+                    approver_id TEXT NOT NULL,
+                    risk_level TEXT NOT NULL,
+                    previous_receipt_id TEXT,
+                    previous_hash TEXT NOT NULL,
+                    receipt_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )"""
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_approval_receipts_scope ON approval_receipts(scope, sequence DESC)")
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS approval_receipt_chain_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    receipt_count INTEGER NOT NULL,
+                    chain_tip TEXT NOT NULL
+                )"""
+            )
+            current = conn.execute(
+                "SELECT COUNT(*) AS receipt_count FROM approval_receipts"
+            ).fetchone()
+            tip = conn.execute(
+                "SELECT receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            conn.execute(
+                """INSERT OR IGNORE INTO approval_receipt_chain_state (id, receipt_count, chain_tip)
+                   VALUES (1, ?, ?)""",
+                (int(current["receipt_count"]), tip["receipt_hash"] if tip else "0" * 64),
+            )
+
+
+def _secret_free_subject(value: Any) -> Any:
+    if isinstance(value, dict):
+        result = {}
+        for key in sorted(value):
+            clean_key = str(key)
+            lowered = clean_key.lower()
+            if any(token in lowered for token in ("secret", "token", "password", "credential", "api_key", "transcript", "messages")):
+                result[clean_key] = "[REDACTED]"
+            else:
+                result[clean_key] = _secret_free_subject(value[key])
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_secret_free_subject(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("/") or re.match(r"^[A-Za-z]:\\", value):
+            return {"local_path_sha256": _sha256_text(value)}
+        if re.search(r"\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,})\b", value):
+            return "[REDACTED]"
+        return value[:2000]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:2000]
+
+
+def _identifier(value: str, name: str) -> str:
+    clean = _bounded_text(value, 120).lower()
+    if not clean or not re.fullmatch(r"[a-z0-9][a-z0-9_.:-]*", clean):
+        raise ApprovalReceiptError(f"{name} must be a stable identifier")
+    return clean
+
+
+def _actor(value: str, name: str) -> str:
+    clean = _bounded_text(value, 200)
+    contains_path = bool(re.search(
+        r"(?:^|\s)(?:/(?:Users|home|tmp|var|private|Volumes|opt|etc|usr|Applications)(?:/|$)|[A-Za-z]:\\)",
+        clean,
+    ))
+    contains_secret = bool(re.search(
+        r"\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,})\b",
+        clean,
+    ))
+    if not clean or "\x00" in clean or contains_path or contains_secret:
+        raise ApprovalReceiptError(f"{name} is required")
+    return clean
+
+
+def _decision(value: str) -> str:
+    clean = _bounded_text(value, 40).lower()
+    aliases = {"approve": "approved", "always_allow": "approved", "reject": "rejected"}
+    clean = aliases.get(clean, clean)
+    if clean not in {"approved", "rejected"}:
+        raise ApprovalReceiptError("decision must be approved or rejected")
+    return clean
+
+
+def _sha256_digest(value: str, name: str) -> str:
+    clean = _bounded_text(value, 64).lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", clean):
+        raise ApprovalReceiptError(f"{name} must be a lowercase SHA-256 digest")
+    return clean
+
+
+def _bounded_text(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()

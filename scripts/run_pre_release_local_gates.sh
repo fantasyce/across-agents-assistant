@@ -8,6 +8,8 @@ PYTHON_BIN="${PYTHON:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$ROOT_DIR/backend/.venv/bin/python" ]]; then
     PYTHON_BIN="$ROOT_DIR/backend/.venv/bin/python"
+  elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
   else
     PYTHON_BIN="python3"
   fi

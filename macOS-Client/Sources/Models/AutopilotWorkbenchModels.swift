@@ -1,5 +1,31 @@
 import Foundation
 
+struct AutopilotEvidenceTarget: Equatable, Hashable {
+    let runID: String
+    let evidenceRoute: String
+
+    init?(runID rawRunID: String?, evidenceRoute rawEvidenceRoute: String?) {
+        guard let runID = rawRunID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let evidenceRoute = rawEvidenceRoute?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !runID.isEmpty,
+              !evidenceRoute.isEmpty,
+              runID.unicodeScalars.allSatisfy({
+                  CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)
+              }),
+              evidenceRoute == "run://\(runID)/evidence"
+                || evidenceRoute == "/api/autopilot/runs/\(runID)/evidence"
+        else {
+            return nil
+        }
+        self.runID = runID
+        self.evidenceRoute = evidenceRoute
+    }
+
+    var backendPath: String {
+        "/api/autopilot/runs/\(runID)/evidence"
+    }
+}
+
 struct AutopilotWorkbenchSnapshot: Decodable, Equatable {
     let schemaVersion: String
     let status: String

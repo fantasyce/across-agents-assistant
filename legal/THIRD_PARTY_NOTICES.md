@@ -22,10 +22,6 @@ The backend declares direct Python dependencies in `backend/pyproject.toml` and
 | `requests` | HTTP client | Installed by package manager | Review before binary release |
 | `pytest` | Tests | Development dependency | Review before binary release if bundled |
 | `pytest-asyncio` | Async tests | Development dependency | Review before binary release if bundled |
-| `sounddevice` | Audio input/output | Installed by package manager | Review before binary release |
-| `numpy` | Audio/model support | Installed by package manager | Review before binary release |
-| `faster-whisper` | Speech recognition support | Installed by package manager | Review before binary release |
-| `webrtcvad` | Voice activity detection | Installed by package manager | Review before binary release |
 | `pywebview` | Optional web UI support | Installed by package manager | Review before binary release |
 | `fastapi` | Local backend API | Installed by package manager | Review before binary release |
 | `uvicorn` | Local API server | Installed by package manager | Review before binary release |
@@ -35,14 +31,17 @@ The backend declares direct Python dependencies in `backend/pyproject.toml` and
 | `httpx` | Async HTTP client | Installed by package manager | Review before binary release |
 | `pyobjc-framework-AppKit` | macOS AppKit bridge | Installed by package manager | Review before binary release |
 | `pyobjc-framework-Vision` | macOS Vision OCR bridge | Installed by package manager | Review before binary release |
+| `numpy` | In-memory PCM conversion for local speech-to-text | Installed by package manager | Review before binary release |
+| `faster-whisper` | Local speech-to-text for explicit microphone input | Installed by package manager; model is downloaded on first voice use into the app runtime cache | Review before binary release |
 
 Before publishing binaries, generate a locked dependency report from the exact
 build environment and preserve license texts required by the resolved versions
 and their transitive dependencies.
 
 Recent Release Evaluation, quality-gate, native-skill readiness, MCP safety,
-and task-observability work uses existing Python dependencies and does not add
-new direct package-manager dependencies.
+and task-observability work uses existing Python dependencies. Local voice
+input additionally uses `faster-whisper` (MIT) and its CTranslate2 runtime
+(MIT); no Whisper model is bundled in this repository or app archive.
 
 ## Direct Swift Dependencies
 

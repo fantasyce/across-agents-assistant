@@ -1,0 +1,737 @@
+{
+  "atlases": [
+    {
+      "cell_pixels": 192,
+      "columns": 5,
+      "file": "journey-node-atlas.png",
+      "id": "journey_nodes",
+      "output_sha256": "1955e7001597aae32df0f74fa3dc69e881b0489f7c8e8c3b8fdd291ec5f6a41b",
+      "rows": 2,
+      "source": "journey-nodes-source.png",
+      "source_sha256": "b8e80c0091c4ac8bb8540169857b5f3c3ebefa8fbf2a45de2d8d1850fc4cbd50",
+      "sprites": [
+        {
+          "alpha_coverage": 0.2412,
+          "id": "voice",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 36.148
+            },
+            "48-light": {
+              "luminance_stddev": 81.001
+            },
+            "64-dark": {
+              "luminance_stddev": 35.848
+            },
+            "64-light": {
+              "luminance_stddev": 81.083
+            },
+            "96-dark": {
+              "luminance_stddev": 35.464
+            },
+            "96-light": {
+              "luminance_stddev": 80.815
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.2345,
+          "id": "first_task",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 31.173
+            },
+            "48-light": {
+              "luminance_stddev": 80.088
+            },
+            "64-dark": {
+              "luminance_stddev": 27.698
+            },
+            "64-light": {
+              "luminance_stddev": 81.161
+            },
+            "96-dark": {
+              "luminance_stddev": 32.695
+            },
+            "96-light": {
+              "luminance_stddev": 80.773
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.5147,
+          "id": "evidence",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 73.121
+            },
+            "48-light": {
+              "luminance_stddev": 76.79
+            },
+            "64-dark": {
+              "luminance_stddev": 73.141
+            },
+            "64-light": {
+              "luminance_stddev": 75.216
+            },
+            "96-dark": {
+              "luminance_stddev": 72.15
+            },
+            "96-light": {
+              "luminance_stddev": 76.857
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3922,
+          "id": "approval",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 51.727
+            },
+            "48-light": {
+              "luminance_stddev": 86.112
+            },
+            "64-dark": {
+              "luminance_stddev": 53.498
+            },
+            "64-light": {
+              "luminance_stddev": 86.092
+            },
+            "96-dark": {
+              "luminance_stddev": 53.056
+            },
+            "96-light": {
+              "luminance_stddev": 85.882
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4527,
+          "id": "memory",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 48.372
+            },
+            "48-light": {
+              "luminance_stddev": 93.163
+            },
+            "64-dark": {
+              "luminance_stddev": 48.381
+            },
+            "64-light": {
+              "luminance_stddev": 92.562
+            },
+            "96-dark": {
+              "luminance_stddev": 47.873
+            },
+            "96-light": {
+              "luminance_stddev": 93.185
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.2873,
+          "id": "workflow",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 38.535
+            },
+            "48-light": {
+              "luminance_stddev": 84.247
+            },
+            "64-dark": {
+              "luminance_stddev": 39.914
+            },
+            "64-light": {
+              "luminance_stddev": 82.366
+            },
+            "96-dark": {
+              "luminance_stddev": 39.643
+            },
+            "96-light": {
+              "luminance_stddev": 82.985
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3689,
+          "id": "repair",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 49.851
+            },
+            "48-light": {
+              "luminance_stddev": 83.799
+            },
+            "64-dark": {
+              "luminance_stddev": 47.478
+            },
+            "64-light": {
+              "luminance_stddev": 84.069
+            },
+            "96-dark": {
+              "luminance_stddev": 48.627
+            },
+            "96-light": {
+              "luminance_stddev": 84.968
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3421,
+          "id": "replay",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 42.379
+            },
+            "48-light": {
+              "luminance_stddev": 90.143
+            },
+            "64-dark": {
+              "luminance_stddev": 42.039
+            },
+            "64-light": {
+              "luminance_stddev": 89.68
+            },
+            "96-dark": {
+              "luminance_stddev": 42.236
+            },
+            "96-light": {
+              "luminance_stddev": 90.233
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.472,
+          "id": "release",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 47.988
+            },
+            "48-light": {
+              "luminance_stddev": 96.958
+            },
+            "64-dark": {
+              "luminance_stddev": 45.872
+            },
+            "64-light": {
+              "luminance_stddev": 96.711
+            },
+            "96-dark": {
+              "luminance_stddev": 44.021
+            },
+            "96-light": {
+              "luminance_stddev": 97.18
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4208,
+          "id": "loop_engineering",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 47.416
+            },
+            "48-light": {
+              "luminance_stddev": 91.588
+            },
+            "64-dark": {
+              "luminance_stddev": 47.11
+            },
+            "64-light": {
+              "luminance_stddev": 91.929
+            },
+            "96-dark": {
+              "luminance_stddev": 48.37
+            },
+            "96-light": {
+              "luminance_stddev": 92.25
+            }
+          }
+        }
+      ]
+    },
+    {
+      "cell_pixels": 192,
+      "columns": 4,
+      "file": "status-companion-atlas.png",
+      "id": "status_companions",
+      "output_sha256": "6b98088a5af320ff08b0a4aa230f67438aef73092b760c384ccd54711e649d89",
+      "rows": 2,
+      "source": "status-companions-source.png",
+      "source_sha256": "8d5ee15741abcbf3ee23f322daa3093170967e3b16a6e5e401bb03250d8b42cf",
+      "sprites": [
+        {
+          "alpha_coverage": 0.4049,
+          "id": "idle",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 43.575
+            },
+            "48-light": {
+              "luminance_stddev": 94.076
+            },
+            "64-dark": {
+              "luminance_stddev": 42.467
+            },
+            "64-light": {
+              "luminance_stddev": 94.498
+            },
+            "96-dark": {
+              "luminance_stddev": 43.676
+            },
+            "96-light": {
+              "luminance_stddev": 94.454
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3037,
+          "id": "listening",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 43.546
+            },
+            "48-light": {
+              "luminance_stddev": 83.059
+            },
+            "64-dark": {
+              "luminance_stddev": 44.176
+            },
+            "64-light": {
+              "luminance_stddev": 83.598
+            },
+            "96-dark": {
+              "luminance_stddev": 44.498
+            },
+            "96-light": {
+              "luminance_stddev": 83.424
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.5171,
+          "id": "working",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 45.318
+            },
+            "48-light": {
+              "luminance_stddev": 98.469
+            },
+            "64-dark": {
+              "luminance_stddev": 44.236
+            },
+            "64-light": {
+              "luminance_stddev": 98.157
+            },
+            "96-dark": {
+              "luminance_stddev": 44.77
+            },
+            "96-light": {
+              "luminance_stddev": 97.928
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3979,
+          "id": "checking",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 51.364
+            },
+            "48-light": {
+              "luminance_stddev": 88.1
+            },
+            "64-dark": {
+              "luminance_stddev": 53.231
+            },
+            "64-light": {
+              "luminance_stddev": 88.562
+            },
+            "96-dark": {
+              "luminance_stddev": 52.785
+            },
+            "96-light": {
+              "luminance_stddev": 89.591
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4118,
+          "id": "waiting",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 47.204
+            },
+            "48-light": {
+              "luminance_stddev": 95.102
+            },
+            "64-dark": {
+              "luminance_stddev": 44.413
+            },
+            "64-light": {
+              "luminance_stddev": 93.617
+            },
+            "96-dark": {
+              "luminance_stddev": 42.144
+            },
+            "96-light": {
+              "luminance_stddev": 94.389
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.2653,
+          "id": "complete",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 46.415
+            },
+            "48-light": {
+              "luminance_stddev": 74.067
+            },
+            "64-dark": {
+              "luminance_stddev": 46.064
+            },
+            "64-light": {
+              "luminance_stddev": 73.483
+            },
+            "96-dark": {
+              "luminance_stddev": 45.534
+            },
+            "96-light": {
+              "luminance_stddev": 74.605
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4163,
+          "id": "blocked",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 39.544
+            },
+            "48-light": {
+              "luminance_stddev": 98.186
+            },
+            "64-dark": {
+              "luminance_stddev": 39.124
+            },
+            "64-light": {
+              "luminance_stddev": 98.025
+            },
+            "96-dark": {
+              "luminance_stddev": 36.229
+            },
+            "96-light": {
+              "luminance_stddev": 98.321
+            }
+          }
+        }
+      ]
+    },
+    {
+      "cell_pixels": 192,
+      "columns": 2,
+      "file": "trust-seal-atlas.png",
+      "id": "trust_seals",
+      "output_sha256": "d1a9344610393be6896fe93222f38a701eb25d5ca8afc49d1277a09486e16335",
+      "rows": 2,
+      "source": "trust-seals-source.png",
+      "source_sha256": "6d34996ef42b8b651d51764928e5f6a91e1b800799ce6373e8364964c2410120",
+      "sprites": [
+        {
+          "alpha_coverage": 0.4416,
+          "id": "ready",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 44.119
+            },
+            "48-light": {
+              "luminance_stddev": 98.77
+            },
+            "64-dark": {
+              "luminance_stddev": 45.252
+            },
+            "64-light": {
+              "luminance_stddev": 98.747
+            },
+            "96-dark": {
+              "luminance_stddev": 45.759
+            },
+            "96-light": {
+              "luminance_stddev": 98.508
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4415,
+          "id": "review",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 46.38
+            },
+            "48-light": {
+              "luminance_stddev": 100.404
+            },
+            "64-dark": {
+              "luminance_stddev": 45.971
+            },
+            "64-light": {
+              "luminance_stddev": 100.258
+            },
+            "96-dark": {
+              "luminance_stddev": 46.373
+            },
+            "96-light": {
+              "luminance_stddev": 99.693
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4412,
+          "id": "blocked",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 38.616
+            },
+            "48-light": {
+              "luminance_stddev": 101.54
+            },
+            "64-dark": {
+              "luminance_stddev": 37.777
+            },
+            "64-light": {
+              "luminance_stddev": 101.954
+            },
+            "96-dark": {
+              "luminance_stddev": 39.262
+            },
+            "96-light": {
+              "luminance_stddev": 100.276
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4412,
+          "id": "improved",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 44.295
+            },
+            "48-light": {
+              "luminance_stddev": 97.932
+            },
+            "64-dark": {
+              "luminance_stddev": 43.848
+            },
+            "64-light": {
+              "luminance_stddev": 97.974
+            },
+            "96-dark": {
+              "luminance_stddev": 45.612
+            },
+            "96-light": {
+              "luminance_stddev": 97.169
+            }
+          }
+        }
+      ]
+    },
+    {
+      "cell_pixels": 192,
+      "columns": 4,
+      "file": "challenge-reward-atlas.png",
+      "id": "challenge_rewards",
+      "output_sha256": "4355c4e3196bb5101a6d3ba36a45abdb17fddc0e37318c0049d9207e3fb4bc22",
+      "rows": 2,
+      "source": "challenge-rewards-source.png",
+      "source_sha256": "660787d4719fc8b6471e2e70cadef36488f802813576e33c4e87b59b1090136b",
+      "sprites": [
+        {
+          "alpha_coverage": 0.6012,
+          "id": "first_verified_delivery",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 59.752
+            },
+            "48-light": {
+              "luminance_stddev": 90.712
+            },
+            "64-dark": {
+              "luminance_stddev": 58.773
+            },
+            "64-light": {
+              "luminance_stddev": 89.911
+            },
+            "96-dark": {
+              "luminance_stddev": 59.403
+            },
+            "96-light": {
+              "luminance_stddev": 90.818
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3144,
+          "id": "evidence_explorer",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 47.315
+            },
+            "48-light": {
+              "luminance_stddev": 83.356
+            },
+            "64-dark": {
+              "luminance_stddev": 46.163
+            },
+            "64-light": {
+              "luminance_stddev": 83.396
+            },
+            "96-dark": {
+              "luminance_stddev": 45.767
+            },
+            "96-light": {
+              "luminance_stddev": 83.322
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.4713,
+          "id": "safe_reviewer",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 50.987
+            },
+            "48-light": {
+              "luminance_stddev": 92.895
+            },
+            "64-dark": {
+              "luminance_stddev": 51.243
+            },
+            "64-light": {
+              "luminance_stddev": 92.856
+            },
+            "96-dark": {
+              "luminance_stddev": 51.761
+            },
+            "96-light": {
+              "luminance_stddev": 92.902
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.1345,
+          "id": "repair_apprentice",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 34.884
+            },
+            "48-light": {
+              "luminance_stddev": 56.119
+            },
+            "64-dark": {
+              "luminance_stddev": 33.112
+            },
+            "64-light": {
+              "luminance_stddev": 56.784
+            },
+            "96-dark": {
+              "luminance_stddev": 39.897
+            },
+            "96-light": {
+              "luminance_stddev": 56.714
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3649,
+          "id": "comparison_analyst",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 50.908
+            },
+            "48-light": {
+              "luminance_stddev": 83.438
+            },
+            "64-dark": {
+              "luminance_stddev": 49.281
+            },
+            "64-light": {
+              "luminance_stddev": 85.627
+            },
+            "96-dark": {
+              "luminance_stddev": 49.333
+            },
+            "96-light": {
+              "luminance_stddev": 86.196
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.434,
+          "id": "release_guardian",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 50.217
+            },
+            "48-light": {
+              "luminance_stddev": 90.671
+            },
+            "64-dark": {
+              "luminance_stddev": 50.5
+            },
+            "64-light": {
+              "luminance_stddev": 91.214
+            },
+            "96-dark": {
+              "luminance_stddev": 52.814
+            },
+            "96-light": {
+              "luminance_stddev": 90.748
+            }
+          }
+        },
+        {
+          "alpha_coverage": 0.3895,
+          "id": "loop_guide",
+          "modes": {
+            "48-dark": {
+              "luminance_stddev": 53.124
+            },
+            "48-light": {
+              "luminance_stddev": 91.101
+            },
+            "64-dark": {
+              "luminance_stddev": 52.148
+            },
+            "64-light": {
+              "luminance_stddev": 89.992
+            },
+            "96-dark": {
+              "luminance_stddev": 52.986
+            },
+            "96-light": {
+              "luminance_stddev": 90.426
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "background_modes": [
+    "light",
+    "dark"
+  ],
+  "chroma_key": "#ff00ff",
+  "owner": "Across Agents Assistant",
+  "schema_version": "across-growth-asset-validation/1.0",
+  "source_kind": "selected built-in ImageGen pixel-art source sheets",
+  "validation_sizes": [
+    48,
+    64,
+    96
+  ]
+}

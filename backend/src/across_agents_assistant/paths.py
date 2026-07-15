@@ -119,7 +119,3 @@ def tmp_dir() -> Path:
 
 def backend_socket_path() -> str:
     return str(run_dir() / "across-agents.sock")
-
-
-def speech_socket_path() -> str:
-    return str(run_dir() / "speech_cli.sock")

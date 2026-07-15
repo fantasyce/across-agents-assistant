@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import across_agents_assistant.api_server as api_server
+import across_agents_assistant.plugin_runtime as plugin_runtime
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import (
     discover_across_plugins,
@@ -246,6 +247,79 @@ def test_inspect_across_plugin_reports_actual_wheel_install_source_from_direct_u
 
     assert orchestrator["install"]["source"] == package_path.as_uri()
     assert "github.com/fantasyce/across-orchestrator" not in orchestrator["install"]["source"]
+
+
+def test_inspect_across_plugin_rejects_stale_bundled_native_runtime(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    executable = plugin_dir / "venv" / "bin" / "across-orchestrator"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"installed runtime")
+    executable.chmod(0o755)
+    command = _write_fake_command(across_home, "across-orchestrator")
+    (plugin_dir / "install-state.json").write_text(
+        json.dumps({"runtime": "bundled_native", "sha256": "0" * 64}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        plugin_runtime,
+        "plugin_payload",
+        lambda plugin_id, env: {
+            "runtime": "native",
+            "version": "0.9.0",
+            "commit": "abc123",
+            "sha256": "1" * 64,
+        },
+    )
+
+    orchestrator = inspect_across_plugin(
+        "across-orchestrator",
+        env={"ACROSS_HOME": str(across_home), "PATH": ""},
+        probe=True,
+    )
+
+    assert orchestrator["command"] == str(command)
+    assert orchestrator["status"] == "needs_repair"
+    assert orchestrator["available"] is False
+    assert orchestrator["integrity_ok"] is False
+    assert any("differs from the bundled version" in issue for issue in orchestrator["integrity_issues"])
+
+
+def test_inspect_across_plugin_accepts_matching_bundled_native_runtime(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    _write_plugin_manifest(across_home, "across-orchestrator", "task-runtime")
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    executable = plugin_dir / "venv" / "bin" / "across-orchestrator"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"installed runtime")
+    executable.chmod(0o755)
+    _write_fake_command(across_home, "across-orchestrator")
+    expected_sha256 = plugin_runtime._sha256_file(executable)
+    (plugin_dir / "install-state.json").write_text(
+        json.dumps({"runtime": "bundled_native", "sha256": expected_sha256}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        plugin_runtime,
+        "plugin_payload",
+        lambda plugin_id, env: {
+            "runtime": "native",
+            "version": "0.9.0",
+            "commit": "abc123",
+            "sha256": expected_sha256,
+        },
+    )
+
+    orchestrator = inspect_across_plugin(
+        "across-orchestrator",
+        env={"ACROSS_HOME": str(across_home), "PATH": ""},
+        probe=True,
+    )
+
+    assert orchestrator["status"] == "installed"
+    assert orchestrator["available"] is True
+    assert orchestrator["integrity_ok"] is True
 
 
 def test_inspect_across_plugin_rejects_wrapper_referencing_documents(tmp_path):

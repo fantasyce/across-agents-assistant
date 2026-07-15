@@ -706,6 +706,11 @@ struct MinimalRunsOverviewView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 16) {
+                    AcrossVisualResultOverview(
+                        contract: AcrossVisualResultFactory.make(task: task),
+                        preferences: preferences
+                    )
+
                     DisclosureGroup(preferences.text("tasks.description"), isExpanded: .constant(true)) {
                         Text(task.description)
                             .font(.body)
@@ -776,6 +781,9 @@ struct MinimalRunsOverviewView: View {
                     label: preferences.text("tasks.evidence.view"),
                     isDisabled: viewModel.isLoadingTaskEvidence
                 ) {
+                    AcrossLearningProgressStore.shared.record([
+                        AcrossLearningEvent(kind: .evidenceInspected, sourceID: task.taskId)
+                    ])
                     viewModel.loadTaskEvidenceBundle(
                         task.taskId,
                         releaseGate: isReleaseE2ETask(task)

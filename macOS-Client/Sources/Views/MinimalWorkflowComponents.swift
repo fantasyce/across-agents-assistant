@@ -392,6 +392,7 @@ struct MinimalIconButton: View {
                 .frame(width: 32, height: 30)
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .foregroundStyle(Color.primary)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))

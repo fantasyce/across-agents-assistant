@@ -17,24 +17,23 @@ struct AgentIconChip: View {
                     .foregroundColor(isSelected ? .white : .secondary)
                     .frame(width: chipSize, height: chipSize)
                     .background(isSelected ? AcrossTheme.accent : AcrossTheme.recessedFill(for: colorScheme))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius)
-                            .stroke(
-                                isSelected ? AcrossTheme.accent : AcrossTheme.separator(for: colorScheme),
-                                lineWidth: 1
-                            )
-                    )
                     .cornerRadius(AcrossTheme.Metrics.controlCornerRadius)
             } else {
                 AgentIconView(name: agent.iconName, size: chipSize, isCloudLLM: agent.isCloudLLM)
                     .frame(width: chipSize, height: chipSize)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius)
-                            .stroke(isSelected ? AcrossTheme.accent : Color.clear, lineWidth: 1.5)
-                    )
+                    .opacity(isSelected ? 1 : 0.72)
+                    .overlay(alignment: .bottomTrailing) {
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(AcrossTheme.accent)
+                                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+                        }
+                    }
             }
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .frame(width: chipSize, height: chipSize)
         .accessibilityLabel(Text(agent.name))
         .accessibilityValue(Text(isSelected ? "Selected" : "Not selected"))
@@ -121,4 +120,3 @@ struct AgentIdentityBadge: View {
         .help(displayName)
     }
 }
-

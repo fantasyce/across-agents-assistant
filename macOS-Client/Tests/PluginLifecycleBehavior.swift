@@ -645,8 +645,8 @@ func testOneClickPluginActionVerification() throws {
     assert(!beforeInstall.isUnlocked(.sharedMemory), "A missing plugin must not expose its main module")
     assert(afterInstall.isUnlocked(.sharedMemory), "A ready plugin should expose its main module immediately")
     assert(
-        afterInstall.achievements.first(where: { $0.id == "memory-connected" })?.isUnlocked == true,
-        "Installing Across Context should unlock its ecosystem achievement"
+        afterInstall.achievements.first(where: { $0.id == "memory-connected" })?.isUnlocked == false,
+        "Installing Across Context must not duplicate a learning achievement"
     )
 }
 

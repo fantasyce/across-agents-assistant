@@ -45,6 +45,7 @@ struct AcrossAchievement: Identifiable, Equatable {
     let id: String
     let title: String
     let titleKey: String?
+    let detailKey: String?
     let systemImage: String
     let isUnlocked: Bool
     let artworkIndex: Int?
@@ -117,17 +118,13 @@ struct AcrossCapabilitySource: Equatable {
 struct AcrossProductProgressSnapshot: Equatable {
     let capabilities: [AcrossProductCapability]
     let achievements: [AcrossAchievement]
+    let learning: AcrossLearningProgressSnapshot
 
     var unlockedCapabilityCount: Int { capabilities.filter(\.isVerified).count }
     var unlockedAchievementCount: Int { achievements.filter(\.isUnlocked).count }
 
     var levelKey: String {
-        switch unlockedCapabilityCount + unlockedAchievementCount {
-        case 0: return "growth.level.starter"
-        case 1...3: return "growth.level.explorer"
-        case 4...6: return "growth.level.builder"
-        default: return "growth.level.deliverer"
-        }
+        learning.level.titleKey
     }
 
     var unlockedSurfaces: [OperationsWorkbenchSurface] {
@@ -145,6 +142,12 @@ struct AcrossProductProgressSnapshot: Equatable {
 }
 
 enum AcrossProductCapabilityRegistry {
+    private static let canonicalPluginIDs: [AcrossProductCapabilityRole: String] = [
+        .sharedMemory: "across-context",
+        .workflows: "across-orchestrator",
+        .selfIteration: "across-autopilot",
+    ]
+
     private static let roleAliases: [AcrossProductCapabilityRole: Set<String>] = [
         .sharedMemory: ["sharedmemory", "memoryhooks", "memory", "contextmemory", "contextretrieval"],
         .workflows: ["workflowexecution", "workflows", "qualitygates", "taskorchestration", "taskexecution"],
@@ -164,9 +167,41 @@ enum AcrossProductCapabilityRegistry {
     }
 
     static func snapshot(
+        plugins: [AcrossPluginStatus],
+        hasAvailableAgent: Bool,
+        learningEvents: [AcrossLearningEvent]
+    ) -> AcrossProductProgressSnapshot {
+        snapshot(
+            sources: plugins.map(AcrossCapabilitySource.init(plugin:)),
+            hasAvailableAgent: hasAvailableAgent,
+            learningEvents: learningEvents
+        )
+    }
+
+    static func snapshot(
         sources: [AcrossCapabilitySource],
         hasAvailableAgent: Bool,
         acceptedDeliveryCount: Int
+    ) -> AcrossProductProgressSnapshot {
+        let migratedEvents = (0..<max(0, acceptedDeliveryCount)).map { index in
+            AcrossLearningEvent(
+                kind: .verifiedDelivery,
+                sourceID: "legacy-delivery-\(index)",
+                occurredAt: Date(timeIntervalSince1970: Double(index)),
+                origin: .migration
+            )
+        }
+        return snapshot(
+            sources: sources,
+            hasAvailableAgent: hasAvailableAgent,
+            learningEvents: migratedEvents
+        )
+    }
+
+    static func snapshot(
+        sources: [AcrossCapabilitySource],
+        hasAvailableAgent: Bool,
+        learningEvents: [AcrossLearningEvent]
     ) -> AcrossProductProgressSnapshot {
         let memorySource = source(for: .sharedMemory, in: sources)
         let workflowSource = source(for: .workflows, in: sources)
@@ -179,10 +214,13 @@ enum AcrossProductCapabilityRegistry {
         ]
         let achievements = achievements(
             sources: sources,
-            capabilities: capabilities,
-            acceptedDeliveryCount: acceptedDeliveryCount
+            learningEvents: learningEvents
         )
-        return AcrossProductProgressSnapshot(capabilities: capabilities, achievements: achievements)
+        return AcrossProductProgressSnapshot(
+            capabilities: capabilities,
+            achievements: achievements,
+            learning: AcrossLearningProgressEngine.snapshot(events: learningEvents, capabilities: capabilities)
+        )
     }
 
     private static func role(for capabilityID: String) -> AcrossProductCapabilityRole {
@@ -197,17 +235,18 @@ enum AcrossProductCapabilityRegistry {
         for role: AcrossProductCapabilityRole,
         in sources: [AcrossCapabilitySource]
     ) -> AcrossCapabilitySource? {
-        sources.first { source in
+        if let canonicalPluginID = canonicalPluginIDs[role],
+           let canonicalSource = sources.first(where: {
+               $0.pluginID == canonicalPluginID && $0.available
+           }) {
+            return canonicalSource
+        }
+
+        let siblingCorePluginIDs = Set(canonicalPluginIDs.values)
+        return sources.first { source in
             guard source.available else { return false }
-            if source.verifiedCapabilities.contains(where: { self.role(for: $0.id) == role }) {
-                return true
-            }
-            switch role {
-            case .sharedMemory: return source.pluginID == "across-context"
-            case .workflows: return source.pluginID == "across-orchestrator"
-            case .selfIteration: return source.pluginID == "across-autopilot"
-            default: return false
-            }
+            guard !siblingCorePluginIDs.contains(source.pluginID) else { return false }
+            return source.verifiedCapabilities.contains(where: { self.role(for: $0.id) == role })
         }
     }
 
@@ -266,28 +305,32 @@ enum AcrossProductCapabilityRegistry {
 
     private static func achievements(
         sources: [AcrossCapabilitySource],
-        capabilities: [AcrossProductCapability],
-        acceptedDeliveryCount: Int
+        learningEvents: [AcrossLearningEvent]
     ) -> [AcrossAchievement] {
-        let hasAgent = capabilities.contains { $0.role == .agent && $0.isVerified }
-        let hasMemory = capabilities.contains { $0.role == .sharedMemory && $0.isVerified }
-        let hasWorkflows = capabilities.contains { $0.role == .workflows && $0.isVerified }
-        let hasSelfIteration = capabilities.contains { $0.role == .selfIteration && $0.isVerified }
-        let hasCompleteEcosystem = capabilities.allSatisfy(\.isVerified)
+        let kinds = Set(learningEvents.map(\.kind))
+        let verifiedDeliveryCount = Set(learningEvents.filter { $0.kind == .verifiedDelivery }.map(\.eventID)).count
+        let hasAgentInteraction = kinds.contains(.agentInteraction)
+        let hasMemoryReview = kinds.contains(.memoryReviewed)
+        let hasQualityWorkflow = kinds.contains(.qualityWorkflow)
+        let hasSupervisedLoop = kinds.contains(.supervisedLoop)
+        let hasEvidenceReview = kinds.contains(.evidenceInspected)
+        let hasProposalReview = kinds.contains(.proposalReviewed)
+        let hasReleaseReadiness = kinds.contains(.releaseReadiness)
 
         let baseStates: [(String, String, String, Bool, Int)] = [
-            ("first-agent", "growth.achievement.firstAgent", "cpu", hasAgent, 0),
-            ("memory-connected", "growth.achievement.memoryConnected", "memorychip", hasMemory, 1),
-            ("workflow-connected", "growth.achievement.workflowConnected", "checklist", hasWorkflows, 2),
-            ("self-iteration-connected", "growth.achievement.selfIterationConnected", "arrow.triangle.2.circlepath", hasSelfIteration, 3),
-            ("first-delivery", "growth.achievement.firstAcceptedDelivery", "checkmark.seal", acceptedDeliveryCount > 0, 4),
-            ("complete-ecosystem", "growth.achievement.completeEcosystem", "point.3.connected.trianglepath.dotted", hasCompleteEcosystem, 5),
+            ("first-agent", "growth.achievement.firstAgent", "bubble.left.and.waveform", hasAgentInteraction, 0),
+            ("memory-connected", "growth.achievement.memoryConnected", "memorychip", hasMemoryReview, 1),
+            ("workflow-connected", "growth.achievement.workflowConnected", "checklist", hasQualityWorkflow, 2),
+            ("self-iteration-connected", "growth.achievement.selfIterationConnected", "arrow.triangle.2.circlepath", hasSupervisedLoop, 3),
+            ("first-delivery", "growth.achievement.firstAcceptedDelivery", "checkmark.seal", verifiedDeliveryCount > 0, 4),
+            ("complete-ecosystem", "growth.achievement.completeEcosystem", "point.3.connected.trianglepath.dotted", kinds.count >= 5, 5),
         ]
         var values = baseStates.map { id, key, systemImage, unlocked, index in
             AcrossAchievement(
                 id: id,
                 title: AcrossCapabilitySource.humanized(id),
                 titleKey: key,
+                detailKey: "\(key).detail",
                 systemImage: systemImage,
                 isUnlocked: unlocked,
                 artworkIndex: index,
@@ -296,18 +339,19 @@ enum AcrossProductCapabilityRegistry {
         }
 
         let milestoneStates: [(String, String, Bool, Int)] = [
-            ("three-deliveries", "growth.achievement.threeDeliveries", acceptedDeliveryCount >= 3, 0),
-            ("ten-deliveries", "growth.achievement.tenDeliveries", acceptedDeliveryCount >= 10, 1),
-            ("twenty-five-deliveries", "growth.achievement.twentyFiveDeliveries", acceptedDeliveryCount >= 25, 2),
-            ("agent-memory-synergy", "growth.achievement.agentMemorySynergy", hasAgent && hasMemory, 3),
-            ("quality-operator", "growth.achievement.qualityOperator", acceptedDeliveryCount >= 3 && hasWorkflows, 4),
-            ("loop-engineering-mastery", "growth.achievement.loopEngineeringMastery", acceptedDeliveryCount >= 10 && hasSelfIteration, 5),
+            ("three-deliveries", "growth.achievement.threeDeliveries", verifiedDeliveryCount >= 3, 0),
+            ("ten-deliveries", "growth.achievement.tenDeliveries", verifiedDeliveryCount >= 10, 1),
+            ("twenty-five-deliveries", "growth.achievement.twentyFiveDeliveries", verifiedDeliveryCount >= 25, 2),
+            ("agent-memory-synergy", "growth.achievement.agentMemorySynergy", hasAgentInteraction && hasMemoryReview, 3),
+            ("quality-operator", "growth.achievement.qualityOperator", hasQualityWorkflow && hasEvidenceReview && hasProposalReview, 4),
+            ("loop-engineering-mastery", "growth.achievement.loopEngineeringMastery", hasSupervisedLoop && hasReleaseReadiness, 5),
         ]
         values.append(contentsOf: milestoneStates.map { id, key, unlocked, index in
             AcrossAchievement(
                 id: id,
                 title: AcrossCapabilitySource.humanized(id),
                 titleKey: key,
+                detailKey: "\(key).detail",
                 systemImage: "star",
                 isUnlocked: unlocked,
                 artworkIndex: index,
@@ -321,6 +365,7 @@ enum AcrossProductCapabilityRegistry {
                     id: "\(source.pluginID):\(achievement.id)",
                     title: achievement.displayName ?? AcrossCapabilitySource.humanized(achievement.id),
                     titleKey: nil,
+                    detailKey: nil,
                     systemImage: achievement.systemImage ?? "checkmark.seal",
                     isUnlocked: true,
                     artworkIndex: nil,

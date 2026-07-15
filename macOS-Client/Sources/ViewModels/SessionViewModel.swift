@@ -274,13 +274,13 @@ class SessionViewModel: ObservableObject {
         }
     }
 
-    @Published var selectedAgentId: String = AgentIDs.normalized(UserDefaults.standard.string(forKey: "lastSelectedAgentId")) ?? "deepseek" {
+    @Published var selectedAgentId: String = AgentIDs.normalized(AppUserDefaults.current.string(forKey: "lastSelectedAgentId")) ?? "deepseek" {
         didSet {
             let normalizedSelectedAgentId = AgentIDs.normalized(selectedAgentId) ?? selectedAgentId
             if shouldRememberSelectedAgent {
-                UserDefaults.standard.set(normalizedSelectedAgentId, forKey: "lastSelectedAgentId")
+                AppUserDefaults.current.set(normalizedSelectedAgentId, forKey: "lastSelectedAgentId")
             } else {
-                UserDefaults.standard.removeObject(forKey: "lastSelectedAgentId")
+                AppUserDefaults.current.removeObject(forKey: "lastSelectedAgentId")
             }
             // Tell backend about the active agent
             guard let url = URL(string: "http://backend/api/active_agent") else { return }

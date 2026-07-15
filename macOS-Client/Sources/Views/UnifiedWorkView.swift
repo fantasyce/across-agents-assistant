@@ -2,12 +2,20 @@ import SwiftUI
 
 struct UnifiedWorkEmptyState: View {
     let projectName: String?
+    let projectPath: String?
     let recentTasks: [TaskOrchestrationTaskSummary]
+    let isBeginnerMissionAvailable: Bool
+    @ObservedObject var beginnerMission: BeginnerMissionViewModel
+    let beginnerGoal: String
     @ObservedObject var preferences: AppPreferences
     let onChooseProject: () -> Void
+    let onRunBeginnerMission: (String) -> Void
+    let onInstallBeginnerCapability: () -> Void
+    let onOpenBeginnerEvidence: () -> Void
     let onOpenTask: (TaskOrchestrationTaskSummary) -> Void
 
     @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -32,8 +40,41 @@ struct UnifiedWorkEmptyState: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+            } else if let visualResult = currentBeginnerVisualResult {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let requestedGoal = beginnerMission.requestedGoal {
+                        Label(requestedGoal, systemImage: "scope")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .accessibilityLabel(
+                                String(format: preferences.text("work.beginner.goalUsed"), requestedGoal)
+                            )
+                    }
+                    AcrossVisualResultOverview(
+                        contract: visualResult,
+                        preferences: preferences
+                    )
+                    HStack {
+                        Button {
+                            onRunBeginnerMission(beginnerMission.requestedGoal ?? beginnerGoal)
+                        } label: {
+                            Label(preferences.text("work.beginner.runAgain"), systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(beginnerMission.isRunning)
+
+                        Spacer()
+
+                        Button(action: onOpenBeginnerEvidence) {
+                            Label(preferences.text("work.beginner.openEvidence"), systemImage: "doc.text.magnifyingglass")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                }
             } else {
-                Color.clear.frame(height: 18)
+                beginnerMissionCard
             }
 
             if !recentTasks.isEmpty {
@@ -80,6 +121,100 @@ struct UnifiedWorkEmptyState: View {
         .frame(maxWidth: windowLayoutSize == .expanded ? 860 : 720, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, windowLayoutSize == .expanded ? 56 : 44)
+    }
+
+    private var currentBeginnerVisualResult: AcrossVisualResultContract? {
+        guard BeginnerMissionViewModel.normalizedProjectPath(projectPath) == beginnerMission.projectPath else {
+            return nil
+        }
+        return beginnerMission.visualResult
+    }
+
+    private var beginnerMissionCard: some View {
+        HStack(spacing: 14) {
+            PixelAtlasReward(
+                atlas: .journeyNodes,
+                index: 1,
+                isUnlocked: isBeginnerMissionAvailable
+            )
+            .frame(width: 54, height: 54)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(preferences.text("work.beginner.title"))
+                    .font(.system(size: 14, weight: .semibold))
+                Label(
+                    preferences.text("work.beginner.safety"),
+                    systemImage: "lock.shield"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+                if let goal = normalizedBeginnerGoal {
+                    Label(goal, systemImage: "scope")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityLabel(
+                            String(format: preferences.text("work.beginner.goalUsed"), goal)
+                        )
+                } else {
+                    Text(preferences.text("work.beginner.goalPrompt"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if beginnerMission.errorMessage != nil {
+                    Text(preferences.text("work.beginner.error"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            if isBeginnerMissionAvailable {
+                Button {
+                    if let goal = normalizedBeginnerGoal {
+                        onRunBeginnerMission(goal)
+                    }
+                } label: {
+                    if beginnerMission.isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label(preferences.text("work.beginner.run"), systemImage: "play.fill")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)
+                .help(normalizedBeginnerGoal == nil
+                    ? preferences.text("work.beginner.goalRequired")
+                    : preferences.text("work.beginner.run"))
+            } else {
+                Button(action: onInstallBeginnerCapability) {
+                    Label(preferences.text("work.beginner.install"), systemImage: "puzzlepiece.extension")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+        }
+        .padding(14)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(preferences.text("work.beginner.title"))
+    }
+
+    private var normalizedBeginnerGoal: String? {
+        BeginnerMissionViewModel.normalizedGoal(beginnerGoal)
     }
 }
 
@@ -182,9 +317,11 @@ struct UnifiedDeliveryView: View {
                     phaseStrip
 
                     if let task {
-                        taskSummary(task)
                         if TaskOrchestrationStateReducers.isTerminalStatus(task.status) {
                             resultSummary(task)
+                            taskSummary(task)
+                        } else {
+                            taskSummary(task)
                         }
                     } else if isLoading {
                         ProgressView(value: progress)
@@ -210,6 +347,13 @@ struct UnifiedDeliveryView: View {
                             Text(preferences.text("work.currentWorkflow.subtitle"))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+
+                            if let task {
+                                RunTrustContractsView(
+                                    task: task,
+                                    preferences: preferences
+                                )
+                            }
 
                             TaskDetailPanel(
                                 viewModel: taskViewModel,
@@ -326,20 +470,10 @@ struct UnifiedDeliveryView: View {
             capabilityContract: capabilityContract
         )
         return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: StatusPalette.systemImage(for: presentation.resultState?.status ?? "attention"))
-                    .font(.system(size: 18))
-                    .foregroundStyle(StatusPalette.tone(for: presentation.resultState?.status ?? "attention").foreground)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(presentation.resultState?.title
-                        ?? preferences.text("work.result.needsAttention"))
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(resultDetail(task))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            AcrossVisualResultOverview(
+                contract: AcrossVisualResultFactory.make(task: task),
+                preferences: preferences
+            )
 
             HStack(spacing: 10) {
                 if !isAccepted, presentation.requiredDecisions.isEmpty {

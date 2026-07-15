@@ -149,12 +149,8 @@ struct WorkspaceDiffReviewView: View {
             }
         }
         .padding(10)
-        .background(AcrossTheme.panelFill(for: colorScheme))
+        .background(AcrossTheme.selectedFill(for: colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
-                .stroke(AcrossTheme.accent.opacity(0.55), lineWidth: 1)
-        }
     }
 
     private func lineBackground(_ kind: WorkspaceDiffLineKind, isSelected: Bool) -> Color {

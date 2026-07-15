@@ -9,6 +9,7 @@ import sys
 import time
 
 from .llm_gateway.provider_registry import get_default_provider_definitions
+from .beginner_study_artifacts import persist_beginner_study_result
 from .loop_engineering_retention import RetentionPolicy, run_retention
 from .paths import backend_socket_path, component_data_home
 from .plugin_runtime import PluginLifecycleError, run_autopilot_cli_json
@@ -42,6 +43,44 @@ class AutopilotClient:
 
     def dry_run(self, spec: str) -> dict[str, Any]:
         return self._dict(["loop", "dry-run", "--spec", _required(spec, "spec"), "--json"])
+
+    def beginner_patterns(self) -> dict[str, Any]:
+        return self._dict(["beginner-patterns", "--json"])
+
+    def no_key_demo(self, pattern_id: str = "first-verified-task") -> dict[str, Any]:
+        return self._dict([
+            "beginner-pattern", "demo", "--pattern", _required(pattern_id, "pattern_id"), "--json"
+        ])
+
+    def run_no_key_demo(
+        self,
+        project_root: str,
+        pattern_id: str = "first-verified-task",
+        *,
+        user_goal: str,
+    ) -> dict[str, Any]:
+        root = Path(_required(project_root, "project_root")).expanduser().resolve(strict=True)
+        if not root.is_dir() or root.parent == root:
+            raise ValueError("project_root must be an existing project directory")
+        result = self._dict(
+            [
+                "beginner-pattern",
+                "run",
+                "--pattern",
+                _required(pattern_id, "pattern_id"),
+                "--goal",
+                _required(user_goal, "user_goal"),
+                "--json",
+            ],
+            timeout=_long_run_timeout_seconds(self.env),
+            # A read-only assessment may legitimately return 1 when it finds a
+            # blocking gate. The JSON is still the product result the beginner
+            # needs to inspect, not a transport or plugin failure.
+            allowed_returncodes=frozenset({0, 1}),
+            cwd=root,
+        )
+        persist_beginner_study_result(result, env=self._runtime_env())
+        return result
 
     def gate(
         self,
@@ -263,8 +302,9 @@ class AutopilotClient:
         *,
         timeout: int = 60,
         allowed_returncodes: frozenset[int] | None = None,
+        cwd: str | Path | None = None,
     ) -> dict[str, Any]:
-        payload = self._json(args, timeout=timeout, allowed_returncodes=allowed_returncodes)
+        payload = self._json(args, timeout=timeout, allowed_returncodes=allowed_returncodes, cwd=cwd)
         if not isinstance(payload, dict):
             raise PluginLifecycleError("Across Autopilot returned an unexpected JSON payload")
         return payload
@@ -275,10 +315,13 @@ class AutopilotClient:
         *,
         timeout: int = 60,
         allowed_returncodes: frozenset[int] | None = None,
+        cwd: str | Path | None = None,
     ) -> Any:
         kwargs: dict[str, Any] = {"env": self._runtime_env(), "timeout": timeout}
         if allowed_returncodes is not None:
             kwargs["allowed_returncodes"] = allowed_returncodes
+        if cwd is not None:
+            kwargs["cwd"] = cwd
         return run_autopilot_cli_json(args, **kwargs)
 
     def _refresh_source_mirrors_if_needed(self, spec: Any) -> dict[str, Any] | None:

@@ -51,9 +51,6 @@ enum AcrossTheme {
         colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.045)
     }
 
-    static func focusRing(for colorScheme: ColorScheme) -> Color {
-        accent.opacity(colorScheme == .dark ? 0.9 : 0.72)
-    }
 }
 
 enum AcrossWindowLayoutSize: Equatable {
@@ -195,10 +192,56 @@ struct StatusChip: View {
         .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.chipCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: AcrossTheme.Metrics.chipCornerRadius)
-                .stroke(tone.foreground.opacity(tone.borderOpacity), lineWidth: 1)
+                .stroke(Color.secondary.opacity(tone.borderOpacity), lineWidth: 1)
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(title))
+    }
+}
+
+enum AcrossReviewActionKind {
+    case approve
+    case archive
+
+    var color: Color {
+        switch self {
+        case .approve:
+            return AcrossTheme.accent
+        case .archive:
+            return Color(nsColor: .systemRed)
+        }
+    }
+}
+
+/// Keeps human-review decisions visually unambiguous in every macOS appearance.
+/// AppKit may suppress a bordered button's tint when the window is inactive, so
+/// these high-stakes actions use an explicit fill rather than relying on tint.
+struct AcrossReviewActionButtonStyle: ButtonStyle {
+    let kind: AcrossReviewActionKind
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color.white.opacity(isEnabled ? 1 : 0.72))
+            .padding(.horizontal, 10)
+            .frame(minHeight: 26)
+            .background(
+                RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius)
+                    .fill(
+                        isEnabled
+                            ? kind.color.opacity(configuration.isPressed ? 0.78 : 1)
+                            : Color.secondary.opacity(0.24)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius)
+                    .stroke(Color.white.opacity(isEnabled ? 0.16 : 0.06), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
@@ -245,15 +288,13 @@ struct CommandToolbarButton: View {
         .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius)
-                .stroke(
-                    isFocused ? AcrossTheme.focusRing(for: colorScheme) : AcrossTheme.separator(for: colorScheme),
-                    lineWidth: 1
-                )
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
         )
         .accessibilityLabel(Text(accessibilityLabel))
         .accessibilityHint(Text(help))
         .help(help)
         .disabled(isDisabled)
         .focused($isFocused)
+        .focusEffectDisabled()
     }
 }

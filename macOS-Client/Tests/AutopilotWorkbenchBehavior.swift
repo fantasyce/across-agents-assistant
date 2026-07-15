@@ -166,11 +166,39 @@ func testAutopilotWorkbenchSnapshotDecodesHealthyContract() throws {
     assert(snapshot.summary.selfIterationStatus == "active", "Self-iteration status should decode")
 }
 
+func testAutopilotEvidenceTargetKeepsRunAndRouteBoundTogether() {
+    let target = AutopilotEvidenceTarget(
+        runID: "run-beginner-1",
+        evidenceRoute: "run://run-beginner-1/evidence"
+    )
+
+    assert(target?.runID == "run-beginner-1", "Evidence target should preserve the selected run")
+    assert(
+        target?.backendPath == "/api/autopilot/runs/run-beginner-1/evidence",
+        "Evidence target should resolve to the run-specific evidence endpoint"
+    )
+    assert(
+        AutopilotEvidenceTarget(
+            runID: "run-beginner-1",
+            evidenceRoute: "run://another-run/evidence"
+        ) == nil,
+        "A route for another run must never be accepted"
+    )
+    assert(
+        AutopilotEvidenceTarget(
+            runID: "run-beginner-1?redirect=other",
+            evidenceRoute: "run://run-beginner-1?redirect=other/evidence"
+        ) == nil,
+        "Unsafe run identifiers must never become backend routes"
+    )
+}
+
 @main
 struct AutopilotWorkbenchBehavior {
     static func main() throws {
         try testAutopilotWorkbenchSnapshotDecodesAttentionContract()
         try testAutopilotWorkbenchSnapshotDecodesHealthyContract()
+        testAutopilotEvidenceTargetKeepsRunAndRouteBoundTogether()
         print("AutopilotWorkbenchBehavior passed")
     }
 }

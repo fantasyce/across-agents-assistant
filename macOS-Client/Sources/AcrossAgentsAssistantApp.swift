@@ -90,6 +90,7 @@ private struct MainPanelRootView: View {
         MainPanelView(viewModel: viewModel)
             .environmentObject(settingsViewModel)
             .environmentObject(appPreferences)
+            .focusEffectDisabled()
             .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 800)
             .background(MainWindowLifecycleBridge())
             .onAppear { AppAppearanceController.apply(appPreferences.colorSchemeMode) }

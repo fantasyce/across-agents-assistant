@@ -96,6 +96,7 @@ struct SettingsHubView: View {
     @ObservedObject var preferences: AppPreferences
     @State var selectedTab: SettingsHubTab
     @State private var selectedCapabilityAgentId: String?
+    @FocusState private var focusedCategory: SettingsHubCategory?
     var onClose: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
@@ -147,6 +148,7 @@ struct SettingsHubView: View {
                 transaction.animation = nil
             }
         }
+        .focusEffectDisabled()
         .ignoresSafeArea(.all, edges: .top)
     }
 
@@ -177,6 +179,7 @@ struct SettingsHubView: View {
 
     private func settingsNavigationRow(_ category: SettingsHubCategory) -> some View {
         let isSelected = selectedCategory == category
+        let isFocused = focusedCategory == category
         return Button {
             selectedTab = category.canonicalTab
         } label: {
@@ -193,11 +196,17 @@ struct SettingsHubView: View {
             .foregroundStyle(isSelected ? AcrossTheme.accent : Color.primary)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-            .background(isSelected ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
+            .background(
+                isSelected
+                    ? AcrossTheme.selectedFill(for: colorScheme)
+                    : (isFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+            )
             .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($focusedCategory, equals: category)
+        .focusEffectDisabled()
         .help(category.title(preferences: preferences))
         .accessibilityValue(Text(isSelected ? preferences.text("operations.selected") : ""))
     }
@@ -462,7 +471,7 @@ private struct GlobalPreferencesContent: View {
                     }
                     settingRow(title: preferences.text("privacy.openData"), help: "~/.across") {
                         Button(preferences.text("privacy.openData")) {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".across"))
+                            NSWorkspace.shared.open(LocalAppPaths.acrossRoot)
                         }
                     }
                     }

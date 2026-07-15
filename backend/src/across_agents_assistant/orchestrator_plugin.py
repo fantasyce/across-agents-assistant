@@ -1158,6 +1158,21 @@ class OrchestratorPluginManager:
             return self._http_get(f"/tasks/{task_id}/evidence-bundle")
         return self._cli_json(["evidence", task_id, "--json"])
 
+    def build_execution_policy_contract(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/contracts/execution-policy", payload)
+        return self._cli_json(["execution-policy", "--payload-json", json.dumps(payload), "--json"])
+
+    def compare_run_snapshots(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/runs/compare", payload)
+        return self._cli_json(["run-compare", "--payload-json", json.dumps(payload), "--json"])
+
+    def build_replay_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/runs/replay-plan", payload)
+        return self._cli_json(["replay-plan", "--payload-json", json.dumps(payload), "--json"])
+
     def get_quality_benchmark(self, task_id: str) -> Dict[str, Any]:
         evidence = self.get_evidence_bundle(task_id)
         return build_external_quality_benchmark(evidence, benchmark_id=f"external-{task_id}-quality")

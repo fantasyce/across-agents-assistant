@@ -212,6 +212,10 @@ struct TaskDetailPanel: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    AcrossVisualResultOverview(
+                        contract: AcrossVisualResultFactory.make(task: task),
+                        preferences: appPreferences
+                    )
                     taskDescriptionSection(task: task)
                     compactResultSection(task: task)
                     qualityOverviewSection(task: task)
@@ -542,6 +546,12 @@ struct TaskDetailPanel: View {
 
                     HStack(spacing: 10) {
                         Button {
+                            AcrossLearningProgressStore.shared.record([
+                                AcrossLearningEvent(
+                                    kind: .evidenceInspected,
+                                    sourceID: task.taskId
+                                )
+                            ])
                             viewModel.loadTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETask(task))
                         } label: {
                             Label(appPreferences.text("tasks.evidence.view"), systemImage: "doc.text.magnifyingglass")

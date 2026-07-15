@@ -8,6 +8,7 @@ struct MacEditorView: NSViewRepresentable {
     var onNavigateHistory: ((Bool) -> Void)? = nil
     var font: NSFont = .systemFont(ofSize: 13)
     var textColor: NSColor = .textColor
+    var accessibilityLabel: String = "Message"
     var needsResign: Bool = false
 
     func makeNSView(context: Context) -> EditorScrollView {
@@ -31,6 +32,7 @@ struct MacEditorView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
         textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.setAccessibilityLabel(accessibilityLabel)
         textView.onSubmit = onSubmit
         textView.onNavigateHistory = onNavigateHistory
         textView.onAttachFiles = { files in
@@ -46,6 +48,7 @@ struct MacEditorView: NSViewRepresentable {
         context.coordinator.parent = self
         textView.onSubmit = onSubmit
         textView.onNavigateHistory = onNavigateHistory
+        textView.setAccessibilityLabel(accessibilityLabel)
         textView.onAttachFiles = { files in
             context.coordinator.attachFiles(files)
         }
@@ -238,8 +241,17 @@ class CustomTextView: NSTextView {
             return
         }
 
+        // Tab moves through the surrounding composer controls. NSTextView's
+        // default is to insert a tab, which traps keyboard and VoiceOver users
+        // inside the work composer.
+        if event.keyCode == 48 {
+            if event.modifierFlags.contains(.shift) {
+                window?.selectPreviousKeyView(self)
+            } else {
+                window?.selectNextKeyView(self)
+            }
         // Enter key (36)
-        if event.keyCode == 36 {
+        } else if event.keyCode == 36 {
             if event.modifierFlags.contains(.shift) {
                 // Shift+Enter -> Insert newline
                 self.insertText("\n", replacementRange: self.selectedRange())

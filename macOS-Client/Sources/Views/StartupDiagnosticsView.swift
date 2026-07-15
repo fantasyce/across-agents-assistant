@@ -286,7 +286,7 @@ struct StartupDiagnosticsView: View {
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(statusColor(report.status).opacity(0.28), lineWidth: 1)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
     }
 

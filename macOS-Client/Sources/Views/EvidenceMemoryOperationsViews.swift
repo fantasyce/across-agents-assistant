@@ -197,6 +197,7 @@ struct MemoryOperationsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var searchFocused: Bool
     @State private var pendingBulkAction: MemoryBulkAction?
+    @State private var memoryPage = 0
 
     var body: some View {
         ScrollView {
@@ -218,6 +219,9 @@ struct MemoryOperationsView: View {
             lifecycle.memoryStatusFilter = ""
             search.scope = .ordinary
             await lifecycle.loadMemories()
+        }
+        .onChange(of: allVisibleMemories.count) {
+            memoryPage = MemoryPagination.clampedIndex(memoryPage, itemCount: allVisibleMemories.count)
         }
         .confirmationDialog(
             preferences.text("memory.bulk.confirmTitle"),
@@ -348,9 +352,7 @@ struct MemoryOperationsView: View {
                 } label: {
                     Label(preferences.text("memory.bulk.approve"), systemImage: "checkmark.circle")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AcrossTheme.accent)
-                .controlSize(.small)
+                .buttonStyle(AcrossReviewActionButtonStyle(kind: .approve))
                 .disabled(lifecycle.isWorking)
 
                 Button {
@@ -358,14 +360,36 @@ struct MemoryOperationsView: View {
                 } label: {
                     Label(preferences.text("memory.bulk.archive"), systemImage: "archivebox")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .controlSize(.small)
+                .buttonStyle(AcrossReviewActionButtonStyle(kind: .archive))
                 .disabled(lifecycle.isWorking)
             }
-            Text(String(format: preferences.text("memory.resultCount"), visibleMemories.count))
+            Text(String(format: preferences.text("memory.resultCount"), allVisibleMemories.count))
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
+            if memoryPageCount > 1 {
+                MinimalIconButton(
+                    systemName: "chevron.left",
+                    label: preferences.text("memory.previousPage"),
+                    isDisabled: memoryPage == 0
+                ) {
+                    memoryPage = max(0, memoryPage - 1)
+                }
+                Text(String(
+                    format: preferences.text("memory.pagination"),
+                    memoryPage + 1,
+                    memoryPageCount
+                ))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                MinimalIconButton(
+                    systemName: "chevron.right",
+                    label: preferences.text("memory.nextPage"),
+                    isDisabled: memoryPage + 1 >= memoryPageCount
+                ) {
+                    memoryPage = min(memoryPageCount - 1, memoryPage + 1)
+                }
+            }
         }
 
         if lifecycle.isLoadingMemories && lifecycle.memories.isEmpty {
@@ -389,11 +413,15 @@ struct MemoryOperationsView: View {
     }
 
     private var visibleMemories: [AcrossMemoryEntry] {
-        Array(
-            lifecycle.memories
-                .filter { $0.status != "archived" && $0.status != "expired" }
-                .prefix(40)
-        )
+        MemoryPagination.page(allVisibleMemories, index: memoryPage)
+    }
+
+    private var allVisibleMemories: [AcrossMemoryEntry] {
+        lifecycle.memories.filter { $0.status != "archived" && $0.status != "expired" }
+    }
+
+    private var memoryPageCount: Int {
+        MemoryPagination.pageCount(itemCount: allVisibleMemories.count)
     }
 
     private var pendingMemories: [AcrossMemoryEntry] {
@@ -454,9 +482,7 @@ struct MemoryOperationsView: View {
                 } label: {
                     Label(preferences.text("review.memory.approve.short"), systemImage: "checkmark")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AcrossTheme.accent)
-                .controlSize(.small)
+                .buttonStyle(AcrossReviewActionButtonStyle(kind: .approve))
                 .disabled(lifecycle.isWorking)
             }
 
@@ -465,8 +491,7 @@ struct MemoryOperationsView: View {
             } label: {
                 Image(systemName: "archivebox")
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red)
+            .buttonStyle(AcrossReviewActionButtonStyle(kind: .archive))
             .disabled(lifecycle.isWorking)
             .help(preferences.text("review.memory.archive"))
             .accessibilityLabel(Text(preferences.text("review.memory.archive")))
@@ -670,6 +695,11 @@ struct MemoryOperationsView: View {
             ) {
                 Task {
                     await search.approve(memoryID: memory.id, projectRoot: activeProjectPath)
+                    if search.mutationErrorMessage == nil {
+                        AcrossLearningProgressStore.shared.record([
+                            AcrossLearningEvent(kind: .memoryReviewed, sourceID: memory.id)
+                        ])
+                    }
                 }
             }
             if canRollback {
@@ -767,6 +797,26 @@ struct MemoryOperationsView: View {
 
     private func copy(_ english: String, _ chinese: String) -> String {
         preferences.resolvedLocaleIdentifier == "zh-Hans" ? chinese : english
+    }
+}
+
+enum MemoryPagination {
+    static let pageSize = 8
+
+    static func pageCount(itemCount: Int) -> Int {
+        max(1, (max(0, itemCount) + pageSize - 1) / pageSize)
+    }
+
+    static func clampedIndex(_ index: Int, itemCount: Int) -> Int {
+        min(max(0, index), pageCount(itemCount: itemCount) - 1)
+    }
+
+    static func page<Element>(_ items: [Element], index: Int) -> [Element] {
+        let selectedIndex = clampedIndex(index, itemCount: items.count)
+        let start = selectedIndex * pageSize
+        let end = min(items.count, start + pageSize)
+        guard start < end else { return [] }
+        return Array(items[start..<end])
     }
 }
 

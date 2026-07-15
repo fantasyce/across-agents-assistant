@@ -238,6 +238,24 @@ def test_one_click_node_install_does_not_require_npm_or_git(
     assert all("npm" not in call and "git" not in call for call in calls)
     assert "../runtimes/node-22.17.1/bin/node" in wrapper_text
     assert "/usr/bin/env node" not in wrapper_text
+    provenance_path = across_home / "plugins" / plugin_id / ".across-managed-plugin.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    assert provenance == {
+        "schema_version": "across-managed-plugin-install/1.0",
+        "plugin_id": plugin_id,
+        "version": version,
+        "commit": descriptor["commit"],
+        "sha256": descriptor["sha256"],
+    }
+
+    provenance["sha256"] = "0" * 64
+    provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+    drifted = inspect_across_plugin(plugin_id, probe=True, env=env)
+
+    assert drifted["status"] == "needs_repair"
+    assert drifted["integrity_ok"] is False
+    assert drifted["available"] is False
+    assert any("differs from the bundled version" in issue for issue in drifted["integrity_issues"])
 
 
 def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(monkeypatch, tmp_path):

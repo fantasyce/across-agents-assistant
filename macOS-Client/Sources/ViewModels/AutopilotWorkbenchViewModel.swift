@@ -143,6 +143,65 @@ final class AutopilotWorkbenchViewModel: ObservableObject {
     }
 }
 
+@MainActor
+final class AutopilotEvidenceViewModel: ObservableObject {
+    typealias DataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    @Published private(set) var payload: AutopilotWorkbenchJSONValue?
+    @Published private(set) var loadedTarget: AutopilotEvidenceTarget?
+    @Published private(set) var isLoading = false
+    @Published private(set) var errorMessage: String?
+
+    private let backendBaseURL: URL
+    private let dataLoader: DataLoader
+    private var loadGeneration = 0
+
+    init(
+        backendBaseURL: URL = URL(string: "http://backend")!,
+        dataLoader: @escaping DataLoader = { request in
+            try await URLSession.shared.data(for: request)
+        }
+    ) {
+        self.backendBaseURL = backendBaseURL
+        self.dataLoader = dataLoader
+    }
+
+    func load(target: AutopilotEvidenceTarget?) async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        guard let target else {
+            loadedTarget = nil
+            payload = nil
+            errorMessage = nil
+            isLoading = false
+            return
+        }
+        guard target != loadedTarget || payload == nil else { return }
+
+        loadedTarget = target
+        payload = nil
+        errorMessage = nil
+        isLoading = true
+        defer {
+            if loadGeneration == generation {
+                isLoading = false
+            }
+        }
+
+        do {
+            var request = URLRequest(url: backendBaseURL.appendingPathComponent(target.backendPath))
+            request.httpMethod = "GET"
+            let (data, response) = try await dataLoader(request)
+            guard loadGeneration == generation else { return }
+            try AutopilotWorkbenchViewModel.validate(response: response, data: data)
+            payload = try JSONDecoder().decode(AutopilotWorkbenchJSONValue.self, from: data)
+        } catch {
+            guard loadGeneration == generation else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 private struct AgentInteropActionResponse: Decodable {
     let status: String
 }

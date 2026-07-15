@@ -585,6 +585,14 @@ def test_completed_external_task_acceptance_is_persistent_and_idempotent(monkeyp
     assert accepted.status_code == 200
     assert accepted.json()["review_status"] == "accepted"
     assert accepted.json()["accepted_at"] is not None
+    assert accepted.json()["approval_receipt"]["scope"] == "task_result_review"
+    assert accepted.json()["approval_receipt"]["integrity_status"] == "verified"
+    assert accepted.json()["approval_receipt"]["privacy"] == {
+        "subject_payload_stored": False,
+        "credentials_included": False,
+        "absolute_paths_included": False,
+        "raw_transcripts_included": False,
+    }
     assert accepted_again.json() == accepted.json()
     assert detail["review_status"] == "accepted"
     summary = next(item for item in page["tasks"] if item["task_id"] == task_id)

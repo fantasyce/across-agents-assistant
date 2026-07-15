@@ -64,6 +64,29 @@ struct ProductCapabilityRegistryTests {
         #expect(snapshot.unlockedSurfaces == [.memory, .achievements])
     }
 
+    @Test func corePluginCapabilitiesDoNotUnlockSiblingProductSurfaces() {
+        let snapshot = AcrossProductCapabilityRegistry.snapshot(
+            sources: [
+                AcrossCapabilitySource(
+                    pluginID: "across-orchestrator",
+                    available: true,
+                    capabilities: [
+                        "workflowExecution": true,
+                        "repositoryReview": true,
+                        "sharedMemory": true,
+                    ]
+                ),
+            ],
+            hasAvailableAgent: true,
+            acceptedDeliveryCount: 0
+        )
+
+        #expect(!snapshot.isUnlocked(.sharedMemory))
+        #expect(snapshot.isUnlocked(.workflows))
+        #expect(!snapshot.isUnlocked(.selfIteration))
+        #expect(snapshot.unlockedSurfaces == [.qualityGate, .achievements])
+    }
+
     @Test func ecosystemComponentsStaySeparateFromTaskAchievements() {
         let snapshot = AcrossProductCapabilityRegistry.snapshot(
             sources: [
@@ -76,9 +99,12 @@ struct ProductCapabilityRegistryTests {
         )
 
         #expect(snapshot.unlockedCapabilityCount == 4)
-        #expect(snapshot.unlockedAchievementCount == 7)
+        #expect(snapshot.unlockedAchievementCount == 1)
         #expect(snapshot.unlockedSurfaces == [.memory, .qualityGate, .autopilot, .achievements])
-        #expect(snapshot.levelKey == "growth.level.deliverer")
+        #expect(snapshot.levelKey == "growth.level.explorer")
+        #expect(snapshot.achievements.first(where: { $0.id == "memory-connected" })?.isUnlocked == false)
+        #expect(snapshot.achievements.first(where: { $0.id == "workflow-connected" })?.isUnlocked == false)
+        #expect(snapshot.achievements.first(where: { $0.id == "self-iteration-connected" })?.isUnlocked == false)
     }
 
     @Test func deliveryMilestonesRemainVisibleAndUnlockProgressively() {
@@ -102,9 +128,22 @@ struct ProductCapabilityRegistryTests {
         #expect(early.achievements.first(where: { $0.id == "three-deliveries" })?.isUnlocked == true)
         #expect(early.achievements.first(where: { $0.id == "ten-deliveries" })?.isUnlocked == false)
         #expect(advanced.achievements.first(where: { $0.id == "ten-deliveries" })?.isUnlocked == true)
-        #expect(advanced.achievements.first(where: { $0.id == "loop-engineering-mastery" })?.isUnlocked == true)
+        #expect(advanced.achievements.first(where: { $0.id == "loop-engineering-mastery" })?.isUnlocked == false)
         #expect(advanced.achievements.first(where: { $0.id == "twenty-five-deliveries" })?.isUnlocked == false)
         #expect(early.achievements.allSatisfy { $0.artworkIndex != nil })
+    }
+
+    @Test func loopMasteryRequiresRealLoopAndReleaseEvents() {
+        let snapshot = AcrossProductCapabilityRegistry.snapshot(
+            sources: [AcrossCapabilitySource(pluginID: "across-autopilot", available: true)],
+            hasAvailableAgent: true,
+            learningEvents: [
+                AcrossLearningEvent(kind: .supervisedLoop, sourceID: "loop-1"),
+                AcrossLearningEvent(kind: .releaseReadiness, sourceID: "release-1"),
+            ]
+        )
+
+        #expect(snapshot.achievements.first(where: { $0.id == "loop-engineering-mastery" })?.isUnlocked == true)
     }
 
     @Test func lowLevelPluginCapabilitiesAreNotPromotedToGrowthRowsOrAchievements() {

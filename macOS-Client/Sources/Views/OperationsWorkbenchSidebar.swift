@@ -12,7 +12,7 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var focusedSurface: OperationsWorkbenchSurface?
-
+    @FocusState private var settingsIsFocused: Bool
     init(
         selection: Binding<OperationsWorkbenchSurface>,
         preferences: AppPreferences,
@@ -95,7 +95,9 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
     }
 
     private func navigationRow(_ surface: OperationsWorkbenchSurface, badge: Int? = nil) -> some View {
-        Button {
+        let isSelected = selection == surface
+        let isFocused = focusedSurface == surface
+        return Button {
             selection = surface
         } label: {
             HStack(spacing: 9) {
@@ -104,28 +106,34 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                     .frame(width: 20, height: 20)
                     .accessibilityHidden(true)
                 Text(preferences.text(surface.localizationKey))
-                    .font(.system(size: 13, weight: selection == surface ? .semibold : .regular))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                 Spacer()
                 if let badge, badge > 0 {
                     Text("\(badge)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(selection == surface ? AcrossTheme.accent : .secondary)
+                        .foregroundStyle(isSelected ? AcrossTheme.accent : .secondary)
                         .frame(minWidth: 20, minHeight: 18)
                         .background(AcrossTheme.recessedFill(for: colorScheme))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
             }
-            .foregroundStyle(selection == surface ? AcrossTheme.accent : Color.primary)
+            .foregroundStyle(isSelected ? AcrossTheme.accent : Color.primary)
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .background(selection == surface ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
+            .background(
+                isSelected
+                    ? AcrossTheme.selectedFill(for: colorScheme)
+                    : (isFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+            )
             .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(true)
         .focused($focusedSurface, equals: surface)
-        .accessibilityValue(Text(selection == surface ? preferences.text("operations.selected") : ""))
+        .focusEffectDisabled()
+        .accessibilityValue(Text(isSelected ? preferences.text("operations.selected") : ""))
         .help(preferences.text(surface.localizationKey))
     }
 
@@ -145,9 +153,13 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
             }
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(settingsIsFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($settingsIsFocused)
+        .focusEffectDisabled()
         .help(preferences.text("settings.title"))
     }
 }

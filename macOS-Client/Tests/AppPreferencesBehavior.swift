@@ -69,6 +69,36 @@ func testLocalizedStringsFallbackToEnglish() {
         )
     }
 
+    let visualAndLearningKeys = AcrossTrustDimension.allCases.map(\.titleKey)
+        + AcrossEvidenceState.allCases.map(\.accessibilityKey)
+        + AcrossLoopStage.allCases.map(\.titleKey)
+        + AcrossEvidenceNodeKind.allCases.map(\.titleKey)
+        + AcrossLearningMissionKind.allCases.flatMap { [$0.titleKey, $0.detailKey] }
+        + AcrossMasteryLevel.allCases.map(\.titleKey)
+        + [
+            "result.accessibility.summary",
+            "result.details",
+            "result.fallback.unavailable",
+            "result.trust.title",
+            "result.evidence.route",
+            "result.next.review_decision",
+            "result.attention.resolveBlocked",
+            "result.decision.hash",
+            "growth.path.title",
+            "growth.path.next",
+            "growth.challenge.title",
+        ]
+    for key in visualAndLearningKeys {
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "en") != key,
+            "\(key) should be localized in English"
+        )
+        assert(
+            AppPreferences.localizedString(key, localeIdentifier: "zh-Hans") != key,
+            "\(key) should be localized in Simplified Chinese"
+        )
+    }
+
     assert(
         AppPreferences.localizedString("settings.title", localeIdentifier: "zh-Hans") == "设置",
         "Simplified Chinese labels should be available"
@@ -311,11 +341,43 @@ func testLocalizedStringsFallbackToEnglish() {
     )
 }
 
+func testStudyPreferenceIsolation() {
+    let profile = "0123456789abcdef"
+    let suite = "app.acrossagents.assistant.beginner-study.\(profile)"
+    let fallbackSuite = "app.acrossagents.behavior.fallback.\(UUID().uuidString)"
+    let fallback = UserDefaults(suiteName: fallbackSuite)!
+    defer {
+        fallback.removePersistentDomain(forName: fallbackSuite)
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
+
+    let isolated = AppUserDefaults.make(
+        environment: [
+            "ACROSS_STUDY_PROFILE_ID": profile,
+            "ACROSS_AGENTS_PREFERENCES_SUITE": suite,
+        ],
+        fallback: fallback
+    )
+    isolated.set("study", forKey: "isolation-marker")
+    assert(isolated !== fallback, "A matching bounded study suite should be selected")
+    assert(fallback.string(forKey: "isolation-marker") == nil, "Study writes must not reach normal preferences")
+
+    let rejected = AppUserDefaults.make(
+        environment: [
+            "ACROSS_STUDY_PROFILE_ID": profile,
+            "ACROSS_AGENTS_PREFERENCES_SUITE": "app.acrossagents.assistant.beginner-study.ffffffffffffffff",
+        ],
+        fallback: fallback
+    )
+    assert(rejected === fallback, "A mismatched suite must fall back to the normal domain")
+}
+
 @main
 struct AppPreferencesBehavior {
     static func main() {
         testLanguageResolution()
         testLocalizedStringsFallbackToEnglish()
+        testStudyPreferenceIsolation()
         print("AppPreferencesBehavior passed")
     }
 }

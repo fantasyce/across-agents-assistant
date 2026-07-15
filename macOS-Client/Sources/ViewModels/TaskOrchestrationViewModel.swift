@@ -119,7 +119,7 @@ class TaskOrchestrationViewModel: ObservableObject {
     private let terminalSettlePollLimit = 12
 
     private var baseURL: URL? {
-        if let urlString = UserDefaults.standard.string(forKey: "serverURL") {
+        if let urlString = AppUserDefaults.current.string(forKey: "serverURL") {
             return URL(string: urlString)
         }
         return URL(string: "http://backend")

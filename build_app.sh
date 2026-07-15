@@ -155,6 +155,10 @@ PYTHONPATH=src $PYTHON_BIN -m PyInstaller --name "backend" "$PYINSTALLER_BUNDLE_
     --collect-all h11 \
     --collect-all pydantic \
     --collect-all sse_starlette \
+    --collect-all faster_whisper \
+    --collect-all ctranslate2 \
+    --collect-all av \
+    --collect-all numpy \
     --collect-all across_agents_assistant \
     --collect-all click \
     --collect-all idna \
@@ -248,6 +252,8 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>$APP_VERSION</string>
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
+    <key>AcrossStudyProfileIsolationVersion</key>
+    <integer>1</integer>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSPrincipalClass</key>
@@ -259,7 +265,7 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <key>NSScreenCaptureUsageDescription</key>
     <string>Across Agents Assistant needs screen capture permission so AI can understand the current screen when you explicitly request it.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Across Agents Assistant needs microphone permission to support voice conversations.</string>
+    <string>Across Agents Assistant uses the microphone only when you press Voice Input, so it can place your words into an editable draft.</string>
     <key>NSSystemExtensionUsageDescription</key>
     <string>Across Agents Assistant needs access to system extensions for local automation features.</string>
     <key>NSAppleEventsUsageDescription</key>

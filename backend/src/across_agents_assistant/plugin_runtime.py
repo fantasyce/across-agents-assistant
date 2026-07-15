@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import urllib.parse
+import uuid
 
 from .managed_plugin_payloads import (
     ManagedPluginPayloadError,
@@ -176,6 +178,21 @@ def inspect_across_plugin(
     command_path = _resolve_manifest_command(command, plugin_dir, source) if command else plugin_dir / "bin" / plugin_id
     command_exists = command_path.is_file() and os.access(command_path, os.X_OK)
     integrity_issues = _plugin_dir_integrity_issues(plugin_id, plugin_dir)
+    if managed_payload is not None:
+        integrity_issues.extend(
+            _managed_node_plugin_payload_integrity_issues(
+                plugin_id,
+                plugin_dir,
+                managed_payload,
+            )
+        )
+        integrity_issues.extend(
+            _managed_native_plugin_payload_integrity_issues(
+                plugin_id,
+                plugin_dir,
+                managed_payload,
+            )
+        )
     if manifest_validation_failed:
         integrity_issues.append("manifest failed capability schema validation")
     if command_exists:
@@ -318,6 +335,7 @@ def run_autopilot_cli_json(
     env: Mapping[str, str] | None = None,
     timeout: int = 60,
     allowed_returncodes: frozenset[int] | None = None,
+    cwd: str | Path | None = None,
 ) -> Any:
     return _run_cli_json(
         "across-autopilot",
@@ -325,6 +343,7 @@ def run_autopilot_cli_json(
         env=env,
         timeout=timeout,
         allowed_returncodes=allowed_returncodes,
+        cwd=cwd,
     )
 
 
@@ -1057,6 +1076,11 @@ def _install_bundled_node_plugin(
             runner=runner,
             timeout=180,
         )
+        _write_managed_node_plugin_marker(
+            plugin.plugin_id,
+            ecosystem_plugin_root(env) / plugin.plugin_id,
+            payload,
+        )
         wrapper = ecosystem_bin_dir(env) / plugin.command
         target = ecosystem_plugin_root(env) / plugin.plugin_id / str(payload.get("entrypoint") or "src/cli.js")
         _write_managed_node_wrapper(wrapper, node=node, target=target)
@@ -1068,6 +1092,82 @@ def _install_bundled_node_plugin(
         raise PluginLifecycleError(f"{plugin.display_name} bundled installer is invalid") from exc
     finally:
         shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def _managed_node_plugin_marker(plugin_dir: Path) -> Path:
+    return plugin_dir / ".across-managed-plugin.json"
+
+
+def _managed_node_plugin_payload_integrity_issues(
+    plugin_id: str,
+    plugin_dir: Path,
+    payload: Mapping[str, Any],
+) -> list[str]:
+    if str(payload.get("runtime") or "") != "node" or not plugin_dir.is_dir():
+        return []
+    expected = {
+        "plugin_id": plugin_id,
+        "version": str(payload.get("version") or ""),
+        "commit": str(payload.get("commit") or ""),
+        "sha256": str(payload.get("sha256") or "").lower(),
+    }
+    marker = _read_json_file(_managed_node_plugin_marker(plugin_dir))
+    if not marker:
+        return ["installed plugin payload provenance is missing; upgrade or repair the plugin"]
+    if marker.get("schema_version") != "across-managed-plugin-install/1.0":
+        return ["installed plugin payload provenance is invalid; upgrade or repair the plugin"]
+    if any(str(marker.get(key) or "").lower() != value.lower() for key, value in expected.items()):
+        return ["installed plugin payload differs from the bundled version; upgrade the plugin"]
+    return []
+
+
+def _managed_native_plugin_payload_integrity_issues(
+    plugin_id: str,
+    plugin_dir: Path,
+    payload: Mapping[str, Any],
+) -> list[str]:
+    if str(payload.get("runtime") or "") != "native" or not plugin_dir.is_dir():
+        return []
+    expected_sha256 = str(payload.get("sha256") or "").lower()
+    install_state = _read_json_file(plugin_dir / "install-state.json")
+    if not install_state:
+        return ["installed native plugin payload provenance is missing; upgrade or repair the plugin"]
+    if str(install_state.get("runtime") or "") != "bundled_native":
+        return ["installed native plugin payload provenance is invalid; upgrade or repair the plugin"]
+    if str(install_state.get("sha256") or "").lower() != expected_sha256:
+        return ["installed native plugin payload differs from the bundled version; upgrade the plugin"]
+    executable = plugin_dir / "venv" / "bin" / plugin_id
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        return ["installed native plugin executable is missing; repair the plugin"]
+    if expected_sha256 and _sha256_file(executable) != expected_sha256:
+        return ["installed native plugin executable checksum mismatch; repair the plugin"]
+    return []
+
+
+def _write_managed_node_plugin_marker(
+    plugin_id: str,
+    plugin_dir: Path,
+    payload: Mapping[str, Any],
+) -> None:
+    if not plugin_dir.is_dir():
+        raise PluginLifecycleError("Managed plugin installer did not create the plugin directory")
+    marker = _managed_node_plugin_marker(plugin_dir)
+    temporary = marker.with_name(f".{marker.name}.tmp-{uuid.uuid4().hex}")
+    temporary.write_text(
+        json.dumps(
+            {
+                "schema_version": "across-managed-plugin-install/1.0",
+                "plugin_id": plugin_id,
+                "version": str(payload.get("version") or ""),
+                "commit": str(payload.get("commit") or ""),
+                "sha256": str(payload.get("sha256") or "").lower(),
+            },
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, marker)
 
 
 def _write_managed_node_wrapper(command_path: Path, *, node: Path, target: Path) -> None:
@@ -1166,6 +1266,7 @@ def _run_cli_json(
     env: Mapping[str, str] | None = None,
     timeout: int = 15,
     allowed_returncodes: frozenset[int] | None = None,
+    cwd: str | Path | None = None,
 ) -> Any:
     source, _runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     command_path = _resolve_command(command, source)
@@ -1176,6 +1277,11 @@ def _run_cli_json(
     if integrity_issues:
         raise PluginLifecycleError(f"{command} plugin must be repaired because its runtime is not self-contained")
     try:
+        run_cwd = None
+        if cwd is not None:
+            run_cwd = Path(cwd).expanduser().resolve(strict=True)
+            if not run_cwd.is_dir() or run_cwd.parent == run_cwd:
+                raise PluginLifecycleError("Plugin command working directory is invalid")
         completed = subprocess.run(
             [str(command_path), *args],
             text=True,
@@ -1183,6 +1289,7 @@ def _run_cli_json(
             stderr=subprocess.PIPE,
             timeout=timeout,
             env=_safe_plugin_env(source),
+            cwd=str(run_cwd) if run_cwd else None,
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -1207,6 +1314,17 @@ def _read_json_file(path: Path) -> dict[str, Any]:
         return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

@@ -16,6 +16,7 @@ extension MainPanelView {
                 tasks: taskOrchestrationViewModel,
                 settings: settingsViewModel,
                 preferences: appPreferences,
+                autopilotEvidenceTarget: autopilotEvidenceTarget,
                 activeProjectPath: operationalProjectPath,
                 productProgress: productProgress,
                 reviewSnapshot: humanReviewSnapshot,
@@ -67,7 +68,11 @@ extension MainPanelView {
         case .loading:
             availabilityLoadingView
         case .empty:
-            onboardingView
+            if productProgress.isUnlocked(.selfIteration) {
+                unifiedWorkEmptyState
+            } else {
+                onboardingView
+            }
         case .ready:
             if appPreferences.automaticDeliveryProtection {
                 if taskOrchestrationViewModel.selectedTask != nil || taskOrchestrationViewModel.isSubmittingTask {
@@ -115,9 +120,31 @@ extension MainPanelView {
     private var unifiedWorkEmptyState: some View {
         UnifiedWorkEmptyState(
             projectName: viewModel.activeProjectName,
+            projectPath: operationalProjectPath,
             recentTasks: taskOrchestrationViewModel.tasks,
+            isBeginnerMissionAvailable: productProgress.isUnlocked(.selfIteration),
+            beginnerMission: beginnerMissionViewModel,
+            beginnerGoal: viewModel.inputText,
             preferences: appPreferences,
             onChooseProject: viewModel.chooseExistingProjectFolder,
+            onRunBeginnerMission: runBeginnerMission,
+            onInstallBeginnerCapability: { openSettings(.plugins) },
+            onOpenBeginnerEvidence: {
+                guard let result = beginnerMissionViewModel.result,
+                      let target = AutopilotEvidenceTarget(
+                        runID: result.runID,
+                        evidenceRoute: result.evidenceRoute
+                      )
+                else { return }
+                learningProgressStore.record([
+                    AcrossLearningEvent(
+                        kind: .evidenceInspected,
+                        sourceID: target.runID
+                    )
+                ])
+                autopilotEvidenceTarget = target
+                selectedOperationsSurface = .autopilot
+            },
             onOpenTask: { task in
                 showsSelectedTaskDetails = false
                 if viewModel.activateProject(matchingDirectory: task.projectDir) {
@@ -126,6 +153,33 @@ extension MainPanelView {
                 taskOrchestrationViewModel.selectTask(task.taskId)
             }
         )
+    }
+
+    func runBeginnerMission(_ userGoal: String) {
+        guard let projectPath = operationalProjectPath else {
+            viewModel.chooseExistingProjectFolder()
+            return
+        }
+        guard let goal = BeginnerMissionViewModel.normalizedGoal(userGoal) else {
+            viewModel.showErrorMessage(appPreferences.text("work.beginner.goalRequired"))
+            return
+        }
+        Task {
+            guard let result = await beginnerMissionViewModel.run(
+                projectPath: projectPath,
+                userGoal: goal
+            ) else { return }
+            if viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines) == goal {
+                viewModel.inputText = ""
+            }
+            guard result.isVerified else { return }
+            learningProgressStore.record([
+                AcrossLearningEvent(
+                    kind: .qualityWorkflow,
+                    sourceID: result.runID ?? result.resultSHA256
+                )
+            ])
+        }
     }
 
     private func returnToWorkHome() {
@@ -265,9 +319,10 @@ extension MainPanelView {
                         onSubmit: { if viewModel.pendingApproval == nil { submit() } },
                         onNavigateHistory: { up in viewModel.navigateHistory(up: up) },
                         font: .systemFont(ofSize: 13),
-                        textColor: .textColor
+                        textColor: .textColor,
+                        accessibilityLabel: inputPlaceholder
                     )
-                    .disabled(viewModel.pendingApproval != nil || !canUseAgentFeatures)
+                    .disabled(viewModel.pendingApproval != nil || !canEditWorkInput)
 
                     if viewModel.inputText.isEmpty {
                         Text(inputPlaceholder)
@@ -287,15 +342,17 @@ extension MainPanelView {
                     .padding(.horizontal, 10)
 
                 HStack(spacing: 6) {
-                    MinimalAssistantAttachmentMenu(
-                        screenshotOCRTitle: appPreferences.text("screenshot.ocr"),
-                        screenshotAttachmentTitle: appPreferences.text("screenshot.attach"),
-                        fileAttachmentTitle: appPreferences.text("attachment.addFiles"),
-                        isDisabled: !canUseAgentFeatures || viewModel.pendingApproval != nil,
-                        onScreenshotOCR: viewModel.requestManualScreenshot,
-                        onScreenshotAttachment: viewModel.requestScreenshotAttachment,
-                        onFileAttachment: viewModel.requestFileAttachment
-                    )
+                    if canUseAgentFeatures {
+                        MinimalAssistantAttachmentMenu(
+                            screenshotOCRTitle: appPreferences.text("screenshot.ocr"),
+                            screenshotAttachmentTitle: appPreferences.text("screenshot.attach"),
+                            fileAttachmentTitle: appPreferences.text("attachment.addFiles"),
+                            isDisabled: viewModel.pendingApproval != nil,
+                            onScreenshotOCR: viewModel.requestManualScreenshot,
+                            onScreenshotAttachment: viewModel.requestScreenshotAttachment,
+                            onFileAttachment: viewModel.requestFileAttachment
+                        )
+                    }
 
                     if !appPreferences.automaticDeliveryProtection {
                         MinimalAssistantAgentPicker(
@@ -308,24 +365,32 @@ extension MainPanelView {
                     }
 
                     MinimalAssistantVoiceControls(
+                        speechState: speechInput.state,
+                        localeIdentifier: appPreferences.resolvedLocaleIdentifier,
+                        voiceInputTitle: appPreferences.text("toolbar.voiceInput"),
                         isMuted: viewModel.isMuted,
                         muteTitle: viewModel.isMuted
                             ? appPreferences.text("toolbar.unmute")
                             : appPreferences.text("toolbar.mute"),
-                        isDisabled: false,
+                        isSpeechDisabled: !canEditWorkInput || viewModel.pendingApproval != nil,
+                        reduceMotion: appPreferences.reduceMotion,
+                        onToggleSpeechInput: toggleSpeechInput,
                         onToggleMute: { viewModel.isMuted.toggle() }
                     )
 
-                    Toggle(isOn: $appPreferences.automaticDeliveryProtection) {
-                        Label(
-                            appPreferences.text("work.automaticCheck"),
-                            systemImage: "checkmark.shield"
-                        )
-                        .font(.system(size: 11, weight: .medium))
+                    if canUseAgentFeatures {
+                        Toggle(isOn: $appPreferences.automaticDeliveryProtection) {
+                            Label(
+                                appPreferences.text("work.automaticCheck"),
+                                systemImage: "checkmark.shield"
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                        }
+                        .toggleStyle(.checkbox)
+                        .focusable(true)
+                        .fixedSize()
+                        .help(appPreferences.text("work.automaticCheck.help"))
                     }
-                    .toggleStyle(.checkbox)
-                    .fixedSize()
-                    .help(appPreferences.text("work.automaticCheck.help"))
 
                     Spacer(minLength: 8)
 

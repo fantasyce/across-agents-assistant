@@ -13,6 +13,7 @@ from .permissions import ToolPermissionStore
 from .task_persistence import TaskPersistenceService
 from ..paths import app_subdir, data_file
 from ..runtime_boundary import safe_runtime_override
+from ..approval.receipts import ApprovalReceiptStore, ApprovalReceiptSubject
 
 logger = logging.getLogger("across_agents_assistant.persistence")
 
@@ -42,6 +43,7 @@ class PersistenceService:
         self.sessions = SessionStore(db_path)
         self.audit = AuditLogger(db_path)
         self.permissions = ToolPermissionStore(db_path)
+        self.approval_receipts = ApprovalReceiptStore(db_path)
         self.tasks = TaskPersistenceService(self.db)
         # 确保 schema 已初始化
         self.db.init_schema()
@@ -377,6 +379,49 @@ class PersistenceService:
             decision=decision,
             details={"tool_args": tool_args, "session_id": session_id},
         )
+
+    def record_approval_receipt(
+        self,
+        *,
+        subject_type: str,
+        subject_id: str,
+        subject_payload: Dict[str, Any],
+        scope: str,
+        decision: str,
+        proposer_id: str,
+        approver_id: str,
+        risk_level: str = "unknown",
+        request_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        subject_sha256: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        receipt = self.approval_receipts.record(
+            subject=ApprovalReceiptSubject(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                payload=subject_payload,
+                subject_sha256=subject_sha256,
+            ),
+            scope=scope,
+            decision=decision,
+            proposer_id=proposer_id,
+            approver_id=approver_id,
+            risk_level=risk_level,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+        chain_status = self.approval_receipts.verify_chain()["integrity_status"]
+        receipt_status = receipt.get("integrity_status")
+        return {
+            **receipt,
+            "receipt_integrity_status": receipt_status,
+            "chain_integrity_status": chain_status,
+            "integrity_status": (
+                "verified"
+                if receipt_status == "verified" and chain_status == "verified"
+                else "tampered"
+            ),
+        }
 
     # ──────────────────────────────────────────
     # 工具授权（兼容旧 db 签名）

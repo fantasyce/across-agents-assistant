@@ -601,9 +601,6 @@
         <div class="header pywebview-drag-region" ondblclick="maximizeWindow()">
             <span id="current-agent-name"></span>
             <div class="header-actions">
-                <button class="btn-icon" id="btn-continuous" onclick="toggleContinuous()" title="开启持续对话">
-                    <svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>
-                </button>
                 <button class="btn-icon" id="btn-speak" onclick="triggerSingleTurn()" title="单次对话 (点击说话)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
                 </button>
@@ -665,8 +662,6 @@
             vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
             volOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>',
             chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
-            continuous: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 4 2, 10 2, 12 6 C 14 2, 20 2, 22 12"></path><path d="M 2 12 C 6 23, 18 23, 22 12"></path><path d="M 2 12 Q 12 7 22 12"></path><path d="M 2 12 Q 12 17 22 12"></path></svg>',
-            continuousOff: '<svg viewBox="1 1 22 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 2 12 C 5 5, 9 5, 12 8 C 15 5, 19 5, 22 12"></path><path d="M 2 12 C 6 22, 18 22, 22 12"></path><path d="M 2 12 Q 12 14 22 12"></path></svg>',
             settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
             refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>',
             collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>',
@@ -848,17 +843,6 @@
             }
 
             document.getElementById('btn-settings').innerHTML = ICONS.settings;
-
-            const btnCont = document.getElementById('btn-continuous');
-            if (state.continuous_on) {
-                btnCont.innerHTML = ICONS.continuous;
-                btnCont.title = "关闭持续对话";
-                btnCont.classList.add('active');
-            } else {
-                btnCont.innerHTML = ICONS.continuousOff;
-                btnCont.title = "开启持续对话";
-                btnCont.classList.remove('active');
-            }
 
             const btnSilent = document.getElementById('btn-silent');
             if (state.silent_on) {
@@ -1553,23 +1537,6 @@
         }
 
         function addMessage(role, text, agentId) {
-            if (role === 'system') {
-                if (text === 'Continuous_Off') {
-                    const btn = document.getElementById('btn-continuous');
-                    btn.innerHTML = ICONS.continuousOff;
-                    btn.title = "开启持续对话";
-                    btn.classList.remove('active');
-                    return;
-                }
-                if (text === 'Continuous_On') {
-                    const btn = document.getElementById('btn-continuous');
-                    btn.innerHTML = ICONS.continuous;
-                    btn.title = "关闭持续对话";
-                    btn.classList.add('active');
-                    return;
-                }
-            }
-
             const msg = { role, text };
             chatHistory.merged.push(msg);
 
@@ -1608,7 +1575,7 @@
                     if (history.length === 0) {
                         const div = document.createElement('div');
                         div.className = 'message msg-system';
-                        div.innerText = '💡 提示: 点击 开启持续对话 或 单次对话 进行语音输入';
+                        div.innerText = '💡 提示: 请在当前原生 Across 工作页面使用单次语音输入';
                         fragment.appendChild(div);
                     }
 
@@ -1749,22 +1716,6 @@
                 btn.title = "开启静音模式";
                 btn.classList.remove('active');
                 addSystemMessage("已恢复语音播报");
-            }
-        }
-
-        async function toggleContinuous() {
-            const isContinuous = await pywebview.api.toggle_continuous();
-            const btn = document.getElementById('btn-continuous');
-            if (isContinuous) {
-                btn.innerHTML = ICONS.continuous;
-                btn.title = "关闭持续对话";
-                btn.classList.add('active');
-                addSystemMessage("已开启持续对话模式");
-            } else {
-                btn.innerHTML = ICONS.continuousOff;
-                btn.title = "开启持续对话";
-                btn.classList.remove('active');
-                addSystemMessage("已关闭持续对话模式");
             }
         }
 

@@ -29,13 +29,13 @@ struct ProjectSidebarRow: View {
             HStack(spacing: 8) {
                 Image(systemName: isActive ? "folder.fill" : "folder")
                     .font(.system(size: 12))
-                    .foregroundStyle(isActive || isFocused ? AcrossTheme.accent : Color.secondary.opacity(0.75))
+                    .foregroundStyle(isActive ? AcrossTheme.accent : Color.secondary.opacity(isFocused ? 0.95 : 0.75))
                     .frame(width: 16)
 
                 Text(project.name)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-                    .foregroundStyle(isActive || isFocused ? AcrossTheme.accent : Color.secondary.opacity(isHovered ? 0.95 : 0.86))
+                    .foregroundStyle(isActive ? AcrossTheme.accent : Color.secondary.opacity(isHovered || isFocused ? 0.95 : 0.86))
 
                 if project.is_pinned {
                     Image(systemName: "pin.fill")
@@ -81,9 +81,9 @@ struct ProjectSidebarRow: View {
             .background(
                 RoundedRectangle(cornerRadius: 7)
                     .fill(
-                        isActive || isFocused
+                        isActive
                             ? AcrossTheme.selectedFill(for: colorScheme)
-                            : isHovered ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear
+                            : (isHovered || isFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
                     )
             )
             .contentShape(Rectangle())
@@ -161,6 +161,7 @@ struct CompactProjectSessionRow: View {
 
     @State private var isHovered = false
     @State private var showsDeleteConfirmation = false
+    @FocusState private var isFocused: Bool
 
     private var titleText: String {
         if let name = session.name, !name.isEmpty {
@@ -221,12 +222,14 @@ struct CompactProjectSessionRow: View {
                 .fill(
                     isActive
                         ? selectedBackground
-                        : (isSelected || isHovered ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+                        : (isSelected || isHovered || isFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
                 )
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled()
         .onKeyPress(.return) {
             onSelect()
             return .handled

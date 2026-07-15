@@ -9,16 +9,6 @@ struct SubtaskCard: View {
     @Environment(\.colorScheme) private var colorScheme
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
 
-    private var borderColor: Color {
-        switch subtask.status {
-        case "running": return Color(hex: "#4d6bfe")
-        case "completed": return Color(hex: "#30d158")
-        case "failed": return Color(hex: "#FF453A")
-        case "pending": return Color(hex: "#8e8e93")
-        default: return Color(hex: "#8e8e93")
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(subtask.description)
@@ -75,7 +65,7 @@ struct SubtaskCard: View {
         .background(theme.cardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isHovered ? borderColor.opacity(0.8) : borderColor.opacity(0.4), lineWidth: isHovered ? 2 : 1)
+                .stroke(theme.divider.opacity(isHovered ? 1 : 0.65), lineWidth: 1)
         )
         .cornerRadius(8)
         .onHover { hovering in

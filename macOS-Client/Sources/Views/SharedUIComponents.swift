@@ -299,17 +299,19 @@ class DraggableNSView: NSView {
         guard let window, let screen = window.screen else { return }
         let visibleFrame = screen.visibleFrame
         let isMaximized = window.frame.isNearlyEqual(to: visibleFrame)
+        let shouldAnimate = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            && !AppUserDefaults.current.bool(forKey: "preferences.reduceMotion")
 
         if isMaximized, let restoreFrame = window.acrossRestoreFrame {
             window.setFrame(
                 window.constrainFrameRect(restoreFrame, to: screen),
                 display: true,
-                animate: true
+                animate: shouldAnimate
             )
             window.acrossRestoreFrame = nil
         } else {
             window.acrossRestoreFrame = window.frame
-            window.setFrame(visibleFrame, display: true, animate: true)
+            window.setFrame(visibleFrame, display: true, animate: shouldAnimate)
         }
     }
 }
@@ -569,13 +571,11 @@ struct AgentSidebarIcon: View {
             }
             .frame(width: 44, height: 44)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isActive ? Color(hex: agent.color) : Color.clear.opacity(isHovered ? 0.5 : 0), lineWidth: isActive ? 2 : 1)
-            )
+            .opacity(isActive ? 1 : (isHovered ? 0.9 : 0.72))
             .scaleEffect(isActive ? 1.0 : (isHovered ? 1.05 : 1.0))
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .help(agent.name)
         .onHover { hovering in
             isHovered = hovering

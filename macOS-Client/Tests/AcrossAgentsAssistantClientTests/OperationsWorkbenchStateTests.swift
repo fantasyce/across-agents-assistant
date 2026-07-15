@@ -137,6 +137,15 @@ struct OperationsWorkbenchStateTests {
                 "memory.pendingExplicit",
                 "review.humanBoundary",
                 "approval.decisionHint",
+                "workbench.nextAction.review_pending_memory.title",
+                "workbench.nextAction.review_pending_memory.reason",
+                "workbench.nextAction.triage_failed_runs.title",
+                "workbench.nextAction.triage_failed_runs.reason",
+                "workbench.nextAction.advance_evaluation_telemetry.title",
+                "workbench.nextAction.advance_context_packs.title",
+                "result.attention.detail.source_reachable",
+                "result.attention.detail.manifest_readable",
+                "result.attention.detail.license_acceptable",
             ]
 
         for key in keys {

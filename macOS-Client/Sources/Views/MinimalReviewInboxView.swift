@@ -51,7 +51,11 @@ struct MinimalReviewInboxView: View {
                 title: preferences.text("review.title"),
                 subtitle: preferences.text("review.subtitle")
             ) {
-                Text(String(format: preferences.text("review.count"), snapshot.totalCount))
+                Text(
+                    snapshot.totalCount == 1
+                        ? preferences.text("review.count.one")
+                        : String(format: preferences.text("review.count"), snapshot.totalCount)
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 MinimalIconButton(
@@ -378,9 +382,7 @@ struct MinimalReviewInboxView: View {
                     } label: {
                         Label(preferences.text("review.memory.approve.short"), systemImage: "checkmark")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AcrossTheme.accent)
-                    .controlSize(.small)
+                    .buttonStyle(AcrossReviewActionButtonStyle(kind: .approve))
                     .help(preferences.text("review.memory.approve"))
                 }
 
@@ -389,9 +391,7 @@ struct MinimalReviewInboxView: View {
                 } label: {
                     Label(preferences.text("review.memory.archive.short"), systemImage: "archivebox")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .controlSize(.small)
+                .buttonStyle(AcrossReviewActionButtonStyle(kind: .archive))
                 .disabled(processingGroupID != nil)
                 .help(preferences.text("review.memory.archive"))
             }

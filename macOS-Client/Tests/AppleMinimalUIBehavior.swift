@@ -90,6 +90,8 @@ private func checkNavigationShape() {
     check(visibleBody.contains("if reviewCount > 0"), "Review must remain hidden when there is nothing to decide")
     check(visibleBody.contains("navigationRow(.humanReview"), "Review must appear when a decision is waiting")
     check(!visibleBody.contains("secondaryRow("), "Management links must not expand the main navigation")
+    check(sidebar.contains(".focused($focusedSurface"), "Keyboard focus must remain tracked without a system outline")
+    check(sidebar.contains(".focusEffectDisabled()"), "Main navigation must suppress blue system focus borders")
 
     let settings = source("macOS-Client/Sources/Views/SettingsHubView.swift")
     let settingsCategories = slice(settings, from: "enum SettingsHubCategory", to: "var id: String")
@@ -113,8 +115,25 @@ private func checkNavigationShape() {
     check(settings.contains(".background(.bar)"), "Settings sidebar must share the main sidebar material")
     check(settings.contains(".minimalPageContentFrame()"), "Settings content must share the primary page geometry")
     check(settings.contains("WindowDragView()"), "Settings must retain a hidden drag region")
+    check(settings.contains(".focused($focusedCategory"), "Settings focus must remain visible through its background state")
+    check(settings.contains(".focusEffectDisabled()"), "Settings must suppress blue system focus borders")
     let settingsShell = slice(settings, from: "var body: some View", to: "private var windowControls")
     check(!settingsShell.contains("Divider()"), "Settings sidebar must not be split by a top rule")
+
+    let app = source("macOS-Client/Sources/AcrossAgentsAssistantApp.swift")
+    let design = source("macOS-Client/Sources/Views/AcrossDesignSystem.swift")
+    let agentIdentity = source("macOS-Client/Sources/Views/AgentIdentityComponents.swift")
+    let taskForm = source("macOS-Client/Sources/Views/TaskFormViews.swift")
+    let pluginSource = source("macOS-Client/Sources/Views/PluginLifecycleView.swift")
+    let diffReview = source("macOS-Client/Sources/Views/WorkspaceDiffReviewView.swift")
+    let capabilities = source("macOS-Client/Sources/Views/AgentCapabilitiesView.swift")
+    check(app.contains(".focusEffectDisabled()"), "The main app must suppress inherited system focus borders")
+    check(!design.contains("focusRing(for"), "The design system must not render a blue focus outline")
+    check(!agentIdentity.contains(".stroke(isSelected ? AcrossTheme.accent"), "Agent selection must use fill or icon feedback, not a blue border")
+    check(!taskForm.contains(".stroke(selectedDeliveryTaskTypes.contains(type) ? AcrossTheme.accent"), "Task selection must use a blue fill without a blue border")
+    check(!pluginSource.contains(".stroke(isHighlighted ? accentColor"), "Highlighted memories must use fill without a blue border")
+    check(!diffReview.contains(".stroke(AcrossTheme.accent"), "Focused diff comments must use fill without a blue border")
+    check(!capabilities.contains(".stroke(accentColor"), "Capability actions must not use blue borders")
 
     let settingsHeader = source("macOS-Client/Sources/Views/MinimalSettingsComponents.swift")
     check(settingsHeader.contains("windowLayoutSize == .expanded ? 32 : 28"), "Settings titles must share primary page typography")
@@ -133,6 +152,18 @@ private func checkNavigationShape() {
     let plugins = source("macOS-Client/Sources/Views/PluginLifecycleView.swift")
     let pluginBody = slice(plugins, from: "var body: some View", to: "private var standaloneHeader")
     check(!pluginBody.contains("memorySection"), "Plugin settings must not duplicate shared memory review")
+    check(
+        plugins.contains(".accessibilityLabel(Text(title))"),
+        "Plugin icon-only lifecycle actions must expose their localized names"
+    )
+    check(
+        plugins.contains(".accessibilityLabel(Text(appPreferences.text(\"settings.refresh\")))"),
+        "Plugin refresh actions must expose a localized accessible name"
+    )
+    check(
+        plugins.contains(".accessibilityLabel(Text(appPreferences.text(\"plugins.loop.probe\")))"),
+        "Plugin Agent Loop probe must expose a localized accessible name"
+    )
 }
 
 private func checkWindowChrome() {
@@ -154,6 +185,13 @@ private func checkWindowChrome() {
     let draggableChrome = source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
         + source("macOS-Client/Sources/Views/MainPanelToolbar.swift")
     check(draggableChrome.contains("WindowDragView()"), "Integrated title bar must retain a drag region")
+    let sharedUI = source("macOS-Client/Sources/Views/SharedUIComponents.swift")
+    check(
+        sharedUI.contains("accessibilityDisplayShouldReduceMotion")
+            && sharedUI.contains("preferences.reduceMotion")
+            && sharedUI.contains("animate: shouldAnimate"),
+        "Double-click full-size transitions must honor both system and in-app Reduce Motion"
+    )
     let mainSidebar = slice(
         source("macOS-Client/Sources/Views/MainPanelSidebar.swift"),
         from: "var leftSidebar: some View",
@@ -257,6 +295,10 @@ private func checkCriticalInteractionContracts() {
     check(!minimalControls.contains(".help(label)"), "Primary page icon buttons must not also show the slower native tooltip")
     check(loopWorkbench.contains("MinimalIconButton("), "Loop Engineering must use the shared header icon buttons")
     check(!loopWorkbench.contains("private func iconButton("), "Loop Engineering must not keep a separate toolbar style")
+    check(loopWorkbench.contains("@State private var showsTechnicalEvidence = false"), "Loop Engineering technical evidence must start collapsed")
+    check(loopWorkbench.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"), "Loop Engineering raw diagnostics must use progressive disclosure")
+    check(!loopWorkbench.contains("if let endpoint = action.endpoint"), "Loop Engineering actions must not expose internal endpoints")
+    check(!loopWorkbench.contains("if let endpoint = section.endpoint"), "Loop Engineering sections must not expose internal endpoints")
     check(memory.contains("systemName: \"wand.and.stars\""), "Memory suggestions must use an icon command")
     check(runs.contains("systemName: \"plus\""), "New Workflow must use the shared icon command")
     check(!runs.contains("runCenterTabs"), "Runs must not expose module tabs")
@@ -280,6 +322,7 @@ private func checkCriticalInteractionContracts() {
 
     let mainPanel = source("macOS-Client/Sources/Views/MainPanelView.swift")
     let chat = source("macOS-Client/Sources/Views/MainPanelChat.swift")
+    let shell = source("macOS-Client/Sources/Views/OperationsWorkbenchShell.swift")
     let toolbar = source("macOS-Client/Sources/Views/MainPanelToolbar.swift")
     let unifiedWork = source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
     let protectedDelivery = slice(chat, from: "private var protectedDeliveryContent", to: "private var unifiedWorkEmptyState")
@@ -296,6 +339,19 @@ private func checkCriticalInteractionContracts() {
     check(unifiedWork.contains("TaskDetailPanel("), "Technical details must be embedded for the selected task")
     check(!protectedDelivery.contains("showTaskOrchestration = true"), "Technical details must not open the all-workflows overlay")
     check(protectedDelivery.contains("acceptTaskResult"), "Accepting a result must persist through the task API")
+    check(chat.contains("AutopilotEvidenceTarget("), "Open evidence must bind the beginner run and evidence route")
+    check(chat.contains("autopilotEvidenceTarget = target"), "Open evidence must preserve its run-specific target")
+    check(mainPanel.contains("if selectedOperationsSurface != .autopilot"), "Leaving Loop Engineering must clear stale evidence routing")
+    check(mainPanel.contains("autopilotEvidenceTarget = nil"), "A later Loop Engineering visit must not inherit an old beginner run")
+    check(shell.contains("AutopilotWorkbenchView(evidenceTarget: autopilotEvidenceTarget)"), "Loop Engineering must receive the selected evidence target")
+    check(loopWorkbench.contains(".task(id: evidenceTarget)"), "Loop Engineering must load evidence when the selected run changes")
+    check(loopWorkbench.contains("@State private var showsFocusedEvidenceDetails = false"), "Focused technical evidence must start collapsed")
+    if let disclosure = loopWorkbench.range(of: "DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails)"),
+       let runID = loopWorkbench.range(of: "Text(target.runID)") {
+        check(runID.lowerBound > disclosure.lowerBound, "Raw run identifiers must stay behind focused technical evidence disclosure")
+    } else {
+        check(false, "Focused evidence must keep a collapsed technical details section")
+    }
     check(!protectedDelivery.contains("onContinue: {\n                let priorGoal = taskOrchestrationViewModel.selectedTask?.description ?? \"\"\n                showsSelectedTaskDetails = false"), "Continue editing must stay on the current result")
 
     let models = source("macOS-Client/Sources/Views/ModelSettingsView.swift")
@@ -323,6 +379,7 @@ private func checkCriticalInteractionContracts() {
     let project = source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")
     check(!runs.contains("NavigationSplitView"), "Run history must not install a system window sidebar")
     check(!review.contains("NavigationSplitView"), "Review inbox must not install a system window sidebar")
+    check(review.contains("review.count.one"), "Review count must use a grammatical singular label")
     check(!project.contains("NavigationSplitView"), "Project workspace must not install a system window sidebar")
     check(project.contains("HSplitView"), "Project workspace must retain its fixed operational panes")
     check(runs.contains("private var runHistoryDrawer"), "Run history must use the floating drawer")

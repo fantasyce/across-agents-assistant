@@ -99,7 +99,6 @@ def test_runtime_paths_are_under_across_agents_home(monkeypatch, tmp_path):
     assert paths.run_dir() == tmp_path / ".across/run/across-agents-assistant"
     assert paths.tmp_dir() == tmp_path / ".across/cache/across-agents-assistant/tmp"
     assert paths.backend_socket_path() == str(tmp_path / ".across/run/across-agents-assistant/across-agents.sock")
-    assert paths.speech_socket_path() == str(tmp_path / ".across/run/across-agents-assistant/speech_cli.sock")
 
 
 def test_across_agents_home_override_controls_runtime_paths(monkeypatch, tmp_path):

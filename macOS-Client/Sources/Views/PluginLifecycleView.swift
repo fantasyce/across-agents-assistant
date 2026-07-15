@@ -137,6 +137,7 @@ struct PluginLifecycleView: View {
             }
             .buttonStyle(.borderless)
             .help(appPreferences.text("settings.refresh"))
+            .accessibilityLabel(Text(appPreferences.text("settings.refresh")))
         }
     }
 
@@ -226,6 +227,7 @@ struct PluginLifecycleView: View {
                         }
                         .buttonStyle(.borderless)
                         .help(appPreferences.text("plugins.loop.probe"))
+                        .accessibilityLabel(Text(appPreferences.text("plugins.loop.probe")))
                         .disabled(viewModel.isWorking)
                     }
                 }
@@ -360,6 +362,7 @@ struct PluginLifecycleView: View {
         .popover(isPresented: $showingLoopHealthDetails, arrowEdge: .bottom) {
             agentLoopHealthPopover(health)
         }
+        .accessibilityLabel(Text(appPreferences.text("plugins.loop.healthDetails")))
     }
 
     private func agentLoopTimelineModePicker() -> some View {
@@ -372,6 +375,7 @@ struct PluginLifecycleView: View {
         .frame(width: 128, height: 28)
         .disabled(viewModel.isRunningAgentLoopProbe)
         .help(appPreferences.text("plugins.loop.timelineMode"))
+        .accessibilityLabel(Text(appPreferences.text("plugins.loop.timelineMode")))
     }
 
     private func agentLoopHealthPopover(_ health: AgentLoopHealthResponse) -> some View {
@@ -996,6 +1000,7 @@ struct PluginLifecycleView: View {
         .background(fieldColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .help(title)
+        .accessibilityLabel(Text(title))
         .disabled(viewModel.isWorking)
     }
 
@@ -1037,6 +1042,7 @@ struct PluginLifecycleView: View {
                 .background(fieldColor)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .help(appPreferences.text("settings.refresh"))
+                .accessibilityLabel(Text(appPreferences.text("settings.refresh")))
             }
 
             if !viewModel.agentLoopMemoryCandidates.isEmpty {
@@ -1187,15 +1193,12 @@ struct PluginLifecycleView: View {
                 .background(fieldColor)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .help(appPreferences.text("plugins.memory.forget"))
+                .accessibilityLabel(Text(appPreferences.text("plugins.memory.forget")))
             }
         }
         .padding(12)
         .background(isHighlighted ? accentColor.opacity(0.10) : fieldColor.opacity(colorScheme == .dark ? 0.7 : 1.0))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isHighlighted ? accentColor.opacity(0.7) : Color.clear, lineWidth: 1)
-        )
     }
 
     private func memoryAction(_ memory: AcrossMemoryEntry, status: String, icon: String, title: String) -> some View {
@@ -1211,6 +1214,7 @@ struct PluginLifecycleView: View {
         .background(fieldColor)
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .help(title)
+        .accessibilityLabel(Text(title))
     }
 
     private func iconName(for id: String) -> String {
