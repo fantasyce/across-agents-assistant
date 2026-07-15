@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import request
+from client import configured_providers, request
 
 
 def _req(method: str, path: str, body: dict = None, expect: int = 200) -> dict:
@@ -61,6 +61,8 @@ class TestE2EComplexMultiWave:
     @pytest.fixture(autouse=True)
     def check_backend(self):
         _req("GET", "/api/llm/status")
+        if not configured_providers():
+            pytest.skip("No model provider configured — complex live task requires one")
 
     def test_01_submit_complex_task(self):
         result = _req(

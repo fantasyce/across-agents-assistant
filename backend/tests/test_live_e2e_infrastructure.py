@@ -31,12 +31,26 @@ def test_live_e2e_runner_enables_live_gate_and_legacy_socket_e2e():
     assert '../across-orchestrator' not in script
 
 
+def test_live_e2e_distinguishes_no_key_readiness_from_model_backed_tasks():
+    minimal = _read("backend/tests/e2e/test_e2e_minimal_task.py")
+    rest_api = _read("backend/tests/e2e/test_e2e_rest_api.py")
+    complex_task = _read("backend/tests/e2e/test_e2e_complex_multi_wave.py")
+    legacy = _read("backend/tests/e2e/test_api_e2e.py")
+
+    assert 'expect=412' in minimal
+    assert 'detail.get("code") == "capability_decision_required"' in minimal
+    assert '"configure_model_provider" in (detail.get("decision_ids") or [])' in minimal
+    assert "if not configured_providers():" in rest_api
+    assert "if not configured_providers():" in complex_task
+    assert "skip_if_model_provider_unavailable(resp)" in legacy
+
+
 def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
     workflow = _read(".github/workflows/live-e2e.yml")
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" not in workflow
-    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0" in workflow
+    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0" in workflow
     assert "scripts/run_live_e2e.sh" in workflow
     assert "ACROSS_AGENTS_ORCHESTRATOR_COMMAND" in workflow
     assert "ACROSS_AGENTS_LIVE_E2E_GATE_ID=\"github_live_e2e\"" in workflow

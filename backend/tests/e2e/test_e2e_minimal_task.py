@@ -65,20 +65,28 @@ class TestE2EMinimalTask:
         _req("GET", "/api/llm/status")
 
     def test_01_readiness_no_keys(self):
-        """Verify readiness check rejects submission when no keys."""
-        # Temporarily verify we have keys — if not, the failure mode is known
-        status = _req("GET", "/api/keys/status")
-        raw_providers = status.get("providers", [])
-        if isinstance(raw_providers, dict):
-            providers = dict(raw_providers)
-        else:
-            providers = {p["provider_id"]: p["status"] for p in raw_providers}
-        configured = [pid for pid, s in providers.items() if s == "configured"]
-        if not configured:
-            pytest.skip("No API keys configured — cannot run E2E task")
+        """Verify an unconfigured fresh profile is blocked with an actionable decision."""
+        if configured_providers():
+            return
+        result = _req(
+            "POST",
+            "/api/tasks/auto",
+            {
+                "description": "Verify the no-key live E2E readiness boundary",
+                "project_dir": f"/tmp/no-key-e2e-{int(time.time())}",
+                "task_types": ["artifact"],
+                "allowed_subtask_agents": [],
+            },
+            expect=412,
+        )
+        detail = result.get("detail") or {}
+        assert detail.get("code") == "capability_decision_required"
+        assert "configure_model_provider" in (detail.get("decision_ids") or [])
 
     def test_02_submit_task(self):
         """Submit a minimal hello.py task via /api/tasks/auto."""
+        if not configured_providers():
+            pytest.skip("No model provider configured — no-key readiness was verified")
         result = _req(
             "POST",
             "/api/tasks/auto",
@@ -96,6 +104,8 @@ class TestE2EMinimalTask:
 
     def test_03_task_has_contracts(self):
         """task-level / subtask-level contracts exist after decomposition."""
+        if not configured_providers():
+            pytest.skip("No model provider configured — live task was not submitted")
         assert TestE2EMinimalTask.task_id, "submit task first"
         deadline = time.time() + 90
         info = {}
@@ -110,6 +120,8 @@ class TestE2EMinimalTask:
 
     def test_04_wait_and_verify(self):
         """Wait for task completion and verify artifacts."""
+        if not configured_providers():
+            pytest.skip("No model provider configured — live task was not submitted")
         assert TestE2EMinimalTask.task_id, "submit task first"
         info = _wait_task(TestE2EMinimalTask.task_id, timeout=600)
         status = info.get("status", "unknown")

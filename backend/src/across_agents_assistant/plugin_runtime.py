@@ -49,16 +49,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.9.0",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.10.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-autopilot",
@@ -67,7 +67,7 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-autopilot",
         install_command="across-autopilot install host-plugin",
         install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.3.0",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.4.0",
     ),
 )
 

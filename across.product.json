@@ -7,28 +7,28 @@
   "summary": "Across starts as a simple project workspace and grows through optional memory, quality workflow, and supervised Loop Engineering capabilities, while keeping evidence, credentials, and final approval under local user control.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.11.0",
-      "published_at": "2026-07-13",
-      "tag": "v0.11.0",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.11.0"
+      "version": "v0.12.0",
+      "published_at": "2026-07-16",
+      "tag": "v0.12.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.12.0"
     },
     "across_autopilot": {
-      "version": "v0.3.0",
-      "published_at": "2026-07-11",
-      "tag": "v0.3.0",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.3.0"
+      "version": "v0.4.0",
+      "published_at": "2026-07-16",
+      "tag": "v0.4.0",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.4.0"
     },
     "across_orchestrator": {
-      "version": "v0.8.0",
-      "published_at": "2026-07-11",
-      "tag": "v0.8.0",
-      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.8.0"
+      "version": "v0.9.0",
+      "published_at": "2026-07-16",
+      "tag": "v0.9.0",
+      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.9.0"
     },
     "across_context": {
-      "version": "v0.9.0",
-      "published_at": "2026-07-11",
-      "tag": "v0.9.0",
-      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.9.0"
+      "version": "v0.10.0",
+      "published_at": "2026-07-16",
+      "tag": "v0.10.0",
+      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.10.0"
     }
   },
   "primary_users": [

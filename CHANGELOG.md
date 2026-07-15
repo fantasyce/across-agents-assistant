@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.12.0 - 2026-07-16
+
+### Added
+
+- Added microphone-only, append-safe voice input with multilingual punctuation,
+  longer pause handling, and explicit recording state in the Work composer.
+- Added beginner-safe guided workflows, deterministic no-key demonstrations,
+  visual result cards, and gameful learning through ten missions, four levels,
+  and twelve achievement badges.
+- Added visible role, model, and budget policy; tamper-evident approval and
+  evidence receipts; safe replay and attempt comparison; and risk-aware
+  sandbox status across the desktop experience.
+- Added governed memory provenance and trusted capability discovery for managed
+  first-party plugins.
+
+### Changed
+
+- Reworked the public README around the current beginner-first product, fresh
+  formal-app screenshots, one-click plugin installation, and the source-first
+  open-source distribution model.
+- Updated managed producer pins to Autopilot `v0.4.0`, Orchestrator `v0.9.0`,
+  and Context `v0.10.0` after their producer-first releases completed.
+- Unified page spacing, detail layouts, project switching, Settings surfaces,
+  borderless navigation, window sizing, and double-click maximize behavior.
+
+### Fixed
+
+- Removed unintended blue focus borders while retaining the selected blue
+  background, removed redundant separators and dense prompt shortcuts, and
+  corrected approval/archive, plugin, achievement, and project-detail states.
+- Restored resilient external sidecars and made unsupported read-only sandbox
+  execution fail closed instead of claiming enforcement.
+
 ## 0.11.0 - 2026-07-13
 
 ### Added

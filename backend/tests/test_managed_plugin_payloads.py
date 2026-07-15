@@ -112,7 +112,7 @@ def test_managed_payload_installs_verified_node_runtime_and_extracts_package(tmp
         payload_root,
         plugin_id="across-context",
         package_name="@across/context",
-        version="0.9.0",
+        version="0.10.0",
     )
     _write_payload_manifest(payload_root, {"across-context": descriptor})
     env = _managed_env(tmp_path, payload_root)
@@ -133,7 +133,7 @@ def test_managed_payload_rejects_checksum_mismatch(tmp_path):
         payload_root,
         plugin_id="across-context",
         package_name="@across/context",
-        version="0.9.0",
+        version="0.10.0",
     )
     descriptor["sha256"] = "0" * 64
     _write_payload_manifest(payload_root, {"across-context": descriptor})
@@ -148,7 +148,7 @@ def test_managed_payload_rejects_checksum_mismatch(tmp_path):
 
 def test_managed_payload_rejects_archive_path_traversal(tmp_path):
     payload_root = tmp_path / "payloads"
-    archive = payload_root / "packages" / "across-context-0.9.0.tar.gz"
+    archive = payload_root / "packages" / "across-context-0.10.0.tar.gz"
     archive.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "w:gz") as handle:
         member = tarfile.TarInfo("../escaped.txt")
@@ -156,7 +156,7 @@ def test_managed_payload_rejects_archive_path_traversal(tmp_path):
         member.size = len(content)
         handle.addfile(member, io.BytesIO(content))
     descriptor = {
-        "version": "0.9.0",
+        "version": "0.10.0",
         "commit": "a" * 40,
         "runtime": "node",
         "archive": str(archive.relative_to(payload_root)),
@@ -180,8 +180,8 @@ def test_managed_payload_rejects_archive_path_traversal(tmp_path):
 @pytest.mark.parametrize(
     ("plugin_id", "package_name", "version", "install"),
     [
-        ("across-context", "@across/context", "0.9.0", run_context_plugin_lifecycle_action),
-        ("across-autopilot", "@across/autopilot", "0.3.0", run_autopilot_plugin_lifecycle_action),
+        ("across-context", "@across/context", "0.10.0", run_context_plugin_lifecycle_action),
+        ("across-autopilot", "@across/autopilot", "0.4.0", run_autopilot_plugin_lifecycle_action),
     ],
 )
 def test_one_click_node_install_does_not_require_npm_or_git(
@@ -261,10 +261,10 @@ def test_one_click_node_install_does_not_require_npm_or_git(
 def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(monkeypatch, tmp_path):
     payload_root = tmp_path / "payloads"
     native = _write_executable(
-        payload_root / "runtimes" / "orchestrator-0.8.0" / "across-orchestrator",
+        payload_root / "runtimes" / "orchestrator-0.9.0" / "across-orchestrator",
         "#!/bin/sh\n"
         "case \"$1\" in\n"
-        "  plugin-manifest) printf '{\"id\":\"across-orchestrator\",\"displayName\":\"Across Orchestrator\",\"kind\":\"task-runtime\",\"version\":\"0.8.0\"}\\n' ;;\n"
+        "  plugin-manifest) printf '{\"id\":\"across-orchestrator\",\"displayName\":\"Across Orchestrator\",\"kind\":\"task-runtime\",\"version\":\"0.9.0\"}\\n' ;;\n"
         "  plugin-status) printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n' ;;\n"
         "  serve) [ \"$2\" = \"--help\" ] && printf '%s\\n' '  --allow-client-project-roots' ;;\n"
         "  *) printf '{}\\n' ;;\n"
@@ -274,7 +274,7 @@ def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(m
         payload_root,
         {
             "across-orchestrator": {
-                "version": "0.8.0",
+                "version": "0.9.0",
                 "commit": "b" * 40,
                 "runtime": "native",
                 "executable": str(native.relative_to(payload_root)),
@@ -302,7 +302,7 @@ def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(m
     assert status["integrity_ok"] is True
     assert status["runtime"] == "bundled_native"
     assert status["python"] is None
-    assert status["source"] == "bundle://across-orchestrator/0.8.0"
+    assert status["source"] == "bundle://across-orchestrator/0.9.0"
     assert api_status["install"]["strategy"] == "bundled-native"
     assert api_status["install"]["requires_external_tools"] is False
     assert api_status["manifest"]["lifecycle"]["install"]["strategy"] == "bundled-native"
