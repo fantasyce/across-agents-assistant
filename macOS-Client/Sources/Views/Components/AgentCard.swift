@@ -59,7 +59,8 @@ struct AgentCard: View {
     }
 
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(hex: "242426") : Color.white
+        if isExpanded { return accentColor.opacity(colorScheme == .dark ? 0.18 : 0.10) }
+        return colorScheme == .dark ? Color(hex: "242426") : Color.white
     }
 
     private var titleColor: Color {
@@ -71,7 +72,6 @@ struct AgentCard: View {
     }
 
     private var borderColor: Color {
-        if isExpanded { return accentColor.opacity(colorScheme == .dark ? 1 : 0.65) }
         return colorScheme == .dark ? Color(white: 1, opacity: 0.08) : Color.black.opacity(0.08)
     }
 }

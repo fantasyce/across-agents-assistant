@@ -155,6 +155,10 @@ PYTHONPATH=src $PYTHON_BIN -m PyInstaller --name "backend" "$PYINSTALLER_BUNDLE_
     --collect-all h11 \
     --collect-all pydantic \
     --collect-all sse_starlette \
+    --collect-all faster_whisper \
+    --collect-all ctranslate2 \
+    --collect-all av \
+    --collect-all numpy \
     --collect-all across_agents_assistant \
     --collect-all click \
     --collect-all idna \
@@ -167,6 +171,11 @@ PYTHONPATH=src $PYTHON_BIN -m PyInstaller --name "backend" "$PYINSTALLER_BUNDLE_
     --exclude-module setuptools.tests \
     --exclude-module _tkinter \
     main.py
+
+echo "=== 2.5 Preparing Managed Plugin Payloads ==="
+ACROSS_BUILD_PYTHON="$PYTHON_BIN" \
+    "$PROJECT_ROOT/scripts/prepare_managed_plugin_payloads.sh" \
+    "$BUILD_DIR/plugin-payloads"
 
 echo "=== 3. Building macOS Client (Release) ==="
 cd "$PROJECT_ROOT/macOS-Client"
@@ -210,6 +219,16 @@ if [ -f "$PROJECT_ROOT/backend/assets/app_icon.icns" ]; then
     cp "$PROJECT_ROOT/backend/assets/app_icon.icns" "$APP_DIR/Contents/Resources/app_icon.icns"
 fi
 
+# The Plugin Center installs fixed, checksummed producer releases without
+# depending on npm, Git, Node, or Python being preinstalled on the user's Mac.
+if [ -d "$BUILD_DIR/plugin-payloads" ]; then
+    rm -rf "$APP_DIR/Contents/Resources/plugin-payloads"
+    /usr/bin/ditto "$BUILD_DIR/plugin-payloads" "$APP_DIR/Contents/Resources/plugin-payloads"
+else
+    echo "Error: managed plugin payloads were not produced." >&2
+    exit 1
+fi
+
 # Copy host-side validation helpers used by packaged Loop Engineering runs.
 mkdir -p "$APP_DIR/Contents/Resources/scripts"
 cp "$PROJECT_ROOT/scripts/candidate_app_lifecycle.sh" "$APP_DIR/Contents/Resources/scripts/candidate_app_lifecycle.sh"
@@ -233,6 +252,8 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <string>$APP_VERSION</string>
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
+    <key>AcrossStudyProfileIsolationVersion</key>
+    <integer>1</integer>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSPrincipalClass</key>
@@ -244,7 +265,7 @@ cat <<PLIST > "$APP_DIR/Contents/Info.plist"
     <key>NSScreenCaptureUsageDescription</key>
     <string>Across Agents Assistant needs screen capture permission so AI can understand the current screen when you explicitly request it.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Across Agents Assistant needs microphone permission to support voice conversations.</string>
+    <string>Across Agents Assistant uses the microphone only when you press Voice Input, so it can place your words into an editable draft.</string>
     <key>NSSystemExtensionUsageDescription</key>
     <string>Across Agents Assistant needs access to system extensions for local automation features.</string>
     <key>NSAppleEventsUsageDescription</key>
@@ -271,16 +292,24 @@ while IFS= read -r -d '' candidate; do
     fi
 done < <(find "$APP_DIR/Contents" -type f -print0)
 
+# Code signing changes Mach-O bytes. Refresh the checksums used when copying
+# the bundled Node and Orchestrator executables into ~/.across, then seal that
+# manifest with the outer app signature.
+PYTHONPATH= "$PYTHON_BIN" "$PROJECT_ROOT/scripts/update_managed_payload_hashes.py" \
+    "$APP_DIR/Contents/Resources/plugin-payloads"
+
 if [ "$SIGNING_IDENTITY" = "-" ]; then
     # Recent macOS builds can reject ad-hoc signed GUI apps when restricted
     # entitlements are attached. Keep local validation bundles entitlement-free;
     # real distribution signing should provide SIGNING_IDENTITY.
-    codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
+    codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR"
 else
-    codesign --force --deep --options runtime \
+    codesign --force --options runtime \
         --entitlements "$PROJECT_ROOT/macOS-Client/Entitlements.entitlements" \
         --sign "$SIGNING_IDENTITY" "$APP_DIR"
 fi
+
+codesign --verify --deep --strict "$APP_DIR"
 
 echo "=== Done! Local app bundle is ready at $APP_DIR ==="
 echo "Note: This build is ad-hoc signed for local development and is not a distributable DMG."

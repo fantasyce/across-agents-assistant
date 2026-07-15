@@ -101,23 +101,44 @@ class TaskPersistenceService:
                 result.append(item)
             return result
 
-    def get_task_summaries(self, *, limit: int = 50, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+    def get_task_summaries(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        project_dir: Optional[str] = None,
+    ) -> tuple[List[Dict[str, Any]], int]:
         """Return lightweight task rows for list views."""
         limit = max(1, min(int(limit or 50), 200))
         offset = max(0, int(offset or 0))
+        project_dir = str(project_dir or "").rstrip("/") or None
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            total = cursor.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+            where_clause = ""
+            query_parameters: List[Any] = []
+            if project_dir:
+                where_clause = """
+                WHERE project_dir = ?
+                   OR (substr(project_dir, 1, length(?)) = ?
+                       AND substr(project_dir, length(?) + 1, 1) = '/')
+                """
+                query_parameters = [project_dir, project_dir, project_dir, project_dir]
+
+            total = cursor.execute(
+                f'SELECT COUNT(*) FROM tasks {where_clause}',
+                query_parameters,
+            ).fetchone()[0]
             cursor.execute(
-                '''
+                f'''
                 SELECT task_id, description, status, progress, completed_count, total_count,
                        created_at, updated_at, project_dir, owner_agent, allowed_subtask_agents,
                        task_types, delivery_mode, last_owner_decision
                 FROM tasks
+                {where_clause}
                 ORDER BY updated_at DESC, created_at DESC
                 LIMIT ? OFFSET ?
                 ''',
-                (limit, offset),
+                (*query_parameters, limit, offset),
             )
             rows = [dict(row) for row in cursor.fetchall()]
             task_ids = [row["task_id"] for row in rows if row.get("task_id")]

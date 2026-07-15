@@ -43,6 +43,7 @@ struct MinimalSettingsPageHeader<Trailing: View>: View {
     let title: String
     let subtitle: String?
     @ViewBuilder let trailing: () -> Trailing
+    @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
 
     init(
         title: String,
@@ -56,12 +57,13 @@ struct MinimalSettingsPageHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: windowLayoutSize == .expanded ? 32 : 28, weight: .bold))
+                    .lineLimit(1)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.system(size: windowLayoutSize == .expanded ? 14 : 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -70,7 +72,6 @@ struct MinimalSettingsPageHeader<Trailing: View>: View {
             Spacer(minLength: 16)
             trailing()
         }
-        .padding(.top, 2)
     }
 }
 

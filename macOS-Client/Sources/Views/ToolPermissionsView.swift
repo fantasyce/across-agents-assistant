@@ -225,9 +225,7 @@ struct ToolPermissionsView: View {
                         )
                     }
                 }
-                .padding(MinimalSettingsMetrics.contentPadding)
-                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .minimalPageContentFrame()
             }
             .overlay {
                 if isLoading {

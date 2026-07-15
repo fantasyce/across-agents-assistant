@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
 import asyncio
 import logging
@@ -19,6 +19,7 @@ import sys
 import re
 import uuid
 import http.client
+import inspect
 import socket
 import urllib.parse
 import urllib.request
@@ -27,6 +28,13 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from .credentials.validation import is_usable_secret, normalize_secret
+from .beginner_study_artifacts import sanitized_beginner_study_result
+from .local_voice_transcription import (
+    LocalVoiceTranscriptionError,
+    MAX_PCM_BYTES as VOICE_MAX_PCM_BYTES,
+    SAMPLE_RATE_HZ as VOICE_SAMPLE_RATE_HZ,
+    transcribe_voice_pcm16,
+)
 
 logger = logging.getLogger("across_agents_assistant")
 
@@ -317,11 +325,14 @@ from .task_api_models import (
     SubTaskInfo,
     TaskDispatchRequest,
     TaskInfo,
+    TaskCapabilityPlanRequest,
+    TaskCapabilityPlanResponse,
     TaskPageResponse,
     TaskSummaryInfo,
     WaveInfo,
     pydantic_dump as _pydantic_dump,
 )
+from .capability_planner import build_task_capability_plan
 from .task_api_observability import (
     build_task_observability_snapshot as _build_task_observability_snapshot,
     expected_files_from_payload as _expected_files_from_payload,
@@ -945,6 +956,7 @@ class ChatResponse(BaseModel):
     audio_path: Optional[str] = None
     requires_approval: bool = False
     approval_request: Optional[Dict[str, Any]] = None
+    approval_receipt: Optional[Dict[str, Any]] = None
 
 class SessionInfo(BaseModel):
     session_id: str
@@ -1003,6 +1015,51 @@ class ApprovalDecision(BaseModel):
     tool_args: Dict[str, Any]
     agent_id: str = LOCAL_AGENT_ID
     tool_call_id: Optional[str] = None
+    approved_by: Optional[str] = Field(default="local-human", min_length=1, max_length=200)
+
+
+class ReplayApprovalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    proposer_id: str = Field(min_length=1, max_length=200)
+    approver_id: str = Field(default="local-human", min_length=1, max_length=200)
+    decision: str = Field(default="approved", pattern=r"^(approved|rejected)$")
+    request_id: Optional[str] = Field(default=None, max_length=500)
+    idempotency_key: Optional[str] = Field(default=None, max_length=500)
+
+
+def _approval_scope_for_tool(tool_name: str) -> str:
+    value = str(tool_name or "").lower()
+    if any(token in value for token in ("promote", "promotion", "release", "publish", "sign", "merge")):
+        return "release_promotion"
+    return "tool_execution"
+
+
+def _with_approval_receipt(response: ChatResponse, receipt: Dict[str, Any]) -> ChatResponse:
+    response.approval_receipt = receipt
+    return response
+
+
+def _record_approval_receipt(**kwargs: Any) -> Dict[str, Any]:
+    recorder = getattr(persistence, "record_approval_receipt", None)
+    if callable(recorder):
+        return recorder(**kwargs)
+    # Compatibility for legacy/custom persistence adapters. The formal
+    # PersistenceService always supplies the durable store; this explicit
+    # marker prevents an old adapter from being mistaken for verified proof.
+    return {
+        "schema_version": "across-approval-receipt/1.0",
+        "scope": kwargs.get("scope"),
+        "decision": kwargs.get("decision"),
+        "integrity_status": "legacy_persistence_unavailable",
+        "privacy": {
+            "subject_payload_stored": False,
+            "credentials_included": False,
+            "absolute_paths_included": False,
+            "raw_transcripts_included": False,
+        },
+    }
 
 
 _GATEWAY_FALLBACK_PREFIX = "EMBEDDED FALLBACK: Gateway agent failed"
@@ -1104,6 +1161,61 @@ def _key_values_from_request(req: KeysRequest) -> Dict[str, str]:
 
 class ActiveAgentRequest(BaseModel):
     agent_id: str
+
+
+class VoiceTranscriptionRequest(BaseModel):
+    """One bounded in-memory recording from the signed local Swift host."""
+
+    pcm16le_base64: str = Field(min_length=4, max_length=VOICE_MAX_PCM_BYTES * 2)
+    sample_rate_hz: int
+    locale_identifier: str
+
+    @field_validator("sample_rate_hz")
+    @classmethod
+    def _validate_voice_sample_rate(cls, value: int) -> int:
+        if value != VOICE_SAMPLE_RATE_HZ:
+            raise ValueError("unsupported sample rate")
+        return value
+
+    @field_validator("locale_identifier")
+    @classmethod
+    def _validate_voice_locale(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or len(normalized) > 32:
+            raise ValueError("invalid locale")
+        return normalized
+
+
+class VoiceTranscriptionResponse(BaseModel):
+    transcript: str
+
+
+@app.post("/api/voice/transcribe", response_model=VoiceTranscriptionResponse)
+async def transcribe_voice_input(req: VoiceTranscriptionRequest):
+    """Transcribe one explicitly finished recording without persisting it."""
+
+    try:
+        pcm16le = base64.b64decode(req.pcm16le_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Voice input was invalid.")
+    if not pcm16le or len(pcm16le) > VOICE_MAX_PCM_BYTES:
+        raise HTTPException(status_code=400, detail="Voice input was invalid.")
+
+    try:
+        result = await asyncio.to_thread(
+            transcribe_voice_pcm16,
+            pcm16le,
+            sample_rate_hz=req.sample_rate_hz,
+            locale_identifier=req.locale_identifier,
+        )
+    except LocalVoiceTranscriptionError as exc:
+        logger.warning("Local voice transcription did not complete: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Local voice input is not ready. Please try again shortly.",
+        )
+    return VoiceTranscriptionResponse(transcript=result.text)
+
 
 @app.post("/api/active_agent")
 async def update_active_agent(req: ActiveAgentRequest):
@@ -1977,6 +2089,29 @@ async def get_across_plugin(plugin_id: str, probe: bool = False):
         raise HTTPException(status_code=404, detail="Unknown Across plugin")
 
 
+@app.post("/api/tasks/capability-plan", response_model=TaskCapabilityPlanResponse)
+async def create_task_capability_plan(req: TaskCapabilityPlanRequest):
+    """Choose routine task capabilities automatically and expose only required decisions."""
+    try:
+        llm_config = load_llm_config()
+        configured_providers = [
+            provider_id
+            for provider_id in _known_provider_ids()
+            if _provider_has_backend_key(provider_id)
+        ]
+        return build_task_capability_plan(
+            user_goal=req.user_goal,
+            project_signals=req.project_signals,
+            plugins=discover_across_plugins(probe=False),
+            configured_providers=configured_providers,
+            primary_provider=llm_config.primary_provider,
+        )
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Capability plan request is invalid")
+    except Exception:
+        raise _safe_http_500("Create task capability plan")
+
+
 class PluginLifecycleActionRequest(BaseModel):
     action: str
 
@@ -1985,6 +2120,22 @@ class AutopilotSpecRequest(BaseModel):
     spec: str
     trigger: Optional[str] = "aaa-user"
     model_policy_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BeginnerNoKeyDemoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_dir: DirectoryPath
+    pattern_id: str = Field(default="first-verified-task", min_length=1, max_length=120)
+    user_goal: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("user_goal")
+    @classmethod
+    def validate_user_goal(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("user_goal must contain visible text")
+        return normalized
 
 
 class AutopilotCancelRequest(BaseModel):
@@ -8748,6 +8899,65 @@ async def get_autopilot_registry():
         raise _safe_http_500("Across Autopilot registry")
 
 
+@app.get("/api/autopilot/beginner-patterns")
+async def get_beginner_workflow_patterns():
+    """Return the original Across beginner-safe workflow pattern registry."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_client().beginner_patterns))
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("List beginner workflow patterns", exc)
+    except Exception:
+        raise _safe_http_500("List beginner workflow patterns")
+
+
+@app.get("/api/autopilot/no-key-demo")
+async def get_no_key_demo(pattern_id: str = "first-verified-task"):
+    """Return the deterministic no-key first-mission contract without running it."""
+    try:
+        return _sanitize_public_payload(await asyncio.to_thread(get_autopilot_client().no_key_demo, pattern_id))
+    except (PluginLifecycleError, ValueError) as exc:
+        raise _autopilot_http_error("Get no-key demonstration", PluginLifecycleError(str(exc)))
+    except Exception:
+        raise _safe_http_500("Get no-key demonstration")
+
+
+@app.post("/api/autopilot/no-key-demo/run")
+async def run_no_key_demo(req: BeginnerNoKeyDemoRequest):
+    """Run one read-only, zero-model-call first mission in the selected project."""
+    try:
+        project_dir = str(req.project_dir.resolve())
+        result = await asyncio.to_thread(
+            get_autopilot_client().run_no_key_demo,
+            project_dir,
+            req.pattern_id,
+            user_goal=req.user_goal,
+        )
+        expected_goal_sha256 = hashlib.sha256(req.user_goal.encode("utf-8")).hexdigest()
+        bounded_result = (
+            sanitized_beginner_study_result(result)
+            if isinstance(result, Mapping)
+            else None
+        )
+        if bounded_result is None:
+            raise PluginLifecycleError("Across Autopilot returned an invalid result envelope")
+        if bounded_result.get("goal_sha256") != expected_goal_sha256:
+            raise PluginLifecycleError("Across Autopilot returned an invalid goal binding")
+        if bounded_result.get("pattern_id") != req.pattern_id:
+            raise PluginLifecycleError("Across Autopilot returned an invalid pattern binding")
+        if (
+            req.pattern_id == "first-verified-task"
+            and bounded_result.get("next_action_id") != "inspect_evidence"
+        ):
+            raise PluginLifecycleError("Across Autopilot returned an invalid first-mission next action")
+        return bounded_result
+    except PluginLifecycleError as exc:
+        raise _autopilot_http_error("Run no-key demonstration", exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=_sanitize_public_error_text(exc)) from exc
+    except Exception:
+        raise _safe_http_500("Run no-key demonstration")
+
+
 @app.get("/api/autopilot/capability-packs")
 async def get_autopilot_capability_packs():
     """Return AAA-hosted reusable Loop Engineering capability packs."""
@@ -9997,6 +10207,65 @@ async def install_orchestrator_plugin():
         )
 
 
+async def _external_orchestrator_contract(method_name: str, payload: Dict[str, Any], label: str):
+    manager = get_orchestrator_plugin_manager()
+    try:
+        method = getattr(manager, method_name)
+        return _sanitize_public_payload(await asyncio.to_thread(method, payload))
+    except OrchestratorPluginUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except OrchestratorPluginHTTPError as exc:
+        raise _external_orchestrator_http_error(label, exc)
+    except Exception:
+        logger.exception("%s failed", label)
+        raise HTTPException(status_code=502, detail=_safe_error_message(label))
+
+
+@app.post("/api/orchestrator/contracts/execution-policy")
+async def build_external_execution_policy(payload: Dict[str, Any]):
+    """Return the visible role/model/budget and risk-selected sandbox contract."""
+    return await _external_orchestrator_contract(
+        "build_execution_policy_contract", payload, "External Across Orchestrator execution policy"
+    )
+
+
+@app.post("/api/orchestrator/runs/compare")
+async def compare_external_runs(payload: Dict[str, Any]):
+    """Compare two bounded run snapshots without loading raw logs."""
+    return await _external_orchestrator_contract(
+        "compare_run_snapshots", payload, "External Across Orchestrator run comparison"
+    )
+
+
+@app.post("/api/orchestrator/runs/replay-plan")
+async def build_external_replay_plan(payload: Dict[str, Any]):
+    """Return a non-executing replay plan; side effects require renewed approval."""
+    trusted_payload = dict(payload or {})
+    claimed = trusted_payload.pop("renewed_approval", None) or trusted_payload.pop("approval_receipt", None)
+    receipt_id = str(claimed.get("receipt_id") or "") if isinstance(claimed, dict) else ""
+    if receipt_id:
+        try:
+            receipt = persistence.approval_receipts.get(receipt_id)
+            chain = persistence.approval_receipts.verify_chain()
+        except KeyError:
+            receipt = None
+            chain = {"integrity_status": "tampered"}
+        if (
+            receipt
+            and receipt.get("integrity_status") == "verified"
+            and chain.get("integrity_status") == "verified"
+        ):
+            trusted_payload["renewed_approval"] = {
+                **receipt,
+                "receipt_integrity_status": receipt.get("integrity_status"),
+                "chain_integrity_status": chain.get("integrity_status"),
+                "integrity_status": "verified",
+            }
+    return await _external_orchestrator_contract(
+        "build_replay_plan", trusted_payload, "External Across Orchestrator replay plan"
+    )
+
+
 class AgentLoopStartRequest(BaseModel):
     goal: str
     project_dir: Optional[str] = None
@@ -10759,13 +11028,60 @@ async def select_agent_workspace_candidate(workspace_id: str, req: AgentWorkspac
 async def promote_agent_workspace(workspace_id: str, req: AgentWorkspacePromoteRequest):
     """Apply a validated candidate only after explicit human approval."""
     try:
-        return await asyncio.to_thread(
-            get_agent_workspace_manager().promote,
+        manager = get_agent_workspace_manager()
+        if req.approved is not True or not str(req.approved_by or "").strip():
+            from .agent_workspaces import AgentWorkspaceError
+
+            raise AgentWorkspaceError(
+                403,
+                "human_approval_required",
+                "Promotion requires approved=true and a non-empty approved_by identity.",
+            )
+        state = await asyncio.to_thread(manager.get, workspace_id)
+        candidate_id = str(req.candidate_id or state.get("selected_candidate_id") or "")
+        if not candidate_id:
+            from .agent_workspaces import AgentWorkspaceError
+
+            raise AgentWorkspaceError(422, "candidate_required", "Select a candidate before promotion.")
+        candidate = next(
+            (
+                item for item in state.get("candidates", [])
+                if isinstance(item, dict) and str(item.get("candidate_id") or "") == candidate_id
+            ),
+            None,
+        )
+        if candidate is None:
+            from .agent_workspaces import AgentWorkspaceError
+
+            raise AgentWorkspaceError(404, "candidate_not_found", "Candidate does not exist.")
+        comparison = candidate.get("comparison") if isinstance(candidate.get("comparison"), dict) else {}
+        patch_sha256 = comparison.get("patch_sha256")
+        receipt = _record_approval_receipt(
+            subject_type="workspace_candidate",
+            subject_id=f"{workspace_id}:{candidate_id}",
+            subject_payload={
+                "workspace_id": workspace_id,
+                "candidate_id": candidate_id,
+                "patch_sha256": patch_sha256,
+            },
+            scope="workspace_promotion",
+            decision="approved",
+            proposer_id=f"candidate:{candidate_id}",
+            approver_id=req.approved_by or "local-human",
+            risk_level="high",
+            request_id=f"promotion:{workspace_id}:{candidate_id}",
+            idempotency_key=f"promotion:{workspace_id}:{candidate_id}:{patch_sha256 or 'no-patch'}",
+        )
+        if receipt.get("integrity_status") != "verified":
+            raise ValueError("verified approval receipt is required before workspace promotion")
+        result = await asyncio.to_thread(
+            manager.promote,
             workspace_id,
-            candidate_id=req.candidate_id,
+            candidate_id=candidate_id,
             approved=req.approved,
             approved_by=req.approved_by,
         )
+        return {**result, "approval_receipt": receipt}
     except Exception as exc:
         raise _agent_workspace_http_error(exc)
 
@@ -11472,6 +11788,24 @@ async def approve_tool_execution(req: ApprovalDecision):
         risk_level=risk_level,
         decision=req.decision
     )
+    try:
+        approval_scope = _approval_scope_for_tool(tool_name)
+        approval_receipt = _record_approval_receipt(
+            subject_type="tool_call",
+            subject_id=req.tool_call_id or f"{req.session_id}:{tool_name}",
+            subject_payload={"tool_name": tool_name, "tool_args": tool_args},
+            scope=approval_scope,
+            decision="approved" if req.decision in {"approve", "always_allow"} else "rejected",
+            proposer_id=req.agent_id,
+            approver_id=req.approved_by or "local-human",
+            risk_level=risk_level,
+            request_id=req.tool_call_id,
+            idempotency_key=f"{req.session_id}:{req.tool_call_id or tool_name}:{req.decision}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if approval_scope == "release_promotion" and approval_receipt.get("integrity_status") != "verified":
+        raise HTTPException(status_code=409, detail="verified approval receipt is required for release promotion")
 
     if req.decision == "always_allow":
         persistence.set_tool_authorization(tool_name, True)
@@ -11513,7 +11847,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                         agent_id=req.agent_id,
                         project_dir=project_root,
                     )
-                    return await _continue_after_tool_execution(continuation_req, result_text)
+                    return _with_approval_receipt(await _continue_after_tool_execution(continuation_req, result_text), approval_receipt)
                 except Exception as e:
                     error_text = f"❌ MCP 工具执行失败: {str(e)}"
                     persistence.add_message(session_id=req.session_id, role="tool", content=error_text, tool_call_id=req.tool_call_id)
@@ -11524,8 +11858,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                         agent_id=req.agent_id,
                         project_dir=project_root,
                     )
-                    return await _continue_after_tool_execution(continuation_req, error_text)
-            return ChatResponse(text="MCP工具名称解析失败", session_id=req.session_id)
+                    return _with_approval_receipt(await _continue_after_tool_execution(continuation_req, error_text), approval_receipt)
+            return ChatResponse(text="MCP工具名称解析失败", session_id=req.session_id, approval_receipt=approval_receipt)
 
         # Execute local tool
         elif tool_def:
@@ -11552,7 +11886,7 @@ async def approve_tool_execution(req: ApprovalDecision):
                     agent_id=req.agent_id, # Pass through the original agent
                     project_dir=project_root,
                 )
-                return await _continue_after_tool_execution(continuation_req, result_text)
+                return _with_approval_receipt(await _continue_after_tool_execution(continuation_req, result_text), approval_receipt)
 
             except Exception as e:
                 error_text = f"❌ 工具执行失败: {str(e)}"
@@ -11565,8 +11899,8 @@ async def approve_tool_execution(req: ApprovalDecision):
                     agent_id=req.agent_id, # Pass through the original agent
                     project_dir=project_root,
                 )
-                return await _continue_after_tool_execution(continuation_req, error_text)
-        return ChatResponse(text="未找到对应的工具", session_id=req.session_id)
+                return _with_approval_receipt(await _continue_after_tool_execution(continuation_req, error_text), approval_receipt)
+        return ChatResponse(text="未找到对应的工具", session_id=req.session_id, approval_receipt=approval_receipt)
     else:
         cancel_text = "用户已取消执行工具操作。"
         persistence.add_message(session_id=req.session_id, role="tool", content=cancel_text, tool_call_id=req.tool_call_id)
@@ -11576,7 +11910,7 @@ async def approve_tool_execution(req: ApprovalDecision):
             session_id=req.session_id,
             agent_id=req.agent_id
         )
-        return await _continue_after_tool_execution(continuation_req, cancel_text)
+        return _with_approval_receipt(await _continue_after_tool_execution(continuation_req, cancel_text), approval_receipt)
 
 
 class PermissionInfo(BaseModel):
@@ -11594,6 +11928,47 @@ class PermissionUpdateRequest(BaseModel):
 async def list_permissions():
     """列出所有已授权的工具权限。"""
     return persistence.list_permissions()
+
+
+@app.get("/api/approval-receipts")
+async def list_approval_receipts(limit: int = 100, offset: int = 0, scope: Optional[str] = None):
+    """Return path-free, secret-free durable decision marks."""
+    return persistence.approval_receipts.list(limit=limit, offset=offset, scope=scope)
+
+
+@app.get("/api/approval-receipts/verify")
+async def verify_approval_receipt_chain():
+    """Verify the complete append-only receipt hash chain."""
+    return persistence.approval_receipts.verify_chain()
+
+
+@app.post("/api/approval-receipts/replay")
+async def record_replay_approval_receipt(req: ReplayApprovalDecision):
+    """Record a new human decision bound to one immutable replay snapshot."""
+    try:
+        return persistence.record_approval_receipt(
+            subject_type="run_snapshot",
+            subject_id=f"replay:{req.source_snapshot_sha256}",
+            subject_payload={},
+            subject_sha256=req.source_snapshot_sha256,
+            scope="replay_external_side_effects",
+            decision=req.decision,
+            proposer_id=req.proposer_id,
+            approver_id=req.approver_id,
+            risk_level="high",
+            request_id=req.request_id,
+            idempotency_key=req.idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/approval-receipts/{receipt_id}")
+async def get_approval_receipt(receipt_id: str):
+    try:
+        return persistence.approval_receipts.get(receipt_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="approval receipt not found") from exc
 
 
 @app.put("/api/permissions/{tool_name}")
@@ -13609,8 +13984,28 @@ def _attach_task_user_review(info: TaskInfo) -> TaskInfo:
     info.accepted_at = review["accepted_at"]
     return info
 
+
+def _normalized_task_project_dir(value: Optional[str]) -> Optional[str]:
+    value = str(value or "").strip()
+    if not value:
+        return None
+    return os.path.normcase(os.path.realpath(os.path.expanduser(value)))
+
+
+def _task_belongs_to_project(task_project_dir: Optional[str], project_dir: Optional[str]) -> bool:
+    if project_dir is None:
+        return True
+    task_project_dir = _normalized_task_project_dir(task_project_dir)
+    if task_project_dir is None:
+        return False
+    return task_project_dir == project_dir or task_project_dir.startswith(project_dir + os.sep)
+
 @app.get("/api/tasks/page", response_model=TaskPageResponse)
-async def list_task_summaries(limit: int = 50, offset: int = 0):
+async def list_task_summaries(
+    limit: int = 50,
+    offset: int = 0,
+    project_dir: Optional[str] = None,
+):
     """List lightweight task summaries for the sidebar.
 
     This endpoint intentionally does not hydrate subtasks, waves, artifacts, or
@@ -13620,9 +14015,12 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
     try:
         limit = max(1, min(int(limit or 50), 200))
         offset = max(0, int(offset or 0))
+        project_dir = _normalized_task_project_dir(project_dir)
 
         in_memory: Dict[str, TaskSummaryInfo] = {}
         for task in _task_state.get_all_tasks():
+            if not _task_belongs_to_project(task.project_dir, project_dir):
+                continue
             original = [st for st in task.subtasks if _is_original_business_subtask_id(st.subtask_id)]
             completed_count = sum(1 for st in original if st.status == JobStatus.COMPLETED)
             total_count = len(original)
@@ -13661,9 +14059,21 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
 
         persistence = getattr(_task_state, "_persistence", None)
         if persistence and hasattr(persistence, "get_task_summaries"):
-            persisted_rows, persisted_total = persistence.get_task_summaries(limit=limit, offset=offset)
+            if project_dir:
+                persisted_rows, persisted_total = persistence.get_task_summaries(
+                    limit=limit,
+                    offset=offset,
+                    project_dir=project_dir,
+                )
+            else:
+                persisted_rows, persisted_total = persistence.get_task_summaries(limit=limit, offset=offset)
         elif persistence:
             all_rows = persistence.get_all_tasks()
+            if project_dir:
+                all_rows = [
+                    row for row in all_rows
+                    if _task_belongs_to_project(row.get("project_dir"), project_dir)
+                ]
             persisted_total = len(all_rows)
             persisted_rows = all_rows[offset:offset + limit]
         else:
@@ -13737,6 +14147,8 @@ async def list_task_summaries(limit: int = 50, offset: int = 0):
             for row in get_orchestrator_plugin_manager().list_task_summaries():
                 task_id = row.get("task_id")
                 if not task_id or task_id in seen_summary_ids:
+                    continue
+                if not _task_belongs_to_project(row.get("project_dir"), project_dir):
                     continue
                 summaries.append(TaskSummaryInfo(
                     task_id=str(task_id),
@@ -13856,9 +14268,6 @@ async def accept_task_result(task_id: str):
     """Persist a one-time user confirmation for a successfully completed task."""
     try:
         current = _task_user_review(task_id)
-        if current["review_status"] == "accepted":
-            return {"task_id": task_id, **current}
-
         info = await get_task(task_id)
         if info.status != TaskStatus.COMPLETED.value:
             raise HTTPException(
@@ -13866,19 +14275,43 @@ async def accept_task_result(task_id: str):
                 detail="Only successfully completed work can be accepted",
             )
 
-        persistence = getattr(_task_state, "_persistence", None)
-        if not persistence or not hasattr(persistence, "save_task_user_review"):
+        task_persistence = getattr(_task_state, "_persistence", None)
+        if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
-        review = persistence.save_task_user_review(
-            task_id,
-            "accepted",
-            accepted_at=time.time(),
+        if current["review_status"] == "accepted":
+            review = current
+        else:
+            review = task_persistence.save_task_user_review(
+                task_id,
+                "accepted",
+                accepted_at=time.time(),
+            )
+        approval_receipt = _record_approval_receipt(
+            subject_type="task_result",
+            subject_id=task_id,
+            subject_payload={
+                "task_id": task_id,
+                "status": info.status,
+                "artifact_ids": [
+                    str(artifact.get("id") or artifact.get("artifact_id"))
+                    for artifact in info.artifacts
+                    if artifact.get("id") or artifact.get("artifact_id")
+                ],
+            },
+            scope="task_result_review",
+            decision="approved",
+            proposer_id=info.owner_agent or "task-owner",
+            approver_id="local-human",
+            risk_level="medium",
+            request_id=f"task-result-review:{task_id}",
+            idempotency_key=f"task-result-review:{task_id}",
         )
         return {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
+            "approval_receipt": approval_receipt,
         }
     except HTTPException:
         raise
@@ -14043,6 +14476,63 @@ def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -
     )
 
 
+def _derive_auto_task_capability_plan(
+    req: AutoTaskRequest,
+    *,
+    plugin_status: Mapping[str, Any],
+) -> Dict[str, Any]:
+    plugins = discover_across_plugins(probe=False)
+    if plugin_status.get("available") and not any(
+        item.get("plugin_id") == "across-orchestrator" and item.get("installed")
+        for item in plugins
+    ):
+        plugins.append({
+            "plugin_id": "across-orchestrator",
+            "display_name": "Across Orchestrator",
+            "installed": True,
+            "integrity_ok": True,
+            "capabilities": ["task_execution", "quality_gates"],
+            "permissions": {},
+            "trust": {"level": "first_party", "managed": True},
+            "health": {"status": "ready"},
+        })
+    llm_config = load_llm_config()
+    configured_providers = [
+        provider_id for provider_id in _known_provider_ids() if _provider_has_backend_key(provider_id)
+    ]
+    # Tests and legacy callers may supply readiness through the existing aggregate check.
+    if not configured_providers and not _check_llm_provider_readiness():
+        configured_providers = [llm_config.primary_provider]
+    signals = {
+        "project_dir": req.project_dir,
+        "task_types": list(req.task_types),
+        "owner_agent": req.owner_agent,
+        **dict(req.project_signals or {}),
+    }
+    return build_task_capability_plan(
+        user_goal=req.description,
+        project_signals=signals,
+        plugins=plugins,
+        configured_providers=configured_providers,
+        primary_provider=llm_config.primary_provider,
+    )
+
+
+def _required_capability_plan_error(plan: Mapping[str, Any]) -> HTTPException | None:
+    decisions = [item for item in plan.get("required_user_decisions", []) if item.get("required")]
+    if not decisions:
+        return None
+    kinds = {str(item.get("kind") or "") for item in decisions}
+    status_code = 412 if kinds.intersection({"missing_capability", "missing_provider"}) else 409
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "code": "capability_decision_required",
+            "decision_ids": [str(item.get("id") or "") for item in decisions],
+        },
+    )
+
+
 async def _submit_auto_orchestrated_task(
     req: AutoTaskRequest,
 ) -> AutoTaskResponse:
@@ -14050,19 +14540,28 @@ async def _submit_auto_orchestrated_task(
     plugin = get_orchestrator_plugin_manager()
     plugin_status = plugin.implementation_status(probe=True)
     if plugin_status.get("implementation") == "external" and plugin_status.get("available"):
+        capability_plan = _derive_auto_task_capability_plan(req, plugin_status=plugin_status)
+        plan_error = _required_capability_plan_error(capability_plan)
+        if plan_error is not None:
+            raise plan_error
         try:
             deliverables = _deliverables_for_external_task(req)
             planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
+            submit_kwargs = {
+                "goal": req.description,
+                "project_dir": req.project_dir or _default_external_orchestrator_project_dir(),
+                "deliverables": deliverables,
+                "agent": _external_owner_agent(req),
+                "subtasks": planned_subtasks,
+                "strict_dependency": req.strict_dependency,
+                "task_types": req.task_types,
+                "agent_adapters": _agent_adapters_for_external_task(req),
+            }
+            if "metadata" in inspect.signature(plugin.submit_task).parameters:
+                submit_kwargs["metadata"] = {"capability_plan": capability_plan}
             task = await asyncio.to_thread(
                 plugin.submit_task,
-                goal=req.description,
-                project_dir=req.project_dir or _default_external_orchestrator_project_dir(),
-                deliverables=deliverables,
-                agent=_external_owner_agent(req),
-                subtasks=planned_subtasks,
-                strict_dependency=req.strict_dependency,
-                task_types=req.task_types,
-                agent_adapters=_agent_adapters_for_external_task(req),
+                **submit_kwargs,
             )
             return AutoTaskResponse(
                 task_id=str(task.get("task_id") or ""),

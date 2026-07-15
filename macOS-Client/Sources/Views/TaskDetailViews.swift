@@ -9,6 +9,7 @@ struct TaskDetailPanel: View {
     @State private var isDescriptionExpanded = false
     @State private var isHealthExpanded = false
     @State private var isObservabilityExpanded = true
+    @State private var isEvidenceReceiptExpanded = false
     @State private var taskPendingCancellationID: String?
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
@@ -211,7 +212,12 @@ struct TaskDetailPanel: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    AcrossVisualResultOverview(
+                        contract: AcrossVisualResultFactory.make(task: task),
+                        preferences: appPreferences
+                    )
                     taskDescriptionSection(task: task)
+                    compactResultSection(task: task)
                     qualityOverviewSection(task: task)
                     observabilitySection(task: task)
 
@@ -333,32 +339,6 @@ struct TaskDetailPanel: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    if task.status == "completed" || task.status == "completed_with_failures" || task.qualityHealth != nil || task.deliveryReport != nil {
-                        Button(action: { viewModel.loadTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETask(task)) }) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#4d6bfe"))
-                                .frame(width: 28, height: 28)
-                                .background(Color(hex: "#4d6bfe").opacity(0.14))
-                                .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(viewModel.isLoadingTaskEvidence)
-                        .help(appPreferences.text("tasks.evidence.view"))
-
-                        Button(action: { viewModel.exportTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETask(task)) }) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#30d158"))
-                                .frame(width: 28, height: 28)
-                                .background(Color(hex: "#30d158").opacity(0.14))
-                                .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(viewModel.isLoadingTaskEvidence)
-                        .help(appPreferences.text("tasks.evidence.export"))
-                    }
-
                     // Show restore only for host-local task rows; external tasks restore through Orchestrator.
                     if task.supportsHostLocalLifecycleControls
                         && TaskOrchestrationViewModel.ResumableTask.isRecoverableDisplayStatus(task.status) {
@@ -550,6 +530,52 @@ struct TaskDetailPanel: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isDescriptionExpanded)
+    }
+
+    @ViewBuilder
+    private func compactResultSection(task: TaskOrchestrationViewModel.TaskDetail) -> some View {
+        let presentation = AcrossTaskCapabilityPresentation(task: task)
+        if let resultState = presentation.resultState {
+            DisclosureGroup(isExpanded: $isEvidenceReceiptExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(presentation.evidenceLines, id: \.self) { line in
+                        Label(line, systemImage: "checkmark")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            AcrossLearningProgressStore.shared.record([
+                                AcrossLearningEvent(
+                                    kind: .evidenceInspected,
+                                    sourceID: task.taskId
+                                )
+                            ])
+                            viewModel.loadTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETask(task))
+                        } label: {
+                            Label(appPreferences.text("tasks.evidence.view"), systemImage: "doc.text.magnifyingglass")
+                        }
+                        Button {
+                            viewModel.exportTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETask(task))
+                        } label: {
+                            Label(appPreferences.text("tasks.evidence.export"), systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(viewModel.isLoadingTaskEvidence)
+                }
+                .padding(.top, 8)
+            } label: {
+                HStack(spacing: 8) {
+                    MinimalWorkflowStatusLabel(status: resultState.status, label: resultState.title)
+                    Text("Evidence receipt")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     @ViewBuilder

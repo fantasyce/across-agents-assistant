@@ -26,7 +26,7 @@ struct AcrossAgentsAssistantApp: App {
             )
             let controller = NSHostingController(rootView: rootView)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+                contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -49,7 +49,7 @@ struct AcrossAgentsAssistantApp: App {
             )
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1280, height: 820)
+        .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(after: .appSettings) {
                 Button(appPreferences.text("menubar.showWindow")) {
@@ -66,7 +66,7 @@ struct AcrossAgentsAssistantApp: App {
                 onClose: { NSApplication.shared.keyWindow?.performClose(nil) }
             )
             .environmentObject(appPreferences)
-            .frame(minWidth: 760, idealWidth: 920, minHeight: 560, idealHeight: 700)
+            .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 800)
             .onAppear { AppAppearanceController.apply(appPreferences.colorSchemeMode) }
             .onChange(of: appPreferences.colorSchemeMode) {
                 AppAppearanceController.apply(appPreferences.colorSchemeMode)
@@ -90,7 +90,8 @@ private struct MainPanelRootView: View {
         MainPanelView(viewModel: viewModel)
             .environmentObject(settingsViewModel)
             .environmentObject(appPreferences)
-            .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 820)
+            .focusEffectDisabled()
+            .frame(minWidth: 1024, idealWidth: 1280, minHeight: 640, idealHeight: 800)
             .background(MainWindowLifecycleBridge())
             .onAppear { AppAppearanceController.apply(appPreferences.colorSchemeMode) }
             .onChange(of: appPreferences.colorSchemeMode) {

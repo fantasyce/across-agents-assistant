@@ -2,9 +2,18 @@ import SwiftUI
 
 struct AutopilotWorkbenchView: View {
     @StateObject private var viewModel = AutopilotWorkbenchViewModel()
+    @StateObject private var evidenceViewModel = AutopilotEvidenceViewModel()
     @StateObject private var workspaceReadiness = AgentWorkspaceReadinessViewModel()
+    @State private var showsTechnicalEvidence = false
+    @State private var showsFocusedEvidenceDetails = false
     @EnvironmentObject private var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
+
+    let evidenceTarget: AutopilotEvidenceTarget?
+
+    init(evidenceTarget: AutopilotEvidenceTarget? = nil) {
+        self.evidenceTarget = evidenceTarget
+    }
 
     private var bgColor: Color { colorScheme == .dark ? .legacyBgDark : .legacyBgLight }
     private var cardColor: Color { colorScheme == .dark ? Color(hex: "202227") : Color(hex: "fafbfc") }
@@ -40,12 +49,13 @@ struct AutopilotWorkbenchView: View {
             VStack(alignment: .leading, spacing: SettingsHubPageLayout.sectionSpacing) {
                 titleRow
                 feedbackRows
+                focusedEvidenceSection
                 agentWorkspaceReadinessSection
 
                 if let snapshot = viewModel.snapshot {
                     summaryGrid(snapshot)
                     actionSection(snapshot)
-                    sectionsGrid(snapshot)
+                    technicalEvidenceSection(snapshot)
                 } else if viewModel.isLoading {
                     loadingRow
                 }
@@ -68,6 +78,10 @@ struct AutopilotWorkbenchView: View {
             async let workbenchLoad: Void = viewModel.load()
             async let readinessLoad: Void = workspaceReadiness.load()
             _ = await (workbenchLoad, readinessLoad)
+        }
+        .task(id: evidenceTarget) {
+            showsFocusedEvidenceDetails = false
+            await evidenceViewModel.load(target: evidenceTarget)
         }
     }
 
@@ -165,6 +179,126 @@ struct AutopilotWorkbenchView: View {
         } else if let error = workspaceReadiness.errorMessage {
             readinessErrorPanel(error)
         }
+    }
+
+    @ViewBuilder
+    private var focusedEvidenceSection: some View {
+        if let target = evidenceTarget {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: focusedEvidenceIcon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(statusColor(focusedEvidenceStatus))
+                        .frame(width: 22, height: 22)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(appPreferences.text("work.beginner.openEvidence"))
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(textColor)
+                        Text(appPreferences.text("workbench.focusedEvidence.subtitle"))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    if evidenceViewModel.isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(Text(appPreferences.text("workbench.loading")))
+                    }
+                }
+
+                if let error = evidenceViewModel.errorMessage {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(statusColor("failed"))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let evidence = evidenceViewModel.payload?.objectValue {
+                    DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(target.runID)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(target.runID)
+                            Text(target.evidenceRoute)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(target.evidenceRoute)
+
+                            ForEach(focusedEvidencePairs(evidence), id: \.key) { pair in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(displayKey(pair.key))
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 112, alignment: .leading)
+                                        .lineLimit(1)
+                                    Text(pair.value.description)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(textColor)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
+                    } label: {
+                        Label(
+                            localizedStatus(evidenceStatus(evidence)),
+                            systemImage: statusIcon(evidenceStatus(evidence))
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(statusColor(evidenceStatus(evidence)))
+                    }
+                    .tint(.secondary)
+                }
+            }
+            .padding(14)
+            .background(cardColor)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text(appPreferences.text("work.beginner.openEvidence")))
+            .accessibilityValue(Text(appPreferences.text("workbench.focusedEvidence.subtitle")))
+        }
+    }
+
+    private var focusedEvidenceStatus: String {
+        if evidenceViewModel.errorMessage != nil {
+            return "failed"
+        }
+        if evidenceViewModel.isLoading {
+            return "unknown"
+        }
+        return evidenceViewModel.payload?.objectValue.map(evidenceStatus) ?? "unknown"
+    }
+
+    private var focusedEvidenceIcon: String {
+        if evidenceViewModel.isLoading {
+            return "circle.dotted"
+        }
+        return statusIcon(focusedEvidenceStatus)
+    }
+
+    private func evidenceStatus(_ evidence: [String: AutopilotWorkbenchJSONValue]) -> String {
+        switch evidence["verdict"]?.description ?? evidence["status"]?.description ?? "unknown" {
+        case "verified", "completed": return "passed"
+        case "needs_attention": return "attention"
+        default:
+            return evidence["verdict"]?.description ?? evidence["status"]?.description ?? "unknown"
+        }
+    }
+
+    private func focusedEvidencePairs(
+        _ evidence: [String: AutopilotWorkbenchJSONValue]
+    ) -> [(key: String, value: AutopilotWorkbenchJSONValue)] {
+        ["schema_version", "mission_id", "spec_id", "status", "verdict", "evidence_sha256", "result_sha256"]
+            .compactMap { key in evidence[key].map { (key: key, value: $0) } }
     }
 
     private var loadingRow: some View {
@@ -373,7 +507,7 @@ struct AutopilotWorkbenchView: View {
 
     private func summaryGrid(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
         LazyVGrid(columns: summaryColumns, spacing: 12) {
-            summaryTile(appPreferences.text("workbench.status"), value: localizedStatus(snapshot.status), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
+            summaryTile(appPreferences.text("workbench.status"), value: localizedWorkbenchStatus(snapshot), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
             summaryTile(appPreferences.text("workbench.runs"), value: "\(snapshot.summary.completedRunCount)/\(snapshot.summary.runCount)", systemName: "checklist", color: statusColor(snapshot.summary.failedRunCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.triggers"), value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)", systemName: "timer", color: statusColor(snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.capabilities"), value: "\(snapshot.summary.capabilityReadyCount)", systemName: "sparkles.rectangle.stack", color: statusColor(snapshot.summary.registryHealthStatus))
@@ -399,24 +533,16 @@ struct AutopilotWorkbenchView: View {
                         HStack(alignment: .top, spacing: 10) {
                             priorityDot(action.priority)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(action.title)
+                                Text(localizedActionTitle(action))
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(textColor)
                                     .lineLimit(1)
-                                Text(action.reason)
+                                Text(localizedActionReason(action))
                                     .font(.system(size: 12))
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            if let endpoint = action.endpoint {
-                                Text(endpoint)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .frame(maxWidth: 220, alignment: .trailing)
-                            }
                         }
                         .padding(11)
                         .background(fieldColor)
@@ -437,6 +563,27 @@ struct AutopilotWorkbenchView: View {
                 }
             }
         }
+    }
+
+    private func technicalEvidenceSection(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
+        DisclosureGroup(isExpanded: $showsTechnicalEvidence) {
+            sectionsGrid(snapshot)
+                .padding(.top, 14)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(appPreferences.text("workbench.technicalEvidence"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textColor)
+                Text(appPreferences.text("workbench.technicalEvidence.subtitle"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .tint(.secondary)
+        .padding(14)
+        .background(cardColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
     }
 
     private func orderedSections(_ snapshot: AutopilotWorkbenchSnapshot) -> [AutopilotWorkbenchSection] {
@@ -503,13 +650,6 @@ struct AutopilotWorkbenchView: View {
                 }
             }
 
-            if let endpoint = section.endpoint {
-                Text(endpoint)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 220, alignment: .topLeading)
@@ -601,7 +741,7 @@ struct AutopilotWorkbenchView: View {
         .padding(.vertical, 9)
         .background(color.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.18), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
     }
 
     private func priorityDot(_ priority: String) -> some View {
@@ -639,6 +779,45 @@ struct AutopilotWorkbenchView: View {
 
     private func localizedStatus(_ status: String) -> String {
         appPreferences.text("workbench.status.\(status)")
+    }
+
+    private func localizedActionTitle(_ action: AutopilotWorkbenchAction) -> String {
+        localizedActionText(action, suffix: "title", fallback: action.title)
+    }
+
+    private func localizedActionReason(_ action: AutopilotWorkbenchAction) -> String {
+        localizedActionText(action, suffix: "reason", fallback: action.reason)
+    }
+
+    private func localizedActionText(
+        _ action: AutopilotWorkbenchAction,
+        suffix: String,
+        fallback: String
+    ) -> String {
+        let key = "workbench.nextAction.\(action.id).\(suffix)"
+        let localized = appPreferences.text(key)
+        return localized == key ? fallback : localized
+    }
+
+    private func localizedWorkbenchStatus(_ snapshot: AutopilotWorkbenchSnapshot) -> String {
+        let reasonsAreMemoryReviewOnly = !snapshot.statusReasons.isEmpty
+            && snapshot.statusReasons.allSatisfy {
+                $0.lowercased().contains("pending memory")
+            }
+        let summary = snapshot.summary
+        if snapshot.status == "attention",
+           reasonsAreMemoryReviewOnly,
+           summary.pendingMemoryCount > 0,
+           summary.failedRunCount == 0,
+           summary.pendingTriggerCount == 0,
+           summary.promotionReadyCount == 0,
+           summary.schedulerRunning,
+           summary.selfIterationStatus == "active",
+           summary.registryHealthStatus == "passed",
+           summary.agentInteropE2EStatus == "passed" {
+            return appPreferences.text("workbench.status.review")
+        }
+        return localizedStatus(snapshot.status)
     }
 
     private func localizedWorkspaceStatus(_ snapshot: AgentWorkspaceReadinessSnapshot) -> String {

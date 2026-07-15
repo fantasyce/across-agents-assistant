@@ -33,9 +33,7 @@ struct StartupDiagnosticsView: View {
 
                 releaseVerificationSection
             }
-            .padding(MinimalSettingsMetrics.contentPadding)
-            .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .minimalPageContentFrame()
         }
         .background(bgColor)
         .task {
@@ -288,7 +286,7 @@ struct StartupDiagnosticsView: View {
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(statusColor(report.status).opacity(0.28), lineWidth: 1)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
         )
     }
 

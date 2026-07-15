@@ -241,10 +241,10 @@ class MCPPluginManager: ObservableObject {
     }
 
     func loadPlugins() {
-        let shouldApplyDefaultEnabledMigration = !UserDefaults.standard.bool(forKey: defaultEnabledMigrationKey)
+        let shouldApplyDefaultEnabledMigration = !AppUserDefaults.current.bool(forKey: defaultEnabledMigrationKey)
         var shouldSaveMergedPlugins = shouldApplyDefaultEnabledMigration
 
-        if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+        if let data = AppUserDefaults.current.data(forKey: userDefaultsKey),
            let saved = try? JSONDecoder().decode([MCPPlugin].self, from: data) {
 
             // Merge saved state with built-ins (in case we added new built-ins in an app update)
@@ -286,7 +286,7 @@ class MCPPluginManager: ObservableObject {
 
             self.plugins = merged
             if shouldApplyDefaultEnabledMigration {
-                UserDefaults.standard.set(true, forKey: defaultEnabledMigrationKey)
+                AppUserDefaults.current.set(true, forKey: defaultEnabledMigrationKey)
             }
             if shouldSaveMergedPlugins {
                 savePlugins()
@@ -294,7 +294,7 @@ class MCPPluginManager: ObservableObject {
         } else {
             self.plugins = builtInPlugins
             if shouldApplyDefaultEnabledMigration {
-                UserDefaults.standard.set(true, forKey: defaultEnabledMigrationKey)
+                AppUserDefaults.current.set(true, forKey: defaultEnabledMigrationKey)
             }
         }
     }
@@ -329,7 +329,7 @@ class MCPPluginManager: ObservableObject {
 
     func savePlugins() {
         if let data = try? JSONEncoder().encode(plugins) {
-            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+            AppUserDefaults.current.set(data, forKey: userDefaultsKey)
         }
     }
 

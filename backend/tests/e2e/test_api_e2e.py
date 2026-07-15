@@ -83,6 +83,22 @@ def skip_if_orchestrator_unavailable(response):
         pytest.skip(f"External Across Orchestrator runtime unavailable: {detail}")
 
 
+def skip_if_model_provider_unavailable(response):
+    """Skip task mutation checks when the isolated live-E2E profile has no model."""
+    if response.status_code != 412:
+        return
+    try:
+        detail = response.json().get("detail") or {}
+    except Exception:
+        return
+    if (
+        isinstance(detail, dict)
+        and detail.get("code") == "capability_decision_required"
+        and "configure_model_provider" in (detail.get("decision_ids") or [])
+    ):
+        pytest.skip("未配置模型服务；无密钥拦截已由 live E2E readiness 验证")
+
+
 class TestBackendAPI:
     _task_id: str | None = None
 
@@ -123,6 +139,7 @@ class TestBackendAPI:
         }
         resp = client.post("http://localhost/api/tasks/auto", json=payload)
         skip_if_orchestrator_unavailable(resp)
+        skip_if_model_provider_unavailable(resp)
         assert resp.status_code in (200, 201, 202), f"创建任务失败: {resp.status_code} {resp.text}"
         data = resp.json()
         task_id = data.get("task_id") or data.get("taskId")

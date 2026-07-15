@@ -217,7 +217,7 @@ struct TaskNewTaskForm: View {
                                 .background(selectedDeliveryTaskTypes.contains(type) ? AcrossTheme.accent.opacity(0.22) : theme.fieldBackground)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .stroke(selectedDeliveryTaskTypes.contains(type) ? AcrossTheme.accent.opacity(0.65) : theme.divider, lineWidth: 1)
+                                        .stroke(theme.divider, lineWidth: 1)
                                 )
                                 .cornerRadius(8)
                             }
@@ -419,7 +419,7 @@ struct TaskNewTaskForm: View {
                 }
                 .padding(.top, 8)
             }
-            .padding(20)
+            .minimalPageContentFrame(topPadding: 12)
         }
         .onAppear {
             applyDefaultProjectPathIfNeeded()

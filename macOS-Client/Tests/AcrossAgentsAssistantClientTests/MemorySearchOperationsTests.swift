@@ -3,6 +3,18 @@ import Testing
 @testable import AcrossAgentsAssistantClient
 
 struct MemorySearchOperationsTests {
+    @Test func memoryLibraryPaginationIsBoundedAndClampsAfterMutations() {
+        let items = Array(0..<19)
+
+        #expect(MemoryPagination.pageSize == 8)
+        #expect(MemoryPagination.pageCount(itemCount: items.count) == 3)
+        #expect(MemoryPagination.page(items, index: 0) == Array(0..<8))
+        #expect(MemoryPagination.page(items, index: 1) == Array(8..<16))
+        #expect(MemoryPagination.page(items, index: 2) == [16, 17, 18])
+        #expect(MemoryPagination.clampedIndex(9, itemCount: 7) == 0)
+        #expect(MemoryPagination.page([Int](), index: 3).isEmpty)
+    }
+
     @Test func ordinarySearchOmitsPendingStatusWhileReviewSearchIsExplicit() throws {
         let backend = URL(string: "http://backend")!
         let ordinary = MemorySearchRequest(

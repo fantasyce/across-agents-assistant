@@ -560,7 +560,7 @@ final class SettingsViewModel: ObservableObject {
 
     private func loadPersistedSettings() {
         // Decode PersistedLLMConfig (no apiKey) from UserDefaults
-        if let data = UserDefaults.standard.data(forKey: "cloudLLMs"),
+        if let data = AppUserDefaults.current.data(forKey: "cloudLLMs"),
            let saved = try? JSONDecoder().decode([PersistedLLMConfig].self, from: data) {
             cloudLLMs = mergeCloudLLMDefaults(saved.map { LLMConfig(from: $0) })
         } else {
@@ -571,7 +571,7 @@ final class SettingsViewModel: ObservableObject {
         // Querying backend will populate it from the backend-owned credential file.
         apiKeyStatusCache = [:]
 
-        if let data = UserDefaults.standard.data(forKey: "localAgents"),
+        if let data = AppUserDefaults.current.data(forKey: "localAgents"),
            let saved = try? JSONDecoder().decode([AgentConfig].self, from: data) {
             localAgents = mergeLocalAgentDefaults(saved)
             persistLocalAgentSettings()
@@ -1154,7 +1154,7 @@ final class SettingsViewModel: ObservableObject {
         // Persist only non-secret config — apiKey is NOT included.
         let persisted = cloudLLMs.map { PersistedLLMConfig(from: $0) }
         if let data = try? JSONEncoder().encode(persisted) {
-            UserDefaults.standard.set(data, forKey: "cloudLLMs")
+            AppUserDefaults.current.set(data, forKey: "cloudLLMs")
         }
     }
 
@@ -1171,7 +1171,7 @@ final class SettingsViewModel: ObservableObject {
 
     private func persistLocalAgentSettings() {
         if let data = try? JSONEncoder().encode(localAgents) {
-            UserDefaults.standard.set(data, forKey: "localAgents")
+            AppUserDefaults.current.set(data, forKey: "localAgents")
         }
     }
 }

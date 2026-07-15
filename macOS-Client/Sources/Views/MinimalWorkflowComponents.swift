@@ -1,30 +1,112 @@
 import SwiftUI
 
+struct AcrossTaskCapabilityPresentation: Equatable {
+    let summaryLine: String?
+    let requiredDecisions: [AcrossTaskCapabilityContract.Decision]
+    let resultState: AcrossTaskCompactResultState?
+    let evidenceLines: [String]
+
+    init(
+        task: TaskOrchestrationTaskDetail,
+        capabilityContract: AcrossTaskCapabilityContract? = nil
+    ) {
+        if let capabilityContract, !capabilityContract.capabilitiesSelected.isEmpty {
+            let count = capabilityContract.capabilitiesSelected.count
+            summaryLine = "\(count) capabilit\(count == 1 ? "y" : "ies") selected; verification planned"
+        } else if task.hasRequirementManifest {
+            summaryLine = "Capabilities selected; verification planned"
+        } else if task.qualityHealth != nil || task.deliveryReport != nil {
+            summaryLine = "Verification in progress"
+        } else {
+            summaryLine = nil
+        }
+
+        requiredDecisions = capabilityContract?.requiredDecisions ?? []
+
+        resultState = Self.resultState(for: task)
+        evidenceLines = Self.evidenceLines(for: task)
+    }
+
+    private static func resultState(for task: TaskOrchestrationTaskDetail) -> AcrossTaskCompactResultState? {
+        guard TaskOrchestrationStateReducers.isTerminalStatus(task.status) else { return nil }
+        let missing = task.deliveryReport?.missingRequired.count
+            ?? task.qualityHealth?.manifestMissing
+            ?? 0
+        let failedConstraints = task.deliveryReport?.failedConstraints.count
+            ?? task.qualityHealth?.deliveryQualityReport?.failedConstraints.count
+            ?? 0
+        if ["failed", "cancelled", "blocked"].contains(task.status)
+            || missing > 0
+            || failedConstraints > 0
+            || task.error?.isEmpty == false {
+            return .blocked
+        }
+        if task.status == "completed_with_failures" || task.reviewStatus != "accepted" {
+            return .needsReview
+        }
+        return .ready
+    }
+
+    private static func evidenceLines(for task: TaskOrchestrationTaskDetail) -> [String] {
+        var lines: [String] = []
+        if let accepted = task.deliveryReport?.acceptedTotal ?? task.qualityHealth?.manifestAccepted,
+           let required = task.deliveryReport?.requiredTotal ?? task.qualityHealth?.manifestRequired {
+            lines.append("\(accepted) of \(required) required checks verified")
+        }
+        if let quality = task.deliveryReport?.qualityGate ?? task.qualityHealth?.deliveryQuality,
+           !quality.isEmpty {
+            lines.append("Quality: \(AcrossCapabilitySource.humanized(quality))")
+        }
+        if !task.artifacts.isEmpty {
+            lines.append("\(task.artifacts.count) artifact\(task.artifacts.count == 1 ? "" : "s") recorded")
+        }
+        if lines.isEmpty, TaskOrchestrationStateReducers.isTerminalStatus(task.status) {
+            lines.append("Task status and execution evidence recorded")
+        }
+        return lines
+    }
+}
+
 struct MinimalPageHeader<Actions: View>: View {
     let title: String
     let subtitle: String?
+    let backLabel: String?
+    let onBack: () -> Void
     private let actions: Actions
+    @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
 
     init(
         title: String,
         subtitle: String? = nil,
+        backLabel: String? = nil,
+        onBack: @escaping () -> Void = {},
         @ViewBuilder actions: () -> Actions
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.backLabel = backLabel
+        self.onBack = onBack
         self.actions = actions()
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
+            if let backLabel {
+                MinimalIconButton(
+                    systemName: "chevron.left",
+                    label: backLabel,
+                    action: onBack
+                )
+            }
+
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: windowLayoutSize == .expanded ? 32 : 28, weight: .bold))
                     .lineLimit(1)
 
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 13))
+                        .font(.system(size: windowLayoutSize == .expanded ? 14 : 13))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -41,11 +123,22 @@ struct MinimalPageHeader<Actions: View>: View {
 private struct MinimalPageContentFrameModifier: ViewModifier {
     let topPadding: CGFloat
     let bottomPadding: CGFloat
+    @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
 
     func body(content: Content) -> some View {
         content
-            .frame(maxWidth: SettingsHubPageLayout.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, SettingsHubPageLayout.contentPadding)
+            .frame(
+                maxWidth: windowLayoutSize == .expanded
+                    ? SettingsHubPageLayout.expandedContentMaxWidth
+                    : SettingsHubPageLayout.contentMaxWidth,
+                alignment: .leading
+            )
+            .padding(
+                .horizontal,
+                windowLayoutSize == .expanded
+                    ? SettingsHubPageLayout.expandedHorizontalContentPadding
+                    : SettingsHubPageLayout.horizontalContentPadding
+            )
             .padding(.top, topPadding)
             .padding(.bottom, bottomPadding)
             .frame(maxWidth: .infinity, alignment: .top)
@@ -54,7 +147,7 @@ private struct MinimalPageContentFrameModifier: ViewModifier {
 
 extension View {
     func minimalPageContentFrame(
-        topPadding: CGFloat = SettingsHubPageLayout.contentPadding,
+        topPadding: CGFloat = SettingsHubPageLayout.topContentPadding,
         bottomPadding: CGFloat = SettingsHubPageLayout.contentPadding
     ) -> some View {
         modifier(MinimalPageContentFrameModifier(
@@ -299,6 +392,7 @@ struct MinimalIconButton: View {
                 .frame(width: 32, height: 30)
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .foregroundStyle(Color.primary)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))

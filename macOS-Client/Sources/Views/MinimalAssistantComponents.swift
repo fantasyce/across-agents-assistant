@@ -133,20 +133,150 @@ struct MinimalAssistantSendButton: View {
 }
 
 struct MinimalAssistantVoiceControls: View {
+    let speechState: SpeechRecognitionState
+    let localeIdentifier: String
+    let voiceInputTitle: String
     let isMuted: Bool
     let muteTitle: String
-    let isDisabled: Bool
+    let isSpeechDisabled: Bool
+    let reduceMotion: Bool
+    let onToggleSpeechInput: () -> Void
     let onToggleMute: () -> Void
 
     var body: some View {
-        InteractiveIconButton(
-            systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2",
-            help: muteTitle,
-            iconSize: MainPanelIconMetrics.glyphSize,
-            foregroundColor: isMuted ? Color(nsColor: .systemRed) : .secondary,
-            frameSize: MainPanelIconMetrics.buttonSize,
-            isDisabled: isDisabled,
-            action: onToggleMute
-        )
+        HStack(spacing: 4) {
+            MinimalAssistantSpeechButton(
+                state: speechState,
+                localeIdentifier: localeIdentifier,
+                title: voiceInputTitle,
+                isDisabled: isSpeechDisabled,
+                reduceMotion: reduceMotion,
+                action: onToggleSpeechInput
+            )
+
+            if let status = speechState.shortStatus(localeIdentifier: localeIdentifier) {
+                Text(status)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(speechStatusColor)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+
+            InteractiveIconButton(
+                systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2",
+                help: muteTitle,
+                iconSize: MainPanelIconMetrics.glyphSize,
+                foregroundColor: isMuted ? Color(nsColor: .systemRed) : .secondary,
+                frameSize: MainPanelIconMetrics.buttonSize,
+                isDisabled: false,
+                action: onToggleMute
+            )
+            .focusable(true)
+        }
+    }
+
+    private var speechStatusColor: Color {
+        switch speechState {
+        case .denied, .failed, .inputDeviceLost:
+            return Color(nsColor: .systemRed)
+        case .unavailable:
+            return Color(nsColor: .systemOrange)
+        case .listening, .transcribing, .segmentTranscript, .retrying:
+            return Color(nsColor: .controlAccentColor)
+        default:
+            return .secondary
+        }
+    }
+}
+
+private struct MinimalAssistantSpeechButton: View {
+    let state: SpeechRecognitionState
+    let localeIdentifier: String
+    let title: String
+    let isDisabled: Bool
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    @State private var pulse = false
+
+    private var iconName: String {
+        switch state {
+        case .requestingPermission, .retrying, .transcribing:
+            return "ellipsis"
+        case .listening:
+            return "waveform"
+        case .segmentTranscript:
+            return "checkmark"
+        case .denied, .failed, .inputDeviceLost:
+            return "mic.badge.xmark"
+        case .unavailable:
+            return "mic.slash"
+        default:
+            return "mic"
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch state {
+        case .denied, .failed, .inputDeviceLost:
+            return Color(nsColor: .systemRed)
+        case .unavailable:
+            return Color(nsColor: .systemOrange)
+        case .requestingPermission, .retrying, .listening, .transcribing, .segmentTranscript:
+            return Color(nsColor: .controlAccentColor)
+        default:
+            return .secondary
+        }
+    }
+
+    private var accessibilityLabel: String {
+        if state.canFinishRecording {
+            return localeIdentifier.lowercased().hasPrefix("zh") ? "结束语音输入" : "Finish voice input"
+        }
+        if case .transcribing = state {
+            return localeIdentifier.lowercased().hasPrefix("zh") ? "正在识别整段语音" : "Transcribing the full recording"
+        }
+        if state.canRetry {
+            return localeIdentifier.lowercased().hasPrefix("zh") ? "重试语音输入" : "Retry voice input"
+        }
+        return title
+    }
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                if state.isActive {
+                    Circle()
+                        .fill(Color(nsColor: .controlAccentColor).opacity(reduceMotion ? 0.12 : 0.16))
+                        .frame(width: 24, height: 24)
+                        .scaleEffect(pulse ? 1.16 : 0.84)
+                        .opacity(pulse ? 0.28 : 0.8)
+                }
+
+                Image(systemName: iconName)
+                    .font(.system(size: MainPanelIconMetrics.glyphSize, weight: .medium))
+                    .foregroundStyle(foregroundColor)
+            }
+            .frame(width: MainPanelIconMetrics.buttonSize, height: MainPanelIconMetrics.buttonSize)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled || state == .transcribing || state.isTranscriptReady)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .accessibilityValue(Text(state.accessibilityDetail(localeIdentifier: localeIdentifier)))
+        .help(state.accessibilityDetail(localeIdentifier: localeIdentifier))
+        .onAppear { updatePulse() }
+        .onChange(of: state) { updatePulse() }
+        .onChange(of: reduceMotion) { updatePulse() }
+    }
+
+    private func updatePulse() {
+        pulse = false
+        guard state.canFinishRecording, !reduceMotion else { return }
+        withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) {
+            pulse = true
+        }
     }
 }

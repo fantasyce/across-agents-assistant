@@ -11,6 +11,7 @@ struct OperationsWorkbenchShell: View {
     @ObservedObject var settings: SettingsViewModel
     @ObservedObject var preferences: AppPreferences
 
+    let autopilotEvidenceTarget: AutopilotEvidenceTarget?
     let activeProjectPath: String?
     let productProgress: AcrossProductProgressSnapshot
     let reviewSnapshot: HumanReviewQueueSnapshot
@@ -57,7 +58,7 @@ struct OperationsWorkbenchShell: View {
                 activeProjectPath: activeProjectPath
             )
         case .autopilot:
-            AutopilotWorkbenchView()
+            AutopilotWorkbenchView(evidenceTarget: autopilotEvidenceTarget)
                 .environmentObject(preferences)
         case .achievements:
             CapabilityProgressView(

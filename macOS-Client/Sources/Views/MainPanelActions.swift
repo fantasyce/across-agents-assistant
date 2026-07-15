@@ -90,9 +90,9 @@ extension MainPanelView {
         viewModel.screenshotCancelledNotice = appPreferences.text("screenshot.cancelled")
         viewModel.screenshotCopyFailedNotice = appPreferences.text("screenshot.copyFailed")
         if appPreferences.rememberLastAgent {
-            UserDefaults.standard.set(viewModel.selectedAgentId, forKey: "lastSelectedAgentId")
+            AppUserDefaults.current.set(viewModel.selectedAgentId, forKey: "lastSelectedAgentId")
         } else {
-            UserDefaults.standard.removeObject(forKey: "lastSelectedAgentId")
+            AppUserDefaults.current.removeObject(forKey: "lastSelectedAgentId")
         }
     }
 
@@ -100,12 +100,47 @@ extension MainPanelView {
         viewModel.showErrorMessage(message)
     }
 
+    func toggleSpeechInput() {
+        if speechInput.state.canFinishRecording {
+            speechInput.finish(preservingDraft: viewModel.inputText)
+            return
+        }
+        guard !speechInput.state.isActive else { return }
+
+        // Prevent synthesized replies from being captured as fresh user input.
+        TTSEngine.shared.stop()
+        if speechInput.state.canRetry {
+            speechInput.retry(
+                existingDraft: viewModel.inputText,
+                localeIdentifier: appPreferences.resolvedLocaleIdentifier
+            )
+        } else {
+            speechInput.start(
+                existingDraft: viewModel.inputText,
+                localeIdentifier: appPreferences.resolvedLocaleIdentifier
+            )
+        }
+    }
+
     func submit() {
         guard !viewModel.isProcessing, !isProtectedTaskRunning else { return }
+        if speechInput.state.isActive {
+            speechInput.cancel(preservingDraft: viewModel.inputText)
+        }
         let text = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachedFiles = viewModel.attachedFiles
         guard !text.isEmpty || !attachedFiles.isEmpty else { return }
-        guard canUseAgentFeatures else { return }
+
+        if shouldUseInputForBeginnerMission, attachedFiles.isEmpty, !text.isEmpty {
+            runBeginnerMission(text)
+            return
+        }
+
+        if !canUseAgentFeatures {
+            guard canUseBeginnerMissionInput, attachedFiles.isEmpty, !text.isEmpty else { return }
+            runBeginnerMission(text)
+            return
+        }
 
         if appPreferences.automaticDeliveryProtection {
             submitProtectedTask(text: text, attachedFiles: attachedFiles)
@@ -121,6 +156,12 @@ extension MainPanelView {
             }
 
             await MainActor.run {
+                learningProgressStore.record([
+                    AcrossLearningEvent(
+                        kind: .agentInteraction,
+                        sourceID: "session:\(viewModel.currentSessionId)"
+                    )
+                ])
                 viewModel.sendMessage(text, attachedFiles: attachedFiles)
                 viewModel.inputText = ""
                 viewModel.attachedFiles = []
@@ -148,6 +189,12 @@ extension MainPanelView {
             }
 
             await MainActor.run {
+                learningProgressStore.record([
+                    AcrossLearningEvent(
+                        kind: .agentInteraction,
+                        sourceID: "protected-session:\(viewModel.currentSessionId)"
+                    )
+                ])
                 taskOrchestrationViewModel.submitTask(
                     description: description,
                     taskTypes: ["functional", "artifact"],

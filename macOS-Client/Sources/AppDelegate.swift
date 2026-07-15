@@ -47,7 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         super.init()
-        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        AppUserDefaults.current.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         debugLog("AppDelegate.init()")
     }
 
@@ -184,7 +184,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func localizedMenuText(_ key: String) -> String {
-        let rawMode = UserDefaults.standard.string(forKey: "preferences.languageMode")
+        let rawMode = AppUserDefaults.current.string(forKey: "preferences.languageMode")
         let mode = rawMode.flatMap(AppLanguageMode.init(rawValue:)) ?? .followSystem
         let localeIdentifier = AppPreferences.resolveLocaleIdentifier(
             mode: mode,

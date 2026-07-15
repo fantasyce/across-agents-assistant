@@ -1,0 +1,11 @@
+{
+  "name": "across-beginner-pocket-checklist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixed public read-only fixture for the Across beginner study",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "node src/checklist.js"
+  }
+}

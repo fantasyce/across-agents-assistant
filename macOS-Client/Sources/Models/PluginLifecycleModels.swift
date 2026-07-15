@@ -4,6 +4,161 @@ struct PluginListResponse: Decodable {
     let plugins: [AcrossPluginStatus]
 }
 
+struct AcrossPluginCapabilityManifest: Decodable, Equatable {
+    let capabilities: [AcrossPluginCapabilityDescriptor]
+    let achievements: [AcrossPluginAchievementDescriptor]
+
+    enum CodingKeys: String, CodingKey {
+        case capabilities
+        case entries
+        case ready
+        case achievements
+    }
+
+    init(
+        capabilities: [AcrossPluginCapabilityDescriptor],
+        achievements: [AcrossPluginAchievementDescriptor] = []
+    ) {
+        self.capabilities = capabilities
+        self.achievements = achievements
+    }
+
+    init(from decoder: Decoder) throws {
+        if let entries = try? decoder.singleValueContainer().decode([AcrossPluginCapabilityDescriptor].self) {
+            capabilities = entries
+            achievements = []
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        capabilities = (try? container.decode([AcrossPluginCapabilityDescriptor].self, forKey: .capabilities))
+            ?? (try? container.decode([AcrossPluginCapabilityDescriptor].self, forKey: .entries))
+            ?? (try? container.decode([AcrossPluginCapabilityDescriptor].self, forKey: .ready))
+            ?? []
+        achievements = (try? container.decode([AcrossPluginAchievementDescriptor].self, forKey: .achievements)) ?? []
+    }
+}
+
+struct AcrossPluginCapabilityDescriptor: Decodable, Equatable, Identifiable {
+    let id: String
+    let displayName: String?
+    let summary: String?
+    let systemImage: String?
+    let category: String?
+    let status: String?
+    let verified: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case capabilityId = "capability_id"
+        case name
+        case displayName = "display_name"
+        case title
+        case summary
+        case description
+        case systemImage = "system_image"
+        case icon
+        case category
+        case status
+        case verified
+        case available
+        case enabled
+    }
+
+    init(
+        id: String,
+        displayName: String? = nil,
+        summary: String? = nil,
+        systemImage: String? = nil,
+        category: String? = nil,
+        status: String? = nil,
+        verified: Bool
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.summary = summary
+        self.systemImage = systemImage
+        self.category = category
+        self.status = status
+        self.verified = verified
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decodeIfPresent(String.self, forKey: .capabilityId)
+            ?? ""
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+            ?? container.decodeIfPresent(String.self, forKey: .title)
+            ?? container.decodeIfPresent(String.self, forKey: .name)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+            ?? container.decodeIfPresent(String.self, forKey: .description)
+        systemImage = try container.decodeIfPresent(String.self, forKey: .systemImage)
+            ?? container.decodeIfPresent(String.self, forKey: .icon)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        let explicit = try container.decodeIfPresent(Bool.self, forKey: .verified)
+            ?? container.decodeIfPresent(Bool.self, forKey: .available)
+            ?? container.decodeIfPresent(Bool.self, forKey: .enabled)
+        verified = explicit ?? ["ready", "verified", "passed", "available"].contains(status?.lowercased() ?? "")
+    }
+}
+
+struct AcrossPluginAchievementDescriptor: Decodable, Equatable, Identifiable {
+    let id: String
+    let displayName: String?
+    let summary: String?
+    let systemImage: String?
+    let earned: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case achievementId = "achievement_id"
+        case name
+        case displayName = "display_name"
+        case title
+        case summary
+        case description
+        case systemImage = "system_image"
+        case icon
+        case earned
+        case unlocked
+        case verified
+    }
+
+    init(
+        id: String,
+        displayName: String? = nil,
+        summary: String? = nil,
+        systemImage: String? = nil,
+        earned: Bool
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.summary = summary
+        self.systemImage = systemImage
+        self.earned = earned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decodeIfPresent(String.self, forKey: .achievementId)
+            ?? ""
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+            ?? container.decodeIfPresent(String.self, forKey: .title)
+            ?? container.decodeIfPresent(String.self, forKey: .name)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+            ?? container.decodeIfPresent(String.self, forKey: .description)
+        systemImage = try container.decodeIfPresent(String.self, forKey: .systemImage)
+            ?? container.decodeIfPresent(String.self, forKey: .icon)
+        earned = try container.decodeIfPresent(Bool.self, forKey: .earned)
+            ?? container.decodeIfPresent(Bool.self, forKey: .unlocked)
+            ?? container.decodeIfPresent(Bool.self, forKey: .verified)
+            ?? false
+    }
+}
+
 struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
     let pluginId: String
     let displayName: String
@@ -22,6 +177,7 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
     let lifecycle: AcrossPluginLifecycle?
     let compatibility: AcrossPluginCompatibility?
     let capabilities: [String: Bool]?
+    let capabilityManifest: AcrossPluginCapabilityManifest?
 
     var id: String { pluginId }
 
@@ -43,6 +199,65 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
         case lifecycle
         case compatibility
         case capabilities
+        case capabilityManifest = "capability_manifest"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let camelContainer = try? decoder.container(keyedBy: CamelCodingKeys.self)
+        pluginId = try container.decode(String.self, forKey: .pluginId)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        kind = try container.decode(String.self, forKey: .kind)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        status = try container.decode(String.self, forKey: .status)
+        installed = try container.decode(Bool.self, forKey: .installed)
+        available = try container.decode(Bool.self, forKey: .available)
+        probe = try container.decode(Bool.self, forKey: .probe)
+        manifestExists = try container.decode(Bool.self, forKey: .manifestExists)
+        manifestPath = try container.decode(String.self, forKey: .manifestPath)
+        command = try container.decode(String.self, forKey: .command)
+        commandExists = try container.decode(Bool.self, forKey: .commandExists)
+        paths = try container.decode(AcrossPluginPaths.self, forKey: .paths)
+        install = try container.decodeIfPresent(AcrossPluginInstallInfo.self, forKey: .install)
+        lifecycle = try container.decodeIfPresent(AcrossPluginLifecycle.self, forKey: .lifecycle)
+        compatibility = try container.decodeIfPresent(AcrossPluginCompatibility.self, forKey: .compatibility)
+        let capabilityMap = try? container.decodeIfPresent([String: Bool].self, forKey: .capabilities)
+        let capabilityNames = try? container.decodeIfPresent([String].self, forKey: .capabilities)
+        let capabilityEntries = try? container.decodeIfPresent([AcrossPluginCapabilityDescriptor].self, forKey: .capabilities)
+        if let capabilityMap {
+            capabilities = capabilityMap
+        } else if let capabilityNames {
+            capabilities = Dictionary(uniqueKeysWithValues: capabilityNames.map { ($0, true) })
+        } else if let capabilityEntries {
+            capabilities = Dictionary(uniqueKeysWithValues: capabilityEntries.map { ($0.id, true) })
+        } else {
+            capabilities = nil
+        }
+        let declaredManifest = try container.decodeIfPresent(AcrossPluginCapabilityManifest.self, forKey: .capabilityManifest)
+            ?? (try camelContainer?.decodeIfPresent(AcrossPluginCapabilityManifest.self, forKey: .capabilityManifest))
+        if let declaredManifest {
+            capabilityManifest = declaredManifest
+        } else if let capabilityEntries {
+            capabilityManifest = AcrossPluginCapabilityManifest(
+                capabilities: capabilityEntries.map {
+                    AcrossPluginCapabilityDescriptor(
+                        id: $0.id,
+                        displayName: $0.displayName,
+                        summary: $0.summary,
+                        systemImage: $0.systemImage,
+                        category: $0.category,
+                        status: $0.status,
+                        verified: true
+                    )
+                }
+            )
+        } else {
+            capabilityManifest = nil
+        }
+    }
+
+    private enum CamelCodingKeys: String, CodingKey {
+        case capabilityManifest
     }
 
     var supportsAgentLoopRuntime: Bool {

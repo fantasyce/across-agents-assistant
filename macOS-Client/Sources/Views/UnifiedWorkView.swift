@@ -2,11 +2,20 @@ import SwiftUI
 
 struct UnifiedWorkEmptyState: View {
     let projectName: String?
+    let projectPath: String?
     let recentTasks: [TaskOrchestrationTaskSummary]
+    let isBeginnerMissionAvailable: Bool
+    @ObservedObject var beginnerMission: BeginnerMissionViewModel
+    let beginnerGoal: String
     @ObservedObject var preferences: AppPreferences
     let onChooseProject: () -> Void
-    let onUseSuggestion: (String) -> Void
-    let onOpenTask: (String) -> Void
+    let onRunBeginnerMission: (String) -> Void
+    let onInstallBeginnerCapability: () -> Void
+    let onOpenBeginnerEvidence: () -> Void
+    let onOpenTask: (TaskOrchestrationTaskSummary) -> Void
+
+    @Environment(\.acrossWindowLayoutSize) private var windowLayoutSize
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -16,7 +25,7 @@ struct UnifiedWorkEmptyState: View {
                 Text(projectName == nil
                     ? preferences.text("work.chooseProject.title")
                     : preferences.text("work.empty.title"))
-                    .font(.system(size: 30, weight: .semibold))
+                    .font(.system(size: windowLayoutSize == .expanded ? 34 : 30, weight: .semibold))
                 Text(projectName == nil
                     ? preferences.text("work.chooseProject.subtitle")
                     : String(format: preferences.text("work.empty.subtitle"), projectName ?? ""))
@@ -31,12 +40,41 @@ struct UnifiedWorkEmptyState: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    suggestionButton(preferences.text("work.suggestion.fix"))
-                    suggestionButton(preferences.text("work.suggestion.feature"))
-                    suggestionButton(preferences.text("work.suggestion.release"))
+            } else if let visualResult = currentBeginnerVisualResult {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let requestedGoal = beginnerMission.requestedGoal {
+                        Label(requestedGoal, systemImage: "scope")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .accessibilityLabel(
+                                String(format: preferences.text("work.beginner.goalUsed"), requestedGoal)
+                            )
+                    }
+                    AcrossVisualResultOverview(
+                        contract: visualResult,
+                        preferences: preferences
+                    )
+                    HStack {
+                        Button {
+                            onRunBeginnerMission(beginnerMission.requestedGoal ?? beginnerGoal)
+                        } label: {
+                            Label(preferences.text("work.beginner.runAgain"), systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(beginnerMission.isRunning)
+
+                        Spacer()
+
+                        Button(action: onOpenBeginnerEvidence) {
+                            Label(preferences.text("work.beginner.openEvidence"), systemImage: "doc.text.magnifyingglass")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .font(.system(size: 11, weight: .medium))
                 }
+            } else {
+                beginnerMissionCard
             }
 
             if !recentTasks.isEmpty {
@@ -48,7 +86,7 @@ struct UnifiedWorkEmptyState: View {
 
                     ForEach(Array(recentTasks.prefix(3))) { task in
                         let isAccepted = task.reviewStatus == "accepted"
-                        Button { onOpenTask(task.taskId) } label: {
+                        Button { onOpenTask(task) } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: isAccepted
                                     ? "checkmark.circle.fill"
@@ -80,29 +118,103 @@ struct UnifiedWorkEmptyState: View {
 
             Spacer(minLength: 80)
         }
-        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: windowLayoutSize == .expanded ? 860 : 720, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 44)
+        .padding(.horizontal, windowLayoutSize == .expanded ? 56 : 44)
     }
 
-    private func suggestionButton(_ title: String) -> some View {
-        Button {
-            onUseSuggestion(title)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                Spacer()
-            }
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
+    private var currentBeginnerVisualResult: AcrossVisualResultContract? {
+        guard BeginnerMissionViewModel.normalizedProjectPath(projectPath) == beginnerMission.projectPath else {
+            return nil
         }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { Divider() }
+        return beginnerMission.visualResult
+    }
+
+    private var beginnerMissionCard: some View {
+        HStack(spacing: 14) {
+            PixelAtlasReward(
+                atlas: .journeyNodes,
+                index: 1,
+                isUnlocked: isBeginnerMissionAvailable
+            )
+            .frame(width: 54, height: 54)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(preferences.text("work.beginner.title"))
+                    .font(.system(size: 14, weight: .semibold))
+                Label(
+                    preferences.text("work.beginner.safety"),
+                    systemImage: "lock.shield"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+                if let goal = normalizedBeginnerGoal {
+                    Label(goal, systemImage: "scope")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityLabel(
+                            String(format: preferences.text("work.beginner.goalUsed"), goal)
+                        )
+                } else {
+                    Text(preferences.text("work.beginner.goalPrompt"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if beginnerMission.errorMessage != nil {
+                    Text(preferences.text("work.beginner.error"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            if isBeginnerMissionAvailable {
+                Button {
+                    if let goal = normalizedBeginnerGoal {
+                        onRunBeginnerMission(goal)
+                    }
+                } label: {
+                    if beginnerMission.isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label(preferences.text("work.beginner.run"), systemImage: "play.fill")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)
+                .help(normalizedBeginnerGoal == nil
+                    ? preferences.text("work.beginner.goalRequired")
+                    : preferences.text("work.beginner.run"))
+            } else {
+                Button(action: onInstallBeginnerCapability) {
+                    Label(preferences.text("work.beginner.install"), systemImage: "puzzlepiece.extension")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+        }
+        .padding(14)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(preferences.text("work.beginner.title"))
+    }
+
+    private var normalizedBeginnerGoal: String? {
+        BeginnerMissionViewModel.normalizedGoal(beginnerGoal)
     }
 }
 
@@ -157,11 +269,15 @@ struct UnifiedDeliveryView: View {
     let task: TaskOrchestrationTaskDetail?
     let isLoading: Bool
     let errorMessage: String?
+    let capabilityContract: AcrossTaskCapabilityContract? = nil
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var taskViewModel: TaskOrchestrationViewModel
     @ObservedObject var settingsViewModel: SettingsViewModel
     let defaultProjectPath: String?
     @Binding var showsTechnicalDetails: Bool
+    let onBack: () -> Void
+    let onChooseProject: () -> Void
+    let onNewWork: () -> Void
     let onAccept: () -> Void
     let onContinue: () -> Void
 
@@ -201,9 +317,11 @@ struct UnifiedDeliveryView: View {
                     phaseStrip
 
                     if let task {
-                        taskSummary(task)
                         if TaskOrchestrationStateReducers.isTerminalStatus(task.status) {
                             resultSummary(task)
+                            taskSummary(task)
+                        } else {
+                            taskSummary(task)
                         }
                     } else if isLoading {
                         ProgressView(value: progress)
@@ -230,6 +348,13 @@ struct UnifiedDeliveryView: View {
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
 
+                            if let task {
+                                RunTrustContractsView(
+                                    task: task,
+                                    preferences: preferences
+                                )
+                            }
+
                             TaskDetailPanel(
                                 viewModel: taskViewModel,
                                 settingsVM: settingsViewModel,
@@ -246,10 +371,7 @@ struct UnifiedDeliveryView: View {
                         .id("current-workflow-details")
                     }
                 }
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 36)
-                .padding(.vertical, 42)
+                .minimalPageContentFrame()
             }
             .onChange(of: showsTechnicalDetails) {
                 guard showsTechnicalDetails else { return }
@@ -261,13 +383,22 @@ struct UnifiedDeliveryView: View {
     }
 
     private var statusHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(headline)
-                .font(.system(size: 28, weight: .semibold))
-            Text(subheadline)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        MinimalPageHeader(title: headline, subtitle: subheadline) {
+            MinimalIconButton(
+                systemName: "chevron.left",
+                label: preferences.text("work.back"),
+                action: onBack
+            )
+            MinimalIconButton(
+                systemName: "folder",
+                label: preferences.text("project.useExisting"),
+                action: onChooseProject
+            )
+            MinimalIconButton(
+                systemName: "plus",
+                label: preferences.text("work.new"),
+                action: onNewWork
+            )
         }
     }
 
@@ -303,6 +434,16 @@ struct UnifiedDeliveryView: View {
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let summaryLine = AcrossTaskCapabilityPresentation(
+                task: task,
+                capabilityContract: capabilityContract
+            ).summaryLine {
+                Text(summaryLine)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
 
@@ -324,27 +465,18 @@ struct UnifiedDeliveryView: View {
     }
 
     private func resultSummary(_ task: TaskOrchestrationTaskDetail) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: isSuccessful ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(isSuccessful ? Color.green : Color.orange)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(isSuccessful
-                        ? preferences.text(isAccepted ? "work.result.accepted" : "work.result.ready")
-                        : preferences.text("work.result.needsAttention"))
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(resultDetail(task))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        let presentation = AcrossTaskCapabilityPresentation(
+            task: task,
+            capabilityContract: capabilityContract
+        )
+        return VStack(alignment: .leading, spacing: 16) {
+            AcrossVisualResultOverview(
+                contract: AcrossVisualResultFactory.make(task: task),
+                preferences: preferences
+            )
 
             HStack(spacing: 10) {
-                if isAccepted {
-                    detailsButton
-                } else {
+                if !isAccepted, presentation.requiredDecisions.isEmpty {
                     if isSuccessful {
                         Button(action: onAccept) {
                             if taskViewModel.isAcceptingTask {
@@ -355,11 +487,12 @@ struct UnifiedDeliveryView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(taskViewModel.isAcceptingTask)
+                    } else {
+                        Button(preferences.text("work.repair"), action: onContinue)
+                            .buttonStyle(.borderedProminent)
                     }
-                    Button(preferences.text(isSuccessful ? "work.continue" : "work.repair"), action: onContinue)
-                        .buttonStyle(.bordered)
-                    detailsButton
                 }
+                detailsButton
             }
         }
     }

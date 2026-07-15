@@ -48,7 +48,7 @@ struct AppleMinimalUIContractTests {
         #expect(settings.contains("ForEach(SettingsHubCategory.allCases)"))
         #expect(settings.contains("switch selectedCategory"))
         #expect(settings.contains("settingsNavigationRow(category)"))
-        #expect(settings.contains("AcrossTheme.sidebarFill(for: colorScheme)"))
+        #expect(settings.contains(".background(.bar)"))
         #expect(settings.contains("AcrossTheme.selectedFill(for: colorScheme)"))
         #expect(!settings.contains("List(selection:"))
 
@@ -57,6 +57,81 @@ struct AppleMinimalUIContractTests {
             Self.slice(plugins, from: "var body: some View", to: "private var standaloneHeader")
         )
         #expect(!pluginBody.contains("memorySection"))
+        #expect(plugins.contains("plugins.action.get"))
+        #expect(plugins.contains("viewModel.runAction(\"install\", for: plugin)"))
+        #expect(plugins.contains("viewModel.activePluginID == plugin.pluginId"))
+        #expect(plugins.contains("ProgressView()"))
+        #expect(plugins.contains(".accessibilityLabel(Text(title))"))
+        #expect(plugins.contains(".accessibilityLabel(Text(appPreferences.text(\"settings.refresh\")))"))
+        #expect(plugins.contains(".accessibilityLabel(Text(appPreferences.text(\"plugins.loop.probe\")))"))
+        #expect(!plugins.contains(".filter { !$0.installed || !$0.available }"))
+    }
+
+    @Test
+    func settingsAndWorkDetailsShareTheMainPageChrome() throws {
+        let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
+        let settingsHeader = try Self.source("macOS-Client/Sources/Views/MinimalSettingsComponents.swift")
+        let chat = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let assistHeaderCondition = try #require(
+            Self.slice(chat, from: "private var shouldShowAssistHeader", to: "@ViewBuilder\n    var contentArea")
+        )
+
+        #expect(settings.contains("private var windowControls"))
+        #expect(!settings.contains("private var header: some View"))
+        #expect(settings.contains(".background(.bar)"))
+        #expect(settings.contains("WindowDragView()"))
+        #expect(settings.contains(".minimalPageContentFrame()"))
+        #expect(settingsHeader.contains("windowLayoutSize == .expanded ? 32 : 28"))
+        #expect(!assistHeaderCondition.contains("selectedTask"))
+        #expect(work.contains("MinimalPageHeader(title: headline, subtitle: subheadline)"))
+        #expect(work.contains("systemName: \"chevron.left\""))
+        #expect(work.contains("systemName: \"folder\""))
+        #expect(work.contains("systemName: \"plus\""))
+
+        for path in [
+            "macOS-Client/Sources/Views/ModelSettingsView.swift",
+            "macOS-Client/Sources/Views/PluginLifecycleView.swift",
+            "macOS-Client/Sources/Views/MCPPreferencesView.swift",
+            "macOS-Client/Sources/Views/AgentCapabilitiesView.swift",
+            "macOS-Client/Sources/Views/ToolPermissionsView.swift",
+            "macOS-Client/Sources/Views/StartupDiagnosticsView.swift",
+        ] {
+            #expect(try Self.source(path).contains(".minimalPageContentFrame()"))
+        }
+    }
+
+    @Test
+    func sidebarsUseSpacingInsteadOfHorizontalSectionRules() throws {
+        let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+        let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
+        let mainSidebar = try #require(
+            Self.slice(sidebar, from: "var leftSidebar: some View", to: "private var contextDrawerLabel")
+        )
+        let settingsShell = try #require(
+            Self.slice(settings, from: "var body: some View", to: "private var windowControls")
+        )
+
+        #expect(!mainSidebar.contains("Divider()"))
+        #expect(!settingsShell.contains("Divider()"))
+        #expect(mainSidebar.contains("projectChatSidebar"))
+        #expect(settingsShell.contains("navigationSidebar"))
+    }
+
+    @Test
+    func selectedWorkTracksTheActiveProject() throws {
+        let mainPanel = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+        let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+        let session = try Self.source("macOS-Client/Sources/ViewModels/SessionViewModel.swift")
+        let tasks = try Self.source("macOS-Client/Sources/ViewModels/TaskOrchestrationViewModel.swift")
+
+        #expect(mainPanel.contains("onChange(of: viewModel.activeProjectPath)"))
+        #expect(mainPanel.contains("onChange(of: taskOrchestrationViewModel.selectedTask?.projectDir)"))
+        #expect(sidebar.contains("updateProjectDirectoryFilter(project.path)"))
+        #expect(session.contains("func activateProject(matchingDirectory directory: String?)"))
+        #expect(tasks.contains("func updateProjectDirectoryFilter"))
+        #expect(tasks.contains("enterWorkflowPicker()"))
+        #expect(tasks.contains("URLQueryItem(name: \"project_dir\""))
     }
 
     @Test
@@ -77,8 +152,12 @@ struct AppleMinimalUIContractTests {
         #expect(!memory.contains("private var improveBar"))
         #expect(loop.contains("MinimalPageHeader("))
         #expect(loop.contains(".minimalPageContentFrame()"))
+        #expect(loop.contains("@State private var showsTechnicalEvidence = false"))
+        #expect(loop.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"))
         #expect(loop.contains("minHeight: 220, maxHeight: 220"))
         #expect(loop.contains(".truncationMode(.tail)"))
+        #expect(!loop.contains("if let endpoint = action.endpoint"))
+        #expect(!loop.contains("if let endpoint = section.endpoint"))
         #expect(workflows.contains(".minimalPageContentFrame(bottomPadding: 8)"))
         #expect(growth.contains("MinimalPageHeader("))
         #expect(growth.contains(".minimalPageContentFrame()"))
@@ -90,11 +169,96 @@ struct AppleMinimalUIContractTests {
         let mainPanel = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
         let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
         let toolbar = try Self.source("macOS-Client/Sources/Views/MainPanelToolbar.swift")
+        let shared = try Self.source("macOS-Client/Sources/Views/SharedUIComponents.swift")
 
         #expect(app.contains(".windowStyle(.hiddenTitleBar)"))
         #expect(app.contains(".fullSizeContentView"))
         #expect(mainPanel.contains("TrafficLightHider()"))
         #expect(sidebar.contains("WindowDragView()") || toolbar.contains("WindowDragView()"))
+        #expect(shared.contains("accessibilityDisplayShouldReduceMotion"))
+        #expect(shared.contains("preferences.reduceMotion"))
+        #expect(shared.contains("animate: shouldAnimate"))
+    }
+
+    @Test
+    func mainWindowAndDetailPagesShareTheIntendedGeometry() throws {
+        let app = try Self.source("macOS-Client/Sources/AcrossAgentsAssistantApp.swift")
+        let mainPanel = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+        let windowSupport = try Self.source("macOS-Client/Sources/Views/MainPanelWindowSupport.swift")
+        let shared = try Self.source("macOS-Client/Sources/Views/SharedUIComponents.swift")
+        let workflowComponents = try Self.source("macOS-Client/Sources/Views/MinimalWorkflowComponents.swift")
+        let workflows = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let simpleStart = try Self.source("macOS-Client/Sources/Views/TaskWorkflowStartViews.swift")
+
+        #expect(app.contains("contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800)"))
+        #expect(app.contains(".defaultSize(width: 1280, height: 800)"))
+        #expect(mainPanel.contains("idealWidth: 1280, minHeight: 640, idealHeight: 800"))
+        #expect(windowSupport.contains("height: min(800, screenFrame.height)"))
+        #expect(windowSupport.contains("isLegacyDefaultSize"))
+        #expect(windowSupport.contains("abs(window.frame.height - 820) <= 2"))
+        #expect(!app.contains("height: 820"))
+
+        #expect(shared.contains("static let topContentPadding: CGFloat = 36"))
+        #expect(workflowComponents.contains("topPadding: CGFloat = SettingsHubPageLayout.topContentPadding"))
+        #expect(workflowComponents.contains("if let backLabel"))
+        #expect(workflows.contains("backLabel: destination == .home ? nil"))
+        #expect(workflows.contains(".minimalPageContentFrame(topPadding: 12)"))
+        #expect(work.contains(".minimalPageContentFrame()"))
+        #expect(!work.contains(".frame(maxWidth: 760"))
+        #expect(simpleStart.contains(".minimalPageContentFrame(topPadding: 12)"))
+    }
+
+    @Test
+    func workComposerExposesAnAccessibleLabelAndDoesNotTrapTabFocus() throws {
+        let editor = try Self.source("macOS-Client/Sources/Views/MacEditorView.swift")
+        let chat = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+
+        #expect(editor.contains("textView.setAccessibilityLabel(accessibilityLabel)"))
+        #expect(editor.contains("event.keyCode == 48"))
+        #expect(editor.contains("window?.selectNextKeyView(self)"))
+        #expect(editor.contains("window?.selectPreviousKeyView(self)"))
+        #expect(chat.contains("accessibilityLabel: inputPlaceholder"))
+    }
+
+    @Test
+    func primaryNavigationAndComposerControlsJoinTheKeyboardFocusChain() throws {
+        let navigation = try Self.source("macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift")
+        let toolbar = try Self.source("macOS-Client/Sources/Views/MainPanelToolbarControls.swift")
+        let assistant = try Self.source("macOS-Client/Sources/Views/MinimalAssistantComponents.swift")
+        let composer = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+
+        #expect(navigation.contains(".focusable(true)"))
+        #expect(navigation.contains(".focused($focusedSurface"))
+        #expect(navigation.contains(".focusEffectDisabled()"))
+        #expect(!toolbar.contains(".focusable(!isDisabled)"))
+        #expect(assistant.contains("action: onToggleMute\n            )\n            .focusable(true)"))
+        #expect(composer.contains(".toggleStyle(.checkbox)\n                        .focusable(true)"))
+    }
+
+    @Test
+    func selectionUsesFillWithoutBlueFocusBorders() throws {
+        let app = try Self.source("macOS-Client/Sources/AcrossAgentsAssistantApp.swift")
+        let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
+        let navigation = try Self.source("macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift")
+        let design = try Self.source("macOS-Client/Sources/Views/AcrossDesignSystem.swift")
+        let agents = try Self.source("macOS-Client/Sources/Views/AgentIdentityComponents.swift")
+        let tasks = try Self.source("macOS-Client/Sources/Views/TaskFormViews.swift")
+        let plugins = try Self.source("macOS-Client/Sources/Views/PluginLifecycleView.swift")
+        let diffReview = try Self.source("macOS-Client/Sources/Views/WorkspaceDiffReviewView.swift")
+        let capabilities = try Self.source("macOS-Client/Sources/Views/AgentCapabilitiesView.swift")
+
+        #expect(app.contains(".focusEffectDisabled()"))
+        #expect(settings.contains(".focusEffectDisabled()"))
+        #expect(settings.contains(".focused($focusedCategory"))
+        #expect(navigation.contains(".focused($focusedSurface"))
+        #expect(navigation.contains("AcrossTheme.hoverFill(for: colorScheme)"))
+        #expect(!design.contains("focusRing(for"))
+        #expect(!agents.contains(".stroke(isSelected ? AcrossTheme.accent"))
+        #expect(!tasks.contains(".stroke(selectedDeliveryTaskTypes.contains(type) ? AcrossTheme.accent"))
+        #expect(!plugins.contains(".stroke(isHighlighted ? accentColor"))
+        #expect(!diffReview.contains(".stroke(AcrossTheme.accent"))
+        #expect(!capabilities.contains(".stroke(accentColor"))
     }
 
     @Test
@@ -106,6 +270,22 @@ struct AppleMinimalUIContractTests {
                 "System \(button) must be hidden"
             )
         }
+    }
+
+    @Test
+    func memoryBatchActionsExposeProgressAndSemanticColors() throws {
+        let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
+        let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
+        let lifecycle = try Self.source("macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift")
+
+        #expect(memory.contains("memoryBatchCompletedCount"))
+        #expect(memory.contains("memory.bulk.archiving"))
+        #expect(memory.contains(".tint(AcrossTheme.accent)"))
+        #expect(memory.contains(".tint(.red)"))
+        #expect(review.contains(".tint(.red)"))
+        #expect(lifecycle.contains("memoryBatchTotalCount = memories.count"))
+        #expect(lifecycle.contains("memoryBatchCompletedCount = index + 1"))
+        #expect(lifecycle.contains("AcrossMemoryMutationResponse.self"))
     }
 
     @Test
@@ -198,6 +378,7 @@ struct AppleMinimalUIContractTests {
         let toolbar = try Self.source("macOS-Client/Sources/Views/MainPanelToolbar.swift")
         let unifiedWork = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
         let shell = try Self.source("macOS-Client/Sources/Views/OperationsWorkbenchShell.swift")
+        let loop = try Self.source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
         let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
         let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
         let protectedDelivery = try #require(
@@ -235,14 +416,33 @@ struct AppleMinimalUIContractTests {
         #expect(unifiedWork.contains("TaskDetailPanel("))
         #expect(!protectedDelivery.contains("showTaskOrchestration = true"))
         #expect(protectedDelivery.contains("acceptTaskResult"))
-        #expect(shell.contains("AutopilotWorkbenchView()"))
+        #expect(chat.contains("AutopilotEvidenceTarget("))
+        #expect(chat.contains("autopilotEvidenceTarget = target"))
+        #expect(chat.contains("selectedOperationsSurface = .autopilot"))
+        #expect(mainPanel.contains("if selectedOperationsSurface != .autopilot"))
+        #expect(mainPanel.contains("autopilotEvidenceTarget = nil"))
+        #expect(shell.contains("AutopilotWorkbenchView(evidenceTarget: autopilotEvidenceTarget)"))
+        #expect(loop.contains(".task(id: evidenceTarget)"))
+        #expect(loop.contains("await evidenceViewModel.load(target: evidenceTarget)"))
+        #expect(loop.contains("@State private var showsFocusedEvidenceDetails = false"))
+        let focusedDisclosure = loop.range(of: "DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails)")
+        let focusedRunID = loop.range(of: "Text(target.runID)")
+        #expect(focusedDisclosure != nil)
+        #expect(focusedRunID != nil)
+        if let focusedDisclosure, let focusedRunID {
+            #expect(focusedRunID.lowerBound > focusedDisclosure.lowerBound)
+        }
         #expect(!shell.contains("onOpenAutopilotDetails"))
         #expect(shell.contains("status: \"active\""))
         #expect(!memory.contains("memory.openCenter"))
         #expect(memory.contains("librarySection"))
         #expect(memory.contains("memory.bulk.approve"))
         #expect(memory.contains("memory.bulk.archive"))
+        #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .approve)"))
+        #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .archive)"))
         #expect(review.contains("review.memory.approve.short"))
+        #expect(review.contains("AcrossReviewActionButtonStyle(kind: .approve)"))
+        #expect(review.contains("AcrossReviewActionButtonStyle(kind: .archive)"))
         #expect(review.contains("ProgressView()"))
 
         let models = try Self.source("macOS-Client/Sources/Views/ModelSettingsView.swift")
@@ -264,6 +464,7 @@ struct AppleMinimalUIContractTests {
 
         #expect(!runs.contains("NavigationSplitView"))
         #expect(!review.contains("NavigationSplitView"))
+        #expect(review.contains("review.count.one"))
         #expect(!project.contains("NavigationSplitView"))
         #expect(project.contains("HSplitView"))
         #expect(!runs.contains(".searchable(text: $searchText, placement: .sidebar"))
@@ -275,6 +476,27 @@ struct AppleMinimalUIContractTests {
         #expect(runs.contains(".onTapGesture { setRunHistoryVisible(false) }"))
         #expect(review.contains(".onTapGesture { setInboxVisible(false) }"))
         #expect(runs.contains("setRunHistoryVisible(false)"))
+    }
+
+    @Test
+    func freshProfileFirstMissionConsumesTheTypedGoalWithoutAnAgent() throws {
+        let main = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+        let chat = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+        let actions = try Self.source("macOS-Client/Sources/Views/MainPanelActions.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+
+        #expect(main.contains("canUseBeginnerMissionInput"))
+        #expect(main.contains("canUseAgentFeatures || canUseBeginnerMissionInput"))
+        #expect(main.contains("shouldUseInputForBeginnerMission"))
+        #expect(chat.contains("case .empty:"))
+        #expect(chat.contains("productProgress.isUnlocked(.selfIteration)"))
+        #expect(chat.contains("beginnerGoal: viewModel.inputText"))
+        #expect(chat.contains("userGoal: goal"))
+        #expect(actions.contains("if shouldUseInputForBeginnerMission"))
+        #expect(actions.contains("if !canUseAgentFeatures"))
+        #expect(actions.contains("runBeginnerMission(text)"))
+        #expect(work.contains("normalizedBeginnerGoal"))
+        #expect(work.contains("work.beginner.goalPrompt"))
     }
 
     private static var repositoryRoot: URL {

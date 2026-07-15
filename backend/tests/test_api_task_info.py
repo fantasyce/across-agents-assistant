@@ -282,6 +282,55 @@ def test_task_page_route_returns_lightweight_summaries(monkeypatch, tmp_path):
     assert result.tasks[0].task_id == "task-page-1"
 
 
+def test_task_page_route_filters_by_project_directory(monkeypatch, tmp_path):
+    import asyncio
+    import across_agents_assistant.api_server as api_server
+
+    project_dir = tmp_path / "project-a"
+    project_dir.mkdir()
+
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=50, offset=0, project_dir=None):
+            assert limit == 50
+            assert offset == 0
+            assert project_dir == str(project_dir_path.resolve())
+            return ([{
+                "task_id": "task-project-a",
+                "description": "Project-scoped task",
+                "status": "completed",
+                "progress": 1.0,
+                "completed_count": 1,
+                "total_count": 1,
+                "created_at": 1.0,
+                "updated_at": 2.0,
+                "project_dir": str(project_dir_path),
+                "owner_agent": "auto",
+                "delivery_mode": "artifact",
+            }], 1)
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    class FakeOrchestratorManager:
+        def list_task_summaries(self):
+            return [{
+                "task_id": "task-other-project",
+                "project_dir": str(tmp_path / "project-b"),
+            }]
+
+    project_dir_path = project_dir
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeOrchestratorManager())
+
+    result = asyncio.run(api_server.list_task_summaries(project_dir=str(project_dir)))
+
+    assert result.total == 1
+    assert [task.task_id for task in result.tasks] == ["task-project-a"]
+
+
 def test_task_page_route_normalizes_passed_delivery_progress(monkeypatch, tmp_path):
     import asyncio
     import across_agents_assistant.api_server as api_server
@@ -860,6 +909,39 @@ def test_task_summaries_use_business_subtask_counts(tmp_path):
     assert rows[0]["completed_count"] == 1
     assert rows[0]["total_count"] == 2
     assert rows[0]["progress"] == 0.5
+
+
+def test_task_summaries_filter_project_and_descendants(tmp_path):
+    from across_agents_assistant.persistence.database import Database
+    from across_agents_assistant.persistence.task_persistence import TaskPersistenceService
+
+    db = Database(str(tmp_path / "assistant.db"))
+    db.init_schema()
+    persistence = TaskPersistenceService(db)
+    project_root = tmp_path / "project-a"
+
+    for task_id, project_dir in [
+        ("task-root", project_root),
+        ("task-child", project_root / "packages" / "client"),
+        ("task-other", tmp_path / "project-b"),
+    ]:
+        persistence.save_task({
+            "task_id": task_id,
+            "description": task_id,
+            "status": "completed",
+            "project_dir": str(project_dir),
+            "created_at": 1.0,
+            "updated_at": 2.0,
+        })
+
+    rows, total = persistence.get_task_summaries(
+        limit=50,
+        offset=0,
+        project_dir=str(project_root),
+    )
+
+    assert total == 2
+    assert {row["task_id"] for row in rows} == {"task-root", "task-child"}
 
 
 def test_db_quality_health_derives_delivery_quality_from_owner_contract(tmp_path):

@@ -13,10 +13,17 @@ trap cleanup EXIT
 echo "== AppPreferencesBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/AppPreferencesBehavior.swift \
+  macOS-Client/Sources/Utils/AppUserDefaults.swift \
+  macOS-Client/Tests/StandaloneLocalAppPathsStub.swift \
   macOS-Client/Sources/Models/AppPreferences.swift \
   macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
   macOS-Client/Sources/Models/PluginLifecycleModels.swift \
   macOS-Client/Sources/Models/ProductCapabilityModels.swift \
+  macOS-Client/Sources/Models/AcrossLearningProgressModels.swift \
+  macOS-Client/Sources/Models/AcrossVisualResultModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
   macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
   -o "$TMP_DIR/AppPreferencesBehavior"
 "$TMP_DIR/AppPreferencesBehavior"
@@ -24,9 +31,12 @@ swiftc -parse-as-library \
 echo "== PluginLifecycleBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/PluginLifecycleBehavior.swift \
+  macOS-Client/Tests/StandaloneLocalAppPathsStub.swift \
   macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
   macOS-Client/Sources/Models/PluginLifecycleModels.swift \
   macOS-Client/Sources/Models/ProductCapabilityModels.swift \
+  macOS-Client/Sources/Models/AcrossLearningProgressModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
   macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
   -o "$TMP_DIR/PluginLifecycleBehavior"
 "$TMP_DIR/PluginLifecycleBehavior"
@@ -126,5 +136,76 @@ swiftc -parse-as-library \
   macOS-Client/Tests/AppleMinimalUIBehavior.swift \
   -o "$TMP_DIR/AppleMinimalUIBehavior"
 "$TMP_DIR/AppleMinimalUIBehavior"
+
+echo "== VisualResultBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/VisualResultBehavior.swift \
+  macOS-Client/Sources/Models/AcrossVisualResultModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
+  -o "$TMP_DIR/VisualResultBehavior"
+"$TMP_DIR/VisualResultBehavior"
+
+echo "== LearningProgressBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/LearningProgressBehavior.swift \
+  macOS-Client/Tests/StandaloneLocalAppPathsStub.swift \
+  macOS-Client/Sources/Models/AcrossLearningProgressModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/ProductCapabilityModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  -o "$TMP_DIR/LearningProgressBehavior"
+"$TMP_DIR/LearningProgressBehavior"
+
+echo "== BeginnerMissionBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/BeginnerMissionBehavior.swift \
+  macOS-Client/Sources/ViewModels/BeginnerMissionViewModel.swift \
+  macOS-Client/Sources/Models/AcrossVisualResultModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
+  -o "$TMP_DIR/BeginnerMissionBehavior"
+"$TMP_DIR/BeginnerMissionBehavior"
+
+echo "== RunTrustContractsBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/RunTrustContractsBehavior.swift \
+  macOS-Client/Sources/ViewModels/RunTrustContractsViewModel.swift \
+  macOS-Client/Sources/Models/AcrossVisualResultModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
+  -o "$TMP_DIR/RunTrustContractsBehavior"
+"$TMP_DIR/RunTrustContractsBehavior"
+
+echo "== SpeechRecognitionBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/SpeechRecognitionBehavior.swift \
+  macOS-Client/Sources/Utils/SpeechRecognitionService.swift \
+  -framework AVFoundation \
+  -o "$TMP_DIR/SpeechRecognitionBehavior"
+"$TMP_DIR/SpeechRecognitionBehavior"
+
+echo "== TTSEngineVoiceSelectionBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/TTSEngineVoiceSelectionBehavior.swift \
+  macOS-Client/Sources/Utils/AppUserDefaults.swift \
+  macOS-Client/Tests/StandaloneLocalAppPathsStub.swift \
+  macOS-Client/Sources/Models/AppPreferences.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/PluginLifecycleModels.swift \
+  macOS-Client/Sources/Models/ProductCapabilityModels.swift \
+  macOS-Client/Sources/Models/AcrossLearningProgressModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift \
+  macOS-Client/Sources/Utils/TTSEngine.swift \
+  -o "$TMP_DIR/TTSEngineVoiceSelectionBehavior"
+"$TMP_DIR/TTSEngineVoiceSelectionBehavior"
 
 echo "Swift behavior checks passed."

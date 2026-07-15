@@ -42,6 +42,42 @@ def test_parallel_planning_leaves_dependencies_empty():
     assert subtasks == []
 
 
+def test_multiple_lines_in_same_wave_have_unique_ids_and_wave_dependencies():
+    req = ExternalTaskPlanningRequest(
+        description="\n".join(
+            [
+                "Wave 1 Contract: create docs/contract.json.",
+                "Wave 1 Architecture: create docs/architecture.md.",
+                "Wave 2 API: create api/server.mjs.",
+                "Wave 2 Schema: create api/schema.json.",
+                "Wave 3 UI: create web/index.html.",
+            ]
+        ),
+        allowed_subtask_agents=["claude", "codex"],
+        strict_dependency=True,
+    )
+
+    deliverables = deliverables_for_external_task(req)
+    subtasks = planned_subtasks_for_external_task(req, deliverables)
+
+    assert [item["id"] for item in subtasks] == [
+        "wave-1-1",
+        "wave-1-2",
+        "wave-2-1",
+        "wave-2-2",
+        "wave-3-1",
+    ]
+    assert [item["dependencies"] for item in subtasks] == [
+        [],
+        [],
+        ["wave-1-1", "wave-1-2"],
+        ["wave-1-1", "wave-1-2"],
+        ["wave-2-1", "wave-2-2"],
+    ]
+    assert len({item["id"] for item in subtasks}) == len(subtasks)
+    assert all(item["id"] not in item["dependencies"] for item in subtasks)
+
+
 def test_negative_guidance_does_not_erase_explicit_artifact_in_prior_clause():
     req = ExternalTaskPlanningRequest(
         description=(
@@ -95,6 +131,53 @@ def test_real_agent_selection_declares_aaa_host_command_adapters():
             "--agent",
             agent_id,
         ]
+
+
+def test_kimi_host_adapter_declares_only_required_runtime_state_paths():
+    req = ExternalTaskPlanningRequest(
+        description="Build a dashboard",
+        owner_agent="kimi",
+        allowed_subtask_agents=["claude"],
+    )
+
+    adapters = agent_adapters_for_external_task(req)
+
+    assert adapters["kimi"]["command"][-2:] == ["--timeout", "1200"]
+    assert adapters["kimi"]["sandboxPolicy"]["network_policy"] == "adapter_scoped"
+    assert adapters["kimi"]["sandboxPolicy"]["execution"] == {
+        "timeout_seconds": 90,
+        "refresh_timeout_on_output": True,
+        "max_wall_timeout_seconds": 1200,
+    }
+    filesystem_policy = adapters["kimi"]["sandboxPolicy"]["filesystem_policy"]
+    assert filesystem_policy["runtime_state_roots"] == [
+        "~/.kimi-code/logs",
+        "~/.kimi-code/sessions",
+        "~/.kimi-code/telemetry",
+        "~/.kimi-code/updates",
+        "~/.kimi-code/user-history",
+    ]
+    assert filesystem_policy["runtime_state_files"] == ["~/.kimi-code/session_index.jsonl"]
+    assert "~/.kimi-code" not in filesystem_policy["runtime_state_roots"]
+    assert "~/.kimi-code/config.toml" not in filesystem_policy["runtime_state_files"]
+    assert "sandboxPolicy" not in adapters["claude"]
+    assert adapters["claude"]["command"][-1] == "claude"
+
+
+def test_kimi_packaged_host_command_has_explicit_timeout(monkeypatch):
+    import across_agents_assistant.external_task_planning as planning
+
+    monkeypatch.setattr(planning.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(planning.sys, "executable", "/Applications/AAA/backend")
+
+    assert host_agent_adapter_command("Kimi") == [
+        "/Applications/AAA/backend",
+        "orchestrator-agent-adapter",
+        "--agent",
+        "kimi",
+        "--timeout",
+        "1200",
+    ]
 
 
 def test_packaged_host_agent_adapter_command_uses_backend_subcommand(monkeypatch):

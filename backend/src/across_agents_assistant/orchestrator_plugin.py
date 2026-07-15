@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import atexit
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,12 @@ import urllib.request
 import uuid
 
 from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .managed_plugin_payloads import (
+    ManagedPluginPayloadError,
+    bundled_install_source,
+    install_native_plugin_executable,
+    plugin_payload,
+)
 from .runtime_boundary import (
     contains_protected_user_reference,
     expand_user,
@@ -46,7 +53,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.8.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
@@ -128,6 +135,17 @@ def _is_executable_file(path: Optional[str]) -> bool:
         return False
     candidate = Path(str(path)).expanduser()
     return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -397,7 +415,7 @@ class OrchestratorPluginConfig:
 
 
 class OrchestratorPluginInstaller:
-    """Installs Across Orchestrator into an app-managed Python virtualenv."""
+    """Installs the bundled runtime, with a Python-venv fallback for development."""
 
     def __init__(
         self,
@@ -412,7 +430,16 @@ class OrchestratorPluginInstaller:
         self.bin_dir = self.plugin_home.parent / "bin" if plugin_home else ecosystem_bin_dir()
         self.source = source or DEFAULT_ORCHESTRATOR_INSTALL_SOURCE
         self.runner = runner
-        self.python_executable = _resolve_python_executable(python_executable)
+        try:
+            payload = plugin_payload(ORCHESTRATOR_PLUGIN_ID)
+        except ManagedPluginPayloadError:
+            payload = None
+        self._bundled_payload = payload if payload and payload.get("runtime") == "native" else None
+        self.python_executable = (
+            ""
+            if self._bundled_payload is not None
+            else _resolve_python_executable(python_executable)
+        )
         self.timeout = timeout
         self.install_dir = self.plugin_home / ORCHESTRATOR_PLUGIN_ID
         self.venv_dir = self.install_dir / "venv"
@@ -437,13 +464,14 @@ class OrchestratorPluginInstaller:
             "installed": installed,
             "wrapper_installed": wrapper_installed,
             "installable": True,
-            "source": actual_source or str(state.get("source") or self.source),
+            "source": actual_source or str(state.get("source") or self._install_source()),
             "install_dir": str(self.install_dir),
             "venv_dir": str(self.venv_dir),
             "command": str(self.command_path),
             "wrapper": str(self.wrapper_path),
             "manifest": str(self.manifest_path),
-            "python": self.python_executable,
+            "python": state.get("python") or self.python_executable or None,
+            "runtime": state.get("runtime") or ("bundled_native" if self._bundled_payload else "python_venv"),
             "integrity_ok": not integrity_issues,
             "integrity_issues": integrity_issues,
             "logs": list(state.get("logs") or [])[-20:],
@@ -454,15 +482,21 @@ class OrchestratorPluginInstaller:
     def install(self) -> Dict[str, Any]:
         logs: List[str] = []
         self.install_dir.mkdir(parents=True, exist_ok=True)
-        logs.append(f"Using Python: {self.python_executable}")
+        if self._bundled_payload is not None:
+            logs.append("Using app-bundled Across Orchestrator runtime")
+        else:
+            logs.append(f"Using Python: {self.python_executable}")
         self._write_state({"status": "installing", "logs": logs, "updated_at": time.time()})
 
         try:
             self._remove_stale_runtime_artifacts(logs)
-            self._run([self.python_executable, "-m", "venv", str(self.venv_dir)], logs, "Create virtualenv")
-            venv_python = str(self.venv_dir / "bin" / "python")
-            self._run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], logs, "Upgrade pip")
-            self._run([venv_python, "-m", "pip", "install", "--upgrade", self.source], logs, "Install Across Orchestrator")
+            if self._bundled_payload is not None:
+                self._install_bundled_runtime(logs)
+            else:
+                self._run([self.python_executable, "-m", "venv", str(self.venv_dir)], logs, "Create virtualenv")
+                venv_python = str(self.venv_dir / "bin" / "python")
+                self._run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], logs, "Upgrade pip")
+                self._run([venv_python, "-m", "pip", "install", "--upgrade", self.source], logs, "Install Across Orchestrator")
 
             if not (self.command_path.is_file() and os.access(self.command_path, os.X_OK)):
                 raise OrchestratorPluginError(
@@ -474,10 +508,13 @@ class OrchestratorPluginInstaller:
             state = {
                 "status": "installed",
                 "logs": logs,
-                "source": self.source,
+                "source": self._install_source(),
                 "command": str(self.command_path),
                 "wrapper": str(self.wrapper_path),
                 "manifest": str(self.manifest_path),
+                "python": self.python_executable or None,
+                "runtime": "bundled_native" if self._bundled_payload else "python_venv",
+                "sha256": str((self._bundled_payload or {}).get("sha256") or "") or None,
                 "updated_at": time.time(),
             }
             self._write_state(state)
@@ -489,12 +526,25 @@ class OrchestratorPluginInstaller:
                 {
                     "status": "failed",
                     "logs": logs,
-                    "source": self.source,
+                    "source": self._install_source(),
                     "error": ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE,
                     "updated_at": time.time(),
                 }
             )
             raise
+
+    def _install_source(self) -> str:
+        return bundled_install_source(ORCHESTRATOR_PLUGIN_ID) or self.source
+
+    def _install_bundled_runtime(self, logs: List[str]) -> None:
+        try:
+            install_native_plugin_executable(
+                ORCHESTRATOR_PLUGIN_ID,
+                self.command_path,
+            )
+        except ManagedPluginPayloadError as exc:
+            raise OrchestratorPluginError("Bundled Across Orchestrator runtime is invalid") from exc
+        logs.append("Install verified bundled Across Orchestrator executable")
 
     def _remove_stale_runtime_artifacts(self, logs: List[str]) -> None:
         stale_dirs = [
@@ -592,6 +642,11 @@ class OrchestratorPluginInstaller:
 
         issues.extend(self._source_tree_integrity_issues())
 
+        if self._bundled_payload is not None and self.command_path.is_file():
+            expected = str(self._bundled_payload.get("sha256") or "")
+            if expected and _sha256_file(self.command_path) != expected:
+                issues.append("bundled Across Orchestrator executable checksum mismatch")
+
         return issues
 
     def _source_tree_integrity_issues(self) -> List[str]:
@@ -613,6 +668,8 @@ class OrchestratorPluginInstaller:
 
     def _text_file_integrity_issues(self, path: Path, install_root: Path, venv_root: Path) -> List[str]:
         try:
+            if path.stat().st_size > 64 * 1024:
+                return []
             text = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             return []
@@ -788,6 +845,8 @@ class OrchestratorPluginManager:
         self._transport: Optional[str] = None
         self._endpoint: Optional[str] = None
         self._sidecar_process: Optional[subprocess.Popen] = None
+        self._sidecar_lock = threading.Lock()
+        self._sidecar_retry_after = 0.0
         self._sidecar_runtime_id = f"aaa-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         atexit.register(self.shutdown)
 
@@ -796,6 +855,10 @@ class OrchestratorPluginManager:
         install_status = self.install_status()
         managed_runtime_blocked = self._managed_runtime_integrity_blocks_external(install_status)
         command_path = None if managed_runtime_blocked else self._resolve_command()
+        managed_runtime_requires_sidecar = self._managed_runtime_requires_sidecar(
+            install_status,
+            command_path,
+        )
         base: Dict[str, Any] = {
             "mode": mode,
             "implementation": "external",
@@ -868,6 +931,17 @@ class OrchestratorPluginManager:
                     }
             except Exception:
                 logger.info("External Across Orchestrator sidecar probe failed", exc_info=True)
+                if managed_runtime_requires_sidecar:
+                    return {
+                        **base,
+                        "implementation": "external",
+                        "available": False,
+                        "transport": "http",
+                        "command": command_path,
+                        "command_available": True,
+                        "connection_note": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
+                        "error": ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE,
+                    }
 
             try:
                 card = self._cli_json(["agent-card", "--json"]) if probe else {}
@@ -918,10 +992,28 @@ class OrchestratorPluginManager:
             return False
         return command == "across-orchestrator"
 
+    def _managed_runtime_requires_sidecar(
+        self,
+        install_status: Dict[str, Any],
+        command_path: Optional[str],
+    ) -> bool:
+        if install_status.get("runtime") != "bundled_native" or not command_path:
+            return False
+        try:
+            resolved = Path(command_path).resolve()
+            managed_paths = {
+                self.installer.command_path.resolve(),
+                self.installer.wrapper_path.resolve(),
+            }
+        except OSError:
+            return False
+        return resolved in managed_paths
+
     def install_plugin(self) -> Dict[str, Any]:
         status = self.installer.install()
         self._transport = None
         self._endpoint = None
+        self._sidecar_retry_after = 0.0
         return status
 
     def uninstall_plugin(self) -> Dict[str, Any]:
@@ -929,6 +1021,7 @@ class OrchestratorPluginManager:
         status = self.installer.uninstall()
         self._transport = None
         self._endpoint = None
+        self._sidecar_retry_after = 0.0
         return status
 
     def should_use_external(self) -> bool:
@@ -1064,6 +1157,21 @@ class OrchestratorPluginManager:
         if self._transport == "http":
             return self._http_get(f"/tasks/{task_id}/evidence-bundle")
         return self._cli_json(["evidence", task_id, "--json"])
+
+    def build_execution_policy_contract(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/contracts/execution-policy", payload)
+        return self._cli_json(["execution-policy", "--payload-json", json.dumps(payload), "--json"])
+
+    def compare_run_snapshots(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/runs/compare", payload)
+        return self._cli_json(["run-compare", "--payload-json", json.dumps(payload), "--json"])
+
+    def build_replay_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._transport == "http":
+            return self._http_post("/runs/replay-plan", payload)
+        return self._cli_json(["replay-plan", "--payload-json", json.dumps(payload), "--json"])
 
     def get_quality_benchmark(self, task_id: str) -> Dict[str, Any]:
         evidence = self.get_evidence_bundle(task_id)
@@ -1314,9 +1422,25 @@ class OrchestratorPluginManager:
         return endpoint or None
 
     def _ensure_sidecar(self, command_path: str) -> str:
+        with self._sidecar_lock:
+            if time.monotonic() < self._sidecar_retry_after:
+                raise OrchestratorPluginUnavailable(ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE)
+            try:
+                endpoint = self._ensure_sidecar_locked(command_path)
+            except OrchestratorPluginUnavailable:
+                self._sidecar_retry_after = time.monotonic() + 30.0
+                raise
+            self._sidecar_retry_after = 0.0
+            return endpoint
+
+    def _ensure_sidecar_locked(self, command_path: str) -> str:
         if self._endpoint:
-            self._http_get("/health")
-            return self._endpoint
+            try:
+                self._http_get("/health")
+                return self._endpoint
+            except Exception:
+                logger.info("Cached Across Orchestrator sidecar endpoint is stale; restarting it")
+                self.shutdown()
 
         self._cleanup_stale_aaa_sidecars()
 
@@ -1350,6 +1474,7 @@ class OrchestratorPluginManager:
                     "0",
                     "--runtime-id",
                     self._sidecar_runtime_id,
+                    "--allow-client-project-roots",
                 ],
                 text=True,
                 stdout=subprocess.PIPE,

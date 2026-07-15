@@ -29,7 +29,7 @@ final class SecurityScopedRepositoryStore: ObservableObject {
     private var accessOwners: Set<String> = []
 
     init(
-        defaults: UserDefaults = .standard,
+        defaults: UserDefaults = AppUserDefaults.current,
         bookmarkKey: String = "operations.securityScopedRepositoryBookmark"
     ) {
         self.defaults = defaults

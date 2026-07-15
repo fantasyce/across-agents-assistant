@@ -12,7 +12,7 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var focusedSurface: OperationsWorkbenchSurface?
-
+    @FocusState private var settingsIsFocused: Bool
     init(
         selection: Binding<OperationsWorkbenchSurface>,
         preferences: AppPreferences,
@@ -35,6 +35,8 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            workspaceContext
+
             VStack(spacing: 4) {
                 ForEach(OperationsWorkbenchSurface.primary) { surface in
                     navigationRow(surface)
@@ -56,13 +58,46 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
         }
-        .background(AcrossTheme.sidebarFill(for: colorScheme))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(preferences.text("operations.navigation")))
     }
 
+    @ViewBuilder
+    private var workspaceContext: some View {
+        if let projectName = activeProjectName ?? activeProjectPath?.split(separator: "/").last.map(String.init) {
+            HStack(spacing: 10) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AcrossTheme.accent)
+                    .frame(width: 24, height: 24)
+                    .background(AcrossTheme.selectedFill(for: colorScheme))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Across")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(projectName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(Text("Across \(projectName)"))
+        }
+    }
+
     private func navigationRow(_ surface: OperationsWorkbenchSurface, badge: Int? = nil) -> some View {
-        Button {
+        let isSelected = selection == surface
+        let isFocused = focusedSurface == surface
+        return Button {
             selection = surface
         } label: {
             HStack(spacing: 9) {
@@ -71,28 +106,34 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                     .frame(width: 20, height: 20)
                     .accessibilityHidden(true)
                 Text(preferences.text(surface.localizationKey))
-                    .font(.system(size: 13, weight: selection == surface ? .semibold : .regular))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                 Spacer()
                 if let badge, badge > 0 {
                     Text("\(badge)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(selection == surface ? AcrossTheme.accent : .secondary)
+                        .foregroundStyle(isSelected ? AcrossTheme.accent : .secondary)
                         .frame(minWidth: 20, minHeight: 18)
                         .background(AcrossTheme.recessedFill(for: colorScheme))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
             }
-            .foregroundStyle(selection == surface ? AcrossTheme.accent : Color.primary)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-            .background(selection == surface ? AcrossTheme.selectedFill(for: colorScheme) : Color.clear)
+            .foregroundStyle(isSelected ? AcrossTheme.accent : Color.primary)
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(
+                isSelected
+                    ? AcrossTheme.selectedFill(for: colorScheme)
+                    : (isFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+            )
             .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(true)
         .focused($focusedSurface, equals: surface)
-        .accessibilityValue(Text(selection == surface ? preferences.text("operations.selected") : ""))
+        .focusEffectDisabled()
+        .accessibilityValue(Text(isSelected ? preferences.text("operations.selected") : ""))
         .help(preferences.text(surface.localizationKey))
     }
 
@@ -110,11 +151,15 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                     .lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(settingsIsFocused ? AcrossTheme.hoverFill(for: colorScheme) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($settingsIsFocused)
+        .focusEffectDisabled()
         .help(preferences.text("settings.title"))
     }
 }

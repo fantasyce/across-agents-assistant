@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "owner": "Across Agents Assistant",
+  "production_rule": "AAA-owned raster atlases only; no external product screenshots or assets are generation references.",
+  "pipeline": "scripts/prepare_growth_asset_atlases.py",
+  "validation": "asset-validation.json",
+  "atlases": [
+    {
+      "file": "capability-atlas.png",
+      "columns": 2,
+      "rows": 2,
+      "usage": "installed Across ecosystem components"
+    },
+    {
+      "file": "achievement-atlas.png",
+      "columns": 3,
+      "rows": 2,
+      "usage": "base learning achievements"
+    },
+    {
+      "file": "achievement-milestones-atlas.png",
+      "columns": 3,
+      "rows": 2,
+      "usage": "learning milestone achievements"
+    },
+    {
+      "file": "journey-node-atlas.png",
+      "columns": 5,
+      "rows": 2,
+      "usage": "ten Capability Path missions"
+    },
+    {
+      "file": "status-companion-atlas.png",
+      "columns": 4,
+      "rows": 2,
+      "usage": "validated future status companions"
+    },
+    {
+      "file": "trust-seal-atlas.png",
+      "columns": 2,
+      "rows": 2,
+      "usage": "ready, review, blocked, and improved result seals"
+    },
+    {
+      "file": "challenge-reward-atlas.png",
+      "columns": 4,
+      "rows": 2,
+      "usage": "evidence-backed challenge rewards"
+    }
+  ]
+}

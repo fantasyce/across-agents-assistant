@@ -19,6 +19,7 @@ struct InteractiveIconButton: View {
             }
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .disabled(isDisabled)
         .accessibilityLabel(Text(help))
         .accessibilityHint(Text(help))
@@ -48,6 +49,7 @@ struct InteractiveAssetIconButton: View {
             }
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .disabled(isDisabled)
         .accessibilityLabel(Text(help))
         .accessibilityHint(Text(help))

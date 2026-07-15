@@ -30,23 +30,33 @@ struct PluginLifecycleView: View {
                 VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                     titleRow
                     feedbackRows
-                    VStack(spacing: 0) {
-                        Divider()
-                        ForEach(Array(viewModel.plugins.enumerated()), id: \.element.id) { index, plugin in
-                            pluginCard(plugin)
-                            if index < viewModel.plugins.count - 1 {
-                                Divider().padding(.leading, 30)
-                            }
+                    if viewModel.isLoadingPlugins && viewModel.plugins.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(appPreferences.text("plugins.loading"))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
                         }
-                        Divider()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 32)
+                    } else {
+                        VStack(spacing: 0) {
+                            Divider()
+                            ForEach(Array(viewModel.plugins.enumerated()), id: \.element.id) { index, plugin in
+                                pluginCard(plugin)
+                                if index < viewModel.plugins.count - 1 {
+                                    Divider().padding(.leading, 30)
+                                }
+                            }
+                            Divider()
+                        }
                     }
                 }
-                .padding(MinimalSettingsMetrics.contentPadding)
-                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .minimalPageContentFrame()
             }
             .overlay {
-                if viewModel.isWorking {
+                if viewModel.isWorking && viewModel.activePluginID == nil {
                     ProgressView()
                         .controlSize(.small)
                         .padding(18)
@@ -65,11 +75,7 @@ struct PluginLifecycleView: View {
         .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
         .task {
             await viewModel.loadPlugins()
-            expandedPluginIds = Set(
-                viewModel.plugins
-                    .filter { !$0.installed || !$0.available }
-                    .map(\.pluginId)
-            )
+            expandedPluginIds = []
         }
         .confirmationDialog(
             appPreferences.text("plugins.action.uninstallConfirmTitle"),
@@ -131,17 +137,37 @@ struct PluginLifecycleView: View {
             }
             .buttonStyle(.borderless)
             .help(appPreferences.text("settings.refresh"))
+            .accessibilityLabel(Text(appPreferences.text("settings.refresh")))
         }
     }
 
     @ViewBuilder
     private var feedbackRows: some View {
-        if let message = viewModel.message {
+        if let feedback = viewModel.pluginFeedback {
+            banner(
+                pluginFeedbackText(feedback),
+                color: feedback.succeeded ? Color(nsColor: .systemGreen) : Color(nsColor: .systemRed)
+            )
+        } else if let message = viewModel.message {
             banner(message, color: Color(nsColor: .systemGreen))
-        }
-        if let error = viewModel.errorMessage {
+        } else if let error = viewModel.errorMessage {
             banner(error, color: Color(nsColor: .systemRed))
         }
+    }
+
+    private func pluginFeedbackText(_ feedback: PluginLifecycleFeedback) -> String {
+        let key: String
+        if !feedback.succeeded {
+            key = "plugins.action.failed"
+        } else {
+            switch feedback.action {
+            case "install": key = "plugins.action.installSuccess"
+            case "repair", "upgrade": key = "plugins.action.repairSuccess"
+            case "uninstall": key = "plugins.action.uninstallSuccess"
+            default: key = "plugins.action.probeSuccess"
+            }
+        }
+        return String(format: appPreferences.text(key), feedback.displayName)
     }
 
     private func banner(_ text: String, color: Color) -> some View {
@@ -189,8 +215,6 @@ struct PluginLifecycleView: View {
                     if plugin.installed {
                         actionButton("repair", icon: "cross.case", title: appPreferences.text("plugins.action.repair"), plugin: plugin)
                         actionButton("uninstall", icon: "trash", title: appPreferences.text("plugins.action.uninstall"), plugin: plugin)
-                    } else {
-                        actionButton("install", icon: "arrow.down.circle", title: appPreferences.text("plugins.action.install"), plugin: plugin)
                     }
                     if plugin.pluginId == "across-orchestrator" && plugin.available {
                         agentLoopTimelineModePicker()
@@ -203,6 +227,7 @@ struct PluginLifecycleView: View {
                         }
                         .buttonStyle(.borderless)
                         .help(appPreferences.text("plugins.loop.probe"))
+                        .accessibilityLabel(Text(appPreferences.text("plugins.loop.probe")))
                         .disabled(viewModel.isWorking)
                     }
                 }
@@ -221,7 +246,7 @@ struct PluginLifecycleView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(textColor)
                         .lineLimit(1)
-                    Text(plugin.kind)
+                    Text(pluginSummary(plugin))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -229,7 +254,7 @@ struct PluginLifecycleView: View {
 
                 Spacer()
 
-                statusChip(plugin)
+                pluginPrimaryAction(plugin)
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
@@ -337,6 +362,7 @@ struct PluginLifecycleView: View {
         .popover(isPresented: $showingLoopHealthDetails, arrowEdge: .bottom) {
             agentLoopHealthPopover(health)
         }
+        .accessibilityLabel(Text(appPreferences.text("plugins.loop.healthDetails")))
     }
 
     private func agentLoopTimelineModePicker() -> some View {
@@ -349,6 +375,7 @@ struct PluginLifecycleView: View {
         .frame(width: 128, height: 28)
         .disabled(viewModel.isRunningAgentLoopProbe)
         .help(appPreferences.text("plugins.loop.timelineMode"))
+        .accessibilityLabel(Text(appPreferences.text("plugins.loop.timelineMode")))
     }
 
     private func agentLoopHealthPopover(_ health: AgentLoopHealthResponse) -> some View {
@@ -879,6 +906,59 @@ struct PluginLifecycleView: View {
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
+    @ViewBuilder
+    private func pluginPrimaryAction(_ plugin: AcrossPluginStatus) -> some View {
+        if viewModel.activePluginID == plugin.pluginId {
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(appPreferences.text(primaryActionProgressKey))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 82, alignment: .trailing)
+        } else if !plugin.installed {
+            Button(appPreferences.text("plugins.action.get")) {
+                Task { await viewModel.runAction("install", for: plugin) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(accentColor)
+            .disabled(viewModel.isWorking || plugin.install?.installable == false)
+            .help(appPreferences.text("plugins.action.getHelp"))
+            .accessibilityLabel(Text(appPreferences.text("plugins.action.get")))
+        } else if !plugin.available {
+            Button(appPreferences.text("plugins.action.repair")) {
+                Task { await viewModel.runAction("repair", for: plugin) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(viewModel.isWorking)
+        } else {
+            statusChip(plugin)
+        }
+    }
+
+    private var primaryActionProgressKey: String {
+        switch viewModel.activePluginAction {
+        case "repair", "upgrade": return "plugins.action.repairing"
+        case "uninstall": return "plugins.action.uninstalling"
+        case "probe": return "plugins.action.probing"
+        default: return "plugins.action.installing"
+        }
+    }
+
+    private func pluginSummary(_ plugin: AcrossPluginStatus) -> String {
+        let key: String
+        switch plugin.pluginId {
+        case "across-context": key = "plugins.component.context"
+        case "across-orchestrator": key = "plugins.component.orchestrator"
+        case "across-autopilot": key = "plugins.component.autopilot"
+        default: return plugin.kind
+        }
+        return appPreferences.text(key)
+    }
+
     private func metadataChip(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
@@ -920,6 +1000,7 @@ struct PluginLifecycleView: View {
         .background(fieldColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .help(title)
+        .accessibilityLabel(Text(title))
         .disabled(viewModel.isWorking)
     }
 
@@ -961,6 +1042,7 @@ struct PluginLifecycleView: View {
                 .background(fieldColor)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .help(appPreferences.text("settings.refresh"))
+                .accessibilityLabel(Text(appPreferences.text("settings.refresh")))
             }
 
             if !viewModel.agentLoopMemoryCandidates.isEmpty {
@@ -1111,15 +1193,12 @@ struct PluginLifecycleView: View {
                 .background(fieldColor)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .help(appPreferences.text("plugins.memory.forget"))
+                .accessibilityLabel(Text(appPreferences.text("plugins.memory.forget")))
             }
         }
         .padding(12)
         .background(isHighlighted ? accentColor.opacity(0.10) : fieldColor.opacity(colorScheme == .dark ? 0.7 : 1.0))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isHighlighted ? accentColor.opacity(0.7) : Color.clear, lineWidth: 1)
-        )
     }
 
     private func memoryAction(_ memory: AcrossMemoryEntry, status: String, icon: String, title: String) -> some View {
@@ -1135,6 +1214,7 @@ struct PluginLifecycleView: View {
         .background(fieldColor)
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .help(title)
+        .accessibilityLabel(Text(title))
     }
 
     private func iconName(for id: String) -> String {

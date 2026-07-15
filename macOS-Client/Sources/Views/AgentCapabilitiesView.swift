@@ -154,9 +154,7 @@ struct AgentCapabilitiesView: View {
                         }
                     }
                 }
-                .padding(MinimalSettingsMetrics.contentPadding)
-                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .minimalPageContentFrame()
             }
             .overlay {
                 if viewModel.isLoading {
@@ -569,10 +567,6 @@ struct AgentCapabilitiesView: View {
             .foregroundColor(textColor)
             .background(accentColor.opacity(0.18))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(accentColor.opacity(0.34), lineWidth: 1)
-            )
             .disabled(viewModel.isSaving)
         }
         .padding(14)

@@ -1,0 +1,15 @@
+{
+  "schema_version": "across-vnext-beginner-public-fixture/1.0",
+  "fixture_id": "pocket-checklist-1.0.0",
+  "privacy": {
+    "contains_credentials": false,
+    "contains_private_data": false,
+    "network_required": false
+  },
+  "files": {
+    "LICENSE": "2f0b58b0bc4edaa8b921412d46481f3125471fe3da983858c9a4dc26a9309d4a",
+    "README.md": "13dab58ad62641a9fd974e8eb30ebcc47e3a434fe06e532d76199f174842b2d3",
+    "package.json": "2de56f76dfb946e1ba0a2d317f990b032f14de78554e27cd3c0fb3cc003ce9b7",
+    "src/checklist.js": "afc115d72f8221d281cbd140acb4defc3aa223df911ed5bc5e7fcab391a81ab5"
+  }
+}

@@ -31,9 +31,7 @@ struct MCPPreferencesView: View {
                         Divider()
                     }
                 }
-                .padding(MinimalSettingsMetrics.contentPadding)
-                .frame(maxWidth: MinimalSettingsMetrics.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .minimalPageContentFrame()
             }
             .background(bgColor)
         }
