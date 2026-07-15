@@ -82,6 +82,7 @@ _CONTEXT_RETRIEVAL_ROUTES = frozenset(
 _CONTEXT_MEMORY_STATUSES = frozenset({"active", "pinned", "pending", "archived", "expired"})
 _CONTEXT_MEMORY_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PLUGIN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _CAPABILITY_MANIFEST_SCHEMA = "across-capability-manifest/1.0"
 _MANIFEST_FIELDS = (
     "id",
@@ -144,14 +145,20 @@ def inspect_across_plugin(
     probe: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    plugin = _known_plugin(plugin_id)
-    if not _PLUGIN_ID_PATTERN.fullmatch(str(plugin_id or "")):
+    requested_plugin_id = str(plugin_id or "")
+    if not _PLUGIN_ID_PATTERN.fullmatch(requested_plugin_id):
         raise ValueError("Unknown Across plugin")
 
     source, runtime_boundary_issues = sanitized_product_runtime_env(env if env is not None else os.environ)
     across_home = ecosystem_home(source)
     plugin_root = ecosystem_plugin_root(source)
-    plugin_dir = plugin_root / plugin_id
+    plugin = _known_plugin(requested_plugin_id)
+    safe_plugin_id = _safe_installed_plugin_id(
+        requested_plugin_id,
+        plugin_root=plugin_root,
+        managed_plugin=plugin,
+    )
+    plugin_dir = plugin_root / safe_plugin_id
     if not _is_relative_to(plugin_dir, plugin_root) or plugin_dir.is_symlink():
         raise CapabilityManifestError("Plugin manifest is invalid")
     manifest_path = plugin_dir / "manifest.json"
@@ -162,7 +169,7 @@ def inspect_across_plugin(
     try:
         manifest = _normalize_capability_manifest(
             raw_manifest,
-            plugin_id=plugin_id,
+            plugin_id=safe_plugin_id,
             plugin_dir=plugin_dir,
             env=source,
             managed_plugin=plugin,
@@ -172,23 +179,23 @@ def inspect_across_plugin(
             raise
         manifest = _managed_default_manifest(plugin)
         manifest_validation_failed = True
-    managed_payload = plugin_payload(plugin_id, source) if plugin is not None else None
+    managed_payload = plugin_payload(safe_plugin_id, source) if plugin is not None else None
     manifest = _apply_host_managed_install_contract(manifest, managed_payload)
     command = plugin.command if plugin is not None else _manifest_command(manifest)
-    command_path = _resolve_manifest_command(command, plugin_dir, source) if command else plugin_dir / "bin" / plugin_id
+    command_path = _resolve_manifest_command(command, plugin_dir, source) if command else plugin_dir / "bin" / safe_plugin_id
     command_exists = command_path.is_file() and os.access(command_path, os.X_OK)
-    integrity_issues = _plugin_dir_integrity_issues(plugin_id, plugin_dir)
+    integrity_issues = _plugin_dir_integrity_issues(safe_plugin_id, plugin_dir)
     if managed_payload is not None:
         integrity_issues.extend(
             _managed_node_plugin_payload_integrity_issues(
-                plugin_id,
+                safe_plugin_id,
                 plugin_dir,
                 managed_payload,
             )
         )
         integrity_issues.extend(
             _managed_native_plugin_payload_integrity_issues(
-                plugin_id,
+                safe_plugin_id,
                 plugin_dir,
                 managed_payload,
             )
@@ -206,7 +213,7 @@ def inspect_across_plugin(
             try:
                 manifest = _normalize_capability_manifest(
                     probed_manifest,
-                    plugin_id=plugin_id,
+                    plugin_id=safe_plugin_id,
                     plugin_dir=plugin_dir,
                     env=source,
                     managed_plugin=plugin,
@@ -219,9 +226,9 @@ def inspect_across_plugin(
 
     installed = manifest_exists or command_exists
     public_status = status or {}
-    actual_install_source = _actual_install_source(plugin_dir, plugin_id)
+    actual_install_source = _actual_install_source(plugin_dir, safe_plugin_id)
     configured_install_source = (
-        bundled_install_source(plugin_id, source)
+        bundled_install_source(safe_plugin_id, source)
         or (_install_source(plugin, source) if plugin is not None else None)
     )
     install_status = public_status.get("install") if isinstance(public_status.get("install"), dict) else None
@@ -248,8 +255,8 @@ def inspect_across_plugin(
             }
         )
     return {
-        "plugin_id": plugin_id,
-        "display_name": str(manifest.get("display_name") or (plugin.display_name if plugin else plugin_id)),
+        "plugin_id": safe_plugin_id,
+        "display_name": str(manifest.get("display_name") or (plugin.display_name if plugin else safe_plugin_id)),
         "kind": str(manifest.get("kind") or (plugin.kind if plugin else "capability-provider")),
         "version": str(manifest.get("version") or ""),
         "status": "needs_repair" if integrity_issues else (public_status.get("status") or ("installed" if installed else "not_installed")),
@@ -278,14 +285,39 @@ def inspect_across_plugin(
             "home": str(across_home),
             "plugin": str(plugin_dir),
             "bin": str(ecosystem_bin_dir(source)),
-            "data": str(across_home / "data" / plugin_id),
-            "config": str(across_home / "config" / plugin_id),
-            "run": str(across_home / "run" / plugin_id),
-            "logs": str(across_home / "logs" / plugin_id),
-            "cache": str(across_home / "cache" / plugin_id),
+            "data": str(across_home / "data" / safe_plugin_id),
+            "config": str(across_home / "config" / safe_plugin_id),
+            "run": str(across_home / "run" / safe_plugin_id),
+            "logs": str(across_home / "logs" / safe_plugin_id),
+            "cache": str(across_home / "cache" / safe_plugin_id),
         },
         "install": install_payload,
     }
+
+
+def _safe_installed_plugin_id(
+    requested_plugin_id: str,
+    *,
+    plugin_root: Path,
+    managed_plugin: KnownAcrossPlugin | None,
+) -> str:
+    """Return an identifier sourced from constants or a directory entry, never request text."""
+    if managed_plugin is not None:
+        return managed_plugin.plugin_id
+    try:
+        candidates = tuple(plugin_root.iterdir())
+    except OSError:
+        candidates = ()
+    for candidate in candidates:
+        if (
+            candidate.name == requested_plugin_id
+            and _PLUGIN_ID_PATTERN.fullmatch(candidate.name)
+            and candidate.is_dir()
+            and not candidate.is_symlink()
+            and (candidate / "manifest.json").is_file()
+        ):
+            return candidate.name
+    raise ValueError("Unknown Across plugin")
 
 
 def run_context_plugin_lifecycle_action(
@@ -816,10 +848,17 @@ def _resolve_manifest_command(
     elif os.sep in value:
         candidate = _validate_manifest_path(value, plugin_dir, env)
     else:
-        local_candidate = plugin_dir / "bin" / value
-        shared_candidate = ecosystem_bin_dir(env) / value
-        candidate = local_candidate if local_candidate.exists() else shared_candidate
-        if value != plugin_dir.name and not local_candidate.exists() and not shared_candidate.exists():
+        if not _COMMAND_NAME_PATTERN.fullmatch(value) or Path(value).name != value:
+            raise CapabilityManifestError("Plugin manifest is invalid")
+        local_candidate = _existing_named_child(plugin_dir / "bin", value)
+        shared_candidate = _existing_named_child(ecosystem_bin_dir(env), value)
+        if local_candidate is not None:
+            candidate = local_candidate
+        elif shared_candidate is not None:
+            candidate = shared_candidate
+        elif value == plugin_dir.name:
+            candidate = ecosystem_bin_dir(env) / plugin_dir.name
+        else:
             raise CapabilityManifestError("Plugin manifest is invalid")
     if not (_is_relative_to(candidate, plugin_dir) or _is_relative_to(candidate, ecosystem_bin_dir(env))):
         raise CapabilityManifestError("Plugin manifest is invalid")
@@ -828,6 +867,18 @@ def _resolve_manifest_command(
         if not (_is_relative_to(resolved, plugin_dir) or _is_relative_to(resolved, ecosystem_bin_dir(env))):
             raise CapabilityManifestError("Plugin manifest is invalid")
     return candidate
+
+
+def _existing_named_child(directory: Path, requested_name: str) -> Path | None:
+    """Resolve a basename to a filesystem-owned directory entry."""
+    try:
+        children = tuple(directory.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if child.name == requested_name:
+            return child
+    return None
 
 
 def _manifest_command(manifest: Mapping[str, Any]) -> str | None:
@@ -1136,7 +1187,7 @@ def _managed_native_plugin_payload_integrity_issues(
         return ["installed native plugin payload provenance is invalid; upgrade or repair the plugin"]
     if str(install_state.get("sha256") or "").lower() != expected_sha256:
         return ["installed native plugin payload differs from the bundled version; upgrade the plugin"]
-    executable = plugin_dir / "venv" / "bin" / plugin_id
+    executable = plugin_dir / "venv" / "bin" / plugin_dir.name
     if not executable.is_file() or not os.access(executable, os.X_OK):
         return ["installed native plugin executable is missing; repair the plugin"]
     if expected_sha256 and _sha256_file(executable) != expected_sha256:

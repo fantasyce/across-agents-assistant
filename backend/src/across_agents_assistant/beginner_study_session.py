@@ -957,7 +957,9 @@ def main(argv: list[str] | None = None) -> int:
             result = {
                 "schema_version": SESSION_SCHEMA,
                 "status": "hashed",
-                "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),
+                # This is a non-secret content fingerprint used for result binding,
+                # not a password verifier. SHA-256 must match the Autopilot contract.
+                "goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest(),  # lgtm[py/weak-sensitive-data-hashing]
                 "raw_goal_stored": False,
                 "release_evidence_created": False,
             }

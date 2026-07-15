@@ -153,6 +153,18 @@ def test_beginner_request_rejects_blank_goal(tmp_path):
         api_server.BeginnerNoKeyDemoRequest(project_dir=str(tmp_path), user_goal=" \n ")
 
 
+def test_beginner_request_rejects_missing_project_directory(tmp_path):
+    from pydantic import ValidationError
+
+    import across_agents_assistant.api_server as api_server
+
+    with pytest.raises(ValidationError):
+        api_server.BeginnerNoKeyDemoRequest(
+            project_dir=str(tmp_path / "missing"),
+            user_goal="Inspect this project safely",
+        )
+
+
 @pytest.mark.asyncio
 async def test_beginner_api_rejects_result_not_bound_to_the_requested_goal(monkeypatch, tmp_path):
     import across_agents_assistant.api_server as api_server

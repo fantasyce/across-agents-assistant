@@ -863,11 +863,7 @@ def test_auto_task_submission_uses_external_orchestrator_plugin(monkeypatch, tmp
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
-    monkeypatch.setattr(api_server, "_build_key_readiness", lambda: {
-        "has_any_key": True,
-        "providers": {"deepseek": "configured"},
-        "readiness_blockers": [],
-    })
+    monkeypatch.setattr(api_server, "_check_llm_provider_readiness", lambda: [])
 
     with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
         monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)

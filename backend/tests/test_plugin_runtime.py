@@ -159,6 +159,11 @@ def test_discovery_rejects_invalid_manifest_paths_and_commands(monkeypatch, tmp_
         "unsafe-command",
         entrypoints={"cli": {"command": "sh -c", "args": ["echo unsafe"]}},
     )
+    _write_capability_manifest(
+        across_home,
+        "unsafe-basename",
+        entrypoints={"cli": {"command": "..", "args": []}},
+    )
     env = {"ACROSS_HOME": str(across_home), "PATH": ""}
     monkeypatch.setenv("ACROSS_HOME", str(across_home))
 
@@ -166,7 +171,7 @@ def test_discovery_rejects_invalid_manifest_paths_and_commands(monkeypatch, tmp_
 
     assert "unsafe-path" not in ids
     assert "unsafe-command" not in ids
-    for plugin_id in ("unsafe-path", "unsafe-command"):
+    for plugin_id in ("unsafe-path", "unsafe-command", "unsafe-basename"):
         response = TestClient(app).get(f"/api/plugins/{plugin_id}")
         assert response.status_code == 404
         assert response.json() == {"detail": "Unknown Across plugin"}

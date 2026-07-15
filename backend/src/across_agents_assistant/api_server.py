@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
 import asyncio
 import logging
@@ -2125,7 +2125,7 @@ class AutopilotSpecRequest(BaseModel):
 class BeginnerNoKeyDemoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    project_dir: str = Field(min_length=1, max_length=4_000)
+    project_dir: DirectoryPath
     pattern_id: str = Field(default="first-verified-task", min_length=1, max_length=120)
     user_goal: str = Field(min_length=1, max_length=2_000)
 
@@ -8925,9 +8925,7 @@ async def get_no_key_demo(pattern_id: str = "first-verified-task"):
 async def run_no_key_demo(req: BeginnerNoKeyDemoRequest):
     """Run one read-only, zero-model-call first mission in the selected project."""
     try:
-        project_dir = _normalize_local_path(req.project_dir)
-        if not Path(project_dir).is_dir():
-            raise ValueError("project_dir must be an existing directory")
+        project_dir = str(req.project_dir.resolve())
         result = await asyncio.to_thread(
             get_autopilot_client().run_no_key_demo,
             project_dir,
