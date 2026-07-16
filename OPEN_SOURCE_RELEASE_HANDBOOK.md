@@ -105,6 +105,27 @@ Confirm:
 - no release-blocking PRs remain open
 - CodeQL and repository health issues are understood
 
+### Automated dependency updates
+
+Review every open Dependabot or equivalent automated dependency PR before an
+open-source release. Do not leave it open merely because it is automated:
+
+- treat security updates as release blockers unless a documented compatibility
+  constraint requires a different mitigation;
+- prefer merging compatible, tested non-security updates so a new open-source
+  release starts from reasonably current dependencies;
+- close a redundant update when the existing version range already admits the
+  proposed version and the product does not require the newer minimum;
+- defer an incompatible or high-risk update explicitly, with the reason and a
+  follow-up owner recorded in the PR or release notes;
+- keep duplicate dependency declarations aligned across requirements, package
+  metadata, lockfiles, build scripts, and packaged-runtime inputs;
+- run the repository's full regression and packaging gates after accepting an
+  update rather than relying only on the bot's minimal checks.
+
+A routine non-security version bump does not require a standalone release, but
+its disposition must be understood before the next planned open-source release.
+
 For GitHub workflow changes, the CLI token must include `workflow` scope:
 
 ```bash
