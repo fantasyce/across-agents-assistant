@@ -449,7 +449,7 @@ struct MinimalReviewInboxView: View {
         Form {
             Section(preferences.text("review.title")) {
                 MinimalKeyValueRow(
-                    preferences.text("review.count"),
+                    preferences.text("review.total"),
                     value: "\(snapshot.totalCount)"
                 )
                 MinimalKeyValueRow(preferences.text("review.blocking"), value: "\(snapshot.blockingCount)")

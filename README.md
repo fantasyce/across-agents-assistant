@@ -46,7 +46,7 @@ only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, approvals, settings, local permissions, and plugin lifecycle | `v0.12.0` |
+| Across Agents Assistant | macOS workspace, approvals, settings, local permissions, and plugin lifecycle | `v0.12.1` |
 | Across Context | shared memory, provenance, review, forgetting, and context packs | `v0.10.0` |
 | Across Orchestrator | task execution, quality gates, safe replay, sandbox policy, and evidence receipts | `v0.9.0` |
 | Across Autopilot | guided workflows, LoopSpec supervision, repair, and release readiness | `v0.4.0` |
@@ -65,7 +65,7 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-growth.png" alt="Gameful learning missions, capability unlocks, and achievement badges"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.12.0` Adds
+## What `v0.12.1` Includes
 
 - Microphone-only, append-safe voice input with Chinese and English
   recognition, punctuation, and longer pause handling.
@@ -78,6 +78,8 @@ require the user to install Git, npm, Node, or Python.
   provenance, and risk-aware sandbox status.
 - Consistent borderless navigation, page spacing, detail layouts, project
   switching, Settings design, and double-click window maximize behavior.
+- A corrected Human Review inspector label that never exposes an untranslated
+  numeric format placeholder.
 
 Full release history lives in [CHANGELOG.md](CHANGELOG.md).
 

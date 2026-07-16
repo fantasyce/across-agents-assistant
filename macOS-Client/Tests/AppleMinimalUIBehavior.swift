@@ -380,6 +380,8 @@ private func checkCriticalInteractionContracts() {
     check(!runs.contains("NavigationSplitView"), "Run history must not install a system window sidebar")
     check(!review.contains("NavigationSplitView"), "Review inbox must not install a system window sidebar")
     check(review.contains("review.count.one"), "Review count must use a grammatical singular label")
+    check(review.contains("preferences.text(\"review.total\")"), "Review inspector must use a non-format total label")
+    check(!review.contains("preferences.text(\"review.count\"),\n                    value:"), "Review inspector must not expose a format placeholder as a label")
     check(!project.contains("NavigationSplitView"), "Project workspace must not install a system window sidebar")
     check(project.contains("HSplitView"), "Project workspace must retain its fixed operational panes")
     check(runs.contains("private var runHistoryDrawer"), "Run history must use the floating drawer")

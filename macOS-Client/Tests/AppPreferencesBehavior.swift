@@ -273,6 +273,14 @@ func testLocalizedStringsFallbackToEnglish() {
         "Agent Loop evidence audit summary should be localized in English"
     )
     assert(
+        AppPreferences.localizedString("review.total", localeIdentifier: "en") == "Total items",
+        "Review inspector total label should not contain a format placeholder in English"
+    )
+    assert(
+        AppPreferences.localizedString("review.total", localeIdentifier: "zh-Hans") == "评审总数",
+        "Review inspector total label should not contain a format placeholder in Simplified Chinese"
+    )
+    assert(
         AppPreferences.localizedString("plugins.loop.detailRecoveryPolicy", localeIdentifier: "en") == "Policy",
         "Agent Loop recovery policy detail label should be localized in English"
     )
