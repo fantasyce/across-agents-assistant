@@ -465,6 +465,8 @@ struct AppleMinimalUIContractTests {
         #expect(!runs.contains("NavigationSplitView"))
         #expect(!review.contains("NavigationSplitView"))
         #expect(review.contains("review.count.one"))
+        #expect(review.contains("preferences.text(\"review.total\")"))
+        #expect(!review.contains("preferences.text(\"review.count\"),\n                    value:"))
         #expect(!project.contains("NavigationSplitView"))
         #expect(project.contains("HSplitView"))
         #expect(!runs.contains(".searchable(text: $searchText, placement: .sidebar"))

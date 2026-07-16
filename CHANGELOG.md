@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1 - 2026-07-16
+
+### Fixed
+
+- Replaced the formatted review-count string used as an inspector field title
+  with a dedicated localized total label, preventing `%d items` or `%d 项`
+  from appearing literally in the interface.
+
 ## 0.12.0 - 2026-07-16
 
 ### Added
