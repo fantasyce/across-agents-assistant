@@ -26,6 +26,27 @@ The goal is to keep every public release reproducible, reviewable, and based on
 - Delete short-lived remote branches after merge. Keep long-lived branches only
   for supported maintenance or LTS release lines.
 
+## Current macOS Distribution Boundary
+
+Across Agents Assistant is currently released as a source-first open-source
+project. GitHub releases publish source history and version tags; the project
+does not yet publish a Developer ID-signed and notarized downloadable app.
+Local source builds are ad-hoc signed and installed to the canonical
+`/Applications/Across Agents Assistant.app` path.
+
+The following distribution capabilities are intentionally deferred by the
+project owner and are not incomplete gates for the current release:
+
+- paid macOS distribution-program enrollment, Developer ID signing, and
+  notarization;
+- an in-app AAA update check and one-click app self-update/relaunch flow.
+
+Do not silently add either capability to a release plan. Reopen this scope only
+after the project owner explicitly approves the Apple account cost and the
+download/update distribution model. AAA's managed plugin install, update,
+repair, and uninstall lifecycle is a separate local capability and remains
+supported without Apple notarization.
+
 ## Branch Model
 
 Use these branch types:

@@ -127,6 +127,12 @@ stay outside Git.
 This is currently a source-first open-source release. The repository does not
 publish a notarized downloadable app. A source build is ad-hoc signed for local
 use; Developer ID signing and notarization are separate distribution steps.
+The AAA app also does not currently provide in-app update checks or one-click
+self-update. Developer ID distribution, Apple notarization, and AAA app
+self-update are intentionally deferred until the project owner approves that
+distribution investment. Managed plugin install, update, repair, and uninstall
+remain supported inside AAA and do not depend on this deferred app-distribution
+work.
 
 ## Development Checks
 
