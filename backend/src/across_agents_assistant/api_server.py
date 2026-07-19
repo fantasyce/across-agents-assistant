@@ -1,6 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
 import asyncio
@@ -15,6 +15,7 @@ import hashlib
 import time
 import threading
 import signal
+import stat
 import sys
 import re
 import uuid
@@ -1278,44 +1279,97 @@ async def get_verified_worker_artifact(artifact_id: str):
     """Serve only a content-addressed artifact verified by the Coordinator."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", artifact_id):
         raise HTTPException(status_code=404, detail="Worker artifact not found")
-    directory = (data_file("worker-artifacts") / artifact_id).resolve()
-    root = data_file("worker-artifacts").resolve()
-    if root not in directory.parents:
+    directory = _worker_artifact_directory(artifact_id)
+    if directory is None:
         raise HTTPException(status_code=404, detail="Worker artifact not found")
-    manifest_path = directory / "manifest.json"
-    artifact_path = directory / "artifact.bin"
+    artifact_file = None
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        with _open_worker_artifact_member(directory, "manifest.json") as manifest_file:
+            manifest_bytes = manifest_file.read(64 * 1024 + 1)
+        if len(manifest_bytes) > 64 * 1024:
+            raise ValueError("artifact manifest is too large")
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
         expected_hash = str(manifest.get("sha256") or "")
         expected_size = int(manifest.get("size") or -1)
+        artifact_file = _open_worker_artifact_member(directory, "artifact.bin")
         if (
             str(manifest.get("artifact_id") or "") != artifact_id
             or manifest.get("upload_status") != "complete"
             or manifest.get("verification_status") != "verified"
             or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
-            or not artifact_path.is_file()
-            or artifact_path.stat().st_size != expected_size
+            or os.fstat(artifact_file.fileno()).st_size != expected_size
         ):
             raise ValueError("unverified artifact")
-        actual_hash = await asyncio.to_thread(_sha256_path, artifact_path)
+        actual_hash = await asyncio.to_thread(_sha256_open_file, artifact_file)
         if actual_hash != expected_hash:
             raise ValueError("artifact hash mismatch")
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        artifact_file.seek(0)
+    except (OSError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        if artifact_file is not None:
+            artifact_file.close()
         raise HTTPException(status_code=404, detail="Verified Worker artifact not found")
-    logical_name = Path(str(manifest.get("logical_name") or artifact_id)).name
-    return FileResponse(
-        path=artifact_path,
-        media_type=str(manifest.get("media_type") or "application/octet-stream"),
-        filename=logical_name,
+    logical_name = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "-",
+        Path(str(manifest.get("logical_name") or artifact_id)).name,
+    ).strip(".-") or f"{artifact_id}.bin"
+    media_type = str(manifest.get("media_type") or "application/octet-stream")
+    if not re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+", media_type):
+        media_type = "application/octet-stream"
+    return StreamingResponse(
+        _stream_worker_artifact(artifact_file),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(logical_name)}"},
     )
 
 
-def _sha256_path(path: Path) -> str:
+def _worker_artifact_directory(artifact_id: str) -> Optional[Path]:
+    """Find an artifact directory without deriving a filesystem path from input."""
+    root = data_file("worker-artifacts").resolve()
+    try:
+        entries = root.iterdir()
+        for entry in entries:
+            if entry.name != artifact_id:
+                continue
+            if entry.is_symlink() or not entry.is_dir():
+                return None
+            directory = entry.resolve(strict=True)
+            return directory if directory.parent == root else None
+    except OSError:
+        return None
+    return None
+
+
+def _open_worker_artifact_member(directory: Path, name: str):
+    """Open a fixed artifact member without following replaceable symlinks."""
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    member_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = os.open(directory, directory_flags)
+    try:
+        member_fd = os.open(name, member_flags, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    member_stat = os.fstat(member_fd)
+    if not stat.S_ISREG(member_stat.st_mode):
+        os.close(member_fd)
+        raise OSError("Worker artifact member is not a regular file")
+    return os.fdopen(member_fd, "rb")
+
+
+def _sha256_open_file(handle) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    handle.seek(0)
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
     return digest.hexdigest()
+
+
+def _stream_worker_artifact(handle):
+    try:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            yield chunk
+    finally:
+        handle.close()
 
 
 _worker_model_provider_preference: dict[str, str] = {}

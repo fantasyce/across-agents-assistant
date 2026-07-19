@@ -406,6 +406,48 @@ def test_verified_worker_artifact_endpoint_rechecks_size_and_hash(tmp_path, monk
     assert rejected.status_code == 404
 
 
+def test_verified_worker_artifact_endpoint_rejects_symlink_members(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
+    artifact_id = "artifact-symlink-test"
+    directory = data_file("worker-artifacts") / artifact_id
+    directory.mkdir(parents=True)
+    payload = b"outside worker report\n"
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(payload)
+    (directory / "artifact.bin").symlink_to(outside)
+    (directory / "manifest.json").write_text(
+        json.dumps({
+            "schema_version": "across-worker-artifact/1.0",
+            "artifact_id": artifact_id,
+            "logical_name": "report.md",
+            "media_type": "text/markdown",
+            "size": len(payload),
+            "sha256": sha256(payload).hexdigest(),
+            "upload_status": "complete",
+            "verification_status": "verified",
+        }),
+        encoding="utf-8",
+    )
+
+    response = TestClient(app).get(f"/api/workers/artifacts/{artifact_id}")
+
+    assert response.status_code == 404
+
+
+def test_verified_worker_artifact_endpoint_rejects_symlink_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
+    artifact_id = "artifact-directory-link"
+    root = data_file("worker-artifacts")
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside-artifact"
+    outside.mkdir()
+    (root / artifact_id).symlink_to(outside, target_is_directory=True)
+
+    response = TestClient(app).get(f"/api/workers/artifacts/{artifact_id}")
+
+    assert response.status_code == 404
+
+
 def test_external_worker_evidence_bundle_uses_projected_worker_receipt(monkeypatch):
     class FakePlugin:
         def get_task(self, task_id):
