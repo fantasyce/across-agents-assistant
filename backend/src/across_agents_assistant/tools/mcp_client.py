@@ -330,7 +330,16 @@ class MCPClientManager:
             logger.error("%s Issues: %s", error, integrity_issues)
             return False, error
 
-        ok, error = self._connect_across_context_external(server_id, params)
+        # The external CLI handshake uses subprocess communication. Running it
+        # directly inside this coroutine stalls every Unix-socket API request
+        # until the plugin answers, which made the entire App appear frozen at
+        # launch. Keep the host event loop responsive while the optional MCP
+        # capability starts in the background.
+        ok, error = await asyncio.to_thread(
+            self._connect_across_context_external,
+            server_id,
+            params,
+        )
         if ok:
             logger.info("Connected Across Context through external MCP plugin.")
             return True, None

@@ -34,39 +34,12 @@ struct DAGVisualization: View {
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Button(action: { isProgressExpanded.toggle() }) {
-                HStack(spacing: 6) {
-                    Text(appPreferences.text("tasks.progress"))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    HStack(alignment: .bottom, spacing: 1) {
-                        Rectangle()
-                            .fill(Color(hex: "#FFBFBB"))
-                            .frame(width: 3, height: 8)
-                            .cornerRadius(1)
-                        Rectangle()
-                            .fill(Color(hex: "#FFE4AB"))
-                            .frame(width: 3, height: 10)
-                            .cornerRadius(1)
-                        Rectangle()
-                            .fill(Color(hex: "#A8E9B2"))
-                            .frame(width: 3, height: 12)
-                            .cornerRadius(1)
-                    }
-
-                    Image(systemName: isProgressExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-
-            if isProgressExpanded {
-                ScrollView(.horizontal, showsIndicators: false) {
+        MinimalDisclosureSection(
+            title: appPreferences.text("tasks.progress"),
+            detail: String(format: appPreferences.text("tasks.subtasks"), task.subtasks.count),
+            isExpanded: $isProgressExpanded
+        ) {
+            ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(Array(task.waves.enumerated()), id: \.element.waveId) { index, wave in
                         WaveColumnView(
@@ -88,7 +61,6 @@ struct DAGVisualization: View {
                     }
                 }
                 .padding(.vertical, 8)
-                }
             }
         }
         .sheet(item: $selectedSubtask) { subtask in
@@ -121,7 +93,7 @@ struct WaveColumnView: View {
                 if wave.isRevalidating {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "#4d6bfe"))
+                        .foregroundColor(AcrossTheme.accent)
                 }
 
                 if isBlocked {
@@ -175,12 +147,12 @@ struct WaveColumnView: View {
 
     private var statusColor: Color {
         if wave.isRevalidating {
-            return Color(hex: "#4d6bfe")
+            return AcrossTheme.accent
         }
         switch wave.governanceStatus ?? wave.status {
-        case "revalidating": return Color(hex: "#4d6bfe")
+        case "revalidating": return AcrossTheme.accent
         case "blocked", "blocked_by_prior_wave", "needs_fix": return Color(hex: "#ff9f0a")
-        case "running": return Color(hex: "#4d6bfe")
+        case "running": return AcrossTheme.accent
         case "completed": return Color(hex: "#30d158")
         case "failed": return Color(hex: "#FF453A")
         default: return Color(hex: "#8e8e93")
@@ -212,10 +184,9 @@ struct WaveColumnView: View {
         case "blocked", "needs_fix":
             return Color(hex: "#ff9f0a")
         case "revalidating":
-            return Color(hex: "#4d6bfe")
+            return AcrossTheme.accent
         default:
             return .secondary
         }
     }
 }
-

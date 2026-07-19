@@ -23,11 +23,12 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var isLoadingTaskEvidence = false
     @Published var taskEvidenceError: String?
     @Published var exportedEvidenceBundleURL: URL?
+    @Published var selectedArtifactPreview: ArtifactPreview?
+    @Published var isLoadingArtifactPreview = false
     @Published var orchestratorPluginStatus: OrchestratorPluginStatus?
     @Published var isLoadingOrchestratorPlugin = false
     @Published var isInstallingOrchestratorPlugin = false
     @Published var orchestratorPluginError: String?
-    @Published var simpleStartDraft: SimpleStartWorkflowDraft?
     private let taskPageSize = 50
     private var taskListOffset = 0
     private var projectDirectoryFilter: String?
@@ -105,6 +106,12 @@ class TaskOrchestrationViewModel: ObservableObject {
     typealias PollSubtaskStatus = TaskOrchestrationPollSubtaskStatus
     typealias PollWaveStatus = TaskOrchestrationPollWaveStatus
 
+    struct ArtifactPreview: Identifiable, Equatable {
+        let id: String
+        let fileName: String
+        let content: String
+    }
+
     private var sseTask: Task<Void, Never>?
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 10
@@ -123,6 +130,61 @@ class TaskOrchestrationViewModel: ObservableObject {
             return URL(string: urlString)
         }
         return URL(string: "http://backend")
+    }
+
+    func previewArtifact(_ artifact: Artifact) {
+        Task { @MainActor in
+            guard !isLoadingArtifactPreview else { return }
+            guard let baseURL else {
+                taskEvidenceError = "Server URL not configured"
+                return
+            }
+            let reference = artifact.filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard reference.hasPrefix("/api/workers/artifacts/") else {
+                taskEvidenceError = "This artifact is not available for in-app preview."
+                return
+            }
+
+            isLoadingArtifactPreview = true
+            taskEvidenceError = nil
+            defer { isLoadingArtifactPreview = false }
+
+            do {
+                let relativePath = String(reference.drop(while: { $0 == "/" }))
+                var request = URLRequest(url: baseURL.appendingPathComponent(relativePath))
+                request.setValue("text/plain, text/markdown, application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 30
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+
+                let content: String
+                if artifact.fileName.lowercased().hasSuffix(".json"),
+                   let value = try? JSONSerialization.jsonObject(with: data),
+                   let formatted = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+                   let text = String(data: formatted, encoding: .utf8) {
+                    content = text
+                } else if let text = String(data: data, encoding: .utf8) {
+                    content = text
+                } else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+
+                selectedArtifactPreview = ArtifactPreview(
+                    id: artifact.id,
+                    fileName: artifact.fileName,
+                    content: content
+                )
+            } catch {
+                taskEvidenceError = "Unable to preview \(artifact.fileName)."
+            }
+        }
+    }
+
+    func closeArtifactPreview() {
+        selectedArtifactPreview = nil
     }
 
     func loadTasks() {
@@ -749,8 +811,6 @@ class TaskOrchestrationViewModel: ObservableObject {
                 if (200...299).contains(httpResponse.statusCode) {
                     let decoder = JSONDecoder()
                     let result = try decoder.decode(AutoTaskSubmitResponse.self, from: data)
-                    simpleStartDraft = nil
-
                     if let newTaskId = result.taskId {
                         viewMode = .detail
                         selectTask(newTaskId)
@@ -927,7 +987,6 @@ class TaskOrchestrationViewModel: ObservableObject {
             viewMode = .empty
             return
         }
-        simpleStartDraft = nil
         viewMode = .createForm
         selectedTask = nil
         stopSSE()
@@ -935,33 +994,14 @@ class TaskOrchestrationViewModel: ObservableObject {
 
     func enterWorkflowPicker() {
         errorMessage = nil
-        simpleStartDraft = nil
         selectedTask = nil
         viewMode = .empty
         stopSSE()
     }
 
-    func startSimpleStartWorkflow(_ preset: SimpleStartWorkflowPreset, target: String = "", projectDirectory: String? = nil) {
-        guard !isOrchestratorPluginUnavailable else {
-            errorMessage = orchestratorPluginUnavailableMessage
-            viewMode = .empty
-            return
-        }
-        errorMessage = nil
-        simpleStartDraft = preset.makeDraft(target: target, projectDirectory: projectDirectory)
-        selectedTask = nil
-        viewMode = .createForm
-        stopSSE()
-    }
-
-    func clearSimpleStartDraft() {
-        simpleStartDraft = nil
-    }
-
     func cancelCreate() {
         errorMessage = nil
         isLoading = false
-        simpleStartDraft = nil
         if selectedTask != nil {
             viewMode = .detail
         } else {

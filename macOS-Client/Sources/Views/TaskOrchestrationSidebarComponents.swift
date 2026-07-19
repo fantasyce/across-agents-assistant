@@ -29,7 +29,7 @@ struct BackendUnavailableBanner: View {
                 Button(action: onRetry) {
                     Text(appPreferences.text("tasks.backendUnavailable.retry"))
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color(hex: "#4D6BFE"))
+                        .foregroundColor(AcrossTheme.accent)
                 }
                 .buttonStyle(.plain)
             }
@@ -55,7 +55,7 @@ struct TaskRowView: View {
 
     private var statusColor: Color {
         switch task.status {
-        case "running": return Color(hex: "#4d6bfe")
+        case "running": return AcrossTheme.accent
         case "completed": return Color(hex: "#30d158")
         case "failed": return Color(hex: "#FF453A")
         case "completed_with_failures": return Color(hex: "#ff9f0a")
@@ -131,4 +131,3 @@ struct TaskRowView: View {
         return Color.clear
     }
 }
-

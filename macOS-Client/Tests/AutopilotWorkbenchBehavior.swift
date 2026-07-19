@@ -166,6 +166,43 @@ func testAutopilotWorkbenchSnapshotDecodesHealthyContract() throws {
     assert(snapshot.summary.selfIterationStatus == "active", "Self-iteration status should decode")
 }
 
+func testAutopilotWorkbenchTreatsUnusedOptionalCapabilitiesAsNeutral() throws {
+    let json = """
+    {
+      "schema_version": "across-aaa-autopilot-workbench/1.0",
+      "status": "passed",
+      "summary": {
+        "run_count": 0,
+        "completed_run_count": 0,
+        "failed_run_count": 0,
+        "pending_trigger_count": 0,
+        "registered_trigger_count": 0,
+        "active_trigger_count": 0,
+        "scheduler_running": false,
+        "self_iteration_status": "not_configured",
+        "capability_ready_count": 42,
+        "registry_health_status": "passed",
+        "pending_memory_count": 0,
+        "promotion_ready_count": 0,
+        "autopilot_available": true,
+        "ecosystem_route_count": 7,
+        "ecosystem_ready_route_count": 7,
+        "agent_plugin_count": 0,
+        "ready_agent_plugin_count": 0,
+        "agent_interop_e2e_status": "not_run"
+      },
+      "status_reasons": [],
+      "sections": {},
+      "actions": [],
+      "endpoints": {}
+    }
+    """.data(using: .utf8)!
+
+    let snapshot = try JSONDecoder().decode(AutopilotWorkbenchSnapshot.self, from: json)
+
+    assert(snapshot.needsAttention == false, "Unused optional capabilities must not create a false attention state")
+}
+
 func testAutopilotEvidenceTargetKeepsRunAndRouteBoundTogether() {
     let target = AutopilotEvidenceTarget(
         runID: "run-beginner-1",
@@ -198,6 +235,7 @@ struct AutopilotWorkbenchBehavior {
     static func main() throws {
         try testAutopilotWorkbenchSnapshotDecodesAttentionContract()
         try testAutopilotWorkbenchSnapshotDecodesHealthyContract()
+        try testAutopilotWorkbenchTreatsUnusedOptionalCapabilitiesAsNeutral()
         testAutopilotEvidenceTargetKeepsRunAndRouteBoundTogether()
         print("AutopilotWorkbenchBehavior passed")
     }

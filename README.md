@@ -25,12 +25,15 @@
 
 ## Start With One Result
 
-Open a project, describe what you want, and review the delivery. Text, files,
-images, and microphone input can all begin a task. Across keeps model routing,
-retry details, and evidence machinery out of the way until they matter.
+Open a project and describe the result you want. Text, files, images, and
+microphone input all use the same **Work** entry. Across keeps workflow choice,
+model routing, retries, and evidence machinery out of the way until they matter.
+If Autopilot is installed, it can resolve the goal to one compatible workflow;
+otherwise the task stays an ordinary host task. Scenario simulation is one
+optional workflow selected from task intent, not a permanent AAA task type.
 
-The recommended first workflow is **Repository Quality Copilot**. Open
-**Workflows** in the app, or run:
+The recommended first task is **Repository Quality Copilot**. Enter a repository
+quality goal in Work, or run:
 
 ```bash
 across-autopilot loop run --spec repo-quality-copilot --json
@@ -41,15 +44,17 @@ and optional memory suggestions for review.
 
 ## A Product That Grows With You
 
-The base app remains useful on its own. First-party plugins add destinations
-only after they are installed and healthy.
+The base app opens projects, accepts text or voice goals, discovers configured
+local agents and models, manages permissions, and provides a deterministic
+no-key learning path. First-party plugins add durable execution, memory, and
+supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, approvals, settings, local permissions, and plugin lifecycle | `v0.12.1` |
-| Across Context | shared memory, provenance, review, forgetting, and context packs | `v0.10.0` |
-| Across Orchestrator | task execution, quality gates, safe replay, sandbox policy, and evidence receipts | `v0.9.0` |
-| Across Autopilot | guided workflows, LoopSpec supervision, repair, and release readiness | `v0.4.0` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.0` |
+| Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.0` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.3` |
+| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.0` |
 
 Install or repair the three optional components from **Settings → Plugins**.
 Packaged builds carry verified plugin payloads, so the one-click path does not
@@ -57,29 +62,32 @@ require the user to install Git, npm, Node, or Python.
 
 ## Product Tour
 
-| Workflows | Loop Engineering |
+| Run History | Loop Engineering |
 | --- | --- |
-| <img src="assets/readme/product-workflows.png" alt="Beginner-safe guided workflows and recent runs"> | <img src="assets/readme/product-loop-engineering.png" alt="Loop Engineering readiness, policy, and evidence"> |
+| <img src="assets/readme/product-run-history.png" alt="Compact run history with review state and results"> | <img src="assets/readme/product-loop-engineering.png" alt="Loop Engineering readiness, policy, and evidence"> |
 
-| Growth | Plugin Center |
+| Devices & Workers | Plugin Center |
 | --- | --- |
-| <img src="assets/readme/product-growth.png" alt="Gameful learning missions, capability unlocks, and achievement badges"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
+| <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.12.1` Includes
+## What `v0.13.0` Includes
 
-- Microphone-only, append-safe voice input with Chinese and English
-  recognition, punctuation, and longer pause handling.
-- Beginner-safe guided starts, visual result cards, and a deterministic no-key
-  demo for learning the product before connecting a model.
-- Ten learning missions, four progression levels, and twelve pixel-style
-  achievement badges backed by real product activity.
-- Human-readable role, model, budget, approval, and promotion policy.
-- Tamper-evident receipts, safe replay, attempt comparison, governed memory
-  provenance, and risk-aware sandbox status.
-- Consistent borderless navigation, page spacing, detail layouts, project
-  switching, Settings design, and double-click window maximize behavior.
-- A corrected Human Review inspector label that never exposes an untranslated
-  numeric format placeholder.
+- One generic Work entry with goal-driven Autopilot resolution; starter cards
+  and scenario-specific host fields no longer define the task model.
+- Approved remote macOS or Linux Workers over direct IP links, including LAN or
+  point-to-point connections, plus an optional public relay path when direct
+  reachability is unavailable.
+- Expiring enrollment, mutual TLS, device revocation, resource leases,
+  cancellation, bounded model grants, signed artifacts, and local evidence
+  verification without copying host model credentials to the Worker.
+- A unified Run History and a compact review surface with one result verdict,
+  progressive evidence disclosure, and explicit accept or revision actions.
+- A faster cached Loop Engineering snapshot, actionable checks, global
+  achievements, configured-agent-only capability views, and the current
+  borderless Apple-style page hierarchy.
+- Managed plugin install, repair, upgrade, rollback, and uninstall coverage for
+  all three first-party plugins, including runtime reconnect and provenance
+  verification after a formal app rebuild.
 
 Full release history lives in [CHANGELOG.md](CHANGELOG.md).
 

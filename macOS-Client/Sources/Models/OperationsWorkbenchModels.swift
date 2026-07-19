@@ -58,7 +58,6 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
     case memory
     case autopilot
     case achievements
-    case humanReview
     case assist
 
     var id: String { rawValue }
@@ -75,7 +74,6 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
         case .memory: return "operations.memory"
         case .autopilot: return "operations.autopilot"
         case .achievements: return "operations.achievements"
-        case .humanReview: return "operations.reviewQueue"
         case .assist: return "operations.assist"
         }
     }
@@ -88,7 +86,6 @@ enum OperationsWorkbenchSurface: String, CaseIterable, Identifiable {
         case .memory: return "memorychip"
         case .autopilot: return "arrow.triangle.2.circlepath"
         case .achievements: return "flag.checkered"
-        case .humanReview: return "tray"
         case .assist: return "checkmark.circle"
         }
     }
@@ -362,6 +359,31 @@ struct HumanReviewSignal: Identifiable, Equatable {
     let detail: String
     let status: String
     let source: String
+
+    var attentionSurface: OperationsWorkbenchSurface? {
+        let normalizedSource = source.lowercased()
+        switch kind {
+        case .pendingMemory:
+            return .memory
+        case .permission:
+            return normalizedSource == "assist" ? .assist : nil
+        case .promotion, .blockingGate, .manualGate, .skippedGate:
+            return normalizedSource.contains("agent loop") ? .autopilot : .qualityGate
+        case .pluginRepair:
+            return nil
+        }
+    }
+
+    var needsSettingsAttention: Bool {
+        switch kind {
+        case .pluginRepair:
+            return true
+        case .permission:
+            return source.lowercased() != "assist"
+        case .promotion, .pendingMemory, .blockingGate, .manualGate, .skippedGate:
+            return false
+        }
+    }
 }
 
 struct HumanReviewQueueSnapshot: Equatable {
@@ -382,6 +404,14 @@ struct HumanReviewQueueSnapshot: Equatable {
 
     var blockingCount: Int {
         items.filter { $0.kind == .blockingGate || StatusPaletteKey.isBlocking($0.status) }.count
+    }
+
+    var attentionSurfaces: Set<OperationsWorkbenchSurface> {
+        Set(items.compactMap(\.attentionSurface))
+    }
+
+    var needsSettingsAttention: Bool {
+        items.contains(where: \.needsSettingsAttention)
     }
 
     func count(for kind: HumanReviewKind) -> Int {

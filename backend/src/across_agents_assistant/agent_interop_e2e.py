@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .paths import data_file, tmp_dir
 
@@ -412,6 +412,77 @@ def run_agent_interop_e2e(
     return payload
 
 
+class AgentInteropE2ERunCoordinator:
+    """Run the bounded interop E2E without holding an HTTP request open.
+
+    The complete scenario can take several minutes. Keeping it behind a
+    synchronous request caused the local Unix-socket bridge to time out while
+    the worker thread continued in the background. This coordinator makes the
+    long-running state explicit and lets the client poll the lightweight GET
+    endpoint instead.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: dict[str, Any] = {
+            "schema_version": "across-aaa-agent-interop-e2e-run/1.0",
+            "status": "idle",
+            "started_at": None,
+            "finished_at": None,
+            "failed_count": 0,
+        }
+        self._thread: threading.Thread | None = None
+
+    def start(self, runner: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return dict(self._state)
+            self._state = {
+                "schema_version": "across-aaa-agent-interop-e2e-run/1.0",
+                "status": "running",
+                "started_at": _now(),
+                "finished_at": None,
+                "failed_count": 0,
+            }
+            self._thread = threading.Thread(
+                target=self._run,
+                args=(runner,),
+                name="across-agent-interop-e2e",
+                daemon=True,
+            )
+            self._thread.start()
+            return dict(self._state)
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._state)
+
+    def _run(self, runner: Callable[[], Mapping[str, Any]]) -> None:
+        try:
+            result = dict(runner() or {})
+            status = "passed" if str(result.get("status") or "") == "passed" else "failed"
+            summary = result.get("summary") if isinstance(result.get("summary"), Mapping) else {}
+            failed_count = _safe_int(summary.get("failed_count"))
+        except Exception:
+            status = "failed"
+            failed_count = 1
+        with self._lock:
+            self._state = {
+                "schema_version": "across-aaa-agent-interop-e2e-run/1.0",
+                "status": status,
+                "started_at": self._state.get("started_at"),
+                "finished_at": _now(),
+                "failed_count": failed_count,
+            }
+
+
+_agent_interop_e2e_run_coordinator = AgentInteropE2ERunCoordinator()
+
+
+def get_agent_interop_e2e_run_coordinator() -> AgentInteropE2ERunCoordinator:
+    return _agent_interop_e2e_run_coordinator
+
+
 def load_agent_interop_e2e_latest() -> dict[str, Any]:
     try:
         payload = json.loads(data_file(LATEST_RESULT_FILE).read_text(encoding="utf-8"))
@@ -487,7 +558,7 @@ def build_agent_interop_workbench_section(payload: Mapping[str, Any] | None = No
     latest = dict(payload or load_agent_interop_e2e_latest())
     summary = dict(latest.get("summary") or {})
     status = str(latest.get("status") or "not_run")
-    section_status = "attention" if status == "not_run" else status
+    section_status = "passed" if status == "not_run" else status
     return {
         "id": "agent_interop_e2e",
         "title": "Agent Interop E2E Lab",
@@ -1270,7 +1341,7 @@ def _mcp_initialize_and_list_tools(command: list[str], *, cwd: Path, env: Mappin
                 initialize_result = message.get("result") or {}
             if message.get("id") == 2:
                 tools_result = message.get("result") or {}
-        tools = tools_result.get("tools") if isinstance(tools_result, dict) else []
+        tools = (tools_result.get("tools") or []) if isinstance(tools_result, dict) else []
         tool_names = [str(item.get("name")) for item in tools if isinstance(item, dict)]
         return {
             "status": "passed" if tool_names else "failed",

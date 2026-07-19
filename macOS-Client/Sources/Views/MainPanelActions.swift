@@ -3,60 +3,7 @@ import AppKit
 
 extension MainPanelView {
     func openSettings(_ tab: SettingsHubTab) {
-        showTaskOrchestration = false
         activeSettingsHubTab = tab
-    }
-
-    func refreshHumanReviewQueue() {
-        Task {
-            async let lifecycleLoad: Void = pluginLifecycleViewModel.load(probe: true)
-            if memorySearchViewModel.hasSearched {
-                await memorySearchViewModel.search(projectRoot: operationalProjectPath)
-            }
-            _ = await lifecycleLoad
-        }
-    }
-
-    func openHumanReviewItem(_ item: HumanReviewSignal) {
-        let source = item.source.lowercased()
-        let identifier = item.id.lowercased()
-
-        switch item.kind {
-        case .pendingMemory:
-            selectedOperationsSurface = .humanReview
-        case .pluginRepair:
-            openSettings(.plugins)
-        case .permission:
-            if source == "assist" || identifier.hasPrefix("permission-") {
-                selectedOperationsSurface = .assist
-            } else {
-                openSettings(.tools)
-            }
-        case .promotion, .blockingGate, .manualGate, .skippedGate:
-            if source.contains("agent loop")
-                || (identifier.hasPrefix("promotion-") && !identifier.contains("release"))
-            {
-                activeSettingsHubTab = nil
-                showTaskOrchestration = false
-                selectedOperationsSurface = .autopilot
-            } else {
-                activeSettingsHubTab = nil
-                showTaskOrchestration = true
-            }
-        }
-    }
-
-    func humanReviewKind(forGateStatus status: String) -> HumanReviewKind? {
-        switch StatusPalette.normalized(status) {
-        case "blocked", "error", "failed", "failure", "timeout":
-            return .blockingGate
-        case "manual", "manual_required", "needs_review":
-            return .manualGate
-        case "skipped":
-            return .skippedGate
-        default:
-            return nil
-        }
     }
 
     func syncSelectedAgentToAvailability() {
@@ -69,7 +16,18 @@ extension MainPanelView {
 
     func loadInitialDataWhenBackendAvailable() {
         guard settingsViewModel.availabilityBootstrapState != .loading else { return }
+        mcpPluginManager.startAutoConnectAfterCoreReady()
         viewModel.loadInitialDataIfNeeded()
+        guard !didLoadProductShell else { return }
+        didLoadProductShell = true
+        taskOrchestrationViewModel.updateProjectDirectoryFilter(
+            viewModel.activeProjectPath,
+            reload: false
+        )
+        taskOrchestrationViewModel.loadTasks()
+        Task {
+            await pluginLifecycleViewModel.loadForProductShell()
+        }
     }
 
     func syncPreferencesToSessionViewModel() {
@@ -142,11 +100,15 @@ extension MainPanelView {
             return
         }
 
-        if appPreferences.automaticDeliveryProtection {
+        if workSubmissionMode.usesProtectedDelivery {
             submitProtectedTask(text: text, attachedFiles: attachedFiles)
             return
         }
 
+        submitDirectAgentWork(text: text, attachedFiles: attachedFiles)
+    }
+
+    private func submitDirectAgentWork(text: String, attachedFiles: [AttachedFile]) {
         Task {
             if let errorMessage = await settingsViewModel.ensureChatAgentReady(agentId: viewModel.selectedAgentId) {
                 await MainActor.run {
@@ -174,11 +136,6 @@ extension MainPanelView {
             viewModel.showErrorMessage(appPreferences.text("work.projectRequired"))
             return
         }
-        guard !taskOrchestrationViewModel.isOrchestratorPluginUnavailable else {
-            viewModel.showErrorMessage(appPreferences.text("work.setupRequired"))
-            return
-        }
-
         let ownerAgent = settingsViewModel.preferredAgentId(current: viewModel.selectedAgentId) ?? "auto"
         let description = protectedTaskDescription(text: text, attachedFiles: attachedFiles)
 

@@ -518,9 +518,9 @@ struct ReleaseEvidenceCenterView: View {
                     Button(action: { viewModel.loadTaskEvidenceBundle(task.taskId, releaseGate: isReleaseE2ETaskDescription(task.description)) }) {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#4d6bfe"))
+                            .foregroundColor(AcrossTheme.accent)
                             .frame(width: 26, height: 26)
-                            .background(Color(hex: "#4d6bfe").opacity(0.12))
+                            .background(AcrossTheme.accent.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
@@ -662,6 +662,7 @@ struct ReleaseEvidenceCenterView: View {
 
 struct TaskEvidenceBundleSheet: View {
     let bundle: TaskEvidenceBundle
+    let resultContract: AcrossVisualResultContract?
     let isLoading: Bool
     let errorMessage: String?
     let exportedURL: URL?
@@ -669,8 +670,11 @@ struct TaskEvidenceBundleSheet: View {
     let onOpenExport: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appPreferences: AppPreferences
-    private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
+    @State private var showsDecisionBasis = false
+    @State private var showsVerificationScope = false
+    @State private var showsResultDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -678,10 +682,11 @@ struct TaskEvidenceBundleSheet: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(appPreferences.text("tasks.evidence.title"))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
                     Text(bundle.taskId)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
                 Spacer()
@@ -690,7 +695,7 @@ struct TaskEvidenceBundleSheet: View {
                     Label(appPreferences.text("tasks.evidence.export"), systemImage: "square.and.arrow.down")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .disabled(isLoading)
 
                 if exportedURL != nil {
@@ -698,157 +703,298 @@ struct TaskEvidenceBundleSheet: View {
                         Label(appPreferences.text("tasks.evidence.openExport"), systemImage: "folder")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
                 }
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(appPreferences.text("settings.close"))
             }
             .padding(16)
 
-            Divider().opacity(0.5)
-
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 8) {
-                        evidenceMetric(appPreferences.text("tasks.delivery"), bundle.taskStatus, bundle.taskStatus)
-                        evidenceMetric(appPreferences.text("tasks.score"), "\(bundle.benchmark.summary.minQualityScore)", bundle.benchmark.status)
-                        evidenceMetric(appPreferences.text("tasks.evidence.benchmark"), bundle.benchmark.status, bundle.benchmark.status)
-                        evidenceMetric(appPreferences.text("tasks.observability.remediation"), "\(bundle.benchmark.summary.maxRemediationAttempts)", bundle.benchmark.summary.maxRemediationAttempts == 0 ? "passed" : "partial")
-                    }
-
-                    Text(bundle.releaseReadinessSummary)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 18) {
+                    evidenceVerdict
 
                     if let errorMessage, !errorMessage.isEmpty {
-                        Text(errorMessage)
-                            .font(.system(size: 11))
-                            .foregroundColor(Color(hex: "#ff9f0a"))
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.orange)
                     }
 
                     if let exportedURL {
                         Text(String(format: appPreferences.text("tasks.evidence.exported"), exportedURL.path))
                             .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
 
-                    evidenceAuditSection
-                    evidenceScenarioSection
+                    if let resultContract {
+                        MinimalDisclosureSection(
+                            title: appPreferences.text("tasks.evidence.decisionBasis"),
+                            detail: appPreferences.text(decisionSummaryKey(resultContract.verdict)),
+                            isExpanded: $showsDecisionBasis
+                        ) {
+                            decisionBasisSection(resultContract)
+                        }
+                    }
+
+                    MinimalDisclosureSection(
+                        title: appPreferences.text("tasks.evidence.scope"),
+                        detail: String(
+                            format: appPreferences.text("tasks.evidence.scope.summary"),
+                            bundle.audit.expectedFiles.count,
+                            bundle.audit.requiredProbes.count
+                        ),
+                        isExpanded: $showsVerificationScope
+                    ) {
+                        evidenceAuditSection
+                    }
+
+                    MinimalDisclosureSection(
+                        title: appPreferences.text("tasks.evidence.results"),
+                        detail: String(
+                            format: appPreferences.text("tasks.evidence.results.summary"),
+                            bundle.benchmark.scenarios.count
+                        ),
+                        isExpanded: $showsResultDetails
+                    ) {
+                        evidenceScenarioSection
+                    }
                 }
-                .padding(16)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
             }
         }
         .frame(minWidth: 720, minHeight: 560)
-        .background(theme.panelBackground)
+        .background(AcrossTheme.canvasFill(for: colorScheme))
+    }
+
+    private var evidenceVerdict: some View {
+        let passed = ["passed", "completed"].contains(bundle.benchmark.status)
+            && ["completed", "passed"].contains(bundle.taskStatus)
+        let repairCount = bundle.benchmark.summary.maxRemediationAttempts
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: passed ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(passed ? Color.green : Color.orange)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(appPreferences.text(passed ? "tasks.evidence.passed" : "tasks.evidence.attention"))
+                        .font(.system(size: 20, weight: .semibold))
+                    Text(
+                        appPreferences.text(
+                            passed
+                                ? "tasks.evidence.summary.passed"
+                                : "tasks.evidence.summary.attention"
+                        )
+                    )
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 16)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("\(bundle.benchmark.summary.minQualityScore)")
+                        .font(.system(size: 24, weight: .semibold).monospacedDigit())
+                    Text(appPreferences.text("tasks.score"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 18) {
+                compactEvidenceState(
+                    appPreferences.text("tasks.delivery"),
+                    value: appPreferences.statusText(bundle.taskStatus),
+                    status: bundle.taskStatus
+                )
+                compactEvidenceState(
+                    appPreferences.text("tasks.evidence.benchmark"),
+                    value: appPreferences.statusText(bundle.benchmark.status),
+                    status: bundle.benchmark.status
+                )
+                compactEvidenceState(
+                    appPreferences.text("tasks.observability.remediation"),
+                    value: repairCount == 0
+                        ? appPreferences.text("tasks.evidence.noRepair")
+                        : "\(repairCount)",
+                    status: repairCount == 0 ? "passed" : "partial"
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private var evidenceAuditSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(appPreferences.text("tasks.evidence.audit"))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            HStack(spacing: 8) {
-                evidenceMetric("Read-only", bundle.audit.readOnly ? "yes" : "no", bundle.audit.readOnly ? "passed" : "failed")
-                evidenceMetric("Redacted", bundle.audit.secretsRedacted ? "yes" : "no", bundle.audit.secretsRedacted ? "passed" : "failed")
-                evidenceMetric("Repair", bundle.audit.repairOrResumeTriggered ? "triggered" : "none", bundle.audit.repairOrResumeTriggered ? "failed" : "passed")
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 18) {
+                auditState(
+                    appPreferences.text("tasks.evidence.readOnly"),
+                    passed: bundle.audit.readOnly
+                )
+                auditState(
+                    appPreferences.text("tasks.evidence.redacted"),
+                    passed: bundle.audit.secretsRedacted
+                )
+                auditState(
+                    appPreferences.text("tasks.evidence.noRepairTriggered"),
+                    passed: !bundle.audit.repairOrResumeTriggered
+                )
             }
 
             evidenceList(title: appPreferences.text("tasks.evidence.expectedFiles"), values: bundle.audit.expectedFiles)
             evidenceList(title: appPreferences.text("tasks.evidence.requiredProbes"), values: bundle.audit.requiredProbes)
         }
-        .padding(14)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func decisionBasisSection(_ contract: AcrossVisualResultContract) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            AcrossTrustCompassView(
+                compass: contract.trustCompass,
+                preferences: appPreferences
+            )
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: decisionIcon(contract.verdict))
+                    .foregroundStyle(decisionColor(contract.verdict))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(appPreferences.text(decisionTitleKey(contract.verdict)))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(appPreferences.text(decisionDetailKey(contract.verdict)))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     private var evidenceScenarioSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(appPreferences.text("tasks.evidence.benchmark"))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
+        VStack(alignment: .leading, spacing: 14) {
             ForEach(bundle.benchmark.scenarios) { scenario in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text(scenario.taskId)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.strongText)
-                        Text(scenario.status)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(statusColor(scenario.status))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                         Spacer()
-                        Text("score \(scenario.qualityScore)")
+                        Label(
+                            appPreferences.statusText(scenario.status),
+                            systemImage: statusIcon(scenario.status)
+                        )
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(statusColor(scenario.status))
+                        Text("\(scenario.qualityScore)")
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
 
                     evidenceList(title: appPreferences.text("tasks.evidence.producedFiles"), values: scenario.producedFiles)
-                    evidenceList(title: appPreferences.text("tasks.evidence.failures"), values: scenario.failures)
+                    if !scenario.failures.isEmpty {
+                        evidenceList(title: appPreferences.text("tasks.evidence.failures"), values: scenario.failures)
+                    }
 
                     if !scenario.checks.isEmpty {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], spacing: 8) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)], spacing: 6) {
                             ForEach(scenario.checks.keys.sorted(), id: \.self) { key in
                                 HStack(spacing: 6) {
                                     Image(systemName: scenario.checks[key] == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                        .foregroundColor(scenario.checks[key] == true ? Color(hex: "#30d158") : Color(hex: "#FF453A"))
+                                        .foregroundStyle(scenario.checks[key] == true ? Color.green : Color.red)
+                                        .accessibilityHidden(true)
                                     Text(key)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.secondary)
+                                        .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                    Spacer(minLength: 0)
                                 }
-                                .padding(7)
-                                .background(theme.fieldBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                         }
                     }
                 }
-                .padding(12)
-                .background(theme.fieldBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
-        .padding(14)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func evidenceMetric(_ title: String, _ value: String, _ status: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    private func compactEvidenceState(_ title: String, value: String, status: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: statusIcon(status))
+                .foregroundStyle(statusColor(status))
+                .accessibilityHidden(true)
             Text(title)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+                .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.strongText)
+                .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
-            Rectangle()
-                .fill(statusColor(status))
-                .frame(height: 2)
-                .clipShape(RoundedRectangle(cornerRadius: 1))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(9)
-        .background(theme.fieldBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func auditState(_ title: String, passed: Bool) -> some View {
+        Label(title, systemImage: passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(passed ? Color.green : Color.red)
+    }
+
+    private func decisionSummaryKey(_ verdict: AcrossRunVerdict) -> String {
+        "tasks.evidence.decision.summary.\(verdict.rawValue)"
+    }
+
+    private func decisionTitleKey(_ verdict: AcrossRunVerdict) -> String {
+        "tasks.evidence.decision.title.\(verdict.rawValue)"
+    }
+
+    private func decisionDetailKey(_ verdict: AcrossRunVerdict) -> String {
+        "tasks.evidence.decision.detail.\(verdict.rawValue)"
+    }
+
+    private func decisionIcon(_ verdict: AcrossRunVerdict) -> String {
+        switch verdict {
+        case .ready: return "checkmark.circle.fill"
+        case .needsReview: return "hand.raised.fill"
+        case .blocked: return "xmark.octagon.fill"
+        case .inProgress: return "circle.dotted"
+        case .cancelled: return "minus.circle.fill"
+        }
+    }
+
+    private func decisionColor(_ verdict: AcrossRunVerdict) -> Color {
+        switch verdict {
+        case .ready: return .green
+        case .needsReview: return .orange
+        case .blocked: return .red
+        case .inProgress: return AcrossTheme.accent
+        case .cancelled: return .secondary
+        }
     }
 
     private func evidenceList(title: String, values: [String]) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.strongText)
             if values.isEmpty {
-                Text("-")
+                Text(appPreferences.text("tasks.evidence.none"))
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             } else {
-                ForEach(values.prefix(12), id: \.self) { value in
-                    Text(value)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 5) {
+                    ForEach(values.prefix(20), id: \.self) { value in
+                        Text(value)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
@@ -856,9 +1002,17 @@ struct TaskEvidenceBundleSheet: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "passed", "completed": return Color(hex: "#30d158")
-        case "failed", "blocked": return Color(hex: "#FF453A")
-        default: return Color(hex: "#ff9f0a")
+        case "passed", "completed": return .green
+        case "failed", "blocked": return .red
+        default: return .orange
+        }
+    }
+
+    private func statusIcon(_ status: String) -> String {
+        switch status {
+        case "passed", "completed": return "checkmark.circle.fill"
+        case "failed", "blocked": return "xmark.octagon.fill"
+        default: return "exclamationmark.circle.fill"
         }
     }
 }

@@ -7,8 +7,9 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
     case experience
     case models
     case capabilities
-    case mcp
     case plugins
+    case workers
+    case mcp
     case tools
     case settings
 
@@ -20,8 +21,9 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
         case .experience: return "waveform.and.person.filled"
         case .models: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
-        case .mcp: return "square.grid.2x2"
         case .plugins: return "puzzlepiece"
+        case .workers: return "desktopcomputer.and.macbook"
+        case .mcp: return "square.grid.2x2"
         case .tools: return "wrench.and.screwdriver.fill"
         case .settings: return "gearshape"
         }
@@ -34,8 +36,9 @@ enum SettingsHubTab: String, CaseIterable, Identifiable {
         case .experience: return preferences.text("settings.experience")
         case .models: return preferences.text("settings.agentsModels")
         case .capabilities: return preferences.text("settings.capabilities")
-        case .mcp: return preferences.text("settings.mcp")
         case .plugins: return preferences.text("settings.plugins")
+        case .workers: return preferences.text("workers.title")
+        case .mcp: return preferences.text("settings.mcp")
         case .tools: return preferences.text("settings.toolPermissions")
         case .settings: return preferences.text("settings.preferences")
         }
@@ -47,6 +50,7 @@ private enum SettingsHubCategory: String, CaseIterable, Identifiable {
     case agents
     case capabilities
     case plugins
+    case workers
     case mcp
     case tools
     case diagnostics
@@ -59,6 +63,7 @@ private enum SettingsHubCategory: String, CaseIterable, Identifiable {
         case .agents: return "cpu"
         case .capabilities: return "sparkles.rectangle.stack"
         case .plugins: return "puzzlepiece.extension"
+        case .workers: return "desktopcomputer.and.macbook"
         case .mcp: return "square.grid.2x2"
         case .tools: return "wrench.and.screwdriver"
         case .diagnostics: return "stethoscope"
@@ -72,6 +77,7 @@ private enum SettingsHubCategory: String, CaseIterable, Identifiable {
         case .agents: return preferences.text("settings.agentsModels")
         case .capabilities: return preferences.text("settings.capabilities")
         case .plugins: return preferences.text("settings.plugins")
+        case .workers: return preferences.text("workers.title")
         case .mcp: return preferences.text("settings.mcp")
         case .tools: return preferences.text("settings.toolPermissions")
         case .diagnostics: return preferences.text("settings.systemHealth")
@@ -84,6 +90,7 @@ private enum SettingsHubCategory: String, CaseIterable, Identifiable {
         case .agents: return .models
         case .capabilities: return .capabilities
         case .plugins: return .plugins
+        case .workers: return .workers
         case .mcp: return .mcp
         case .tools: return .tools
         case .diagnostics: return .diagnostics
@@ -109,6 +116,7 @@ struct SettingsHubView: View {
         case .models: return .agents
         case .capabilities: return .capabilities
         case .plugins: return .plugins
+        case .workers: return .workers
         case .mcp: return .mcp
         case .tools: return .tools
         case .diagnostics: return .diagnostics
@@ -238,6 +246,9 @@ struct SettingsHubView: View {
             .environmentObject(preferences)
         case .plugins:
             PluginLifecycleView(onClose: nil, embeddedInHub: true)
+                .environmentObject(preferences)
+        case .workers:
+            DevicesWorkersSettingsView()
                 .environmentObject(preferences)
         case .mcp:
             MCPPreferencesView(onClose: nil, embeddedInHub: true)

@@ -42,8 +42,8 @@ def fake_candidate(root: Path) -> Path:
     info = {
         "CFBundleIdentifier": "app.acrossagents.assistant",
         "CFBundleExecutable": executable.name,
-        "CFBundleShortVersionString": "0.12.1",
-        "CFBundleVersion": "0.12.1",
+        "CFBundleShortVersionString": "0.13.0",
+        "CFBundleVersion": "0.13.0",
         "AcrossStudyProfileIsolationVersion": 1,
     }
     info_path = app / "Contents" / "Info.plist"

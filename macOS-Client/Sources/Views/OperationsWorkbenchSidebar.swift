@@ -3,7 +3,8 @@ import SwiftUI
 struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
     @Binding var selection: OperationsWorkbenchSurface
     @ObservedObject var preferences: AppPreferences
-    let reviewCount: Int
+    let attentionSurfaces: Set<OperationsWorkbenchSurface>
+    let settingsNeedsAttention: Bool
     let capabilitySurfaces: [OperationsWorkbenchSurface]
     let activeProjectName: String?
     let activeProjectPath: String?
@@ -16,7 +17,8 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
     init(
         selection: Binding<OperationsWorkbenchSurface>,
         preferences: AppPreferences,
-        reviewCount: Int,
+        attentionSurfaces: Set<OperationsWorkbenchSurface>,
+        settingsNeedsAttention: Bool,
         capabilitySurfaces: [OperationsWorkbenchSurface],
         activeProjectName: String?,
         activeProjectPath: String?,
@@ -25,7 +27,8 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
     ) {
         _selection = selection
         self.preferences = preferences
-        self.reviewCount = reviewCount
+        self.attentionSurfaces = attentionSurfaces
+        self.settingsNeedsAttention = settingsNeedsAttention
         self.capabilitySurfaces = capabilitySurfaces
         self.activeProjectName = activeProjectName
         self.activeProjectPath = activeProjectPath
@@ -39,13 +42,10 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
 
             VStack(spacing: 4) {
                 ForEach(OperationsWorkbenchSurface.primary) { surface in
-                    navigationRow(surface)
-                }
-                if reviewCount > 0 {
-                    navigationRow(.humanReview, badge: reviewCount)
+                    navigationRow(surface, showsAttention: attentionSurfaces.contains(surface))
                 }
                 ForEach(capabilitySurfaces) { surface in
-                    navigationRow(surface)
+                    navigationRow(surface, showsAttention: attentionSurfaces.contains(surface))
                 }
             }
             .padding(.horizontal, 10)
@@ -94,11 +94,12 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
         }
     }
 
-    private func navigationRow(_ surface: OperationsWorkbenchSurface, badge: Int? = nil) -> some View {
+    private func navigationRow(_ surface: OperationsWorkbenchSurface, showsAttention: Bool = false) -> some View {
         let isSelected = selection == surface
         let isFocused = focusedSurface == surface
         return Button {
             selection = surface
+            focusedSurface = surface
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: surface.systemName)
@@ -109,13 +110,11 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                 Spacer()
-                if let badge, badge > 0 {
-                    Text("\(badge)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(isSelected ? AcrossTheme.accent : .secondary)
-                        .frame(minWidth: 20, minHeight: 18)
-                        .background(AcrossTheme.recessedFill(for: colorScheme))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                if showsAttention {
+                    Circle()
+                        .fill(AcrossTheme.accent)
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel(Text(preferences.text("operations.attention")))
                 }
             }
             .foregroundStyle(isSelected ? AcrossTheme.accent : Color.primary)
@@ -150,6 +149,12 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer()
+                if settingsNeedsAttention {
+                    Circle()
+                        .fill(AcrossTheme.accent)
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel(Text(preferences.text("operations.attention")))
+                }
             }
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)

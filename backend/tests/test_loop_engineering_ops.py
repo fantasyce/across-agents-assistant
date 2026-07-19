@@ -1,6 +1,21 @@
 from across_agents_assistant.loop_engineering_ops import build_loop_engineering_ops_dashboard
 
 
+def test_ops_dashboard_treats_unconfigured_automation_as_optional():
+    payload = build_loop_engineering_ops_dashboard(
+        telemetry={"run_count": 0, "by_status": {}},
+        runs={"runs": []},
+        trigger_registry={"triggers": []},
+        trigger_scheduler={"running": False},
+        capability_pack={"ready_count": 42},
+        registry_health={"status": "passed"},
+        self_iteration_plan={"status": "not_registered", "ready": False},
+    )
+
+    assert payload["status"] == "passed"
+    assert payload["next_actions"] == []
+
+
 def test_ops_dashboard_latest_success_clears_historical_failure_attention():
     payload = build_loop_engineering_ops_dashboard(
         telemetry={
@@ -46,7 +61,7 @@ def test_ops_dashboard_latest_success_clears_historical_failure_attention():
     assert payload["signals"]["historical_gate_failure_count"] == 1
     assert payload["summary"]["platform_self_repair_queued_count"] == 1
     assert payload["self_iteration_plan"]["platform_self_repair"]["spec"] == "aaa-platform-self-repair"
-    assert payload["next_actions"][0]["action"] == "continue_scheduled_e2e"
+    assert payload["next_actions"] == []
 
 
 def test_ops_dashboard_latest_failed_run_still_requires_attention():
@@ -129,7 +144,7 @@ def test_ops_dashboard_resolves_obsolete_platform_self_repair_failure():
     assert payload["summary"]["resolved_failed"] == 1
     assert payload["summary"]["current_failed"] == 0
     assert payload["signals"]["gate_failure_count"] == 0
-    assert payload["next_actions"][0]["action"] == "continue_scheduled_e2e"
+    assert payload["next_actions"] == []
 
 
 def test_ops_dashboard_keeps_unresolved_platform_self_repair_failure_attention():

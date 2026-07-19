@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -29,14 +30,39 @@ def probe_agent_plugin_runtime_status(
     *,
     commands: Mapping[str, list[str]] | None = None,
     env: Mapping[str, str] | None = None,
-    timeout_seconds: int = 8,
+    timeout_seconds: int = 20,
 ) -> dict[str, Any]:
     source_env = dict(env or os.environ)
     effective_commands = _effective_commands(commands, source_env)
-    results = {
-        name: _run_json_command(name, command, source_env, timeout_seconds=timeout_seconds)
-        for name, command in effective_commands.items()
-    }
+    results: dict[str, dict[str, Any]] = {}
+    pending_commands: dict[str, list[str]] = {}
+    for name, command in effective_commands.items():
+        empty_inventory = _default_empty_inventory_result(
+            name,
+            command,
+            source_env,
+            commands_are_explicit=commands is not None,
+        )
+        if empty_inventory is not None:
+            results[name] = empty_inventory
+        else:
+            pending_commands[name] = command
+    # Packaged native plugin commands may need a few seconds to cold-start on
+    # first use. Probe the three independent producers concurrently so a slow
+    # healthy command neither becomes a false failure nor adds its latency to
+    # every other producer probe.
+    with ThreadPoolExecutor(max_workers=max(1, len(pending_commands))) as executor:
+        futures = {
+            name: executor.submit(
+                _run_json_command,
+                name,
+                command,
+                source_env,
+                timeout_seconds=timeout_seconds,
+            )
+            for name, command in pending_commands.items()
+        }
+        results.update({name: future.result() for name, future in futures.items()})
     return build_agent_plugin_runtime_status(
         orchestrator=results.get("orchestrator", {}),
         autopilot=results.get("autopilot", {}),
@@ -226,6 +252,74 @@ def _managed_default_command(default: list[str], env: Mapping[str, str]) -> list
     return list(default)
 
 
+def _default_empty_inventory_result(
+    name: str,
+    command: list[str],
+    env: Mapping[str, str],
+    *,
+    commands_are_explicit: bool,
+) -> dict[str, Any] | None:
+    """Return the canonical optional empty state without cold-starting a frozen CLI.
+
+    The packaged Orchestrator executable is intentionally isolated from AAA,
+    but a one-file executable can take longer than the host's bounded probe
+    timeout to cold-start. When the host-managed external-agent registry is
+    definitely empty, launching that executable cannot reveal any additional
+    health information: an empty optional registry is already a valid state.
+    Explicit/custom commands and non-empty registries always run normally.
+    """
+    if name != "orchestrator" or commands_are_explicit:
+        return None
+    if str(env.get(COMMAND_ENV_KEYS["orchestrator"]) or "").strip():
+        return None
+    if not command:
+        return None
+    executable = Path(command[0]).expanduser()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        return None
+    registry_dir = _orchestrator_registry_dir(env)
+    try:
+        if registry_dir.is_dir() and any(registry_dir.glob("*.json")):
+            return None
+    except OSError:
+        return None
+    return {
+        "status": "passed",
+        "source": "orchestrator",
+        "payload": {
+            "status": "unavailable",
+            "summary": {
+                "agent_count": 0,
+                "healthy_agent_count": 0,
+                "plugin_count": 0,
+                "generic_schema": "across-agent-plugin/1.0",
+            },
+            "agents": [],
+        },
+    }
+
+
+def _orchestrator_registry_dir(env: Mapping[str, str]) -> Path:
+    home = Path(str(env.get("HOME") or Path.home())).expanduser()
+    across_home_value = str(env.get("ACROSS_HOME") or "").strip()
+    across_home = _expand_home(across_home_value, home) if across_home_value else home / ".across"
+    orchestrator_home_value = str(env.get("ACROSS_ORCHESTRATOR_HOME") or "").strip()
+    orchestrator_home = (
+        _expand_home(orchestrator_home_value, home)
+        if orchestrator_home_value
+        else across_home / "data" / "across-orchestrator"
+    )
+    return orchestrator_home / "external-agents"
+
+
+def _expand_home(value: str, home: Path) -> Path:
+    if value == "~":
+        return home
+    if value.startswith("~/"):
+        return home / value[2:]
+    return Path(value).expanduser()
+
+
 def _status_from_probe(result: Mapping[str, Any], payload_status: Any) -> str:
     probe_status = str(result.get("status") or "").strip()
     if probe_status in {"failed", "unavailable"}:
@@ -242,12 +336,16 @@ def _inventory_status_from_probe(
     ready_count: int | None = None,
 ) -> str:
     status = _status_from_probe(result, payload_status)
-    if status == "failed":
-        return "failed"
     if str(result.get("status") or "").strip() in {"failed", "unavailable"}:
         return status
-    if total_count == 0 and status in {"attention", "unavailable", "unknown"}:
+    # A reachable inventory with zero configured extensions is a valid empty
+    # state. Some producer versions report that state as ``failed`` even
+    # though the probe itself succeeded; absence of an optional extension must
+    # not become a host health failure.
+    if total_count == 0 and status in {"attention", "failed", "unavailable", "unknown"}:
         return "passed"
+    if status == "failed":
+        return "failed"
     if ready_count is not None and total_count > 0 and ready_count < total_count:
         return "attention"
     return status if status in {"passed", "attention", "failed"} else "passed"

@@ -15,6 +15,7 @@ from across_agents_assistant.orchestrator_plugin import (
     OrchestratorPluginManager,
     OrchestratorPluginUnavailable,
     evaluate_app_grade_quality,
+    external_evidence_to_app_bundle,
     external_task_to_app_info,
 )
 
@@ -28,6 +29,40 @@ REQUIRED_FILES = [
     "cli/quality-check.mjs",
     "tests/e2e-smoke.mjs",
 ]
+
+
+def test_generic_external_task_uses_orchestrator_gates_instead_of_release_e2e_probes(tmp_path):
+    required = ["across-results/report.md", "across-results/evidence.json"]
+    evidence = {
+        "task_id": "task-workflow",
+        "goal": "Inspect this repository",
+        "status": "completed",
+        "project_root": str(tmp_path),
+        "contract": {"requiredArtifacts": required},
+        "metadata": {
+            "task_types": ["functional", "artifact"],
+            "delivery_mode": "composite",
+        },
+        "subtasks": [{"agent": "across-autopilot", "status": "completed"}],
+        "artifacts": [{"path": path, "present": True} for path in required],
+        "quality": {
+            "status": "passed",
+            "gates": {
+                "required_artifacts_present": True,
+                "no_artifacts_outside_project": True,
+            },
+        },
+    }
+
+    bundle = external_evidence_to_app_bundle(
+        evidence,
+        benchmark_id="generic-workflow",
+    )
+
+    assert bundle["benchmark"]["status"] == "passed"
+    assert bundle["benchmark"]["external_quality"]["quality_score"] == 100
+    assert bundle["audit"]["required_probes"] == []
+    assert bundle["owner_agent"] == "across-autopilot"
 
 
 def _free_port() -> int:
@@ -77,6 +112,34 @@ def test_orchestrator_sidecar_env_enables_across_context_memory_provider(tmp_pat
     assert env["ACROSS_ORCHESTRATOR_MEMORY_PROVIDER"] == "across-context"
     assert env["ACROSS_CONTEXT_COMMAND"].endswith("/across-context")
     assert not any(path.endswith(".across_agents/plugins/bin") for path in env["PATH"].split(os.pathsep))
+
+
+def test_task_summary_index_does_not_start_or_probe_sidecar_by_default(tmp_path, monkeypatch):
+    registry_path = tmp_path / "tasks.json"
+    registry_path.write_text(
+        json.dumps({
+            "schema_version": "1.0",
+            "tasks": [{"task_id": "task-indexed", "description": "Indexed", "status": "completed"}],
+        }),
+        encoding="utf-8",
+    )
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(tmp_path / "across-orchestrator"),
+            registry_path=registry_path,
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+    monkeypatch.setattr(
+        manager,
+        "get_task",
+        lambda _task_id: (_ for _ in ()).throw(AssertionError("summary read must stay index-only")),
+    )
+
+    assert manager.list_task_summaries() == [
+        {"task_id": "task-indexed", "description": "Indexed", "status": "completed"}
+    ]
 
 
 def test_managed_orchestrator_sidecar_allows_client_project_roots(monkeypatch, tmp_path):
@@ -164,6 +227,73 @@ def test_managed_orchestrator_restarts_a_stale_cached_sidecar(monkeypatch, tmp_p
 
     assert endpoint == "http://127.0.0.1:43123"
     assert captured == {"starts": 1, "health": 2}
+
+
+def test_bundled_orchestrator_sidecar_allows_cold_start(monkeypatch, tmp_path):
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command="across-orchestrator",
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+            connect_timeout=5.0,
+        )
+    )
+    monkeypatch.setattr(manager, "install_status", lambda: {"runtime": "bundled_native"})
+
+    assert manager._sidecar_startup_timeout(str(manager.installer.command_path)) == 60.0
+    assert manager._sidecar_startup_timeout(str(tmp_path / "external-orchestrator")) == 5.0
+
+
+def test_external_managed_wrapper_keeps_native_cold_start_budget(tmp_path):
+    installed = tmp_path / "installed"
+    wrapper = installed / "bin" / "across-orchestrator"
+    native = installed / "plugins" / "across-orchestrator" / "venv" / "bin" / "across-orchestrator"
+    wrapper.parent.mkdir(parents=True)
+    native.parent.mkdir(parents=True)
+    wrapper.write_text(
+        '#!/bin/sh\nSCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)\n'
+        'exec "$SCRIPT_DIR"/../plugins/across-orchestrator/venv/bin/across-orchestrator "$@"\n',
+        encoding="utf-8",
+    )
+    native.write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+
+    isolated_plugin_home = tmp_path / "isolated" / "plugins"
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            command=str(wrapper),
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=isolated_plugin_home,
+            connect_timeout=5.0,
+        )
+    )
+
+    assert manager.install_status()["installed"] is False
+    assert manager._managed_runtime_requires_sidecar(manager.install_status(), str(wrapper)) is True
+    assert manager._sidecar_startup_timeout(str(wrapper)) == 60.0
+
+
+def test_bundled_orchestrator_fallback_manifest_keeps_version_and_cold_start_timeout(tmp_path):
+    observed = {}
+
+    def runner(_args, **kwargs):
+        observed["timeout"] = kwargs["timeout"]
+        raise TimeoutError("cold start")
+
+    installer = OrchestratorPluginInstaller(
+        plugin_home=tmp_path / "plugins",
+        runner=runner,
+    )
+    installer._bundled_payload = {"version": "0.9.0"}
+    logs = []
+
+    installer._write_manifest(logs)
+
+    manifest = json.loads(installer.manifest_path.read_text(encoding="utf-8"))
+    assert observed["timeout"] == 60.0
+    assert manifest["version"] == "0.9.0"
+    assert logs == ["Plugin manifest probe failed; writing host manifest."]
 
 
 def test_managed_orchestrator_does_not_fall_back_to_cli_when_sidecar_is_incompatible(monkeypatch, tmp_path):
@@ -1087,6 +1217,38 @@ def test_external_http_runtime_forwards_declared_agent_adapters(tmp_path):
 
     assert task["task_id"] == "task-external-http"
     assert server.last_submit["agentAdapters"] == agent_adapters
+
+
+def test_generic_worker_routed_parent_task_is_never_auto_run_locally(tmp_path, monkeypatch):
+    with _FakeOrchestratorHTTPServer(str(tmp_path / "project")) as server:
+        manager = OrchestratorPluginManager(
+            OrchestratorPluginConfig(
+                mode="external",
+                endpoint=server.endpoint,
+                command="missing-across-orchestrator",
+                registry_path=tmp_path / "tasks.json",
+                auto_run=True,
+            )
+        )
+        started = []
+        monkeypatch.setattr(manager, "start_task_async", started.append)
+
+        task = manager.submit_task(
+            goal="Run a bounded remote analysis",
+            project_dir=str(tmp_path / "project"),
+            deliverables=["report.md"],
+            metadata={
+                "execution_contract": {
+                    "workflow_id": "remote-analysis-pack",
+                    "route": "worker",
+                    "phases": ["local-plan", "remote-run", "local-verify"],
+                }
+            },
+        )
+
+    assert task["task_id"] == "task-external-http"
+    assert started == []
+    assert server.last_submit["metadata"]["execution_contract"]["route"] == "worker"
 
 
 def test_external_app_task_artifacts_include_client_file_metadata(tmp_path):

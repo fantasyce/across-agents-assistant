@@ -47,6 +47,67 @@ class AutopilotClient:
     def beginner_patterns(self) -> dict[str, Any]:
         return self._dict(["beginner-patterns", "--json"])
 
+    def resolve_workflow(
+        self,
+        user_goal: str,
+        *,
+        requested_workflow_id: str | None = None,
+    ) -> dict[str, Any]:
+        args = [
+            "workflow-pack",
+            "resolve",
+            "--goal",
+            _required(user_goal, "user_goal"),
+            "--json",
+        ]
+        if requested_workflow_id:
+            args.extend(["--pack", _required(requested_workflow_id, "requested_workflow_id")])
+        return self._dict(args)
+
+    def build_worker_job_plan(
+        self,
+        *,
+        workflow_id: str,
+        user_goal: str,
+        project_id: str,
+        live_model: bool,
+    ) -> dict[str, Any]:
+        return self._dict([
+            "workflow-pack",
+            "worker-job-plan",
+            "--pack",
+            _required(workflow_id, "workflow_id"),
+            "--goal",
+            _required(user_goal, "user_goal"),
+            "--project-id",
+            _required(project_id, "project_id"),
+            "--live-model",
+            "true" if live_model else "false",
+            "--json",
+        ])
+
+    def build_execution_plan(
+        self,
+        *,
+        workflow_id: str,
+        user_goal: str,
+        project_id: str,
+        live_model: bool,
+    ) -> dict[str, Any]:
+        return self._dict([
+            "workflow-pack",
+            "execution-plan",
+            "--pack",
+            _required(workflow_id, "workflow_id"),
+            "--goal",
+            _required(user_goal, "user_goal"),
+            "--project-id",
+            _required(project_id, "project_id"),
+            "--live-model",
+            "true" if live_model else "false",
+            "--json",
+        ])
+
     def no_key_demo(self, pattern_id: str = "first-verified-task") -> dict[str, Any]:
         return self._dict([
             "beginner-pattern", "demo", "--pattern", _required(pattern_id, "pattern_id"), "--json"
@@ -181,6 +242,7 @@ class AutopilotClient:
         *,
         trigger: str = "aaa-user",
         model_policy_overrides: Mapping[str, Any] | None = None,
+        project_root: str | Path | None = None,
     ) -> dict[str, Any]:
         retention_required = self._candidate_retention_required(spec)
         self._refresh_source_mirrors_if_needed(spec)
@@ -188,7 +250,11 @@ class AutopilotClient:
         if model_policy_overrides:
             args.extend(["--model-overrides-json", json.dumps(model_policy_overrides, sort_keys=True)])
         try:
-            return self._dict(args, timeout=_long_run_timeout_seconds(self.env))
+            return self._dict(
+                args,
+                timeout=_long_run_timeout_seconds(self.env),
+                cwd=project_root,
+            )
         finally:
             if retention_required:
                 self._run_candidate_retention()

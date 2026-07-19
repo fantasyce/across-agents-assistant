@@ -132,6 +132,9 @@ class MCPPluginManager: ObservableObject {
 
     private let userDefaultsKey = "across_agents_mcp_plugins"
     private let defaultEnabledMigrationKey = "across_agents_mcp_plugins_default_enabled_migration_v044"
+    private var didStartDeferredAutoConnect = false
+    private var deferredAutoConnectIDs: [String] = []
+    private let autoConnectPriority = ["across_context", "filesystem", "sqlite", "local_kb"]
 
     // MARK: - Built-in Plugin Helpers
 
@@ -223,20 +226,37 @@ class MCPPluginManager: ObservableObject {
 
     private init() {
         loadPlugins()
+    }
 
-        // Wait a very short bit for the backend to fully start before connecting
-        // enabled built-in plugins whose configuration is complete.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.autoConnectConfiguredBuiltInPlugins()
+    /// Start optional MCP subprocesses only after Work has left its core
+    /// bootstrap state. Connections are serialized so three packaged Python
+    /// runtimes do not compete with the first usable window.
+    func startAutoConnectAfterCoreReady() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.didStartDeferredAutoConnect else { return }
+            self.didStartDeferredAutoConnect = true
+            let eligible = self.plugins.filter {
+                $0.isEnabled
+                    && $0.canAutoConnectOnLaunch
+                    && ($0.status == "disconnected" || $0.status == "error")
+            }
+            let priority = Dictionary(uniqueKeysWithValues: self.autoConnectPriority.enumerated().map { ($1, $0) })
+            self.deferredAutoConnectIDs = eligible
+                .map(\.id)
+                .sorted { (priority[$0] ?? Int.max) < (priority[$1] ?? Int.max) }
+            self.connectNextDeferredPlugin()
         }
     }
 
-    private func autoConnectConfiguredBuiltInPlugins() {
-        for plugin in plugins where plugin.isEnabled && plugin.canAutoConnectOnLaunch {
-            // Only connect if it's currently disconnected or error, to prevent overlapping the initial retry loops
-            if plugin.status == "disconnected" || plugin.status == "error" {
-                connectPlugin(id: plugin.id)
-            }
+    private func connectNextDeferredPlugin() {
+        guard !deferredAutoConnectIDs.isEmpty else {
+            StartupTelemetry.mark("mcp_autoconnect_complete")
+            return
+        }
+        let id = deferredAutoConnectIDs.removeFirst()
+        connectPlugin(id: id) { [weak self] in
+            StartupTelemetry.mark("mcp_\(id)_complete")
+            self?.connectNextDeferredPlugin()
         }
     }
 
@@ -430,12 +450,16 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
-    private func connectPlugin(id: String, retryCount: Int = 0) {
-        guard let plugin = plugins.first(where: { $0.id == id }) else { return }
+    private func connectPlugin(id: String, retryCount: Int = 0, completion: (() -> Void)? = nil) {
+        guard let plugin = plugins.first(where: { $0.id == id }) else {
+            completion?()
+            return
+        }
 
         // Prevent concurrent connection attempts if we are already explicitly connecting,
         // EXCEPT when we are in the retry loop (where we intentionally want to try again)
         if retryCount == 0 && plugin.status == "connecting" {
+            completion?()
             return
         }
 
@@ -443,6 +467,7 @@ class MCPPluginManager: ObservableObject {
         if plugin.requiresConfiguration {
             if !plugin.isConfigurationComplete {
                 updateStatus(id: id, status: "disconnected")
+                completion?()
                 return
             }
         }
@@ -458,7 +483,10 @@ class MCPPluginManager: ObservableObject {
             readonly: plugin.isReadOnly
         )
 
-        guard let url = URL(string: "http://backend/api/mcp/connect") else { return }
+        guard let url = URL(string: "http://backend/api/mcp/connect") else {
+            completion?()
+            return
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -474,6 +502,7 @@ class MCPPluginManager: ObservableObject {
                     savePlugins()
                 }
             }
+            completion?()
             return
         }
 
@@ -482,7 +511,7 @@ class MCPPluginManager: ObservableObject {
                 if retryCount < 40 {
                     // Backend might still be starting up, retry after 0.5 seconds (up to 20 seconds total)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.connectPlugin(id: id, retryCount: retryCount + 1)
+                        self?.connectPlugin(id: id, retryCount: retryCount + 1, completion: completion)
                     }
                     return
                 }
@@ -495,6 +524,7 @@ class MCPPluginManager: ObservableObject {
                             self?.savePlugins()
                         }
                     }
+                    completion?()
                 }
                 return
             }
@@ -515,6 +545,7 @@ class MCPPluginManager: ObservableObject {
                             self?.savePlugins()
                         }
                     }
+                    completion?()
                 }
                 return
             }
@@ -526,6 +557,9 @@ class MCPPluginManager: ObservableObject {
                 errorMessage: nil,
                 implementationMode: connectResponse?.implementation
             )
+            DispatchQueue.main.async {
+                completion?()
+            }
         }.resume()
     }
 

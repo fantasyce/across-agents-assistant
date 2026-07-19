@@ -48,6 +48,7 @@ class ChatCompletionRequest:
     stop: Optional[List[str]] = None
     functions: Optional[List[Dict]] = None
     extra_body: Dict[str, Any] = field(default_factory=dict)
+    timeout_seconds: Optional[float] = None
 
 
 class KeychainError(Exception):
@@ -127,6 +128,12 @@ class BaseLLMAdapter(ABC):
             if value > 0:
                 return value
         return default
+
+    def request_timeout_seconds(self, request: ChatCompletionRequest, *, default: float = 60.0) -> float:
+        """Use a bounded request deadline when the caller supplies one."""
+        if request.timeout_seconds is not None:
+            return max(1.0, float(request.timeout_seconds))
+        return self.timeout_seconds(default=default)
 
     @abstractmethod
     def chat(self, request: ChatCompletionRequest) -> LLMResponse:

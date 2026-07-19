@@ -56,6 +56,7 @@ def build_external_task_submission_payload(
     task_types: Optional[Sequence[Any]] = None,
     subtasks: Optional[Sequence[Dict[str, Any]]] = None,
     agent_adapters: Optional[Dict[str, Dict[str, Any]]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build the explicit HTTP/CLI payload for submitting a generic external task."""
     payload: Dict[str, Any] = {
@@ -72,6 +73,8 @@ def build_external_task_submission_payload(
         payload[_TASK_SUBMIT_KEYS["subtasks"]] = list(subtasks)
     if agent_adapters:
         payload[_TASK_SUBMIT_KEYS["agent_adapters"]] = dict(agent_adapters)
+    if metadata:
+        payload["metadata"] = dict(metadata)
     return payload
 
 

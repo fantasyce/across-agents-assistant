@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.13.0 - 2026-07-20
+
+### Added
+
+- Added approved remote Worker enrollment and execution over direct IP links or
+  an optional relay, with mutual TLS, expiring identity, revocation, resource
+  leases, cancellation, bounded model grants, and hash-verified artifacts.
+- Added one generic task entry with goal-driven Autopilot workflow resolution,
+  including optional scenario simulation through the normal task contract.
+- Added governed remote Worker experience memory that remains pending until
+  human approval and can be revoked per device.
+
+### Changed
+
+- Unified Work and Run History so ordinary work and supervised workflow runs use
+  the same task identity, review state, evidence package, and result actions.
+- Simplified task result, Loop Engineering, Growth, agent capability, Settings,
+  diagnostics, and plugin surfaces around progressive disclosure and compact
+  actionable controls.
+- Cached the Loop Engineering workspace snapshot and moved refresh to an
+  explicit user action to reduce repeated loading and startup work.
+- Updated managed producer pins to Autopilot `v0.5.0`, Orchestrator `v0.10.3`,
+  and Context `v0.11.0` after their producer-first releases completed.
+- Raised the OpenAI Python client minimum to `2.45.0` after compatibility
+  validation, superseding the equivalent automated dependency PR.
+
+### Fixed
+
+- Fixed external task cancellation, generic quality scoring, nested Autopilot
+  execution-plan reading, Worker presence projection, project switching, and
+  actionable Loop check feedback.
+- Hardened formal app rebuild shutdown so descendant backend processes do not
+  survive and continue serving stale code.
+
 ## 0.12.1 - 2026-07-16
 
 ### Fixed

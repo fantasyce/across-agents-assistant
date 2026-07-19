@@ -1,11 +1,33 @@
+import asyncio
 import os
 import json
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
 
 from across_agents_assistant.tools.mcp_client import MCPClientManager
+
+
+@pytest.mark.asyncio
+async def test_across_context_handshake_does_not_block_host_event_loop(tmp_path, monkeypatch):
+    command = _write_fake_across_context_server(tmp_path)
+    manager = MCPClientManager()
+    manager.register_server("across_context", str(command), ["mcp"])
+
+    def slow_handshake(server_id, params):
+        time.sleep(0.15)
+        return True, None
+
+    monkeypatch.setattr(manager, "_connect_across_context_external", slow_handshake)
+    started_at = time.perf_counter()
+    connection = asyncio.create_task(manager.connect_server("across_context"))
+    await asyncio.sleep(0.02)
+
+    assert time.perf_counter() - started_at < 0.1
+    assert not connection.done()
+    assert await connection == (True, None)
 
 
 @pytest.mark.asyncio

@@ -162,6 +162,7 @@ class LLMGateway:
             stop=kwargs.get("stop"),
             functions=functions,
             extra_body=dict(kwargs.get("extra_body") or {}),
+            timeout_seconds=float(kwargs["timeout"]) if kwargs.get("timeout") is not None else None,
         )
 
         # Try current provider, fallback to others
@@ -191,6 +192,7 @@ class LLMGateway:
                             stop=request.stop,
                             functions=request.functions,
                             extra_body=dict(request.extra_body or {}),
+                            timeout_seconds=request.timeout_seconds,
                         )
                         return await fallback_adapter.chat(fallback_request)
                     except (KeychainDeniedError, KeychainTimeoutError, KeychainNotFoundError):

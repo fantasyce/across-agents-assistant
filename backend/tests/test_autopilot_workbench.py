@@ -4,7 +4,38 @@ from across_agents_assistant.autopilot_workbench import (
 )
 
 
-def _healthy_snapshot():
+def _healthy_snapshot(*, agent_plugin_runtime=None, ecosystem_roadmap=None):
+    healthy_ecosystem_roadmap = {
+        "summary": {"route_count": 7, "ready_route_count": 7},
+        "sections": {
+            "protocol_gateway": {
+                "id": "protocol_gateway",
+                "title": "Protocol Gateway",
+                "status": "passed",
+                "summary": {"adapter_count": 6},
+                "items": [],
+                "endpoint": "/api/ecosystem/protocol-gateway",
+            }
+        },
+        "actions": [],
+    }
+    healthy_agent_plugin_runtime = {
+        "status": "passed",
+        "summary": {
+            "downstream_count": 3,
+            "downstream_ready_count": 3,
+            "agent_plugin_count": 1,
+            "ready_agent_plugin_count": 1,
+            "external_agent_count": 1,
+            "healthy_external_agent_count": 1,
+            "context_pack_count": 1,
+        },
+        "sections": {
+            "orchestrator_external_agents": {"id": "orchestrator_external_agents", "title": "Orchestrator External Agent Registry", "status": "passed", "summary": {"agent_count": 1}},
+            "autopilot_agent_plugin_runtime": {"id": "autopilot_agent_plugin_runtime", "title": "Autopilot Generic Agent Plugin Runtime", "status": "passed", "summary": {"agent_plugin_count": 1}},
+            "context_agent_packs": {"id": "context_agent_packs", "title": "Context Agent Plugin Packs", "status": "passed", "summary": {"context_pack_count": 1}},
+        },
+    }
     return build_autopilot_workbench_snapshot(
         plugins=[
             {"plugin_id": "across-context", "available": True, "installed": True, "status": "installed"},
@@ -46,37 +77,8 @@ def _healthy_snapshot():
         registry_health={"status": "passed", "checks": [{"id": "registry", "status": "passed"}]},
         agent_loop_memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0, "approved_count": 0}},
         pending_memories=[],
-        ecosystem_roadmap={
-            "summary": {"route_count": 7, "ready_route_count": 7},
-            "sections": {
-                "protocol_gateway": {
-                    "id": "protocol_gateway",
-                    "title": "Protocol Gateway",
-                    "status": "passed",
-                    "summary": {"adapter_count": 6},
-                    "items": [],
-                    "endpoint": "/api/ecosystem/protocol-gateway",
-                }
-            },
-            "actions": [],
-        },
-        agent_plugin_runtime={
-            "status": "passed",
-            "summary": {
-                "downstream_count": 3,
-                "downstream_ready_count": 3,
-                "agent_plugin_count": 1,
-                "ready_agent_plugin_count": 1,
-                "external_agent_count": 1,
-                "healthy_external_agent_count": 1,
-                "context_pack_count": 1,
-            },
-            "sections": {
-                "orchestrator_external_agents": {"id": "orchestrator_external_agents", "title": "Orchestrator External Agent Registry", "status": "passed", "summary": {"agent_count": 1}},
-                "autopilot_agent_plugin_runtime": {"id": "autopilot_agent_plugin_runtime", "title": "Autopilot Generic Agent Plugin Runtime", "status": "passed", "summary": {"agent_plugin_count": 1}},
-                "context_agent_packs": {"id": "context_agent_packs", "title": "Context Agent Plugin Packs", "status": "passed", "summary": {"context_pack_count": 1}},
-            },
-        },
+        ecosystem_roadmap=healthy_ecosystem_roadmap if ecosystem_roadmap is None else ecosystem_roadmap,
+        agent_plugin_runtime=healthy_agent_plugin_runtime if agent_plugin_runtime is None else agent_plugin_runtime,
         agent_interop_e2e={
             "status": "passed",
             "summary": {
@@ -140,8 +142,35 @@ def test_autopilot_workbench_snapshot_passed_contract():
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["eval_case_count"] == 5
     assert snapshot["sections"]["agent_interop_e2e"]["summary"]["otlp_resource_span_count"] == 1
     assert snapshot["sections"]["protocol_gateway"]["status"] == "passed"
-    assert snapshot["actions"][0]["id"] == "continue_scheduled_e2e"
+    assert snapshot["actions"] == []
     assert snapshot["endpoints"]["promotion_review_template"] == "/api/autopilot/runs/{run_id}/promotion-review"
+
+
+def test_agent_plugin_failure_marks_workbench_attention_instead_of_passed():
+    failed_runtime = {
+        "status": "failed",
+        "summary": {"downstream_count": 3, "downstream_ready_count": 2},
+        "sections": {},
+    }
+    ecosystem = {
+        "summary": {"route_count": 7, "ready_route_count": 6},
+        "sections": {},
+        "actions": [
+            {
+                "id": "advance_agent_plugin_runtime",
+                "priority": "high",
+                "title": "Advance Generic Agent Plugin Runtime",
+                "reason": "Generic Agent Plugin Runtime is failed.",
+                "endpoint": "/api/ecosystem/agent-plugins",
+            }
+        ],
+    }
+
+    snapshot = _healthy_snapshot(agent_plugin_runtime=failed_runtime, ecosystem_roadmap=ecosystem)
+
+    assert snapshot["status"] == "attention"
+    assert "generic Agent plugin runtime requires attention" in snapshot["status_reasons"]
+    assert snapshot["actions"][0]["id"] == "advance_agent_plugin_runtime"
 
 
 def test_autopilot_workbench_uses_ops_current_failed_count_for_recovered_failures():
@@ -374,7 +403,75 @@ def test_autopilot_workbench_snapshot_degrades_to_failed_with_actions():
     assert snapshot["summary"]["pending_trigger_count"] == 1
     assert snapshot["summary"]["promotion_ready_count"] == 1
     assert snapshot["sections"]["memory"]["status"] == "attention"
-    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "attention"
+    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "passed"
     assert snapshot["actions"][0]["id"] == "repair_autopilot_plugin"
-    assert any(action["id"] == "run_agent_interop_e2e" for action in snapshot["actions"])
+    assert not any(action["id"] == "run_agent_interop_e2e" for action in snapshot["actions"])
     assert any(action["id"] == "review_pending_memory" for action in snapshot["actions"])
+
+
+def test_optional_automation_and_interop_absence_do_not_create_release_attention():
+    snapshot = build_autopilot_workbench_snapshot(
+        plugins=[{"plugin_id": "across-autopilot", "available": True, "installed": True, "status": "installed"}],
+        registry={"built_in": [{"id": "repo-quality-copilot"}]},
+        trigger_queue={"items": []},
+        trigger_registry={"triggers": []},
+        trigger_scheduler={"running": False},
+        self_iteration_plan={
+            "status": "not_registered",
+            "ready": False,
+            "readiness": [
+                {"id": "trigger_registered", "status": "failed"},
+                {"id": "trigger_active", "status": "failed"},
+                {"id": "capability_pack_ready", "status": "passed"},
+            ],
+        },
+        runs={"runs": []},
+        telemetry={"runs": {"total": 0, "completed": 0, "failed": 0}},
+        ops_dashboard={
+            "status": "passed",
+            "summary": {"capability_ready_count": 42},
+            "next_actions": [{"action": "continue_scheduled_e2e", "reason": "healthy"}],
+        },
+        capability_registry={"capabilities": [{"id": f"cap-{i}", "available": True} for i in range(42)]},
+        registry_health={"status": "passed", "checks": []},
+        agent_loop_memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0}},
+        pending_memories=[],
+        agent_plugin_runtime={"status": "passed", "summary": {}},
+        agent_interop_e2e={"status": "not_run", "summary": {}, "checks": []},
+    )
+
+    assert snapshot["status"] == "passed"
+    assert snapshot["sections"]["self_iteration"]["status"] == "passed"
+    assert snapshot["sections"]["self_iteration"]["items"][0]["status"] == "not_configured"
+    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "passed"
+    assert not any(action["id"] in {"ensure_self_iteration_plan", "run_agent_interop_e2e"} for action in snapshot["actions"])
+
+
+def test_failed_interop_uses_one_executable_action_instead_of_duplicate_evaluation_refresh():
+    snapshot = build_autopilot_workbench_snapshot(
+        plugins=[{"plugin_id": "across-autopilot", "available": True, "installed": True, "status": "installed"}],
+        registry={"built_in": [{"id": "repo-quality-copilot"}]},
+        ops_dashboard={"status": "passed", "summary": {"capability_ready_count": 42}, "next_actions": []},
+        registry_health={"status": "passed", "checks": []},
+        ecosystem_roadmap={
+            "summary": {"route_count": 7, "ready_route_count": 6},
+            "actions": [
+                {
+                    "id": "advance_evaluation_telemetry",
+                    "priority": "medium",
+                    "title": "Advance Eval And Telemetry",
+                    "reason": "Eval And Telemetry is attention.",
+                    "endpoint": "/api/ecosystem/evaluation-telemetry",
+                }
+            ],
+        },
+        agent_interop_e2e={
+            "status": "failed",
+            "summary": {"failed_count": 2},
+            "checks": [{"id": "three_plugin_mcp_load", "status": "failed"}],
+        },
+    )
+
+    action_ids = [action["id"] for action in snapshot["actions"]]
+    assert action_ids.count("run_agent_interop_e2e") == 1
+    assert "advance_evaluation_telemetry" not in action_ids

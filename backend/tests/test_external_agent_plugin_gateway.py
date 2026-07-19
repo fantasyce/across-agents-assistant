@@ -2,6 +2,7 @@ from across_agents_assistant.external_agent_plugin_gateway import (
     AGENT_PLUGIN_RUNTIME_SCHEMA_VERSION,
     _effective_commands,
     build_agent_plugin_runtime_status,
+    probe_agent_plugin_runtime_status,
 )
 
 
@@ -120,7 +121,7 @@ def test_agent_plugin_runtime_status_treats_reachable_empty_inventory_as_ready()
             "payload": {
                 "sections": {
                     "agent_plugin_runtime": {
-                        "status": "unavailable",
+                        "status": "failed",
                         "summary": {"agent_plugin_count": 0, "ready_agent_plugin_count": 0, "dry_run_only": True},
                         "items": [],
                     }
@@ -153,3 +154,30 @@ def test_agent_plugin_runtime_uses_managed_across_home_binaries(tmp_path):
     commands = _effective_commands(None, {"ACROSS_HOME": str(across_home)})
 
     assert commands["autopilot"][0] == str(managed)
+
+
+def test_default_empty_orchestrator_inventory_skips_slow_optional_cli(tmp_path):
+    across_home = tmp_path / ".across"
+    bin_dir = across_home / "bin"
+    registry_dir = across_home / "data" / "across-orchestrator" / "external-agents"
+    bin_dir.mkdir(parents=True)
+    registry_dir.mkdir(parents=True)
+
+    scripts = {
+        "across-orchestrator": "#!/bin/sh\nexit 77\n",
+        "across-autopilot": "#!/bin/sh\nprintf '%s' '{\"status\":\"attention\",\"sections\":{\"agent_plugin_runtime\":{\"status\":\"attention\",\"summary\":{\"agent_plugin_count\":0,\"ready_agent_plugin_count\":0}}}}'\n",
+        "across-context": "#!/bin/sh\nprintf '%s' '{\"status\":\"passed\",\"summary\":{\"context_pack_count\":0,\"agent_plugin_count\":0},\"packs\":[]}'\n",
+    }
+    for name, source in scripts.items():
+        executable = bin_dir / name
+        executable.write_text(source, encoding="utf-8")
+        executable.chmod(0o755)
+
+    payload = probe_agent_plugin_runtime_status(
+        env={"ACROSS_HOME": str(across_home), "HOME": str(tmp_path)},
+        timeout_seconds=2,
+    )
+
+    assert payload["status"] == "passed"
+    assert payload["summary"]["downstream_ready_count"] == 3
+    assert payload["sections"]["orchestrator_external_agents"]["status"] == "passed"

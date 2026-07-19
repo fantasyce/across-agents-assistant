@@ -17,6 +17,8 @@ struct MinimalProjectWorkspaceView: View {
     @State private var promotionConfirmed = false
     @State private var showsCancelConfirmation = false
     @State private var showsCleanupConfirmation = false
+    @State private var showsChangedFiles = false
+    @State private var showsDiff = false
 
     init(
         operations: AgentWorkspaceOperationsViewModel,
@@ -32,12 +34,11 @@ struct MinimalProjectWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MinimalWorkflowHeader(
+            MinimalPageHeader(
                 title: preferences.text("workspace.title"),
                 subtitle: repositoryStore.selectedPath
                     ?? (requiresRepositorySelection ? preferences.text("workspace.notConfigured") : activeProjectPath)
-                    ?? preferences.text("workspace.subtitle"),
-                status: nil
+                    ?? preferences.text("workspace.subtitle")
             ) {
                 if operations.workspace != nil {
                     MinimalIconButton(
@@ -68,6 +69,7 @@ struct MinimalProjectWorkspaceView: View {
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                 }
             }
+            .minimalPageContentFrame(bottomPadding: 8)
 
             if let errorMessage = operations.errorMessage {
                 MinimalNoticeBar(message: errorMessage, status: "error")
@@ -461,9 +463,11 @@ struct MinimalProjectWorkspaceView: View {
                     value: preferences.statusText(comparison.risk.level)
                 )
 
-                Divider()
-
-                DisclosureGroup(preferences.text("workspace.changes.files")) {
+                MinimalDisclosureSection(
+                    title: preferences.text("workspace.changes.files"),
+                    detail: "\(comparison.changedFiles.count)",
+                    isExpanded: $showsChangedFiles
+                ) {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(comparison.changedFiles, id: \.self) { path in
                             Label(path, systemImage: "doc")
@@ -471,12 +475,13 @@ struct MinimalProjectWorkspaceView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    .padding(.top, 8)
                 }
 
                 if let diffText, !diffText.isEmpty {
-                    Divider()
-                    DisclosureGroup(preferences.text("workspace.changes.diff"), isExpanded: .constant(true)) {
+                    MinimalDisclosureSection(
+                        title: preferences.text("workspace.changes.diff"),
+                        isExpanded: $showsDiff
+                    ) {
                         WorkspaceDiffReviewView(
                             files: WorkspaceUnifiedDiffParser.parse(diffText),
                             comments: operations.workspace?.lineReviewBatches
@@ -501,7 +506,6 @@ struct MinimalProjectWorkspaceView: View {
                                 }
                             }
                         }
-                        .padding(.top, 8)
                     }
                 }
             }

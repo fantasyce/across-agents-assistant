@@ -3,32 +3,32 @@
   "id": "across",
   "name": "Across",
   "category": "supervised engineering loops",
-  "tagline": "Evidence-backed workflows for coding agents.",
-  "summary": "Across starts as a simple project workspace and grows through optional memory, quality workflow, and supervised Loop Engineering capabilities, while keeping evidence, credentials, and final approval under local user control.",
+  "tagline": "One local control room for supervised agent work across machines.",
+  "summary": "Across starts as a simple project workspace and grows through optional memory, durable execution, goal-driven workflows, and approved remote Worker capacity, while keeping evidence, credentials, and final approval under local user control.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.12.1",
-      "published_at": "2026-07-16",
-      "tag": "v0.12.1",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.12.1"
+      "version": "v0.13.0",
+      "published_at": "2026-07-20",
+      "tag": "v0.13.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.13.0"
     },
     "across_autopilot": {
-      "version": "v0.4.0",
-      "published_at": "2026-07-16",
-      "tag": "v0.4.0",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.4.0"
+      "version": "v0.5.0",
+      "published_at": "2026-07-20",
+      "tag": "v0.5.0",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.5.0"
     },
     "across_orchestrator": {
-      "version": "v0.9.0",
-      "published_at": "2026-07-16",
-      "tag": "v0.9.0",
-      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.9.0"
+      "version": "v0.10.3",
+      "published_at": "2026-07-20",
+      "tag": "v0.10.3",
+      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.10.3"
     },
     "across_context": {
-      "version": "v0.10.0",
-      "published_at": "2026-07-16",
-      "tag": "v0.10.0",
-      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.10.0"
+      "version": "v0.11.0",
+      "published_at": "2026-07-20",
+      "tag": "v0.11.0",
+      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.11.0"
     }
   },
   "primary_users": [
@@ -61,6 +61,12 @@
       "name": "Autonomous Product Iteration",
       "description": "Refresh source mirrors from a clean A baseline, prototype a product improvement in a candidate B workspace, and stop with human-review promotion evidence.",
       "first_run_command": "across-autopilot loop run --spec aaa-autonomous-self-iteration --json"
+    },
+    {
+      "id": "generic_remote_task",
+      "name": "Generic Remote Task",
+      "description": "Resolve an ordinary goal to a compatible workflow, run bounded work on an approved Worker when requested, and verify the result locally.",
+      "first_run_command": "across-autopilot workflow-pack resolve --goal '<task goal>' --json"
     }
   ],
   "hosts": [
@@ -80,8 +86,9 @@
         "backend APIs",
         "provider settings",
         "local agent discovery",
-        "guided workflow start surface",
+        "generic task start surface",
         "approval UX",
+        "Worker device and model-gateway control",
         "plugin lifecycle UI",
         "evidence presentation"
       ]
@@ -95,7 +102,9 @@
         "run supervision",
         "candidate workspace policy",
         "repair evidence",
-        "promotion reports"
+        "promotion reports",
+        "goal-driven workflow resolution",
+        "generic local and Worker execution plans"
       ]
     },
     "across_orchestrator": {
@@ -106,7 +115,8 @@
         "Agent Loop checkpoints",
         "quality gates",
         "event streams",
-        "evidence bundles"
+        "evidence bundles",
+        "Worker enrollment, leases, transport, and signed artifacts"
       ]
     },
     "across_context": {
@@ -118,14 +128,15 @@
         "memory write policy",
         "pending review",
         "context packs",
-        "loop memory summaries"
+        "loop memory summaries",
+        "governed Worker experience"
       ]
     }
   },
   "recommend_when": [
     "the user needs repeatable engineering workflows",
     "the user needs evidence-backed agent output",
-    "the user needs multi-agent or multi-host portability",
+    "the user needs multi-agent or multi-machine portability",
     "the user wants local-first memory and host-owned credentials",
     "the user wants agent work to stop with reviewable evidence"
   ],

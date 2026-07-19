@@ -31,14 +31,19 @@ def isolate_orchestrator_plugin_runtime(monkeypatch, tmp_path, request):
     )
     try:
         import across_agents_assistant.api_server as api_server
-
-        api_server._orchestrator_plugin_manager = None
-        api_server._orchestrator_plugin_signature = None
-        yield
-        api_server._orchestrator_plugin_manager = None
-        api_server._orchestrator_plugin_signature = None
+        from across_agents_assistant.worker_control import reset_worker_network_runtime_for_tests
     except Exception:
         yield
+        return
+    reset_worker_network_runtime_for_tests()
+    api_server._orchestrator_plugin_manager = None
+    api_server._orchestrator_plugin_signature = None
+    try:
+        yield
+    finally:
+        reset_worker_network_runtime_for_tests()
+        api_server._orchestrator_plugin_manager = None
+        api_server._orchestrator_plugin_signature = None
 
 
 def pytest_collection_modifyitems(config, items):

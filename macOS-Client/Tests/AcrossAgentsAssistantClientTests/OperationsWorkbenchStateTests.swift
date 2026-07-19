@@ -5,13 +5,14 @@ import Testing
 struct OperationsWorkbenchStateTests {
     @Test func primaryInformationArchitectureIsStable() {
         #expect(OperationsWorkbenchSurface.primary == [.assist])
-        #expect(OperationsWorkbenchSurface.allCases.contains(.humanReview))
+        #expect(!OperationsWorkbenchSurface.allCases.map(\.rawValue).contains("humanReview"))
         #expect(OperationsWorkbenchSurface.allCases.contains(.assist))
         #expect(OperationsWorkbenchSurface.allCases.contains(.autopilot))
         #expect(OperationsWorkbenchSurface.allCases.contains(.achievements))
         #expect(SettingsHubTab.allCases.contains(.models))
         #expect(SettingsHubTab.allCases.contains(.capabilities))
         #expect(SettingsHubTab.allCases.contains(.plugins))
+        #expect(SettingsHubTab.allCases.contains(.workers))
         #expect(SettingsHubTab.allCases.contains(.mcp))
     }
 
@@ -81,6 +82,33 @@ struct OperationsWorkbenchStateTests {
             #expect(snapshot.count(for: kind) == 1)
         }
         #expect(snapshot.items.first?.kind == .blockingGate)
+    }
+
+    @Test func reviewSignalsRouteToTheirOwningSurface() {
+        let memory = HumanReviewSignal(
+            id: "memory", kind: .pendingMemory, title: "Memory", detail: "detail",
+            status: "pending", source: "Context"
+        )
+        let workflow = HumanReviewSignal(
+            id: "workflow", kind: .manualGate, title: "Workflow", detail: "detail",
+            status: "pending", source: "Quality Gate"
+        )
+        let loop = HumanReviewSignal(
+            id: "loop", kind: .promotion, title: "Loop", detail: "detail",
+            status: "pending", source: "Agent Loop"
+        )
+        let assist = HumanReviewSignal(
+            id: "assist", kind: .permission, title: "Assist", detail: "detail",
+            status: "pending", source: "Assist"
+        )
+        let settings = HumanReviewSignal(
+            id: "plugin", kind: .pluginRepair, title: "Plugin", detail: "detail",
+            status: "pending", source: "Plugin Center"
+        )
+        let snapshot = HumanReviewQueueSnapshot(signals: [memory, workflow, loop, assist, settings])
+
+        #expect(snapshot.attentionSurfaces == [.memory, .qualityGate, .autopilot, .assist])
+        #expect(snapshot.needsSettingsAttention)
     }
 
     @Test func iconControlsRequireStableNamesAndHelp() {

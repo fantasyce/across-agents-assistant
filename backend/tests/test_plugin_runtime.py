@@ -596,6 +596,40 @@ def test_plugins_action_api_runs_one_click_context_install(monkeypatch):
     assert calls == ["install"]
 
 
+def test_plugins_action_api_reconciles_worker_runtime_after_orchestrator_repair(monkeypatch):
+    calls: list[str] = []
+
+    class FakeManager:
+        def install_plugin(self):
+            calls.append("install")
+            return {"status": "installed", "installed": True}
+
+        def implementation_status(self, probe: bool = True):
+            assert probe is True
+            calls.append("status")
+            return {"implementation": "external", "available": True}
+
+    class FakeWorkerRuntime:
+        def shutdown(self):
+            calls.append("worker-shutdown")
+
+        def reconcile(self):
+            calls.append("worker-reconcile")
+            return {"status": "running", "listener_pid": 42}
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeManager())
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: FakeWorkerRuntime())
+
+    response = TestClient(app).post(
+        "/api/plugins/across-orchestrator/actions",
+        json={"action": "repair"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["worker_runtime"]["listener_pid"] == 42
+    assert calls == ["worker-shutdown", "install", "worker-reconcile", "status"]
+
+
 def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, tmp_path):
     monkeypatch.setattr(
         api_server,

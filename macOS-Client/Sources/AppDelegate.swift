@@ -49,6 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
         AppUserDefaults.current.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         debugLog("AppDelegate.init()")
+        StartupTelemetry.mark("app_delegate_initialized")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -230,6 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showMainWindowIfNeeded() {
         MainWindowRegistry.shared.showMainWindow()
         debugLog("main window requested windows=\(NSApp.windows.count)")
+        StartupTelemetry.mark("first_window_requested")
     }
 
     static func findBackendProjectDir() -> URL? {
@@ -422,6 +424,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             try backendProcess?.run()
             backendLaunchDate = Date()
             debugLog("Launched PID: \(backendProcess?.processIdentifier ?? 0), running: \(backendProcess?.isRunning ?? false)")
+            StartupTelemetry.mark("backend_process_started")
         } catch {
             debugLog("Failed to launch backend: \(error)")
             backendProcess = nil

@@ -125,14 +125,8 @@ def _next_actions(
         actions.append({"priority": "high", "action": "repair_unified_registry", "reason": "unified capability registry health is not passing"})
     if failed or gate_failures:
         actions.append({"priority": "medium", "action": "triage_failed_runs", "reason": "run or gate failures need evidence review"})
-    if not trigger_summary.get("total"):
-        actions.append({"priority": "low", "action": "register_trigger", "reason": "no production trigger is registered"})
-    if self_iteration_plan.get("status") != "active":
-        actions.append({"priority": "medium", "action": "ensure_self_iteration_plan", "reason": "continuous AAA self-iteration is not active"})
     if trigger_summary.get("total") and trigger_scheduler.get("running") is not True:
         actions.append({"priority": "medium", "action": "start_trigger_scheduler", "reason": "registered triggers need the local scheduler lifecycle running for unattended operation"})
-    if not actions:
-        actions.append({"priority": "low", "action": "continue_scheduled_e2e", "reason": "ops signals are healthy"})
     return actions
 
 

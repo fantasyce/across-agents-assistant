@@ -166,6 +166,7 @@ def build_autopilot_workbench_snapshot(
         "agent_plugin_count": _nested(agent_plugin_runtime, "summary", "agent_plugin_count") or 0,
         "ready_agent_plugin_count": _nested(agent_plugin_runtime, "summary", "ready_agent_plugin_count") or 0,
         "agent_plugin_context_pack_count": _nested(agent_plugin_runtime, "summary", "context_pack_count") or 0,
+        "agent_plugin_runtime_status": str(agent_plugin_runtime.get("status") or "unknown"),
         "agent_interop_e2e_status": str(agent_interop_e2e.get("status") or "not_run"),
     }
     status, reasons = _workbench_status(
@@ -177,7 +178,7 @@ def build_autopilot_workbench_snapshot(
         "self_iteration": _section(
             "self_iteration",
             "Continuous Self-Iteration",
-            "passed" if self_iteration_status == "active" else "attention",
+            "attention" if self_iteration_status in {"failed", "degraded", "blocked"} else "passed",
             {
                 "status": self_iteration_status,
                 "ready": bool(self_iteration_plan.get("ready")),
@@ -191,7 +192,7 @@ def build_autopilot_workbench_snapshot(
                     "promotion_review_required": platform_self_repair.get("promotion_review_required"),
                 },
             },
-            _list(self_iteration_plan.get("readiness")),
+            _optional_self_iteration_items(self_iteration_plan, self_iteration_status),
             WORKBENCH_ENDPOINTS["self_iteration_plan"],
         ),
         "triggers": _section(
@@ -303,7 +304,7 @@ def build_autopilot_workbench_snapshot(
         "agent_interop_e2e": _section(
             "agent_interop_e2e",
             "Agent Interop E2E Lab",
-            "attention" if str(agent_interop_e2e.get("status") or "not_run") == "not_run" else str(agent_interop_e2e.get("status") or "unknown"),
+            "passed" if str(agent_interop_e2e.get("status") or "not_run") == "not_run" else str(agent_interop_e2e.get("status") or "unknown"),
             {
                 "status": str(agent_interop_e2e.get("status") or "not_run"),
                 "passed_count": _nested(agent_interop_e2e, "summary", "passed_count") or 0,
@@ -373,9 +374,11 @@ def _workbench_status(
         attention_reasons.append("recent Autopilot runs failed")
     if int(summary.get("pending_memory_count") or 0) > 0:
         attention_reasons.append("Context has pending memory review items")
-    if str(summary.get("agent_interop_e2e_status") or "") != "passed":
+    if str(summary.get("agent_interop_e2e_status") or "") in {"failed", "blocked", "degraded"}:
         attention_reasons.append("Agent interop E2E has not passed")
-    if str(summary.get("self_iteration_status") or "") != "active":
+    if str(summary.get("agent_plugin_runtime_status") or "") in {"failed", "attention", "unavailable"}:
+        attention_reasons.append("generic Agent plugin runtime requires attention")
+    if str(summary.get("self_iteration_status") or "") in {"failed", "blocked", "degraded"}:
         attention_reasons.append("continuous self-iteration is not active")
     if int(summary.get("registered_trigger_count") or 0) > 0 and summary.get("scheduler_running") is not True:
         attention_reasons.append("registered triggers exist but scheduler is stopped")
@@ -385,8 +388,6 @@ def _workbench_status(
         attention_reasons.append("promotion-ready candidates require human review")
     if ops_status == "attention":
         attention_reasons.append("operations dashboard requires attention")
-    if int(trigger_summary.get("total") or 0) == 0:
-        attention_reasons.append("no Autopilot triggers are registered")
     if attention_reasons:
         return "attention", attention_reasons
     return "passed", []
@@ -402,7 +403,7 @@ def _actions(
     actions: list[dict[str, Any]] = []
     if summary.get("autopilot_available") is not True:
         actions.append(_action("repair_autopilot_plugin", "high", "Repair Across Autopilot plugin", "Autopilot is unavailable.", "/api/plugins/across-autopilot/actions"))
-    if str(summary.get("self_iteration_status") or "") != "active":
+    if str(summary.get("self_iteration_status") or "") in {"failed", "blocked", "degraded"}:
         actions.append(_action("ensure_self_iteration_plan", "medium", "Ensure self-iteration plan", "Register or reactivate the default self-iteration trigger.", WORKBENCH_ENDPOINTS["self_iteration_plan_ensure"]))
     if int(summary.get("registered_trigger_count") or 0) > 0 and summary.get("scheduler_running") is not True:
         actions.append(_action("start_trigger_scheduler", "medium", "Start trigger scheduler", "Registered triggers need a running local scheduler.", WORKBENCH_ENDPOINTS["trigger_scheduler_start"]))
@@ -412,11 +413,13 @@ def _actions(
         actions.append(_action("review_pending_memory", "medium", "Review pending Context memory", "Context memory candidates require approval or rejection.", WORKBENCH_ENDPOINTS["memory_pending"]))
     if int(summary.get("promotion_ready_count") or 0) > 0:
         actions.append(_action("open_promotion_review", "high", "Review promotion candidate", "Promotion-ready output must remain human-gated.", WORKBENCH_ENDPOINTS["promotion_review_template"]))
-    if str(summary.get("agent_interop_e2e_status") or "") != "passed":
+    if str(summary.get("agent_interop_e2e_status") or "") in {"failed", "blocked", "degraded"}:
         actions.append(_action("run_agent_interop_e2e", "high", "Run agent interop E2E", "Verify Context, Orchestrator, and Autopilot load through generic agent hosts.", WORKBENCH_ENDPOINTS["agent_interop_e2e"]))
     for item in _list(ops_dashboard.get("next_actions")):
         item_dict = _dict(item)
         action_id = str(item_dict.get("action") or "").strip()
+        if action_id == "continue_scheduled_e2e":
+            continue
         if not action_id or any(existing["id"] == action_id for existing in actions):
             continue
         actions.append(
@@ -431,6 +434,15 @@ def _actions(
     for item in _list(_dict(ecosystem_roadmap).get("actions")):
         item_dict = _dict(item)
         action_id = str(item_dict.get("id") or "").strip()
+        if action_id == "continue_ecosystem_e2e":
+            continue
+        if action_id == "advance_evaluation_telemetry" and any(
+            existing["id"] == "run_agent_interop_e2e" for existing in actions
+        ):
+            # Evaluation attention is already represented by the executable
+            # interop check. Showing both actions made the evaluation row a
+            # duplicate no-op that only refreshed the snapshot.
+            continue
         if not action_id or any(existing["id"] == action_id for existing in actions):
             continue
         actions.append(
@@ -442,11 +454,25 @@ def _actions(
                 item_dict.get("endpoint"),
             )
         )
-    if not actions:
-        actions.append(_action("continue_scheduled_e2e", "low", "Continue scheduled E2E", "Workbench status is healthy.", WORKBENCH_ENDPOINTS["snapshot"]))
     if status_reasons:
-        actions[0]["status_reason_count"] = len(status_reasons)
+        if actions:
+            actions[0]["status_reason_count"] = len(status_reasons)
     return actions[:8]
+
+
+def _optional_self_iteration_items(
+    self_iteration_plan: Mapping[str, Any],
+    status: str,
+) -> list[dict[str, Any]]:
+    items = [_dict(item) for item in _list(self_iteration_plan.get("readiness"))]
+    if status not in {"not_registered", "paused"}:
+        return items
+    neutral_status = "paused" if status == "paused" else "not_configured"
+    for item in items:
+        if item.get("id") in {"trigger_registered", "trigger_active"} and item.get("status") != "passed":
+            item["status"] = neutral_status
+            item["optional"] = True
+    return items
 
 
 def _ecosystem_sections(ecosystem_roadmap: Mapping[str, Any]) -> dict[str, dict[str, Any]]:

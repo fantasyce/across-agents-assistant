@@ -57,7 +57,34 @@ struct MCPCardView: View {
     private var accentColor: Color { AcrossTheme.accent }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        MinimalDisclosureRow(
+            isExpanded: $isExpanded,
+            accessibilityLabel: pluginDisplayName
+        ) {
+            HStack(spacing: 10) {
+                Image(systemName: iconName(for: plugin.id))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pluginDisplayName)
+                        .font(.system(size: 12, weight: .medium))
+                    MinimalStatusLabel(
+                        text: statusText(for: plugin),
+                        color: statusColor(for: plugin.status)
+                    )
+                }
+            }
+            .padding(.vertical, 10)
+        } trailing: {
+            Toggle("", isOn: Binding(
+                get: { plugin.isEnabled },
+                set: { _ in MCPPluginManager.shared.togglePlugin(id: plugin.id) }
+            ))
+            .labelsHidden()
+            .controlSize(.small)
+        } content: {
             VStack(alignment: .leading, spacing: 10) {
                 Text(pluginDisplayDescription)
                     .font(.system(size: 11))
@@ -78,35 +105,7 @@ struct MCPCardView: View {
             }
             .padding(.leading, 28)
             .padding(.bottom, 10)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: iconName(for: plugin.id))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(accentColor)
-                    .frame(width: 20)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pluginDisplayName)
-                        .font(.system(size: 12, weight: .medium))
-                    MinimalStatusLabel(
-                        text: statusText(for: plugin),
-                        color: statusColor(for: plugin.status)
-                    )
-                }
-
-                Spacer(minLength: 12)
-
-                Toggle("", isOn: Binding(
-                    get: { plugin.isEnabled },
-                    set: { _ in MCPPluginManager.shared.togglePlugin(id: plugin.id) }
-                ))
-                .labelsHidden()
-                .controlSize(.small)
-            }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
         }
-        .disclosureGroupStyle(.automatic)
     }
 
     @ViewBuilder

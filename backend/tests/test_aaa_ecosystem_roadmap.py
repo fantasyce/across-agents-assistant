@@ -124,6 +124,32 @@ def test_ecosystem_roadmap_accepts_agent_interop_e2e_as_release_evidence():
     assert roadmap["sections"]["evaluation_telemetry"]["summary"]["agent_interop_e2e_status"] == "passed"
 
 
+def test_ecosystem_roadmap_does_not_require_eval_evidence_before_first_run():
+    roadmap = build_aaa_ecosystem_roadmap(
+        plugins=[
+            {"plugin_id": "across-context", "available": True, "status": "installed"},
+            {"plugin_id": "across-orchestrator", "available": True, "status": "installed"},
+            {"plugin_id": "across-autopilot", "available": True, "status": "installed"},
+        ],
+        capability_registry={"providers": [], "capabilities": _capabilities()},
+        registry_health={"status": "passed"},
+        agent_cards={"cards": []},
+        mcp_safety={},
+        autopilot_registry={},
+        autopilot_runs={"runs": [], "run_count": 0},
+        autopilot_telemetry={"runs": {"total": 0, "failed": 0}},
+        ops_dashboard={"status": "passed", "summary": {"capability_ready_count": 42}},
+        release_evaluation={"release_readiness": "no_evidence", "evaluated_task_count": 0},
+        memory_metrics={"totals": {"candidate_count": 0, "pending_count": 0}},
+        pending_memories=[],
+        agent_plugin_runtime=_agent_plugin_runtime(),
+        agent_interop_e2e={"status": "not_run", "summary": {}},
+    )
+
+    assert roadmap["sections"]["evaluation_telemetry"]["status"] == "passed"
+    assert roadmap["sections"]["trust_sandbox"]["status"] == "passed"
+
+
 def test_ecosystem_roadmap_surfaces_virtual_agent_context_pack():
     runtime = {
         "status": "passed",

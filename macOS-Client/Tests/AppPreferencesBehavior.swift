@@ -79,6 +79,7 @@ func testLocalizedStringsFallbackToEnglish() {
     visualAndLearningKeys.append(contentsOf: [
             "result.accessibility.summary",
             "result.details",
+            "result.verdict.guidance.needs_review",
             "result.fallback.unavailable",
             "result.trust.title",
             "result.evidence.route",
@@ -88,6 +89,21 @@ func testLocalizedStringsFallbackToEnglish() {
             "growth.path.title",
             "growth.path.next",
             "growth.challenge.title",
+            "growth.challenge.next",
+            "growth.challenge.complete",
+            "tasks.review.accept",
+            "tasks.delivery.summary",
+            "tasks.evidence.passed",
+            "tasks.evidence.summary.passed",
+            "tasks.evidence.scope",
+            "tasks.evidence.decisionBasis",
+            "tasks.evidence.decision.summary.needs_review",
+            "tasks.evidence.decision.title.needs_review",
+            "tasks.evidence.decision.detail.needs_review",
+            "result.review.awaiting",
+            "workbench.technicalEvidence.expanded",
+            "workbench.technicalEvidence.collapsed",
+            "workbench.selfCheck",
         ])
     for key in visualAndLearningKeys {
         assert(
@@ -121,28 +137,12 @@ func testLocalizedStringsFallbackToEnglish() {
         "Workbench toolbar help should be localized in Simplified Chinese"
     )
     assert(
-        AppPreferences.localizedString("toolbar.tasks", localeIdentifier: "en") == "Workflows",
-        "Task toolbar help should present the workflow entrypoint in English"
+        AppPreferences.localizedString("operations.qualityGate", localeIdentifier: "en") == "Run History",
+        "Orchestrator navigation should present run history in English"
     )
     assert(
-        AppPreferences.localizedString("toolbar.tasks", localeIdentifier: "zh-Hans") == "工作流",
-        "Task toolbar help should present the workflow entrypoint in Simplified Chinese"
-    )
-    assert(
-        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "en") == "Choose the work to run",
-        "Simple Start title should be localized in English"
-    )
-    assert(
-        AppPreferences.localizedString("tasks.simpleStart.title", localeIdentifier: "zh-Hans") == "选择要完成的工作",
-        "Simple Start title should be localized in Simplified Chinese"
-    )
-    assert(
-        AppPreferences.localizedString("tasks.simpleStart.plugin.targetPlaceholder", localeIdentifier: "en") != "tasks.simpleStart.plugin.targetPlaceholder",
-        "Plugin Compatibility Lab target placeholder should be localized in English"
-    )
-    assert(
-        AppPreferences.localizedString("tasks.simpleStart.release.action", localeIdentifier: "zh-Hans") == "检查发布",
-        "Release Captain action should be localized in Simplified Chinese"
+        AppPreferences.localizedString("operations.qualityGate", localeIdentifier: "zh-Hans") == "运行记录",
+        "Orchestrator navigation should present run history in Simplified Chinese"
     )
     assert(
         AppPreferences.localizedString("workbench.actions", localeIdentifier: "zh-Hans") == "下一步动作",

@@ -6,14 +6,6 @@ extension MainPanelView {
             HStack(spacing: 12) {
                 CustomTrafficLights()
                 Spacer()
-                if let label = contextDrawerLabel {
-                    MinimalIconButton(
-                        systemName: "sidebar.left",
-                        label: label,
-                        action: { setContextDrawerVisible(!showsContextDrawer) }
-                    )
-                    .frame(width: MainPanelIconMetrics.buttonSize, height: MainPanelIconMetrics.buttonSize)
-                }
             }
             .padding(.horizontal, 16)
             .frame(height: 56)
@@ -22,7 +14,8 @@ extension MainPanelView {
             OperationsWorkbenchSidebar(
                 selection: $selectedOperationsSurface,
                 preferences: appPreferences,
-                reviewCount: humanReviewSnapshot.totalCount,
+                attentionSurfaces: humanReviewSnapshot.attentionSurfaces,
+                settingsNeedsAttention: humanReviewSnapshot.needsSettingsAttention,
                 capabilitySurfaces: productProgress.unlockedSurfaces,
                 activeProjectName: viewModel.activeProjectName,
                 activeProjectPath: viewModel.activeProjectPath,
@@ -38,21 +31,6 @@ extension MainPanelView {
         .frame(width: CGFloat(min(max(sidebarWidth, 220), 320)))
         .frame(maxHeight: .infinity)
         .background(.bar)
-    }
-
-    private var contextDrawerLabel: String? {
-        switch selectedOperationsSurface {
-        case .humanReview:
-            return appPreferences.text("review.title")
-        default:
-            return nil
-        }
-    }
-
-    private func setContextDrawerVisible(_ isVisible: Bool) {
-        withAnimation(appPreferences.reduceMotion ? nil : .easeOut(duration: 0.18)) {
-            showsContextDrawer = isVisible
-        }
     }
 
     var projectChatSidebar: some View {
@@ -109,7 +87,7 @@ extension MainPanelView {
                                 activeProjectId: viewModel.activeProjectId,
                                 currentSessionId: viewModel.currentSessionId,
                                 selectedSessionIds: selectedSessionIds,
-                                showsSessions: !appPreferences.automaticDeliveryProtection,
+                                showsSessions: workSubmissionMode.usesDirectAgent,
                                 onSelectProject: {
                                     taskOrchestrationViewModel.updateProjectDirectoryFilter(project.path)
                                     if let firstSession = project.sessions.first {
@@ -119,7 +97,6 @@ extension MainPanelView {
                                         selectedSessionIds.removeAll()
                                         viewModel.startNewSession(in: project)
                                     }
-                                    selectedOperationsSurface = .assist
                                 },
                                 onOpenTree: {
                                     viewModel.loadProjectDirectory(project)
@@ -129,7 +106,6 @@ extension MainPanelView {
                                 },
                                 onNewChat: {
                                     activeSettingsHubTab = nil
-                                    showTaskOrchestration = false
                                     appPreferences.automaticDeliveryProtection = false
                                     viewModel.startNewSession(in: project)
                                     selectedOperationsSurface = .assist

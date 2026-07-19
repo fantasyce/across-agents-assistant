@@ -160,6 +160,19 @@ def test_packaged_build_cleans_python_bytecode_before_collecting_package():
     assert pyc_index < collect_index
 
 
+def test_packaged_build_isolates_build_time_runtime_state_from_formal_user_data():
+    script = (PROJECT_ROOT / "build_app.sh").read_text(encoding="utf-8")
+    isolation_index = script.index('export ACROSS_HOME="$BUILD_RUNTIME_DIR/across-home"')
+    pyinstaller_index = script.index('echo "Running PyInstaller..."')
+
+    assert isolation_index < pyinstaller_index
+    assert 'export ACROSS_AGENTS_HOME="$BUILD_RUNTIME_DIR/across-agents-home"' in script
+    assert 'export ACROSS_CONTEXT_HOME="$BUILD_RUNTIME_DIR/across-context-home"' in script
+    assert 'export ACROSS_AUTOPILOT_HOME="$BUILD_RUNTIME_DIR/across-autopilot-home"' in script
+    assert 'export ACROSS_ORCHESTRATOR_HOME="$BUILD_RUNTIME_DIR/across-orchestrator-home"' in script
+    assert "trap cleanup_build_runtime EXIT" in script
+
+
 def test_readme_does_not_describe_historical_task_orchestrator_residue():
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 

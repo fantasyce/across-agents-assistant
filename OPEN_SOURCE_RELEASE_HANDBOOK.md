@@ -157,6 +157,8 @@ Across Orchestrator usually includes:
 - `package.json`
 - `package-lock.json`
 - README current release notes and install tag
+- Worker distribution workflow, installer, platform bundles, checksums, and
+  relay container metadata when the Worker protocol changes
 
 Across Context usually includes:
 
@@ -304,6 +306,22 @@ gh release create vX.Y.Z \
   --notes "<release notes>"
 ```
 
+For an Orchestrator release that includes the Worker control plane, wait for
+the tag-triggered **Worker and Relay Release** workflow before updating AAA:
+
+```bash
+gh run list --workflow "Worker and Relay Release" --branch vX.Y.Z --limit 1
+gh run watch <run-id> --exit-status
+gh release view vX.Y.Z --json assets
+```
+
+Verify that the release contains the installer, `SHA256SUMS`, and all four
+macOS/Linux Worker archives. Verify the relay job published, scanned, signed,
+and attested the immutable multi-architecture image. AAA's Worker catalog must
+use only those released URLs and matching SHA-256 values; it must remain
+`published=false` if the assets are missing or unverified. Never weaken a
+Worker checksum or switch to a development checkout to unblock an AAA release.
+
 ## Post-Release Verification
 
 For each released repository:
@@ -338,6 +356,12 @@ fresh formal A app:
   "/Applications/Across Agents Assistant.app/Contents/Info.plist"
 pgrep -fl "Across Agents Assistant|across-agents-backend"
 ```
+
+Then query all three managed plugins from the installed App. Each must report
+the released version with `installed=true`, `available=true`,
+`integrity_ok=true`, and a successful plugin-specific health probe. Verify the
+Worker control runtime and one approved remote reconnect when that environment
+is available; absence of a remote machine must not make local tasks unusable.
 
 Do not use `~/Applications/Across Agents Assistant.app` as a release target.
 

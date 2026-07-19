@@ -3,15 +3,11 @@ import SwiftUI
 
 struct MainPanelOverlayHost: View {
     @ObservedObject var session: SessionViewModel
-    @ObservedObject var taskOrchestration: TaskOrchestrationViewModel
     @ObservedObject var settings: SettingsViewModel
     @ObservedObject var preferences: AppPreferences
 
     let settingsTab: SettingsHubTab?
-    let showsTaskOrchestration: Bool
-    let activeProjectPath: String?
     let onCloseSettings: () -> Void
-    let onCloseTaskOrchestration: () -> Void
 
     var body: some View {
         Group {
@@ -21,14 +17,6 @@ struct MainPanelOverlayHost: View {
                     preferences: preferences,
                     selectedTab: settingsTab,
                     onClose: onCloseSettings
-                )
-            }
-            if showsTaskOrchestration {
-                TaskOrchestrationView(
-                    viewModel: taskOrchestration,
-                    settingsVM: settings,
-                    defaultProjectPath: activeProjectPath,
-                    onClose: onCloseTaskOrchestration
                 )
             }
             if let request = session.pendingApproval {

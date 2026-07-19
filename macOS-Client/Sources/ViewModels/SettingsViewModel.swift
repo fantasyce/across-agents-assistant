@@ -157,7 +157,8 @@ final class SettingsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     @Published var apiKeyStatusCache: [String: String] = [:]
 
-    private let backendBase = "http://backend"
+    private let backendBase: String
+    private let backendDataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
     private var localAgentIds: Set<String> {
         Set(localAgents.map { AgentIDs.normalized($0.id) ?? $0.id })
     }
@@ -243,7 +244,16 @@ final class SettingsViewModel: ObservableObject {
         releaseVerificationError = nil
     }
 
-    init(bootstrapOnInit: Bool = true, loadPersisted: Bool = true) {
+    init(
+        bootstrapOnInit: Bool = true,
+        loadPersisted: Bool = true,
+        backendBase: String = "http://backend",
+        backendDataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = {
+            try await URLSession.shared.data(for: $0)
+        }
+    ) {
+        self.backendBase = backendBase
+        self.backendDataLoader = backendDataLoader
         if loadPersisted {
             loadPersistedSettings()
         } else {
@@ -308,7 +318,7 @@ final class SettingsViewModel: ObservableObject {
         }
         do {
             let url = URL(string: "\(backendBase)/api/diagnostics/startup")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 throw URLError(.badServerResponse)
@@ -335,7 +345,7 @@ final class SettingsViewModel: ObservableObject {
             let url = URL(string: "\(backendBase)/api/release/verification")!
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 throw URLError(.badServerResponse)
@@ -371,7 +381,7 @@ final class SettingsViewModel: ObservableObject {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(keys)
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 return false
             }
@@ -409,7 +419,7 @@ final class SettingsViewModel: ObservableObject {
         do {
             let suffix = force ? "?force=true" : ""
             let url = URL(string: "\(backendBase)/api/agents/detect\(suffix)")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return false
@@ -611,7 +621,7 @@ final class SettingsViewModel: ObservableObject {
     private func refreshCloudProvidersFromBackend() async {
         guard let url = URL(string: "\(backendBase)/api/llm/providers") else { return }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return
@@ -658,7 +668,7 @@ final class SettingsViewModel: ObservableObject {
             return
         }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return
@@ -685,7 +695,7 @@ final class SettingsViewModel: ObservableObject {
     private func refreshKeyStatusFromBackend() async {
         do {
             let url = URL(string: "\(backendBase)/api/keys/status")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return
@@ -715,7 +725,7 @@ final class SettingsViewModel: ObservableObject {
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return
@@ -732,7 +742,7 @@ final class SettingsViewModel: ObservableObject {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return nil
@@ -776,6 +786,7 @@ final class SettingsViewModel: ObservableObject {
     private func completeAvailabilityBootstrap() {
         didCompleteAvailabilityBootstrap = true
         refreshAvailabilityState()
+        StartupTelemetry.mark("core_ui_ready")
     }
 
     private func failAvailabilityBootstrap(_ message: String) {
@@ -797,7 +808,7 @@ final class SettingsViewModel: ObservableObject {
                     model: config.selectedModel
                 )
             )
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 return
@@ -822,7 +833,7 @@ final class SettingsViewModel: ObservableObject {
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -976,7 +987,7 @@ final class SettingsViewModel: ObservableObject {
     private func pingBackend() async -> Bool {
         guard let url = URL(string: "\(backendBase)/api/health") else { return false }
         do {
-            let (_, response) = try await URLSession.shared.data(from: url)
+            let (_, response) = try await backendDataLoader(URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse else {
                 return false
             }
@@ -991,8 +1002,7 @@ final class SettingsViewModel: ObservableObject {
             setBackendKeyStatus(providerId, status: "configured")
             return true
         }
-        guard isKeyConfigured(providerId),
-              let llm = cloudLLMs.first(where: { $0.id == providerId }),
+        guard let llm = cloudLLMs.first(where: { $0.id == providerId }),
               let key = llm.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty else {
             return false
@@ -1080,7 +1090,7 @@ final class SettingsViewModel: ObservableObject {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await backendDataLoader(request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return KeysCheckResultItem(provider_id: providerId, status: "error", error: "Backend error")
             }
@@ -1144,7 +1154,7 @@ final class SettingsViewModel: ObservableObject {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(["provider_id": providerId])
-            let (_, _) = try await URLSession.shared.data(for: request)
+            let (_, _) = try await backendDataLoader(request)
         } catch {
             print("Failed to delete key from backend: \(error)")
         }

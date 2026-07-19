@@ -26,7 +26,7 @@ struct SubtaskCard: View {
                     if let runningForSeconds = subtask.runningForSeconds, runningForSeconds >= 1 {
                         Text(formatDuration(runningForSeconds))
                             .font(.system(size: 9))
-                            .foregroundColor(Color(hex: "#4d6bfe"))
+                            .foregroundColor(AcrossTheme.accent)
                     } else {
                         ProgressView()
                             .controlSize(.mini)
@@ -53,7 +53,7 @@ struct SubtaskCard: View {
                         .frame(height: 4)
                         .overlay(
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(hex: "#4d6bfe"))
+                                .fill(AcrossTheme.accent)
                                 .frame(width: geo.size.width * subtask.progress, height: 4)
                         )
                 }
@@ -202,7 +202,7 @@ struct SubtaskDetailSheet: View {
 
                                 Text(String(format: "%.0fs", runningForSeconds))
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Color(hex: "#4d6bfe"))
+                                    .foregroundColor(AcrossTheme.accent)
                             }
                         }
                     }
@@ -287,7 +287,7 @@ struct SubtaskDetailSheet: View {
 
     private var statusColor: Color {
         switch subtask.status {
-        case "running": return Color(hex: "#4d6bfe")
+        case "running": return AcrossTheme.accent
         case "completed": return Color(hex: "#30d158")
         case "failed": return Color(hex: "#FF453A")
         case "pending": return Color(hex: "#8e8e93")

@@ -157,57 +157,6 @@ extension View {
     }
 }
 
-struct MinimalWorkflowHeader<Actions: View>: View {
-    let title: String
-    let subtitle: String?
-    let status: String?
-    private let actions: Actions
-
-    init(
-        title: String,
-        subtitle: String? = nil,
-        status: String? = nil,
-        @ViewBuilder actions: () -> Actions
-    ) {
-        self.title = title
-        self.subtitle = subtitle
-        self.status = status
-        self.actions = actions()
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer(minLength: 12)
-
-            if let status {
-                MinimalWorkflowStatusLabel(status: status)
-            }
-
-            actions
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 52)
-        .background(.bar)
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-}
-
 struct MinimalWorkflowStatusLabel: View {
     let status: String
     let label: String?
@@ -311,6 +260,125 @@ struct MinimalSectionHeader: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct MinimalDisclosureRow<Label: View, Trailing: View, Content: View>: View {
+    @Binding var isExpanded: Bool
+    let accessibilityLabel: String
+    @ViewBuilder let label: () -> Label
+    @ViewBuilder let trailing: () -> Trailing
+    @ViewBuilder let content: () -> Content
+
+    @EnvironmentObject private var preferences: AppPreferences
+
+    init(
+        isExpanded: Binding<Bool>,
+        accessibilityLabel: String,
+        @ViewBuilder label: @escaping () -> Label,
+        @ViewBuilder trailing: @escaping () -> Trailing,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        _isExpanded = isExpanded
+        self.accessibilityLabel = accessibilityLabel
+        self.label = label
+        self.trailing = trailing
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isExpanded ? 8 : 0) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(alignment: .center, spacing: 12) {
+                        label()
+                        Spacer(minLength: 12)
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityValue(
+                    preferences.text(
+                        isExpanded
+                            ? "tasks.section.expanded"
+                            : "tasks.section.collapsed"
+                    )
+                )
+
+                trailing()
+            }
+
+            if isExpanded {
+                content()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension MinimalDisclosureRow where Trailing == EmptyView {
+    init(
+        isExpanded: Binding<Bool>,
+        accessibilityLabel: String,
+        @ViewBuilder label: @escaping () -> Label,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            isExpanded: isExpanded,
+            accessibilityLabel: accessibilityLabel,
+            label: label,
+            trailing: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+struct MinimalDisclosureSection<Content: View>: View {
+    let title: String
+    let detail: String?
+    @Binding var isExpanded: Bool
+    private let content: Content
+
+    init(
+        title: String,
+        detail: String? = nil,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.detail = detail
+        _isExpanded = isExpanded
+        self.content = content()
+    }
+
+    var body: some View {
+        MinimalDisclosureRow(
+            isExpanded: $isExpanded,
+            accessibilityLabel: title
+        ) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } content: {
+            content
+        }
     }
 }
 

@@ -21,6 +21,29 @@ echo "=== 1. Cleaning up previous builds ==="
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
+# PyInstaller imports application modules while discovering dependencies. Keep
+# every build-time side effect away from the installed App's real ~/.across
+# state, even when an imported module initializes persistence at import time.
+BUILD_RUNTIME_DIR="$BUILD_DIR/build-runtime"
+export ACROSS_HOME="$BUILD_RUNTIME_DIR/across-home"
+export ACROSS_AGENTS_HOME="$BUILD_RUNTIME_DIR/across-agents-home"
+export ACROSS_CONTEXT_HOME="$BUILD_RUNTIME_DIR/across-context-home"
+export ACROSS_AUTOPILOT_HOME="$BUILD_RUNTIME_DIR/across-autopilot-home"
+export ACROSS_ORCHESTRATOR_HOME="$BUILD_RUNTIME_DIR/across-orchestrator-home"
+export ACROSS_AGENTS_DEVELOPER_MODE=1
+export ACROSS_ORCHESTRATOR_DEVELOPER_MODE=1
+mkdir -p \
+    "$ACROSS_HOME" \
+    "$ACROSS_AGENTS_HOME" \
+    "$ACROSS_CONTEXT_HOME" \
+    "$ACROSS_AUTOPILOT_HOME" \
+    "$ACROSS_ORCHESTRATOR_HOME"
+cleanup_build_runtime() {
+    rm -rf "$BUILD_RUNTIME_DIR"
+}
+trap cleanup_build_runtime EXIT
+echo "Build-time runtime state: $BUILD_RUNTIME_DIR"
+
 echo "=== 2. Building Python Backend ==="
 cd "$PROJECT_ROOT/backend"
 
@@ -36,7 +59,11 @@ fi
 echo "Using Python: $PYTHON_3_10"
 
 VENV_DIR="$PROJECT_ROOT/backend/.venv"
-if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/bin/activate" ]; then
+if [ -d "$VENV_DIR" ] && {
+    [ ! -f "$VENV_DIR/bin/activate" ] ||
+    [ ! -x "$VENV_DIR/bin/python" ] ||
+    ! "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1
+}; then
     echo "Virtual environment is incomplete; recreating $VENV_DIR..."
     rm -rf "$VENV_DIR"
 fi

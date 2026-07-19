@@ -31,6 +31,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "orchestrator-agent-adapter":
 
     sys.exit(adapter_main(sys.argv[2:]))
 
+if len(sys.argv) > 1 and sys.argv[1] == "autopilot-workflow-adapter":
+    from across_agents_assistant.autopilot_workflow_adapter import main as workflow_adapter_main
+
+    sys.exit(workflow_adapter_main(sys.argv[2:]))
+
 if len(sys.argv) > 1 and sys.argv[1] == "autopilot-model-decision":
     from across_agents_assistant.autopilot_model_decision_cli import main as model_decision_main
 
@@ -50,6 +55,16 @@ if len(sys.argv) > 1 and sys.argv[1] == "autopilot-review-decision":
     from across_agents_assistant.autopilot_review_decision_cli import main as review_decision_main
 
     sys.exit(review_decision_main(sys.argv[2:]))
+
+if len(sys.argv) > 1 and sys.argv[1] == "worker-model-gateway":
+    from across_agents_assistant.worker_model_gateway import main as worker_model_gateway_main
+
+    sys.exit(worker_model_gateway_main(sys.argv[2:]))
+
+if len(sys.argv) > 1 and sys.argv[1] == "worker-enrollment-gateway":
+    from across_agents_assistant.worker_enrollment_gateway import main as worker_enrollment_gateway_main
+
+    sys.exit(worker_enrollment_gateway_main(sys.argv[2:]))
 
 from across_agents_assistant.api_server import start_api_server
 from across_agents_assistant.paths import backend_socket_path

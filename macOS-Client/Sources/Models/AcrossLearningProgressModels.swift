@@ -46,7 +46,7 @@ struct AcrossLearningEvent: Codable, Equatable, Hashable, Identifiable {
 }
 
 struct AcrossLearningLedger: Codable, Equatable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int
     var events: [AcrossLearningEvent]
@@ -78,8 +78,9 @@ struct AcrossLearningLedger: Codable, Equatable {
     }
 
     mutating func recompute(taskEvents: [AcrossLearningEvent]) -> Bool {
-        let retained = events.filter { $0.origin != .taskSummary }
-        let updated = Self.deduplicated(retained + taskEvents)
+        // Achievements are global and monotonic. A project-filtered task list
+        // may add evidence, but it must never erase evidence earned elsewhere.
+        let updated = Self.deduplicated(events + taskEvents)
         guard updated != events else { return false }
         events = updated
         schemaVersion = Self.currentSchemaVersion

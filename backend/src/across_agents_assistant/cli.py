@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
         "loop-engineering-capabilities",
         help="Print the AAA-hosted Loop Engineering capability pack registry.",
     )
+    worker_model_gateway_parser = sub.add_parser(
+        "worker-model-gateway",
+        help="Run the explicit-interface mTLS task-bound Worker model gateway.",
+    )
+    worker_model_gateway_parser.add_argument("gateway_args", nargs=argparse.REMAINDER)
 
     args = parser.parse_args(argv)
 
@@ -150,6 +155,11 @@ def main(argv: list[str] | None = None) -> int:
 
         print(json.dumps(loop_engineering_capability_pack(), ensure_ascii=False, sort_keys=True))
         return 0
+
+    if args.command == "worker-model-gateway":
+        from .worker_model_gateway import main as worker_model_gateway_main
+
+        return worker_model_gateway_main(args.gateway_args)
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

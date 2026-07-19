@@ -1,110 +1,174 @@
 import SwiftUI
 
+struct AcrossTaskResultOverview: View {
+    let task: TaskOrchestrationTaskDetail
+    @ObservedObject var preferences: AppPreferences
+    @ObservedObject var viewModel: TaskOrchestrationViewModel
+    let allowsAcceptance: Bool
+    let onOpenEvidence: () -> Void
+
+    init(
+        task: TaskOrchestrationTaskDetail,
+        preferences: AppPreferences,
+        viewModel: TaskOrchestrationViewModel,
+        allowsAcceptance: Bool = true,
+        onOpenEvidence: @escaping () -> Void
+    ) {
+        self.task = task
+        _preferences = ObservedObject(wrappedValue: preferences)
+        _viewModel = ObservedObject(wrappedValue: viewModel)
+        self.allowsAcceptance = allowsAcceptance
+        self.onOpenEvidence = onOpenEvidence
+    }
+
+    var body: some View {
+        let decision = AcrossTaskResultDecision(task: task)
+        AcrossVisualResultOverview(
+            contract: AcrossVisualResultFactory.make(task: task),
+            preferences: preferences,
+            primaryActionTitle: decision.canAccept && allowsAcceptance
+                ? preferences.text("tasks.review.accept")
+                : nil,
+            isPrimaryActionDisabled: viewModel.isAcceptingTask,
+            isPrimaryActionLoading: viewModel.isAcceptingTask,
+            onPrimaryAction: decision.canAccept && allowsAcceptance ? {
+                viewModel.acceptTaskResult(task.taskId) {}
+            } : nil,
+            secondaryActionTitle: decision.canInspectEvidence
+                ? preferences.text("tasks.evidence.view")
+                : nil,
+            onSecondaryAction: decision.canInspectEvidence ? onOpenEvidence : nil
+        )
+    }
+}
+
 struct AcrossVisualResultOverview: View {
     let contract: AcrossVisualResultContract
     @ObservedObject var preferences: AppPreferences
 
-    @State private var showsDetails = false
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private let primaryActionTitle: String?
+    private let primaryActionSystemImage: String
+    private let isPrimaryActionDisabled: Bool
+    private let isPrimaryActionLoading: Bool
+    private let onPrimaryAction: (() -> Void)?
+    private let secondaryActionTitle: String?
+    private let secondaryActionSystemImage: String
+    private let onSecondaryAction: (() -> Void)?
 
-    private var reducesMotion: Bool { systemReduceMotion || preferences.reduceMotion }
+    init(
+        contract: AcrossVisualResultContract,
+        preferences: AppPreferences,
+        primaryActionTitle: String? = nil,
+        primaryActionSystemImage: String = "checkmark",
+        isPrimaryActionDisabled: Bool = false,
+        isPrimaryActionLoading: Bool = false,
+        onPrimaryAction: (() -> Void)? = nil,
+        secondaryActionTitle: String? = nil,
+        secondaryActionSystemImage: String = "doc.text.magnifyingglass",
+        onSecondaryAction: (() -> Void)? = nil
+    ) {
+        self.contract = contract
+        _preferences = ObservedObject(wrappedValue: preferences)
+        self.primaryActionTitle = primaryActionTitle
+        self.primaryActionSystemImage = primaryActionSystemImage
+        self.isPrimaryActionDisabled = isPrimaryActionDisabled
+        self.isPrimaryActionLoading = isPrimaryActionLoading
+        self.onPrimaryAction = onPrimaryAction
+        self.secondaryActionTitle = secondaryActionTitle
+        self.secondaryActionSystemImage = secondaryActionSystemImage
+        self.onSecondaryAction = onSecondaryAction
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             verdictHeader
-            Divider()
-            AcrossTrustCompassView(compass: contract.trustCompass, preferences: preferences)
-            Divider()
-            AcrossEvidenceRouteView(
-                constellation: contract.evidenceConstellation,
-                preferences: preferences
-            )
-            nextActionRow
 
-            DisclosureGroup(isExpanded: $showsDetails) {
-                VStack(alignment: .leading, spacing: 16) {
-                    AcrossLoopTrailView(steps: contract.loopTrail, preferences: preferences)
-                    AcrossEvidenceConstellationView(
-                        constellation: contract.evidenceConstellation,
-                        preferences: preferences
-                    )
-                    AcrossAttentionStackView(items: contract.attentionStack, preferences: preferences)
-                    if let lens = contract.attemptLens {
-                        AcrossAttemptLensView(lens: lens, preferences: preferences)
-                    }
-                    if let mark = contract.decisionMark {
-                        AcrossDecisionMarkView(mark: mark, preferences: preferences)
-                    }
-                }
-                .padding(.top, 12)
-            } label: {
-                Label(preferences.text("result.details"), systemImage: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .medium))
+            Text(preferences.text(guidanceKey))
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !hasActions {
+                Label(
+                    preferences.text(contract.nextAction.titleKey),
+                    systemImage: contract.nextAction.systemImage
+                )
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
             }
-            .animation(reducesMotion ? nil : .easeOut(duration: 0.2), value: showsDetails)
-        }
-        .padding(16)
-        .background(AcrossTheme.recessedFill(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius, style: .continuous)
-                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(preferences.text("result.accessibility.summary"))
     }
 
     private var verdictHeader: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let trustSealIndex {
-                    PixelAtlasReward(
-                        atlas: .trustSeals,
-                        index: trustSealIndex,
-                        isUnlocked: true
-                    )
-                } else {
-                    Image(systemName: contract.verdict.systemImage)
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(stateColor(verdictState))
-                        .symbolEffect(.appear, options: .nonRepeating, isActive: !reducesMotion)
+        HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: contract.verdict.systemImage)
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(stateColor(verdictState))
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(preferences.text(contract.verdict.titleKey))
+                        .font(.system(size: 20, weight: .semibold))
+                    if contract.verdict == .needsReview {
+                        Label(
+                            preferences.text("result.review.awaiting"),
+                            systemImage: "hand.raised.fill"
+                        )
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(stateColor(.partial))
+                        .lineLimit(1)
+                    } else {
+                        AcrossEvidenceStateGlyph(state: verdictState, preferences: preferences)
+                    }
                 }
             }
-            .frame(width: 46, height: 46)
-            .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preferences.text(contract.verdict.titleKey))
-                    .font(.system(size: 18, weight: .semibold))
-                Text(preferences.text("result.verdict.subtitle"))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+
+            Spacer(minLength: 16)
+
+            if hasActions {
+                actionRow
             }
-            Spacer()
-            AcrossEvidenceStateGlyph(state: verdictState, preferences: preferences)
         }
-        .accessibilityElement(children: .combine)
     }
 
-    private var nextActionRow: some View {
-        HStack(spacing: 10) {
-            Image(systemName: contract.nextAction.systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(AcrossTheme.accent)
-                .frame(width: 24, height: 24)
-                .accessibilityHidden(true)
-            Text(preferences.text("result.next.label"))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text(preferences.text(contract.nextAction.titleKey))
-                .font(.system(size: 13, weight: .semibold))
-            Spacer()
+    @ViewBuilder
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            if let secondaryActionTitle, let onSecondaryAction {
+                Button(action: onSecondaryAction) {
+                    Label(secondaryActionTitle, systemImage: secondaryActionSystemImage)
+                }
+                .buttonStyle(.bordered)
+            }
+            if let primaryActionTitle, let onPrimaryAction {
+                Button(action: onPrimaryAction) {
+                    if isPrimaryActionLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(primaryActionTitle)
+                    } else {
+                        Label(primaryActionTitle, systemImage: primaryActionSystemImage)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPrimaryActionDisabled || isPrimaryActionLoading)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(AcrossTheme.accent.opacity(colorScheme == .dark ? 0.16 : 0.09))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .accessibilityElement(children: .combine)
+        .controlSize(.regular)
+    }
+
+    private var hasActions: Bool {
+        (primaryActionTitle != nil && onPrimaryAction != nil)
+            || (secondaryActionTitle != nil && onSecondaryAction != nil)
+    }
+
+    private var guidanceKey: String {
+        "result.verdict.guidance.\(contract.verdict.rawValue)"
     }
 
     private var verdictState: AcrossEvidenceState {
@@ -115,14 +179,6 @@ struct AcrossVisualResultOverview: View {
         }
     }
 
-    private var trustSealIndex: Int? {
-        switch contract.verdict {
-        case .ready: return 0
-        case .needsReview: return 1
-        case .blocked, .cancelled: return 2
-        case .inProgress: return nil
-        }
-    }
 }
 
 struct AcrossTrustCompassView: View {
@@ -130,34 +186,50 @@ struct AcrossTrustCompassView: View {
     @ObservedObject var preferences: AppPreferences
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(preferences.text("result.trust.title"))
-                .font(.system(size: 12, weight: .semibold))
-            HStack(spacing: 8) {
+                .font(.system(size: 11, weight: .semibold))
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 240), spacing: 18)],
+                spacing: 8
+            ) {
                 ForEach(AcrossTrustDimension.allCases) { dimension in
                     let state = compass.state(for: dimension)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: dimension.systemImage)
-                                .accessibilityHidden(true)
-                            Text(preferences.text(dimension.titleKey))
-                                .lineLimit(1)
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        AcrossEvidenceStateGlyph(state: state, preferences: preferences)
+                    HStack(spacing: 7) {
+                        Image(systemName: dimension.systemImage)
+                            .foregroundStyle(stateColor(state))
+                            .accessibilityHidden(true)
+                        Text(preferences.text(dimension.titleKey))
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Label(
+                            trustStateText(dimension: dimension, state: state),
+                            systemImage: stateGlyph(state)
+                        )
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(stateColor(state))
+                        .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(9)
-                    .background(stateColor(state).opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .frame(maxWidth: .infinity)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(preferences.text(dimension.titleKey))
-                    .accessibilityValue(preferences.text(state.accessibilityKey))
+                    .accessibilityValue(trustStateText(dimension: dimension, state: state))
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(preferences.text("result.trust.title"))
+    }
+
+    private func trustStateText(
+        dimension: AcrossTrustDimension,
+        state: AcrossEvidenceState
+    ) -> String {
+        if dimension == .humanControl && state == .partial {
+            return preferences.text("result.review.awaiting")
+        }
+        return preferences.text(state.accessibilityKey)
     }
 }
 

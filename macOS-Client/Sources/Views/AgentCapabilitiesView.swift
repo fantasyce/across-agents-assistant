@@ -83,7 +83,7 @@ struct AgentCapabilitiesView: View {
     private var toolColor: Color { Color(nsColor: .systemBlue) }
 
     private var agentOptions: [CapabilityAgentOption] {
-        let local = settingsViewModel.localAgents.map { agent in
+        let local = settingsViewModel.availableLocalAgents.map { agent in
             CapabilityAgentOption(
                 id: AgentIDs.normalized(agent.id) ?? agent.id,
                 name: agent.name,
@@ -92,7 +92,7 @@ struct AgentCapabilitiesView: View {
                 isAvailable: settingsViewModel.isLocalAgentAvailable(agent.id)
             )
         }
-        let cloud = settingsViewModel.cloudLLMs.map { llm in
+        let cloud = settingsViewModel.availableCloudLLMs.map { llm in
             CapabilityAgentOption(
                 id: llm.id,
                 name: llm.name,
@@ -125,6 +125,7 @@ struct AgentCapabilitiesView: View {
 
     private let skillColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
     private let toolColumns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 2)
+    private let profileScrollTopID = "agent-capabilities-profile-top"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -132,30 +133,47 @@ struct AgentCapabilitiesView: View {
                 standaloneHeader
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
-                    titleRow
+            VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
+                titleRow
 
-                    if let errorMessage = viewModel.errorMessage {
-                        warningBanner(errorMessage)
-                    }
-                    if let nativeSkillMessage = viewModel.nativeSkillMessage {
-                        warningBanner(nativeSkillMessage)
-                    }
+                if let errorMessage = viewModel.errorMessage {
+                    warningBanner(errorMessage)
+                }
+                if let nativeSkillMessage = viewModel.nativeSkillMessage {
+                    warningBanner(nativeSkillMessage)
+                }
 
-                    HStack(alignment: .top, spacing: 18) {
+                HStack(alignment: .top, spacing: 18) {
+                    ScrollView {
                         agentList
-                            .frame(width: 246)
+                            .padding(.bottom, MinimalSettingsMetrics.contentPadding)
+                    }
+                    .frame(width: 246)
 
-                        if let agent = selectedAgent, let profile = selectedProfile {
-                            profileEditor(agent: agent, profile: profile)
-                        } else {
-                            emptyPanel
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(profileScrollTopID)
+
+                                if let agent = selectedAgent, let profile = selectedProfile {
+                                    profileEditor(agent: agent, profile: profile)
+                                } else {
+                                    emptyPanel
+                                }
+                            }
+                            .padding(.bottom, MinimalSettingsMetrics.contentPadding)
+                        }
+                        .onChange(of: selectedAgentId) {
+                            proxy.scrollTo(profileScrollTopID, anchor: .top)
                         }
                     }
                 }
-                .minimalPageContentFrame()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .minimalPageContentFrame()
             .overlay {
                 if viewModel.isLoading {
                     ProgressView()

@@ -49,16 +49,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.10.0",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.11.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3",
     ),
     KnownAcrossPlugin(
         plugin_id="across-autopilot",
@@ -67,7 +67,7 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-autopilot",
         install_command="across-autopilot install host-plugin",
         install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.4.0",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.5.0",
     ),
 )
 
@@ -630,6 +630,27 @@ def remember_context_memory(
     if not isinstance(memory, dict):
         raise PluginLifecycleError("Across Context did not return a memory record")
     return memory
+
+
+def remember_worker_context_outcome(
+    *,
+    outcome: Mapping[str, Any],
+    project_root: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    args = [
+        "worker-memory",
+        "remember",
+        "--outcome-json",
+        json.dumps(dict(outcome), ensure_ascii=False, separators=(",", ":")),
+        "--json",
+    ]
+    if project_root:
+        args.extend(["--project", project_root])
+    payload = _run_context_cli_json(args, env=env, timeout=15)
+    if not isinstance(payload, dict) or not payload.get("id"):
+        raise PluginLifecycleError("Across Context did not return a Worker memory record")
+    return payload
 
 
 def update_context_memory_status(

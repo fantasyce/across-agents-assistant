@@ -5,8 +5,14 @@ import Testing
 struct AppleMinimalUIContractTests {
     private static let expectedMainNavigation = ["工作"]
 
+    @Test
+    func providerConfigurationStatusesAreLocalized() {
+        #expect(AppPreferences.localizedString("status.not_configured", localeIdentifier: "en") == "Not configured")
+        #expect(AppPreferences.localizedString("status.not_configured", localeIdentifier: "zh-Hans") == "未配置")
+    }
+
     @Test @MainActor
-    func mainNavigationKeepsOneWorkDestinationAndConditionalReview() throws {
+    func mainNavigationKeepsOneWorkDestinationAndRoutesAttentionToOwners() throws {
         let visibleTitles = OperationsWorkbenchSurface.primary.map {
             AppPreferences.localizedString($0.localizationKey, localeIdentifier: "zh-Hans")
         }
@@ -15,8 +21,10 @@ struct AppleMinimalUIContractTests {
         let sidebar = try Self.source("macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift")
         let visibleBody = sidebar.components(separatedBy: "private func sectionLabel").first ?? sidebar
         #expect(visibleBody.contains("ForEach(OperationsWorkbenchSurface.primary)"))
-        #expect(visibleBody.contains("if reviewCount > 0"))
-        #expect(visibleBody.contains("navigationRow(.humanReview"))
+        #expect(visibleBody.contains("attentionSurfaces.contains(surface)"))
+        #expect(visibleBody.contains("Circle()"))
+        #expect(!visibleBody.contains("reviewCount"))
+        #expect(!visibleBody.contains("navigationRow(.humanReview"))
         #expect(!visibleBody.contains("secondaryRow("))
     }
 
@@ -33,6 +41,7 @@ struct AppleMinimalUIContractTests {
             "agents",
             "capabilities",
             "plugins",
+            "workers",
             "mcp",
             "tools",
             "diagnostics",
@@ -106,7 +115,7 @@ struct AppleMinimalUIContractTests {
         let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
         let settings = try Self.source("macOS-Client/Sources/Views/SettingsHubView.swift")
         let mainSidebar = try #require(
-            Self.slice(sidebar, from: "var leftSidebar: some View", to: "private var contextDrawerLabel")
+            Self.slice(sidebar, from: "var leftSidebar: some View", to: "var projectChatSidebar")
         )
         let settingsShell = try #require(
             Self.slice(settings, from: "var body: some View", to: "private var windowControls")
@@ -135,12 +144,96 @@ struct AppleMinimalUIContractTests {
     }
 
     @Test
+    func projectSelectionPreservesTheCurrentOperationalSurface() throws {
+        let sidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
+        let projectSelection = try #require(
+            Self.slice(sidebar, from: "onSelectProject: {", to: "onOpenTree: {")
+        )
+        let newChat = try #require(
+            Self.slice(sidebar, from: "onNewChat: {", to: "onSelectSession: {")
+        )
+
+        #expect(projectSelection.contains("updateProjectDirectoryFilter(project.path)"))
+        #expect(!projectSelection.contains("selectedOperationsSurface = .assist"))
+        #expect(newChat.contains("selectedOperationsSurface = .assist"))
+    }
+
+    @Test
+    func settingsInteractionsUseIndependentScrollingAndSinglePurposeControls() throws {
+        let capabilities = try Self.source("macOS-Client/Sources/Views/AgentCapabilitiesView.swift")
+        let capabilityBody = try #require(
+            Self.slice(capabilities, from: "var body: some View", to: "private var standaloneHeader")
+        )
+        #expect(capabilityBody.contains("ScrollViewReader"))
+        #expect(capabilityBody.contains(".frame(width: 246)"))
+        #expect(capabilityBody.contains(".onChange(of: selectedAgentId)"))
+        #expect(capabilityBody.contains("proxy.scrollTo(profileScrollTopID, anchor: .top)"))
+
+        let permissions = try Self.source("macOS-Client/Sources/Views/ToolPermissionsView.swift")
+        let permissionDropdown = try #require(
+            Self.slice(permissions, from: "private struct PermissionDropdownButton", to: "struct ToolPermissionsView")
+        )
+        #expect(permissionDropdown.contains("Menu {"))
+        #expect(!permissionDropdown.contains("Image(systemName: \"chevron.down\")"))
+
+        let diagnostics = try Self.source("macOS-Client/Sources/Views/StartupDiagnosticsView.swift")
+        #expect(diagnostics.contains("@State private var showingChecks = false"))
+        #expect(diagnostics.contains("isExpanded: $showingChecks"))
+        #expect(diagnostics.contains("VStack(spacing: 12)"))
+    }
+
+    @Test
+    func loopNextActionsRunOnlyFromAPlayButton() throws {
+        let loop = try Self.source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
+        let actions = try #require(
+            Self.slice(loop, from: "private func actionSection", to: "private func sectionsGrid")
+        )
+
+        #expect(actions.contains("Image(systemName: \"play.circle.fill\")"))
+        #expect(!actions.contains("Image(systemName: \"arrow.right\")"))
+        #expect(!actions.contains(".contentShape(Rectangle())"))
+        #expect(actions.contains(".accessibilityHint(localizedActionReason(action))"))
+    }
+
+    @Test
+    func growthResultsAndDiagnosticsKeepActionsExplicitAndCompact() throws {
+        let growth = try Self.source("macOS-Client/Sources/Views/CapabilityProgressView.swift")
+        let challenge = try #require(
+            Self.slice(growth, from: "private struct CapabilityPathView", to: "private struct CapabilityComponentTile")
+        )
+        #expect(challenge.contains("Image(systemName: \"play.circle.fill\")"))
+        #expect(!challenge.contains("Image(systemName: \"arrow.right\")"))
+        #expect(challenge.contains("Button {\n                        start(mission)"))
+        #expect(!challenge.contains(".contentShape(Rectangle())"))
+
+        let results = try Self.source("macOS-Client/Sources/Views/AcrossVisualResultViews.swift")
+        let overview = try #require(
+            Self.slice(results, from: "struct AcrossVisualResultOverview", to: "struct AcrossTrustCompassView")
+        )
+        let verdictHeader = try #require(
+            Self.slice(overview, from: "private var verdictHeader", to: "private var actionRow")
+        )
+        #expect(overview.contains("if !hasActions"))
+        #expect(verdictHeader.contains("Spacer(minLength: 16)"))
+        #expect(verdictHeader.contains("if hasActions {\n                actionRow"))
+
+        let diagnostics = try Self.source("macOS-Client/Sources/Views/StartupDiagnosticsView.swift")
+        let header = try #require(
+            Self.slice(diagnostics, from: "private var header", to: "private func overview")
+        )
+        #expect(header.contains(".controlSize(.small)"))
+        #expect(!header.contains(".padding(.horizontal"))
+        #expect(!header.contains(".padding(.vertical"))
+    }
+
+    @Test
     func primaryOperationalPagesShareAQuietHeaderAndBoundDenseCards() throws {
         let work = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
         let workflows = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
         let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
         let loop = try Self.source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
         let growth = try Self.source("macOS-Client/Sources/Views/CapabilityProgressView.swift")
+        let shared = try Self.source("macOS-Client/Sources/Views/MinimalWorkflowComponents.swift")
 
         #expect(work.contains("if shouldShowAssistHeader"))
         #expect(work.contains("taskOrchestrationViewModel.selectedTask != nil"))
@@ -153,12 +246,36 @@ struct AppleMinimalUIContractTests {
         #expect(loop.contains("MinimalPageHeader("))
         #expect(loop.contains(".minimalPageContentFrame()"))
         #expect(loop.contains("@State private var showsTechnicalEvidence = false"))
-        #expect(loop.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"))
-        #expect(loop.contains("minHeight: 220, maxHeight: 220"))
+        #expect(loop.contains("title: appPreferences.text(\"workbench.sections\")"))
+        #expect(loop.contains("isExpanded: $showsTechnicalEvidence"))
+        #expect(!loop.contains("sectionHeader(appPreferences.text(\"workbench.sections\")"))
+        #expect(!loop.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"))
+        #expect(!loop.contains("minHeight: 220, maxHeight: 220"))
+        #expect(shared.contains("struct MinimalDisclosureSection"))
+        #expect(shared.contains("isExpanded.toggle()"))
+        #expect(shared.contains("isExpanded ? \"chevron.down\" : \"chevron.right\""))
+        #expect(shared.contains(".contentShape(Rectangle())"))
         #expect(loop.contains(".truncationMode(.tail)"))
         #expect(!loop.contains("if let endpoint = action.endpoint"))
         #expect(!loop.contains("if let endpoint = section.endpoint"))
+        #expect(loop.contains("label: appPreferences.text(\"workbench.selfCheck\")"))
+        let workspaceReadiness = try #require(
+            Self.slice(loop, from: "private func agentWorkspaceReadinessPanel", to: "private func summaryGrid")
+        )
+        #expect(!workspaceReadiness.contains("AcrossTheme.panelFill"))
+        #expect(!workspaceReadiness.contains("AcrossTheme.recessedFill"))
+        let operationalCards = try #require(
+            Self.slice(loop, from: "private func sectionPanel", to: "private func summaryPairs")
+        )
+        #expect(operationalCards.contains("AcrossTheme.panelFill"))
         #expect(workflows.contains(".minimalPageContentFrame(bottomPadding: 8)"))
+        #expect(workflows.contains("Text(conciseTaskTitle(task.description))"))
+        #expect(growth.contains("onStartMission: (AcrossLearningMissionKind) -> Void"))
+        #expect(growth.contains("Array(repeating: GridItem(.flexible(minimum: 148), spacing: 12), count: 4)"))
+        #expect(growth.contains("private struct CapabilityComponentTile"))
+        #expect(!growth.contains("private func missionNode"))
+        #expect(!growth.contains("Text(preferences.text(\"growth.path.title\"))"))
+        #expect(!growth.contains("subtitle: preferences.text(progress.levelKey)"))
         #expect(growth.contains("MinimalPageHeader("))
         #expect(growth.contains(".minimalPageContentFrame()"))
     }
@@ -189,7 +306,6 @@ struct AppleMinimalUIContractTests {
         let workflowComponents = try Self.source("macOS-Client/Sources/Views/MinimalWorkflowComponents.swift")
         let workflows = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
         let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
-        let simpleStart = try Self.source("macOS-Client/Sources/Views/TaskWorkflowStartViews.swift")
 
         #expect(app.contains("contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800)"))
         #expect(app.contains(".defaultSize(width: 1280, height: 800)"))
@@ -206,7 +322,6 @@ struct AppleMinimalUIContractTests {
         #expect(workflows.contains(".minimalPageContentFrame(topPadding: 12)"))
         #expect(work.contains(".minimalPageContentFrame()"))
         #expect(!work.contains(".frame(maxWidth: 760"))
-        #expect(simpleStart.contains(".minimalPageContentFrame(topPadding: 12)"))
     }
 
     @Test
@@ -252,6 +367,7 @@ struct AppleMinimalUIContractTests {
         #expect(settings.contains(".focusEffectDisabled()"))
         #expect(settings.contains(".focused($focusedCategory"))
         #expect(navigation.contains(".focused($focusedSurface"))
+        #expect(navigation.contains("focusedSurface = surface"))
         #expect(navigation.contains("AcrossTheme.hoverFill(for: colorScheme)"))
         #expect(!design.contains("focusRing(for"))
         #expect(!agents.contains(".stroke(isSelected ? AcrossTheme.accent"))
@@ -275,17 +391,89 @@ struct AppleMinimalUIContractTests {
     @Test
     func memoryBatchActionsExposeProgressAndSemanticColors() throws {
         let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
-        let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
         let lifecycle = try Self.source("macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift")
+        let designSystem = try Self.source("macOS-Client/Sources/Views/AcrossDesignSystem.swift")
 
         #expect(memory.contains("memoryBatchCompletedCount"))
         #expect(memory.contains("memory.bulk.archiving"))
-        #expect(memory.contains(".tint(AcrossTheme.accent)"))
-        #expect(memory.contains(".tint(.red)"))
-        #expect(review.contains(".tint(.red)"))
+        #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .approve)"))
+        #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .archive)"))
+        #expect(designSystem.contains("case .approve:\n            return AcrossTheme.accent"))
+        #expect(designSystem.contains("case .archive:\n            return Color(nsColor: .systemRed)"))
         #expect(lifecycle.contains("memoryBatchTotalCount = memories.count"))
         #expect(lifecycle.contains("memoryBatchCompletedCount = index + 1"))
         #expect(lifecycle.contains("AcrossMemoryMutationResponse.self"))
+    }
+
+    @Test
+    func productShellPublishesFastReviewCountsAndUsesExpandedWindowSpace() throws {
+        let lifecycle = try Self.source("macOS-Client/Sources/ViewModels/PluginLifecycleViewModel.swift")
+        let main = try Self.source("macOS-Client/Sources/Views/MainPanelView.swift")
+
+        #expect(lifecycle.contains("var pendingMemoryCount: Int"))
+        #expect(lifecycle.contains("agentLoopMemoryMetrics?.totals?.pendingCount ?? 0"))
+        #expect(lifecycle.contains("let memoryMetricsTask = Task"))
+        #expect(lifecycle.contains("await loadMemories(refreshMetrics: false)"))
+        #expect(main.contains("windowContentWidth >= 1220"))
+        #expect(main.contains("pluginLifecycleViewModel.pendingMemoryCount"))
+    }
+
+    @Test
+    func taskResultsKeepOnlyTheDecisionSurfaceVisibleByDefault() throws {
+        let runs = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
+        let visualResults = try Self.source("macOS-Client/Sources/Views/AcrossVisualResultViews.swift")
+        let evidence = try Self.source("macOS-Client/Sources/Views/TaskReleaseEvidenceViews.swift")
+        let artifacts = try Self.source("macOS-Client/Sources/Views/TaskArtifactViews.swift")
+        let detail = try Self.source("macOS-Client/Sources/Views/TaskDetailViews.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+
+        #expect(runs.contains("@State private var showsTaskDescription = false"))
+        #expect(runs.contains("@State private var showsWaveDetails = false"))
+        #expect(runs.contains("@State private var showsArtifactDetails = false"))
+        #expect(runs.contains("MinimalDisclosureSection("))
+        #expect(!runs.contains("DisclosureGroup(isExpanded: $showsTaskDescription)"))
+        #expect(!runs.contains("DisclosureGroup(isExpanded: $showsWaveDetails)"))
+        #expect(!runs.contains("DisclosureGroup(isExpanded: $showsArtifactDetails)"))
+        #expect(runs.contains("Array(artifacts.prefix(8))"))
+        #expect(visualResults.contains("viewModel.acceptTaskResult(task.taskId)"))
+        #expect(runs.contains("AcrossTaskResultOverview("))
+        #expect(work.contains("AcrossTaskResultOverview("))
+        #expect(work.contains("showsResultOverview: false"))
+        #expect(detail.contains("if showsResultOverview"))
+        #expect(!runs.contains("runHeader(task)"))
+        let resultOverview = try #require(
+            Self.slice(visualResults, from: "struct AcrossVisualResultOverview", to: "struct AcrossTrustCompassView")
+        )
+        #expect(!resultOverview.contains("DisclosureGroup"))
+        #expect(!resultOverview.contains("AcrossEvidenceRouteView"))
+        #expect(resultOverview.contains("result.review.awaiting"))
+        #expect(!visualResults.contains("AcrossTheme.recessedFill"))
+        #expect(evidence.contains("@State private var showsDecisionBasis = false"))
+        #expect(evidence.contains("@State private var showsVerificationScope = false"))
+        #expect(evidence.contains("@State private var showsResultDetails = false"))
+        #expect(evidence.contains("isExpanded: $showsDecisionBasis"))
+        #expect(evidence.contains("isExpanded: $showsVerificationScope"))
+        #expect(evidence.contains("isExpanded: $showsResultDetails"))
+        #expect(!evidence.contains("DisclosureGroup(isExpanded: $showsDecisionBasis)"))
+        #expect(evidence.contains("AcrossTrustCompassView("))
+        #expect(!evidence.contains("AcrossEvidenceRouteView("))
+        #expect(!evidence.contains("AcrossLoopTrailView("))
+        #expect(artifacts.contains("artifact.filePath.hasPrefix(\"/api/workers/artifacts/\")"))
+        #expect(artifacts.contains("TaskArtifactPreviewSheet"))
+        #expect(detail.contains("viewModel.previewArtifact($0)"))
+        #expect(detail.contains("$viewModel.selectedArtifactPreview"))
+        #expect(!evidence.contains("AcrossDecisionMarkView("))
+        #expect(!evidence.contains("Text(bundle.releaseReadinessSummary)"))
+    }
+
+    @Test
+    func workerRowsKeepNativeChildAccessibilityInsteadOfRepeatingTheRowLabel() throws {
+        let workers = try Self.source("macOS-Client/Sources/Views/DevicesWorkersSettingsView.swift")
+
+        #expect(workers.contains(".accessibilityElement(children: .contain)"))
+        #expect(!workers.contains(".accessibilityLabel(Text(node.displayName + \", \" + stateText(node.state)))"))
+        #expect(workers.contains("Task.sleep(for: .seconds(5))"))
+        #expect(!workers.contains(".onChange(of: viewModel.snapshot)"))
     }
 
     @Test
@@ -326,7 +514,6 @@ struct AppleMinimalUIContractTests {
             "macOS-Client/Sources/Views/MainPanelToolbar.swift",
             "macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift",
             "macOS-Client/Sources/Views/OperationsWorkbenchShell.swift",
-            "macOS-Client/Sources/Views/HumanReviewQueueView.swift",
             "macOS-Client/Sources/Views/MainPanelChat.swift",
             "macOS-Client/Sources/Views/UnifiedWorkView.swift",
         ]
@@ -371,7 +558,6 @@ struct AppleMinimalUIContractTests {
         let taskDetail = try Self.source("macOS-Client/Sources/Views/TaskDetailViews.swift")
         let releaseCenter = try Self.source("macOS-Client/Sources/Views/TaskReleaseEvidenceViews.swift")
         let taskSidebar = try Self.source("macOS-Client/Sources/Views/TaskOrchestrationSidebar.swift")
-        let simpleStart = try Self.source("macOS-Client/Sources/Views/TaskWorkflowStartViews.swift")
         let qualityGate = try Self.source("macOS-Client/Sources/Views/QualityGateOperationsView.swift")
         let workspaceViewModel = try Self.source("macOS-Client/Sources/ViewModels/AgentWorkspaceOperationsViewModel.swift")
         let project = try Self.source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")
@@ -380,7 +566,6 @@ struct AppleMinimalUIContractTests {
         let shell = try Self.source("macOS-Client/Sources/Views/OperationsWorkbenchShell.swift")
         let loop = try Self.source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
         let memory = try Self.source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
-        let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
         let protectedDelivery = try #require(
             Self.slice(chat, from: "private var protectedDeliveryContent", to: "private var unifiedWorkEmptyState")
         )
@@ -389,23 +574,34 @@ struct AppleMinimalUIContractTests {
         #expect(sidebar.contains("selectedOperationsSurface = .assist"))
         #expect(!sidebar.contains("if selectedOperationsSurface == .assist"))
         #expect(mainPanel.contains("memory-review-batch"))
-        #expect(!actions.contains("case .pendingMemory:\n            openSettings(.plugins)"))
+        #expect(mainPanel.contains("qualityGateViewModel.reviewSignals"))
+        #expect(mainPanel.contains("workspaceOperationsViewModel.reviewSignals"))
+        #expect(!actions.contains("openHumanReviewItem"))
         #expect(actions.contains("submitProtectedTask"))
+        #expect(actions.contains("workSubmissionMode.usesProtectedDelivery"))
+        #expect(actions.contains("submitDirectAgentWork"))
+        #expect(!actions.contains("work.setupRequired"))
+        #expect(mainPanel.contains("&& !canUseAgentFeatures"))
         #expect(actions.contains("taskTypes: [\"functional\", \"artifact\"]"))
-        #expect(actions.contains("selectedOperationsSurface = .autopilot"))
         #expect(!actions.contains("openSettings(.workbench)"))
-        #expect(runs.contains("showsReleaseE2EConfirmation = true"))
         #expect(runs.contains("RunDestination"))
         #expect(runs.contains("private var runOverview"))
+        #expect(runs.contains("ForEach(filteredTasks)"))
+        #expect(!runs.contains("viewModel.tasks.prefix(6)"))
         #expect(!runs.contains("runCenterTabs"))
         #expect(!runs.contains("pickerStyle(.segmented)"))
         #expect(!runs.contains("private var releaseMenu"))
         #expect(!runs.contains("showsQualityGate"))
-        #expect(!simpleStart.contains("accentHex"))
-        #expect(!simpleStart.contains("SimpleStartWorkflowCard"))
+        #expect(runs.contains("onStartWork()"))
+        #expect(!runs.contains("SimpleStartWorkflowView"))
+        #expect(!runs.contains("TaskNewTaskForm("))
+        #expect(!runs.contains("runActionRow("))
+        #expect(!runs.contains("destination = .quality"))
+        #expect(!runs.contains("destination = .release"))
         #expect(runs.contains("@State private var showsInspector = false"))
         #expect(qualityGate.contains("@State private var showsAdvancedOptions = false"))
-        #expect(qualityGate.contains("DisclosureGroup("))
+        #expect(qualityGate.contains("MinimalDisclosureSection("))
+        #expect(!qualityGate.contains("DisclosureGroup("))
         #expect(!workspaceViewModel.contains("workspace-readiness-"))
         #expect(project.contains("workspace.repositoryRequired.title"))
         #expect(project.contains("chooseRepository"))
@@ -415,7 +611,7 @@ struct AppleMinimalUIContractTests {
         #expect(toolbar.contains("!appPreferences.automaticDeliveryProtection"))
         #expect(unifiedWork.contains("TaskDetailPanel("))
         #expect(!protectedDelivery.contains("showTaskOrchestration = true"))
-        #expect(protectedDelivery.contains("acceptTaskResult"))
+        #expect(unifiedWork.contains("AcrossTaskResultOverview("))
         #expect(chat.contains("AutopilotEvidenceTarget("))
         #expect(chat.contains("autopilotEvidenceTarget = target"))
         #expect(chat.contains("selectedOperationsSurface = .autopilot"))
@@ -425,7 +621,7 @@ struct AppleMinimalUIContractTests {
         #expect(loop.contains(".task(id: evidenceTarget)"))
         #expect(loop.contains("await evidenceViewModel.load(target: evidenceTarget)"))
         #expect(loop.contains("@State private var showsFocusedEvidenceDetails = false"))
-        let focusedDisclosure = loop.range(of: "DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails)")
+        let focusedDisclosure = loop.range(of: "isExpanded: $showsFocusedEvidenceDetails")
         let focusedRunID = loop.range(of: "Text(target.runID)")
         #expect(focusedDisclosure != nil)
         #expect(focusedRunID != nil)
@@ -433,23 +629,27 @@ struct AppleMinimalUIContractTests {
             #expect(focusedRunID.lowerBound > focusedDisclosure.lowerBound)
         }
         #expect(!shell.contains("onOpenAutopilotDetails"))
-        #expect(shell.contains("status: \"active\""))
+        #expect(memory.contains("status: \"active\""))
         #expect(!memory.contains("memory.openCenter"))
         #expect(memory.contains("librarySection"))
         #expect(memory.contains("memory.bulk.approve"))
         #expect(memory.contains("memory.bulk.archive"))
         #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .approve)"))
         #expect(memory.contains("AcrossReviewActionButtonStyle(kind: .archive)"))
-        #expect(review.contains("review.memory.approve.short"))
-        #expect(review.contains("AcrossReviewActionButtonStyle(kind: .approve)"))
-        #expect(review.contains("AcrossReviewActionButtonStyle(kind: .archive)"))
-        #expect(review.contains("ProgressView()"))
-
         let models = try Self.source("macOS-Client/Sources/Views/ModelSettingsView.swift")
         #expect(models.contains("onOpenCapabilities"))
+        #expect(models.contains("unconfiguredLocalAgents"))
+        #expect(models.contains("showingUnconfiguredLocalAgents.toggle()"))
         #expect(models.contains("showingUnconfiguredProviders.toggle()"))
+        let capabilities = try Self.source("macOS-Client/Sources/Views/AgentCapabilitiesView.swift")
+        #expect(capabilities.contains("settingsViewModel.availableLocalAgents.map"))
+        #expect(capabilities.contains("settingsViewModel.availableCloudLLMs.map"))
+        #expect(!capabilities.contains("settingsViewModel.localAgents.map"))
+        #expect(!capabilities.contains("settingsViewModel.cloudLLMs.map"))
         #expect(message.contains("isCopyFocused"))
         #expect(taskDetail.contains("tasks.cancelConfirmTitle"))
+        #expect(taskDetail.contains("if task.remoteExecution != nil"))
+        #expect(taskDetail.contains("if task.remoteExecution == nil,"))
         #expect(releaseCenter.contains("tasks.releaseE2E.confirmTitle"))
         #expect(taskSidebar.contains("tasks.releaseE2E.confirmTitle"))
         #expect(app.contains("TrafficLightHider(resetsRestoredZoomedFrame: false)"))
@@ -458,25 +658,18 @@ struct AppleMinimalUIContractTests {
     @Test
     func runHistoryUsesAFloatingDrawerInsteadOfAWindowSidebar() throws {
         let runs = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
-        let review = try Self.source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
         let project = try Self.source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")
         let mainSidebar = try Self.source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
 
         #expect(!runs.contains("NavigationSplitView"))
-        #expect(!review.contains("NavigationSplitView"))
-        #expect(review.contains("review.count.one"))
-        #expect(review.contains("preferences.text(\"review.total\")"))
-        #expect(!review.contains("preferences.text(\"review.count\"),\n                    value:"))
         #expect(!project.contains("NavigationSplitView"))
         #expect(project.contains("HSplitView"))
         #expect(!runs.contains(".searchable(text: $searchText, placement: .sidebar"))
         #expect(runs.contains("private var runHistoryDrawer"))
-        #expect(review.contains("private var reviewInboxDrawer"))
-        #expect(mainSidebar.contains("setContextDrawerVisible(!showsContextDrawer)"))
+        #expect(!mainSidebar.contains("contextDrawerLabel"))
         #expect(mainSidebar.contains("CustomTrafficLights()"))
         #expect(mainSidebar.contains("Spacer()"))
         #expect(runs.contains(".onTapGesture { setRunHistoryVisible(false) }"))
-        #expect(review.contains(".onTapGesture { setInboxVisible(false) }"))
         #expect(runs.contains("setRunHistoryVisible(false)"))
     }
 

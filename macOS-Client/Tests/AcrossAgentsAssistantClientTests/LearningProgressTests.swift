@@ -18,15 +18,23 @@ struct LearningProgressTests {
         #expect(ledger.events == [event])
     }
 
-    @Test func taskRecomputationRemovesStaleDerivedEventsButPreservesUserEvidence() {
+    @Test func projectTaskRecomputationAccumulatesGlobalAchievements() {
         let manual = AcrossLearningEvent(kind: .evidenceInspected, sourceID: "task-1")
-        let oldTask = AcrossLearningEvent(kind: .verifiedDelivery, sourceID: "old", origin: .taskSummary)
-        let newTask = AcrossLearningEvent(kind: .verifiedDelivery, sourceID: "new", origin: .taskSummary)
-        var ledger = AcrossLearningLedger(events: [manual, oldTask])
+        let workspaceTask = AcrossLearningEvent(kind: .verifiedDelivery, sourceID: "workspace-task", origin: .taskSummary)
+        let assistantTask = AcrossLearningEvent(kind: .qualityWorkflow, sourceID: "aaa-task", origin: .taskSummary)
+        var ledger = AcrossLearningLedger(events: [manual])
 
-        let didRecompute = ledger.recompute(taskEvents: [newTask])
-        #expect(didRecompute)
-        #expect(Set(ledger.events.map(\.eventID)) == Set([manual.eventID, newTask.eventID]))
+        let recordedWorkspaceTask = ledger.recompute(taskEvents: [workspaceTask])
+        let recordedAssistantTask = ledger.recompute(taskEvents: [assistantTask])
+        let recordedDuplicate = ledger.recompute(taskEvents: [assistantTask])
+        #expect(recordedWorkspaceTask)
+        #expect(recordedAssistantTask)
+        #expect(!recordedDuplicate)
+        #expect(Set(ledger.events.map(\.eventID)) == Set([
+            manual.eventID,
+            workspaceTask.eventID,
+            assistantTask.eventID,
+        ]))
     }
 
     @MainActor

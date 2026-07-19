@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct UnifiedWorkEmptyState: View {
@@ -224,7 +225,6 @@ struct UnifiedDeliverySetupNotice: View {
     let errorMessage: String?
     @ObservedObject var preferences: AppPreferences
     let onInstall: () -> Void
-    let onUseDirectMode: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -243,10 +243,6 @@ struct UnifiedDeliverySetupNotice: View {
             }
 
             Spacer(minLength: 8)
-
-            Button(preferences.text("work.setup.direct"), action: onUseDirectMode)
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .medium))
 
             Button(action: onInstall) {
                 if isInstalling {
@@ -278,7 +274,6 @@ struct UnifiedDeliveryView: View {
     let onBack: () -> Void
     let onChooseProject: () -> Void
     let onNewWork: () -> Void
-    let onAccept: () -> Void
     let onContinue: () -> Void
 
     private var phase: Int {
@@ -358,7 +353,8 @@ struct UnifiedDeliveryView: View {
                             TaskDetailPanel(
                                 viewModel: taskViewModel,
                                 settingsVM: settingsViewModel,
-                                defaultProjectPath: defaultProjectPath
+                                defaultProjectPath: defaultProjectPath,
+                                showsResultOverview: false
                             )
                             .frame(minHeight: 560, maxHeight: 700)
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -379,6 +375,29 @@ struct UnifiedDeliveryView: View {
                     proxy.scrollTo("current-workflow-details", anchor: .top)
                 }
             }
+        }
+        .sheet(item: $taskViewModel.selectedEvidenceBundle, onDismiss: {
+            taskViewModel.closeEvidenceBundle()
+        }) { bundle in
+            TaskEvidenceBundleSheet(
+                bundle: bundle,
+                resultContract: task.map { AcrossVisualResultFactory.make(task: $0) },
+                isLoading: taskViewModel.isLoadingTaskEvidence,
+                errorMessage: taskViewModel.taskEvidenceError,
+                exportedURL: taskViewModel.exportedEvidenceBundleURL,
+                onExport: {
+                    taskViewModel.exportTaskEvidenceBundle(
+                        bundle.taskId,
+                        releaseGate: bundle.usesReleaseE2EBenchmark
+                    )
+                },
+                onOpenExport: {
+                    if let url = taskViewModel.exportedEvidenceBundleURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                }
+            )
+            .environmentObject(preferences)
         }
     }
 
@@ -470,28 +489,25 @@ struct UnifiedDeliveryView: View {
             capabilityContract: capabilityContract
         )
         return VStack(alignment: .leading, spacing: 16) {
-            AcrossVisualResultOverview(
-                contract: AcrossVisualResultFactory.make(task: task),
-                preferences: preferences
+            AcrossTaskResultOverview(
+                task: task,
+                preferences: preferences,
+                viewModel: taskViewModel,
+                allowsAcceptance: presentation.requiredDecisions.isEmpty,
+                onOpenEvidence: {
+                    taskViewModel.loadTaskEvidenceBundle(
+                        task.taskId,
+                        releaseGate: isReleaseE2ETask(task)
+                    )
+                }
             )
 
+            if !isAccepted, !isSuccessful, presentation.requiredDecisions.isEmpty {
+                Button(preferences.text("work.repair"), action: onContinue)
+                    .buttonStyle(.borderedProminent)
+            }
+
             HStack(spacing: 10) {
-                if !isAccepted, presentation.requiredDecisions.isEmpty {
-                    if isSuccessful {
-                        Button(action: onAccept) {
-                            if taskViewModel.isAcceptingTask {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Text(preferences.text("work.accept"))
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(taskViewModel.isAcceptingTask)
-                    } else {
-                        Button(preferences.text("work.repair"), action: onContinue)
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
                 detailsButton
             }
         }
@@ -501,10 +517,13 @@ struct UnifiedDeliveryView: View {
         Button {
             showsTechnicalDetails.toggle()
         } label: {
-            Label(
-                preferences.text(showsTechnicalDetails ? "work.details.hide" : "work.details"),
-                systemImage: showsTechnicalDetails ? "chevron.up" : "chevron.down"
-            )
+            HStack(spacing: 8) {
+                Text(preferences.text(showsTechnicalDetails ? "work.details.hide" : "work.details"))
+                Spacer(minLength: 8)
+                Image(systemName: showsTechnicalDetails ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
@@ -555,5 +574,10 @@ struct UnifiedDeliveryView: View {
             return String(format: preferences.text("work.result.summary"), task.artifacts.count)
         }
         return preferences.text("work.result.failureSummary")
+    }
+
+    private func isReleaseE2ETask(_ task: TaskOrchestrationTaskDetail) -> Bool {
+        task.description.contains("Release E2E scenario:")
+            || task.description.contains("Scenario ID: cross_agent_full_delivery_v1")
     }
 }
