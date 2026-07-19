@@ -53,7 +53,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.4"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 _BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 60.0
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (

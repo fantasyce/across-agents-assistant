@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.1 - 2026-07-20
+
+### Fixed
+
+- Updated the bundled Across Orchestrator and verified Worker release catalog
+  to `v0.10.4`, where Worker capability and MCP versions now follow the package
+  release version instead of a stale duplicate constant.
+- Added release-consistency coverage so a successfully updated remote Worker
+  cannot appear as an older version in the device control center.
+
 ## 0.13.0 - 2026-07-20
 
 ### Added
