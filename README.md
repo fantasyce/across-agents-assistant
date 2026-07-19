@@ -51,9 +51,9 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.0` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.1` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.0` |
-| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.3` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.4` |
 | Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.0` |
 
 Install or repair the three optional components from **Settings → Plugins**.
@@ -70,7 +70,7 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.13.0` Includes
+## What `v0.13.1` Includes
 
 - One generic Work entry with goal-driven Autopilot resolution; starter cards
   and scenario-specific host fields no longer define the task model.
