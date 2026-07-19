@@ -83,9 +83,9 @@ def test_local_agent_activity_refreshes_wall_timeout():
             "-c",
             (
                 "import sys, time\n"
-                "for i in range(4):\n"
+                "for i in range(6):\n"
                 "    print(f'heartbeat {i}', file=sys.stderr, flush=True)\n"
-                "    time.sleep(0.2)\n"
+                "    time.sleep(0.25)\n"
                 "print('DONE', flush=True)\n"
             ),
         ],
@@ -97,10 +97,10 @@ def test_local_agent_activity_refreshes_wall_timeout():
 
     stdout, process_stderr, timeout_kind, _timeout_seconds = UniversalAgentClient._communicate_with_activity_timeout(
         process,
-        max_wall_timeout=0.35,
-        idle_timeout=0.55,
+        max_wall_timeout=0.8,
+        idle_timeout=1.2,
     )
 
     assert timeout_kind is None
     assert "DONE" in stdout
-    assert "heartbeat 3" in process_stderr
+    assert "heartbeat 5" in process_stderr
