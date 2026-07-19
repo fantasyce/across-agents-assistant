@@ -56,7 +56,7 @@ struct CloudLLMCard: View {
                 name: llm.name,
                 statusText: isConfigured ? appPreferences.text("models.configured") : appPreferences.text("models.notConfigured"),
                 isInstalled: isConfigured,
-                accentColor: Color(hex: "4d6bfe"),
+                accentColor: AcrossTheme.accent,
                 isExpanded: isExpanded,
                 onTap: { isExpanded.toggle() },
                 isCloudLLM: true
@@ -244,7 +244,7 @@ struct CloudLLMCard: View {
                         .foregroundColor(secondaryTextColor)
                 }
                 Slider(value: $temperature, in: 0...2, step: 0.1)
-                    .tint(Color(hex: "4d6bfe"))
+                    .tint(AcrossTheme.accent)
             }
             .padding(.top, 8)
         }
@@ -265,7 +265,7 @@ struct CloudLLMCard: View {
                 onSave(updated)
                 isExpanded = false
             }
-            .buttonStyle(PrimaryButtonStyle(color: Color(hex: "4d6bfe")))
+            .buttonStyle(PrimaryButtonStyle(color: AcrossTheme.accent))
             .disabled(isSaveDisabled)
 
             if isConfigured {

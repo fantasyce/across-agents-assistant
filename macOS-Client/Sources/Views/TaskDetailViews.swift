@@ -5,6 +5,7 @@ struct TaskDetailPanel: View {
     @ObservedObject var viewModel: TaskOrchestrationViewModel
     @ObservedObject var settingsVM: SettingsViewModel
     let defaultProjectPath: String?
+    let showsResultOverview: Bool
 
     @State private var isDescriptionExpanded = false
     @State private var isHealthExpanded = false
@@ -14,6 +15,18 @@ struct TaskDetailPanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
+
+    init(
+        viewModel: TaskOrchestrationViewModel,
+        settingsVM: SettingsViewModel,
+        defaultProjectPath: String?,
+        showsResultOverview: Bool = true
+    ) {
+        _viewModel = ObservedObject(wrappedValue: viewModel)
+        _settingsVM = ObservedObject(wrappedValue: settingsVM)
+        self.defaultProjectPath = defaultProjectPath
+        self.showsResultOverview = showsResultOverview
+    }
 
     var body: some View {
         ZStack {
@@ -34,22 +47,13 @@ struct TaskDetailPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.panelBackground)
-        .sheet(item: $viewModel.selectedEvidenceBundle, onDismiss: {
-            viewModel.closeEvidenceBundle()
-        }) { bundle in
-            TaskEvidenceBundleSheet(
-                bundle: bundle,
-                isLoading: viewModel.isLoadingTaskEvidence,
-                errorMessage: viewModel.taskEvidenceError,
-                exportedURL: viewModel.exportedEvidenceBundleURL,
-                onExport: { viewModel.exportTaskEvidenceBundle(bundle.taskId, releaseGate: bundle.usesReleaseE2EBenchmark) },
-                onOpenExport: {
-                    if let url = viewModel.exportedEvidenceBundleURL {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
+        .sheet(item: $viewModel.selectedArtifactPreview, onDismiss: {
+            viewModel.closeArtifactPreview()
+        }) { preview in
+            TaskArtifactPreviewSheet(
+                preview: preview,
+                onClose: { viewModel.closeArtifactPreview() }
             )
-            .environmentObject(appPreferences)
         }
         .confirmationDialog(
             appPreferences.text("tasks.cancelConfirmTitle"),
@@ -108,7 +112,7 @@ struct TaskDetailPanel: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(Color(hex: "#4D6BFE"))
+                        .background(AcrossTheme.accent)
                         .cornerRadius(8)
                     }
                     .buttonStyle(.plain)
@@ -117,10 +121,14 @@ struct TaskDetailPanel: View {
             } else if viewModel.isOrchestratorPluginUnavailable {
                 orchestratorPluginUnavailableView
             } else {
-                SimpleStartWorkflowView(
-                    viewModel: viewModel,
-                    defaultProjectPath: defaultProjectPath
-                )
+                MinimalWorkflowStateView(
+                    state: .empty,
+                    title: appPreferences.text("tasks.overview.newTask"),
+                    detail: appPreferences.text("tasks.overview.newTask.detail"),
+                    actionTitle: appPreferences.text("tasks.overview.newTask")
+                ) {
+                    viewModel.enterCreateMode()
+                }
             }
         }
     }
@@ -173,7 +181,7 @@ struct TaskDetailPanel: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
-                    .background(viewModel.canInstallOrchestratorPlugin ? Color(hex: "#4D6BFE") : Color.secondary.opacity(0.35))
+                    .background(viewModel.canInstallOrchestratorPlugin ? AcrossTheme.accent : Color.secondary.opacity(0.35))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
@@ -208,20 +216,32 @@ struct TaskDetailPanel: View {
         VStack(spacing: 0) {
             taskHeaderView(task: task)
 
-            Divider().opacity(0.5)
-
             ScrollView {
                 VStack(spacing: 20) {
-                    AcrossVisualResultOverview(
-                        contract: AcrossVisualResultFactory.make(task: task),
-                        preferences: appPreferences
-                    )
+                    if showsResultOverview {
+                        AcrossTaskResultOverview(
+                            task: task,
+                            preferences: appPreferences,
+                            viewModel: viewModel,
+                            onOpenEvidence: {
+                                viewModel.loadTaskEvidenceBundle(
+                                    task.taskId,
+                                    releaseGate: isReleaseE2ETask(task)
+                                )
+                            }
+                        )
+                    }
+                    if let remoteExecution = task.remoteExecution {
+                        remoteExecutionSection(remoteExecution)
+                    }
                     taskDescriptionSection(task: task)
                     compactResultSection(task: task)
                     qualityOverviewSection(task: task)
                     observabilitySection(task: task)
 
-                    if !task.waves.isEmpty {
+                    if task.remoteExecution != nil {
+                        EmptyView()
+                    } else if !task.waves.isEmpty {
                         DAGVisualization(task: task, viewModel: viewModel)
                     } else if !task.subtasks.isEmpty {
                         SubtaskListView(task: task, viewModel: viewModel)
@@ -277,11 +297,85 @@ struct TaskDetailPanel: View {
                     }
 
                     if !task.artifacts.isEmpty {
-                        ArtifactFileList(artifacts: task.artifacts)
+                        ArtifactFileList(
+                            artifacts: task.artifacts,
+                            onPreview: { viewModel.previewArtifact($0) }
+                        )
                     }
                 }
                 .padding(16)
             }
+        }
+    }
+
+    private func remoteExecutionSection(_ execution: TaskOrchestrationRemoteExecution) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.connected.to.line.below")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AcrossTheme.accent)
+                Text(appPreferences.text("tasks.remoteExecution.title"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text(execution.nodeId ?? appPreferences.text("tasks.remoteExecution.waitingNode"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(Array(execution.phases.enumerated()), id: \.element.id) { index, phase in
+                    HStack(spacing: 6) {
+                        Image(systemName: remotePhaseIcon(phase.status))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(remotePhaseColor(phase.status))
+                        Text(appPreferences.text("tasks.remoteExecution.phase.\(phase.id)"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(phase.status == "waiting" ? .secondary : theme.primaryText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(remotePhaseColor(phase.status).opacity(phase.status == "waiting" ? 0.04 : 0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+                    if index < execution.phases.count - 1 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.45))
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let reason = execution.reasonCategory, !reason.isEmpty {
+                Label(reason.replacingOccurrences(of: "_", with: " "), systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(hex: "#FF9F0A"))
+            }
+        }
+        .padding(16)
+        .background(theme.controlBackground.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func remotePhaseIcon(_ status: String) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "failed", "cancelled", "blocked": return "xmark.circle.fill"
+        case "running": return "arrow.triangle.2.circlepath.circle.fill"
+        case "queued": return "clock.fill"
+        default: return "circle"
+        }
+    }
+
+    private func remotePhaseColor(_ status: String) -> Color {
+        switch status {
+        case "completed": return Color(hex: "#30D158")
+        case "failed", "cancelled", "blocked": return Color(hex: "#FF453A")
+        case "running": return AcrossTheme.accent
+        case "queued": return Color(hex: "#FF9F0A")
+        default: return .secondary
         }
     }
 
@@ -302,7 +396,8 @@ struct TaskDetailPanel: View {
                         .foregroundColor(.secondary)
                 }
 
-                if let ownerAgent = task.ownerAgent, !ownerAgent.isEmpty {
+                if task.remoteExecution == nil,
+                   let ownerAgent = task.ownerAgent, !ownerAgent.isEmpty {
                     HStack(spacing: 4) {
                         AgentIdentityBadge(agentId: ownerAgent, ownerAgentId: nil, size: 18)
                         Text(ownerAgent)
@@ -419,7 +514,7 @@ struct TaskDetailPanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: viewModel.taskEvidenceError == nil ? "doc.badge.gearshape" : "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(viewModel.taskEvidenceError == nil ? Color(hex: "#4d6bfe") : Color(hex: "#ff9f0a"))
+                        .foregroundColor(viewModel.taskEvidenceError == nil ? AcrossTheme.accent : Color(hex: "#ff9f0a"))
                     Text(taskEvidenceStatusText)
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
@@ -429,7 +524,7 @@ struct TaskDetailPanel: View {
                         Button(action: { NSWorkspace.shared.activateFileViewerSelecting([url]) }) {
                             Text(appPreferences.text("tasks.evidence.openExport"))
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(Color(hex: "#4d6bfe"))
+                                .foregroundColor(AcrossTheme.accent)
                         }
                         .buttonStyle(.plain)
                     }
@@ -500,43 +595,27 @@ struct TaskDetailPanel: View {
     }
 
     private func taskDescriptionSection(task: TaskOrchestrationViewModel.TaskDetail) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: { isDescriptionExpanded.toggle() }) {
-                HStack(spacing: 6) {
-                        Text(appPreferences.text("tasks.description"))
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                    Image(systemName: "doc.text.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "#4d6bfe"))
-
-                    Image(systemName: isDescriptionExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-
-            if isDescriptionExpanded {
-                Text(task.description)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .lineSpacing(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
+        MinimalDisclosureSection(
+            title: appPreferences.text("tasks.description"),
+            isExpanded: $isDescriptionExpanded
+        ) {
+            Text(task.description)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .animation(.easeInOut(duration: 0.2), value: isDescriptionExpanded)
     }
 
     @ViewBuilder
     private func compactResultSection(task: TaskOrchestrationViewModel.TaskDetail) -> some View {
         let presentation = AcrossTaskCapabilityPresentation(task: task)
         if let resultState = presentation.resultState {
-            DisclosureGroup(isExpanded: $isEvidenceReceiptExpanded) {
+            MinimalDisclosureSection(
+                title: appPreferences.text("tasks.evidence.title"),
+                detail: resultState.title,
+                isExpanded: $isEvidenceReceiptExpanded
+            ) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(presentation.evidenceLines, id: \.self) { line in
                         Label(line, systemImage: "checkmark")
@@ -565,14 +644,6 @@ struct TaskDetailPanel: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .disabled(viewModel.isLoadingTaskEvidence)
-                }
-                .padding(.top, 8)
-            } label: {
-                HStack(spacing: 8) {
-                    MinimalWorkflowStatusLabel(status: resultState.status, label: resultState.title)
-                    Text("Evidence receipt")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -605,10 +676,10 @@ struct TaskDetailPanel: View {
                         Image(systemName: "checkmark.seal.fill")
                             .font(.system(size: 12))
                             .foregroundColor(qualityColor(for: deliveryQuality ?? orchestrationHealth ?? "unknown"))
+                        Spacer()
                         Image(systemName: isHealthExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.secondary)
-                        Spacer()
                     }
                 }
                 .buttonStyle(.plain)
@@ -769,11 +840,11 @@ struct TaskDetailPanel: View {
                             .foregroundColor(theme.primaryText)
                         Image(systemName: "point.3.connected.trianglepath.dotted")
                             .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#4d6bfe"))
+                            .foregroundColor(AcrossTheme.accent)
+                        Spacer()
                         Image(systemName: isObservabilityExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.secondary)
-                        Spacer()
                     }
                 }
                 .buttonStyle(.plain)
@@ -884,7 +955,7 @@ struct TaskDetailPanel: View {
         if kind.contains("passed") || kind.contains("completed") || status == "completed" {
             return Color(hex: "#30d158")
         }
-        return Color(hex: "#4d6bfe")
+        return AcrossTheme.accent
     }
 
     private func displayStatus(_ status: String) -> String {
@@ -903,7 +974,7 @@ struct TaskDetailPanel: View {
 
     private func statusColor(for status: String) -> Color {
         switch status {
-        case "running": return Color(hex: "#4d6bfe")
+        case "running": return AcrossTheme.accent
         case "completed": return Color(hex: "#30d158")
         case "failed": return Color(hex: "#FF453A")
         case "completed_with_failures": return Color(hex: "#ff9f0a")

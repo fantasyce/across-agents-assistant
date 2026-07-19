@@ -799,8 +799,23 @@ def test_agent_interop_e2e_endpoints(monkeypatch):
         "checks": [{"id": "three_plugin_mcp_load", "status": "passed"}],
         "errors": [],
     }
+    class FakeRunCoordinator:
+        def status(self):
+            return {
+                "schema_version": "across-aaa-agent-interop-e2e-run/1.0",
+                "status": "passed",
+                "started_at": "2026-07-19T00:00:00Z",
+                "finished_at": "2026-07-19T00:00:01Z",
+                "failed_count": 0,
+            }
+
+        def start(self, runner):
+            runner()
+            return self.status()
+
     monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: payload)
     monkeypatch.setattr(api_server, "run_agent_interop_e2e", lambda: payload)
+    monkeypatch.setattr(api_server, "get_agent_interop_e2e_run_coordinator", lambda: FakeRunCoordinator())
     client = TestClient(app)
 
     latest = client.get("/api/autopilot/agent-interop-e2e")
@@ -811,6 +826,7 @@ def test_agent_interop_e2e_endpoints(monkeypatch):
     assert run.status_code == 200
     assert run.json()["status"] == "passed"
     assert run.json()["summary"]["mcp_server_count"] == 3
+    assert run.json()["run_state"]["status"] == "passed"
 
 
 def test_unified_capability_registry_endpoint_preserves_product_boundaries(monkeypatch):

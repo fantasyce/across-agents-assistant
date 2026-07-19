@@ -1,6 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
 import asyncio
@@ -294,6 +294,7 @@ from .attachments import (
 from .external_task_planning import (
     ExternalTaskPlanningRequest,
     agent_adapters_for_external_task,
+    autopilot_workflow_adapter_command,
     deliverables_for_external_task,
     external_owner_agent,
     planned_subtasks_for_external_task,
@@ -343,7 +344,16 @@ from .task_review.release_e2e import (
     build_release_e2e_scenarios,
     build_release_e2e_task_request,
 )
-from .paths import app_home, app_subdir, backend_socket_path, data_file, log_dir as app_log_dir, run_dir, tmp_dir
+from .paths import (
+    app_home,
+    app_subdir,
+    backend_socket_path,
+    data_file,
+    ecosystem_home,
+    log_dir as app_log_dir,
+    run_dir,
+    tmp_dir,
+)
 from .orchestrator_plugin import (
     OrchestratorPluginConfig,
     OrchestratorPluginHTTPError,
@@ -357,6 +367,7 @@ from .autopilot_client import AutopilotClient
 from .aaa_ecosystem_roadmap import build_aaa_ecosystem_roadmap, ecosystem_route_section
 from .agent_interop_e2e import (
     augment_release_evaluation_with_agent_interop,
+    get_agent_interop_e2e_run_coordinator,
     load_agent_interop_e2e_latest,
     public_agent_interop_e2e_result,
     run_agent_interop_e2e,
@@ -396,6 +407,17 @@ from .unified_capability_registry import (
     build_unified_capability_registry,
     evaluate_unified_capability_registry_health,
 )
+from .worker_control import (
+    WorkerControlError,
+    WorkerOrchestratorClient,
+    _verified_release_asset,
+    _worker_release_catalog,
+    get_worker_network_runtime,
+    get_worker_presence_cache,
+    get_worker_trust_store,
+    merge_coordinator_presence,
+)
+from .worker_task_bridge import get_worker_task_bridge
 
 # Global task history state
 _task_state = TaskState()
@@ -478,6 +500,30 @@ def _stop_autopilot_trigger_scheduler_for_shutdown() -> None:
     scheduler = _autopilot_trigger_scheduler
     if scheduler is not None:
         scheduler.stop()
+
+
+async def _restore_optional_runtime_services_on_startup() -> None:
+    """Restore non-core services without delaying the local control API."""
+    started_at = time.perf_counter()
+    try:
+        scheduler_started_at = time.perf_counter()
+        await asyncio.to_thread(_restore_self_iteration_scheduler_on_startup)
+        logger.info(
+            "Startup optional service ready: scheduler duration_ms=%d",
+            round((time.perf_counter() - scheduler_started_at) * 1_000),
+        )
+    except Exception:
+        logger.warning("Failed to restore self-iteration scheduler on startup.", exc_info=True)
+    try:
+        worker_started_at = time.perf_counter()
+        await asyncio.to_thread(get_worker_network_runtime().reconcile)
+        logger.info(
+            "Startup optional service ready: worker_runtime duration_ms=%d total_ms=%d",
+            round((time.perf_counter() - worker_started_at) * 1_000),
+            round((time.perf_counter() - started_at) * 1_000),
+        )
+    except Exception:
+        logger.warning("Failed to reconcile Worker network runtime on startup.", exc_info=True)
 
 # Initialize persistence only. Task history is loaded lazily by task APIs.
 def _init_task_persistence():
@@ -822,24 +868,680 @@ def _augment_mcp_tool_args_for_session(
     return args
 
 
+def _restrict_api_socket_permissions(path: str | Path | None = None) -> bool:
+    """Keep the host-only API socket private after Uvicorn has bound it."""
+    target = Path(path or backend_socket_path())
+    if not target.exists():
+        return False
+    target.chmod(0o600)
+    return True
+
+
+def _bind_private_api_socket(path: str | Path) -> socket.socket:
+    """Bind the host API socket privately before Uvicorn starts accepting."""
+    target = Path(path)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        listener.bind(str(target))
+        target.chmod(0o600)
+        listener.listen(2048)
+        listener.set_inheritable(True)
+    except Exception:
+        listener.close()
+        raise
+    return listener
+
+
 @asynccontextmanager
 async def _api_lifespan(app: FastAPI):
     """Make persistence available without starting or recovering historical tasks."""
-    _init_task_persistence()
     try:
-        await asyncio.to_thread(_restore_self_iteration_scheduler_on_startup)
-    except Exception:
-        logger.warning("Failed to restore self-iteration scheduler on startup.", exc_info=True)
+        _restrict_api_socket_permissions()
+    except OSError:
+        logger.warning("Failed to restrict backend Unix socket permissions.", exc_info=True)
+    _init_task_persistence()
+    get_worker_presence_cache().snapshot()
+    optional_runtime_task = asyncio.create_task(
+        _restore_optional_runtime_services_on_startup(),
+        name="aaa-optional-runtime-startup",
+    )
     try:
         yield
     finally:
+        # Avoid racing shutdown against an in-flight reconcile that owns the
+        # runtime manager lock. This affects only an immediate quit, never API
+        # readiness or the first usable Work surface.
+        await asyncio.gather(optional_runtime_task, return_exceptions=True)
         workspace_manager = globals().get("_agent_workspace_manager")
         if workspace_manager is not None:
             await asyncio.to_thread(workspace_manager.shutdown, wait=False, cancel_active=True)
+        await asyncio.to_thread(get_worker_network_runtime().shutdown)
         await asyncio.to_thread(_stop_autopilot_trigger_scheduler_for_shutdown)
 
 
 app = FastAPI(title="Across Agents Assistant API", lifespan=_api_lifespan)
+
+
+async def _external_task_info_with_worker(task_payload: Mapping[str, Any], *, evidence: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+    info = external_task_to_app_info(dict(task_payload), evidence=dict(evidence) if evidence else None)
+    task_id = str(info.get("task_id") or "")
+    if task_id:
+        bridge = get_worker_task_bridge()
+        remote = await asyncio.to_thread(bridge.optional_status, task_id)
+        if remote:
+            info = bridge.project_task_info(info, remote)
+    return info
+
+
+class WorkerPairingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ttl_seconds: int = Field(default=600, ge=60, le=600)
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    platform: Optional[str] = Field(default=None, max_length=40)
+
+
+class WorkerPairingSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enrollment_id: str = Field(min_length=1, max_length=128)
+    pairing_code: str = Field(min_length=1, max_length=64)
+    public_identity: Dict[str, Any]
+    capability_summary: Dict[str, Any]
+
+
+class WorkerNodeApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verification_code: str = Field(min_length=6, max_length=12)
+
+
+class WorkerNodeActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(min_length=1, max_length=32)
+    reason: Optional[str] = Field(default=None, max_length=120)
+
+
+class WorkerListenerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    bind_host: Optional[str] = Field(default=None, max_length=255)
+    port: int = Field(default=0, ge=0, le=65535)
+    certificate_fingerprint: Optional[str] = Field(default=None, max_length=128)
+
+
+class WorkerRelayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    endpoint: Optional[str] = Field(default=None, max_length=2048)
+
+
+class WorkerModelGrantCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1, max_length=128)
+    node_id: str = Field(min_length=1, max_length=128)
+    purpose: str = Field(default="workflow", min_length=1, max_length=64)
+    max_calls: int = Field(default=1, ge=1, le=100)
+    max_tokens: int = Field(default=1024, ge=1, le=1_000_000)
+    max_concurrency: int = Field(default=1, ge=1, le=16)
+    max_cost_usd: float = Field(default=0.0, ge=0.0, le=10_000.0)
+    ttl_seconds: int = Field(default=300, ge=30, le=3600)
+
+
+class WorkerModelInvokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grant_id: str = Field(min_length=1, max_length=128)
+    run_id: str = Field(min_length=1, max_length=128)
+    job_id: str = Field(min_length=1, max_length=128)
+    node_id: str = Field(min_length=1, max_length=128)
+    purpose: str = Field(default="workflow", min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=200_000)
+    system_prompt: Optional[str] = Field(default=None, max_length=40_000)
+    max_tokens: int = Field(default=1024, ge=1, le=100_000)
+    token_budget: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    timeout_seconds: int = Field(default=60, ge=5, le=300)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+
+
+class WorkerWorkflowJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=128)
+    goal: str = Field(min_length=1, max_length=20_000)
+    project_dir: Optional[str] = Field(default=None, max_length=4096)
+    job_plan: Dict[str, Any]
+
+
+def _worker_control_http_error(exc: WorkerControlError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
+
+
+def _worker_control_snapshot_with_presence() -> Dict[str, Any]:
+    """Return the host trust snapshot reconciled with live coordinator presence.
+
+    Every read-only health surface must use the same snapshot.  Reading only the
+    persisted trust store makes an approved, connected Worker appear offline in
+    startup diagnostics while the Devices view correctly shows it online.
+    """
+
+    snapshot = get_worker_trust_store().snapshot()
+    if any(
+        node.get("approved_at") and node.get("state") not in {"pending_approval", "revoked"}
+        for node in snapshot.get("nodes", [])
+    ):
+        # Avoid projecting a stale ``offline`` Coordinator snapshot while a
+        # connected Worker is already refreshing through the managed socket.
+        # Core health has its own 50 ms bound, so this longer UI-only budget
+        # cannot delay the global health endpoint.
+        coordinator = get_worker_presence_cache().snapshot(wait_for_refresh_seconds=1.0)
+        if coordinator is not None:
+            snapshot = merge_coordinator_presence(snapshot, coordinator)
+    return snapshot
+
+
+_worker_health_cache_lock = threading.Lock()
+_worker_health_cache: Dict[str, Any] = {
+    "status": "initializing",
+    "reason": "worker_runtime_starting",
+}
+
+
+async def _worker_health_for_core_probe() -> Dict[str, Any]:
+    """Return Worker health without letting reconciliation delay core health."""
+
+    def refresh() -> Dict[str, Any]:
+        snapshot = _worker_control_snapshot_with_presence()
+        health = dict(snapshot.get("health") or {})
+        with _worker_health_cache_lock:
+            _worker_health_cache.clear()
+            _worker_health_cache.update(health)
+        return health
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(refresh), timeout=0.05)
+    except asyncio.TimeoutError:
+        with _worker_health_cache_lock:
+            return dict(_worker_health_cache)
+
+
+async def _known_task_count_for_core_probe() -> int:
+    """Return a bounded task count without waiting on restoration/reconcile locks."""
+
+    in_memory_tasks = getattr(_task_state, "_tasks", None)
+    if isinstance(in_memory_tasks, Mapping):
+        return len(in_memory_tasks)
+    try:
+        tasks = await asyncio.wait_for(
+            asyncio.to_thread(_task_state.get_all_tasks),
+            timeout=0.05,
+        )
+        return len(tasks)
+    except Exception:
+        return 0
+
+
+@app.get("/api/worker-control")
+async def get_worker_control():
+    try:
+        snapshot = _worker_control_snapshot_with_presence()
+        snapshot["listener"]["runtime"] = await asyncio.to_thread(get_worker_network_runtime().reconcile)
+        return snapshot
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.get("/api/worker-control/nodes/{node_id}/verification-code")
+async def get_worker_host_verification_code(node_id: str):
+    try:
+        return get_worker_trust_store().host_verification_code(node_id)
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/pairings")
+async def create_worker_pairing(request: WorkerPairingCreateRequest):
+    try:
+        store = get_worker_trust_store()
+        pairing = store.create_pairing(ttl_seconds=request.ttl_seconds, display_name=request.display_name)
+        if request.platform:
+            try:
+                pairing["install"] = store.install_command(pairing, platform_name=request.platform)
+            except WorkerControlError as exc:
+                if exc.code not in {"worker_release_unavailable", "worker_release_platform_unavailable", "relay_enrollment_unavailable"}:
+                    raise
+                pairing["install"] = None
+                pairing["install_unavailable_reason"] = exc.code
+        return pairing
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/pairings/submit")
+async def submit_worker_pairing(request: WorkerPairingSubmitRequest):
+    try:
+        return get_worker_trust_store().submit_pairing(request.model_dump())
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/nodes/{node_id}/approve")
+async def approve_worker_node(node_id: str, request: WorkerNodeApprovalRequest):
+    try:
+        node = get_worker_trust_store().approve(node_id, request.verification_code)
+        registered = await asyncio.to_thread(
+            WorkerOrchestratorClient().call,
+            "node.import_approved",
+            {
+                "capability_manifest": node["capability_manifest"],
+                "display_name": node.get("display_name"),
+                "certificate_fingerprint": node["certificate_fingerprint"],
+                "session_generation": node["session_generation"],
+                "identity_expires_at": node["identity_expires_at"],
+            },
+        )
+        return {**node, "coordinator_registered": True, "coordinator_state": registered.get("state")}
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/nodes/{node_id}/actions")
+async def run_worker_node_action(node_id: str, request: WorkerNodeActionRequest):
+    try:
+        store = get_worker_trust_store()
+        update_payload = None
+        if request.action == "update":
+            node = next((item for item in store.snapshot().get("nodes", []) if item.get("node_id") == node_id), None)
+            if not isinstance(node, Mapping):
+                raise WorkerControlError("Device was not found.", code="node_not_found", status_code=404)
+            manifest = node.get("capability_manifest") if isinstance(node.get("capability_manifest"), Mapping) else {}
+            platform_name = f"{manifest.get('os')}-{manifest.get('architecture')}"
+            catalog = _worker_release_catalog()
+            if not catalog.get("published"):
+                raise WorkerControlError("The verified Worker release is not published yet.", code="worker_release_unavailable", status_code=409)
+            asset = (catalog.get("assets") or {}).get(platform_name)
+            if not isinstance(asset, Mapping):
+                raise WorkerControlError("The Worker release does not support this platform.", code="worker_release_platform_unavailable", status_code=409)
+            url, checksum = _verified_release_asset(asset, platform_name)
+            update_payload = {"node_id": node_id, "version": catalog["version"], "url": url, "sha256": checksum}
+        result = store.action(node_id, request.action, reason=request.reason)
+        client = WorkerOrchestratorClient()
+        if request.action in {"drain", "resume"}:
+            await asyncio.to_thread(client.call, "node.drain", {"node_id": node_id, "draining": request.action == "drain"})
+        elif request.action == "revoke":
+            await asyncio.to_thread(client.call, "node.revoke", {"node_id": node_id, "reason": request.reason or "host_revoked"})
+        elif request.action == "remove":
+            await asyncio.to_thread(client.call, "node.delete", {"node_id": node_id})
+        elif request.action == "update":
+            try:
+                await asyncio.to_thread(client.call, "node.request_update", update_payload)
+            except Exception:
+                store.action(node_id, "resume", reason="update_dispatch_failed")
+                raise
+        return {**result, "coordinator_synchronized": True}
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/listener")
+async def configure_worker_listener(request: WorkerListenerRequest):
+    try:
+        configured = get_worker_trust_store().configure_listener(request.model_dump())
+        configured["runtime"] = await asyncio.to_thread(get_worker_network_runtime().reconcile)
+        return configured
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/relay")
+async def configure_worker_relay(request: WorkerRelayRequest):
+    try:
+        store = get_worker_trust_store()
+        configured = store.configure_relay(request.model_dump())
+        configured["runtime"] = await asyncio.to_thread(get_worker_network_runtime().reconcile)
+        dispatched = 0
+        if configured.get("enabled"):
+            client = WorkerOrchestratorClient()
+            for directive in store.relay_transport_directives():
+                await asyncio.to_thread(client.call, "node.request_transport", directive)
+                dispatched += 1
+        configured["transport_directives_dispatched"] = dispatched
+        return configured
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/model-grants")
+async def create_worker_model_grant(request: WorkerModelGrantCreateRequest):
+    try:
+        return await asyncio.to_thread(
+            WorkerOrchestratorClient().call,
+            "model_grant.issue",
+            {
+                "job_id": request.job_id,
+                "node_id": request.node_id,
+                "audience": "aaa-model-gateway",
+                "scopes": ["model.invoke"],
+                "purposes": [request.purpose],
+                "max_calls": request.max_calls,
+                "max_tokens": request.max_tokens,
+                "max_concurrency": request.max_concurrency,
+                "max_cost_usd": request.max_cost_usd,
+                "ttl_seconds": request.ttl_seconds,
+            },
+        )
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/worker-control/model-gateway/invoke")
+async def invoke_worker_model_gateway(request: WorkerModelInvokeRequest):
+    return await invoke_worker_model_gateway_core(request)
+
+
+@app.post("/api/worker-control/jobs")
+async def submit_worker_job(request: WorkerWorkflowJobRequest):
+    try:
+        return await asyncio.to_thread(
+            get_worker_task_bridge().submit_workflow,
+            task_id=request.task_id,
+            goal=request.goal,
+            project_dir=request.project_dir,
+            job_plan=request.job_plan,
+        )
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.get("/api/tasks/{task_id}/worker-execution")
+async def get_task_worker_execution(task_id: str):
+    try:
+        return await asyncio.to_thread(get_worker_task_bridge().status, task_id)
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.post("/api/tasks/{task_id}/worker-execution/cancel")
+async def cancel_task_worker_execution(task_id: str):
+    try:
+        return await asyncio.to_thread(get_worker_task_bridge().cancel, task_id)
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+
+@app.get("/api/workers/artifacts/{artifact_id}")
+async def get_verified_worker_artifact(artifact_id: str):
+    """Serve only a content-addressed artifact verified by the Coordinator."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", artifact_id):
+        raise HTTPException(status_code=404, detail="Worker artifact not found")
+    directory = (data_file("worker-artifacts") / artifact_id).resolve()
+    root = data_file("worker-artifacts").resolve()
+    if root not in directory.parents:
+        raise HTTPException(status_code=404, detail="Worker artifact not found")
+    manifest_path = directory / "manifest.json"
+    artifact_path = directory / "artifact.bin"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_hash = str(manifest.get("sha256") or "")
+        expected_size = int(manifest.get("size") or -1)
+        if (
+            str(manifest.get("artifact_id") or "") != artifact_id
+            or manifest.get("upload_status") != "complete"
+            or manifest.get("verification_status") != "verified"
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+            or not artifact_path.is_file()
+            or artifact_path.stat().st_size != expected_size
+        ):
+            raise ValueError("unverified artifact")
+        actual_hash = await asyncio.to_thread(_sha256_path, artifact_path)
+        if actual_hash != expected_hash:
+            raise ValueError("artifact hash mismatch")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=404, detail="Verified Worker artifact not found")
+    logical_name = Path(str(manifest.get("logical_name") or artifact_id)).name
+    return FileResponse(
+        path=artifact_path,
+        media_type=str(manifest.get("media_type") or "application/octet-stream"),
+        filename=logical_name,
+    )
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+_worker_model_provider_preference: dict[str, str] = {}
+_WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 60.0
+_WORKER_MODEL_FINALIZATION_RESERVE_SECONDS = 5.0
+
+
+def _worker_model_provider_candidates(purpose: str) -> list[str]:
+    """Return configured host providers, preferring the last truthful route."""
+    try:
+        current = str(get_gateway().get_current_provider_id() or "").strip().lower()
+    except Exception:
+        current = ""
+    configured = [
+        provider.provider_id
+        for provider in load_llm_config().providers
+        if provider.enabled and _provider_has_backend_key(provider.provider_id)
+    ]
+    preferred = _worker_model_provider_preference.get(str(purpose or "").strip())
+    ordered = [preferred, current, *configured]
+    return list(dict.fromkeys(provider_id for provider_id in ordered if provider_id))
+
+
+def _worker_model_extra_body(provider_id: Optional[str] = None) -> dict[str, Any]:
+    """Keep short Worker annotations inside their explicit token budget."""
+    if str(provider_id or "").lower() == "minimax":
+        return {"reasoning_split": True, "thinking": {"type": "disabled"}}
+    return {}
+
+
+def _worker_model_combined_usage(attempts: list[Any]) -> dict[str, Any]:
+    final_usage = attempts[-1].usage if attempts and isinstance(attempts[-1].usage, dict) else {}
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    providers: list[str] = []
+    for response in attempts:
+        usage = response.usage if isinstance(response.usage, dict) else {}
+        attempt_input = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        attempt_output = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        input_tokens += attempt_input
+        output_tokens += attempt_output
+        total_tokens += int(usage.get("total_tokens") or attempt_input + attempt_output)
+        provider = str(getattr(response, "provider", "") or "").strip()
+        if provider:
+            providers.append(provider)
+    return {
+        **final_usage,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "provider_attempts": len(attempts),
+        "providers_attempted": providers,
+    }
+
+
+def _worker_model_usage_summary(attempts: list[Any]) -> tuple[dict[str, Any], int, float, str]:
+    usage = _worker_model_combined_usage(attempts)
+    tokens = int(usage.get("total_tokens") or usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    attempt_costs = [
+        _worker_model_usage_cost(
+            provider=str(candidate.provider or ""),
+            model=str(candidate.model or ""),
+            usage=candidate.usage if isinstance(candidate.usage, dict) else {},
+            raw=getattr(candidate, "raw", {}) if isinstance(getattr(candidate, "raw", {}), dict) else {},
+        )
+        for candidate in attempts
+    ]
+    cost_usd = round(sum(item[0] for item in attempt_costs), 8)
+    cost_source = "+".join(dict.fromkeys(item[1] for item in attempt_costs)) or "unavailable"
+    return {**usage, "cost_usd": cost_usd, "cost_source": cost_source}, tokens, cost_usd, cost_source
+
+
+async def invoke_worker_model_gateway_core(request: WorkerModelInvokeRequest):
+    loop = asyncio.get_running_loop()
+    provider_deadline = loop.time() + max(
+        0.25,
+        float(request.timeout_seconds) - _WORKER_MODEL_FINALIZATION_RESERVE_SECONDS,
+    )
+    client = WorkerOrchestratorClient()
+    binding = {
+        "grant_id": request.grant_id,
+        "run_id": request.run_id,
+        "job_id": request.job_id,
+        "node_id": request.node_id,
+        "audience": "aaa-model-gateway",
+        "scope": "model.invoke",
+        "purpose": request.purpose,
+    }
+    try:
+        reservation = await asyncio.to_thread(
+            client.call,
+            "model_grant.begin",
+            {**binding, "requested_tokens": request.token_budget or request.max_tokens},
+        )
+    except WorkerControlError as exc:
+        raise _worker_control_http_error(exc) from exc
+
+    call_id = str(reservation.get("call_id") or "")
+    provider_response_received = False
+    grant_finish_attempted = False
+    attempts = []
+    try:
+        response = None
+        for provider_id in _worker_model_provider_candidates(request.purpose):
+            remaining_seconds = provider_deadline - loop.time()
+            if remaining_seconds <= 0:
+                break
+            attempt_timeout = min(_WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS, remaining_seconds)
+            try:
+                candidate = await asyncio.wait_for(
+                    _chat_with_model_capability(
+                        message=request.message,
+                        system_prompt=request.system_prompt,
+                        provider_id=provider_id,
+                        scope="worker.model.invoke",
+                        max_tokens=request.max_tokens,
+                        temperature=request.temperature,
+                        timeout=attempt_timeout,
+                        extra_body=_worker_model_extra_body(provider_id),
+                    ),
+                    timeout=attempt_timeout,
+                )
+            except Exception:
+                logger.warning("Worker model provider %s failed; trying the next configured route.", provider_id)
+                continue
+            attempts.append(candidate)
+            provider_response_received = True
+            response = candidate
+            if str(candidate.text or "").strip():
+                _worker_model_provider_preference[request.purpose] = provider_id
+                break
+            logger.info("Worker model provider %s returned no final text; trying the next configured route.", provider_id)
+        if response is None or not str(response.text or "").strip():
+            raise RuntimeError("No configured host model provider returned final text within the task deadline")
+        usage, tokens, cost_usd, _ = _worker_model_usage_summary(attempts)
+        grant_finish_attempted = True
+        grant_usage = await asyncio.to_thread(
+            client.call,
+            "model_grant.finish",
+            {
+                "grant_id": request.grant_id,
+                "call_id": call_id,
+                "tokens": tokens,
+                "cost_usd": cost_usd,
+                "outcome": "completed",
+            },
+        )
+        return {
+            "schema_version": "across-worker-model-response/1.0",
+            "call_id": call_id,
+            "text": response.text,
+            "model": response.model,
+            "provider": response.provider,
+            "finish_reason": response.finish_reason,
+            "usage": usage,
+            "grant_usage": grant_usage,
+            "provider_key_exposed": False,
+        }
+    except asyncio.CancelledError:
+        try:
+            await asyncio.shield(
+                asyncio.to_thread(
+                    client.call,
+                    "model_grant.finish",
+                    {
+                        "grant_id": request.grant_id,
+                        "call_id": call_id,
+                        "tokens": 0,
+                        "cost_usd": 0.0,
+                        "outcome": "provider_failure",
+                    },
+                )
+            )
+        except Exception:
+            logger.warning("Failed to finalize cancelled Worker Model Grant.", exc_info=True)
+        raise
+    except Exception as exc:
+        if not grant_finish_attempted:
+            try:
+                _, failed_tokens, failed_cost_usd, _ = _worker_model_usage_summary(attempts)
+                await asyncio.to_thread(
+                    client.call,
+                    "model_grant.finish",
+                    {
+                        "grant_id": request.grant_id,
+                        "call_id": call_id,
+                        "tokens": failed_tokens,
+                        "cost_usd": failed_cost_usd,
+                        "outcome": "provider_failure",
+                    },
+                )
+            except Exception:
+                logger.warning("Failed to finalize Worker Model Grant after provider failure.", exc_info=True)
+        failure_category = "policy" if provider_response_received else "provider"
+        logger.warning("Worker model gateway %s failure: %s", failure_category, type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "worker_model_budget_failed" if provider_response_received else "worker_model_provider_failed",
+                "category": failure_category,
+                "message": "Host model usage exceeded the task grant." if provider_response_received else "Host model provider request failed.",
+            },
+        ) from exc
+
+
+def _worker_model_usage_cost(*, provider: str, model: str, usage: Mapping[str, Any], raw: Mapping[str, Any]) -> tuple[float, str]:
+    for source in (usage, raw.get("usage") if isinstance(raw.get("usage"), Mapping) else {}, raw):
+        for key in ("cost_usd", "cost", "total_cost_usd"):
+            value = source.get(key) if isinstance(source, Mapping) else None
+            if isinstance(value, (int, float)) and value >= 0:
+                return round(float(value), 8), "provider"
+    pricing_text = os.environ.get("ACROSS_MODEL_PRICING_USD_PER_MILLION_JSON", "").strip()
+    if pricing_text:
+        try:
+            pricing = json.loads(pricing_text)
+            selected = pricing.get(f"{provider}/{model}") or pricing.get(provider) or pricing.get("default")
+            if isinstance(selected, Mapping):
+                input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                cost = input_tokens * float(selected.get("input") or 0) / 1_000_000
+                cost += output_tokens * float(selected.get("output") or 0) / 1_000_000
+                return round(max(0.0, cost), 8), "host-pricing-policy"
+        except (ValueError, TypeError, json.JSONDecodeError):
+            logger.warning("Worker model pricing policy is invalid; cost remains unpriced.")
+    return 0.0, "unpriced"
 
 class MCPConnectRequest(BaseModel):
     server_id: str
@@ -2025,6 +2727,80 @@ def _build_startup_diagnostics() -> Dict[str, Any]:
         },
     })
 
+    try:
+        worker_snapshot = _worker_control_snapshot_with_presence()
+        worker_runtime = get_worker_network_runtime().status()
+        worker_health = worker_snapshot.get("health") or {}
+        worker_configured = bool(worker_snapshot.get("listener", {}).get("enabled") or worker_snapshot.get("relay", {}).get("enabled"))
+        runtime_state = str(worker_runtime.get("status") or "stopped")
+        runtime_ok = not worker_configured or runtime_state in {"running", "waiting_for_approved_worker"}
+        checks.append(
+            {
+                "id": "worker_network_runtime",
+                "title": "Worker network runtime",
+                "status": "passed" if runtime_ok else "failed",
+                "detail": (
+                    "Remote execution is optional and currently disabled."
+                    if not worker_configured
+                    else (
+                        "Worker listener, enrollment, and model gateway are ready."
+                        if runtime_state == "running"
+                        else (
+                            "Relay is ready and waiting for an approved Worker."
+                            if runtime_state == "waiting_for_approved_worker"
+                            else "The configured Worker network runtime is not ready."
+                        )
+                    )
+                ),
+                "remediation": None if runtime_ok else "Open Devices & Workers and review the connection runtime status.",
+                "metadata": {
+                    "configured": worker_configured,
+                    "runtime_status": runtime_state,
+                    "listener_running": bool(worker_runtime.get("listener_running")),
+                    "enrollment_gateway_running": bool(worker_runtime.get("enrollment_gateway_running")),
+                    "model_gateway_running": bool(worker_runtime.get("model_gateway_running")),
+                    "relay_session_count": int(worker_runtime.get("relay_session_count") or 0),
+                    "tls_minimum": worker_runtime.get("tls_minimum"),
+                    "host_credentials_copied": bool(worker_runtime.get("host_credentials_copied")),
+                },
+            }
+        )
+        node_count = int(worker_health.get("node_count") or 0)
+        online_count = int(worker_health.get("online_count") or 0)
+        incompatible_count = int(worker_health.get("incompatible_count") or 0)
+        node_status = "warning" if incompatible_count or (worker_configured and node_count and online_count == 0) else "passed"
+        checks.append(
+            {
+                "id": "worker_nodes",
+                "title": "Worker nodes",
+                "status": node_status,
+                "detail": (
+                    "No Worker is installed; local tasks remain available."
+                    if node_count == 0
+                    else f"{online_count} of {node_count} approved Worker nodes are online."
+                ),
+                "remediation": None if node_status == "passed" else "Review offline or incompatible devices in Devices & Workers.",
+                "metadata": {
+                    "node_count": node_count,
+                    "online_count": online_count,
+                    "pending_count": int(worker_health.get("pending_count") or 0),
+                    "incompatible_count": incompatible_count,
+                },
+            }
+        )
+    except Exception as exc:
+        logger.warning("Unable to inspect Worker diagnostics: %s", type(exc).__name__)
+        checks.append(
+            {
+                "id": "worker_network_runtime",
+                "title": "Worker network runtime",
+                "status": "warning",
+                "detail": "Worker diagnostics are temporarily unavailable; local tasks are unaffected.",
+                "remediation": "Refresh diagnostics or open Devices & Workers.",
+                "metadata": {},
+            }
+        )
+
     summary = _diagnostic_summary(checks)
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return {
@@ -2069,14 +2845,16 @@ async def get_readiness():
 @app.get("/api/diagnostics/startup")
 async def get_startup_diagnostics():
     """Return a non-secret first-run and packaged-app startup diagnostic report."""
-    return _sanitize_public_payload(_build_startup_diagnostics())
+    report = await asyncio.to_thread(_build_startup_diagnostics)
+    return _sanitize_public_payload(report)
 
 
 @app.get("/api/plugins")
 async def list_across_plugins(probe: bool = False):
     """Return Across ecosystem plugin discovery status without mutating installs."""
+    plugins = await asyncio.to_thread(discover_across_plugins, probe=probe)
     return {
-        "plugins": _sanitize_public_payload(discover_across_plugins(probe=probe)),
+        "plugins": _sanitize_public_payload(plugins),
     }
 
 
@@ -2084,7 +2862,8 @@ async def list_across_plugins(probe: bool = False):
 async def get_across_plugin(plugin_id: str, probe: bool = False):
     """Return one Across ecosystem plugin discovery status."""
     try:
-        return _sanitize_public_payload(inspect_across_plugin(plugin_id, probe=probe))
+        plugin = await asyncio.to_thread(inspect_across_plugin, plugin_id, probe=probe)
+        return _sanitize_public_payload(plugin)
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Across plugin")
 
@@ -2099,13 +2878,21 @@ async def create_task_capability_plan(req: TaskCapabilityPlanRequest):
             for provider_id in _known_provider_ids()
             if _provider_has_backend_key(provider_id)
         ]
-        return build_task_capability_plan(
+        plan = build_task_capability_plan(
             user_goal=req.user_goal,
             project_signals=req.project_signals,
             plugins=discover_across_plugins(probe=False),
             configured_providers=configured_providers,
             primary_provider=llm_config.primary_provider,
         )
+        workflow_request = AutoTaskRequest(
+            description=req.user_goal,
+            task_types=["functional", "artifact"],
+            project_signals=req.project_signals,
+        )
+        workflow_resolution = await asyncio.to_thread(_resolve_task_workflow, workflow_request)
+        _apply_workflow_resolution_to_capability_plan(plan, workflow_resolution)
+        return plan
     except ValueError:
         raise HTTPException(status_code=422, detail="Capability plan request is invalid")
     except Exception:
@@ -8858,9 +9645,22 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
             if action in {"probe", "refresh"}:
                 return _sanitize_public_payload(manager.implementation_status(probe=True))
             if action in {"install", "repair", "upgrade"}:
-                install = await asyncio.to_thread(manager.install_plugin)
+                worker_manager = get_worker_network_runtime()
+                await asyncio.to_thread(worker_manager.shutdown)
+                try:
+                    install = await asyncio.to_thread(manager.install_plugin)
+                finally:
+                    # The Worker listener/control service imports the managed
+                    # Orchestrator executable at process start. Always restart
+                    # it after a lifecycle replacement, including same-version
+                    # repair, so no consumer keeps executing the old payload.
+                    worker_runtime = await asyncio.to_thread(worker_manager.reconcile)
                 runtime = manager.implementation_status(probe=True)
-                return _sanitize_public_payload({"runtime": runtime, "install": install})
+                return _sanitize_public_payload({
+                    "runtime": runtime,
+                    "install": install,
+                    "worker_runtime": worker_runtime,
+                })
             if action == "uninstall":
                 result = await asyncio.to_thread(manager.uninstall_plugin)
                 return _sanitize_public_payload(result)
@@ -9301,18 +10101,22 @@ async def run_autopilot_loop(req: AutopilotSpecRequest):
 async def get_agent_interop_e2e_result():
     """Return the latest host-neutral plugin interop E2E result."""
     try:
-        return public_agent_interop_e2e_result(load_agent_interop_e2e_latest())
+        result = public_agent_interop_e2e_result(load_agent_interop_e2e_latest())
+        result["run_state"] = get_agent_interop_e2e_run_coordinator().status()
+        return result
     except Exception:
         raise _safe_http_500("Get agent interop E2E result")
 
 
 @app.post("/api/autopilot/agent-interop-e2e")
 async def run_agent_interop_e2e_endpoint():
-    """Run the complete Context/Orchestrator/Autopilot host interop E2E scenario."""
+    """Start the complete host interop E2E scenario without blocking the UI."""
     try:
-        result = await asyncio.to_thread(run_agent_interop_e2e)
-        return public_agent_interop_e2e_result(result)
-    except Exception as exc:
+        run_state = get_agent_interop_e2e_run_coordinator().start(run_agent_interop_e2e)
+        result = public_agent_interop_e2e_result(load_agent_interop_e2e_latest())
+        result["run_state"] = run_state
+        return result
+    except Exception:
         raise _safe_http_500("Run agent interop E2E")
 
 
@@ -9591,16 +10395,19 @@ async def refresh_autopilot_workbench():
 
 async def _release_evaluation_payload(limit: int = 100) -> Dict[str, Any]:
     try:
-        external_rows = get_orchestrator_plugin_manager().list_task_summaries()
+        external_rows = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().list_task_summaries
+        )
     except Exception:
         external_rows = []
     try:
-        agent_interop_e2e = load_agent_interop_e2e_latest()
+        agent_interop_e2e = await asyncio.to_thread(load_agent_interop_e2e_latest)
     except Exception:
         agent_interop_e2e = {}
     try:
         safe_limit = max(1, min(int(limit or 100), 500))
-        rows = _collect_release_task_rows(
+        rows = await asyncio.to_thread(
+            _collect_release_task_rows,
             safe_limit,
             task_state=_task_state,
             external_task_rows=lambda: external_rows,
@@ -9777,7 +10584,15 @@ async def get_ecosystem_external_agents(refresh: bool = False):
 
 @app.get("/api/ecosystem/agent-plugins")
 async def get_ecosystem_agent_plugins(refresh: bool = False):
-    return ecosystem_route_section(await _build_ecosystem_roadmap_response(refresh=refresh), "agent_plugin_runtime")
+    # This action checks one bounded runtime contract. Rebuilding the complete
+    # ecosystem roadmap here launched unrelated probes and made a single row
+    # appear stuck for tens of seconds.
+    try:
+        agent_plugin_runtime = await asyncio.to_thread(probe_agent_plugin_runtime_status)
+    except Exception:
+        agent_plugin_runtime = {}
+    roadmap = build_aaa_ecosystem_roadmap(agent_plugin_runtime=agent_plugin_runtime)
+    return ecosystem_route_section(roadmap, "agent_plugin_runtime")
 
 
 @app.post("/api/autopilot/runs/{run_id}/cancel")
@@ -10176,7 +10991,7 @@ async def forget_across_context_memory(memory_id: str):
 async def get_orchestrator_plugin_status():
     """Return Across Orchestrator runtime and one-click install status."""
     manager = get_orchestrator_plugin_manager()
-    runtime = manager.implementation_status(probe=True)
+    runtime = await asyncio.to_thread(manager.implementation_status, probe=True)
     return _sanitize_public_payload({
         "runtime": runtime,
         "install": runtime.get("install") or manager.install_status(),
@@ -10554,10 +11369,12 @@ async def get_health():
     if isinstance(db_path, Path):
         db_path = str(db_path)
 
+    known_tasks = await _known_task_count_for_core_probe()
+
     try:
-        known_tasks = len(_task_state.get_all_tasks())
+        worker_health = await _worker_health_for_core_probe()
     except Exception:
-        known_tasks = len(getattr(_task_state, "_tasks", {}) or {})
+        worker_health = {"status": "degraded", "reason": "worker_control_probe_failed"}
 
     return {
         "status": "ok",
@@ -10575,6 +11392,7 @@ async def get_health():
             "known_tasks": known_tasks,
             "persistence_initialized": _task_persistence_initialized,
         },
+        "worker_control": worker_health,
     }
 
 
@@ -11173,7 +11991,11 @@ async def list_projects(session_limit: int = 5):
     """List project directories with a small set of recent chats per project."""
     try:
         projects = []
-        for p in persistence.list_projects(session_limit=session_limit):
+        project_rows = await asyncio.to_thread(
+            persistence.list_projects,
+            session_limit=session_limit,
+        )
+        for p in project_rows:
             sessions = [_project_session_info_from_row(s) for s in p.get("sessions", [])]
             projects.append(_project_info_from_row(p, sessions=sessions))
         return ProjectListResponse(projects=projects)
@@ -11227,11 +12049,20 @@ async def list_sessions(limit: int = 50, offset: int = 0, project_id: Optional[s
         safe_limit = max(1, min(int(limit or 50), 200))
         safe_offset = max(0, int(offset or 0))
         try:
-            page_result = persistence.list_sessions(limit=safe_limit, offset=safe_offset, project_id=project_id)
+            page_result = await asyncio.to_thread(
+                persistence.list_sessions,
+                limit=safe_limit,
+                offset=safe_offset,
+                project_id=project_id,
+            )
         except TypeError as exc:
             if project_id is not None or "project_id" not in str(exc):
                 raise
-            page_result = persistence.list_sessions(limit=safe_limit, offset=safe_offset)
+            page_result = await asyncio.to_thread(
+                persistence.list_sessions,
+                limit=safe_limit,
+                offset=safe_offset,
+            )
         if isinstance(page_result, tuple):
             active, total = page_result
         else:
@@ -12754,19 +13585,13 @@ def start_api_server():
     except OSError:
         pass
 
-    # Issue 39: Don't set global umask(0o177) as it affects all file creation
-    # (including agent-created directories). Instead, fix socket permissions
-    # after creation via a background thread.
-    def _fix_permissions():
-        for _ in range(100):
-            if os.path.exists(SOCKET_PATH):
-                os.chmod(SOCKET_PATH, 0o600)
-                break
-            time.sleep(0.05)
+    # Bind before starting Uvicorn so the socket is never briefly exposed with
+    # the process umask's default permissions. A global restrictive umask would
+    # also affect agent-created files, so keep this change local to the socket.
+    api_socket = _bind_private_api_socket(SOCKET_PATH)
 
-    threading.Thread(target=_fix_permissions, daemon=True).start()
-
-    # Issue 47: Use Config + Server API for programmatic control over shutdown
+    # Issue 47: Use Config + Server API for programmatic control over shutdown.
+    # Passing our pre-bound socket avoids Uvicorn recreating it as 0666.
     config = uvicorn.Config(app, uds=SOCKET_PATH, timeout_graceful_shutdown=1)
     server = uvicorn.Server(config)
 
@@ -12786,7 +13611,10 @@ def start_api_server():
     original_handler = signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    server.run()
+    try:
+        server.run(sockets=[api_socket])
+    finally:
+        api_socket.close()
     # In packaged app shutdowns, non-daemon worker threads can occasionally keep
     # the frozen backend process alive after Uvicorn has stopped accepting on
     # the Unix socket. Exit hard once the server loop returns so the macOS app
@@ -14006,6 +14834,20 @@ async def list_task_summaries(
     offset: int = 0,
     project_dir: Optional[str] = None,
 ):
+    """List task summaries without blocking the shared async request loop."""
+    return await asyncio.to_thread(
+        _list_task_summaries_sync,
+        limit=limit,
+        offset=offset,
+        project_dir=project_dir,
+    )
+
+
+def _list_task_summaries_sync(
+    limit: int = 50,
+    offset: int = 0,
+    project_dir: Optional[str] = None,
+):
     """List lightweight task summaries for the sidebar.
 
     This endpoint intentionally does not hydrate subtasks, waves, artifacts, or
@@ -14018,7 +14860,12 @@ async def list_task_summaries(
         project_dir = _normalized_task_project_dir(project_dir)
 
         in_memory: Dict[str, TaskSummaryInfo] = {}
-        for task in _task_state.get_all_tasks():
+        task_snapshot = getattr(_task_state, "_tasks", None)
+        if isinstance(task_snapshot, Mapping):
+            in_memory_tasks = list(task_snapshot.values())
+        else:
+            in_memory_tasks = _task_state.get_all_tasks()
+        for task in in_memory_tasks:
             if not _task_belongs_to_project(task.project_dir, project_dir):
                 continue
             original = [st for st in task.subtasks if _is_original_business_subtask_id(st.subtask_id)]
@@ -14150,21 +14997,29 @@ async def list_task_summaries(
                     continue
                 if not _task_belongs_to_project(row.get("project_dir"), project_dir):
                     continue
-                summaries.append(TaskSummaryInfo(
-                    task_id=str(task_id),
-                    description=str(row.get("description") or ""),
-                    status=str(row.get("status") or "pending"),
-                    external_task=True,
-                    progress=float(row.get("progress") or 0),
-                    completed_count=int(row.get("completed_count") or 0),
-                    total_count=int(row.get("total_count") or 0),
-                    created_at=float(row.get("created_at") or 0),
-                    updated_at=float(row.get("updated_at") or 0),
-                    project_dir=row.get("project_dir"),
-                    owner_agent=row.get("owner_agent"),
-                    delivery_mode=row.get("delivery_mode") or "composite",
+                summary_payload = {
+                    "task_id": str(task_id),
+                    "description": str(row.get("description") or ""),
+                    "status": str(row.get("status") or "pending"),
+                    "external_task": True,
+                    "progress": float(row.get("progress") or 0),
+                    "completed_count": int(row.get("completed_count") or 0),
+                    "total_count": int(row.get("total_count") or 0),
+                    "created_at": float(row.get("created_at") or 0),
+                    "updated_at": float(row.get("updated_at") or 0),
+                    "project_dir": row.get("project_dir"),
+                    "owner_agent": row.get("owner_agent"),
+                    "delivery_mode": row.get("delivery_mode") or "composite",
                     **_task_user_review(str(task_id)),
-                ))
+                }
+                bridge = get_worker_task_bridge()
+                # The sidebar uses the last durable Worker projection.  A live
+                # Worker probe belongs to the detail view; doing it here made
+                # the whole task list wait for cold-start reconciliation.
+                worker_info = bridge.cached_status(str(task_id))
+                if worker_info:
+                    summary_payload = bridge.project_task_summary(summary_payload, worker_info)
+                summaries.append(TaskSummaryInfo(**summary_payload))
                 seen_summary_ids.add(str(task_id))
             if len(summaries) > total:
                 total = len(summaries)
@@ -14241,7 +15096,7 @@ async def get_task(task_id: str):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-            return _attach_task_user_review(TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence)))
+            return _attach_task_user_review(TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence))))
 
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
         _repair_task_dispatch_if_possible(task_id, reason="api_detail_poll")
@@ -14353,7 +15208,12 @@ async def list_tasks():
                 if not task_id or task_id in seen_task_ids:
                     continue
                 task_payload = plugin.get_task(str(task_id))
-                task_infos.append(_attach_task_user_review(TaskInfo(**external_task_to_app_info(task_payload))))
+                bridge = get_worker_task_bridge()
+                worker_info = bridge.optional_status(str(task_id))
+                app_info = external_task_to_app_info(task_payload)
+                if worker_info:
+                    app_info = bridge.project_task_info(app_info, worker_info)
+                task_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
                 seen_task_ids.add(str(task_id))
         except Exception as exc:
             logger.debug("Skipping external Orchestrator tasks: %s", exc)
@@ -14480,6 +15340,7 @@ def _derive_auto_task_capability_plan(
     req: AutoTaskRequest,
     *,
     plugin_status: Mapping[str, Any],
+    workflow_resolution: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     plugins = discover_across_plugins(probe=False)
     if plugin_status.get("available") and not any(
@@ -14509,13 +15370,228 @@ def _derive_auto_task_capability_plan(
         "owner_agent": req.owner_agent,
         **dict(req.project_signals or {}),
     }
-    return build_task_capability_plan(
+    plan = build_task_capability_plan(
         user_goal=req.description,
         project_signals=signals,
         plugins=plugins,
         configured_providers=configured_providers,
         primary_provider=llm_config.primary_provider,
     )
+    resolution = dict(workflow_resolution or _empty_workflow_resolution(req.description))
+    _apply_workflow_resolution_to_capability_plan(plan, resolution)
+    return plan
+
+
+def _empty_workflow_resolution(
+    goal: str,
+    *,
+    status: str = "not_selected",
+    reason: str = "No workflow pack is needed for this task.",
+    requested_workflow_id: str | None = None,
+) -> Dict[str, Any]:
+    resolution = {
+        "schema_version": "across-workflow-resolution/1.0",
+        "goal": str(goal or ""),
+        "selected_workflow": None,
+        "automatic": True,
+        "resolution_status": status,
+        "reason": reason,
+        "candidates": [],
+    }
+    if requested_workflow_id:
+        resolution["requested_workflow_id"] = requested_workflow_id
+    return resolution
+
+
+def _resolve_task_workflow(req: AutoTaskRequest) -> Dict[str, Any]:
+    signals = dict(req.project_signals or {})
+    requested = str(signals.get("requested_workflow_id") or signals.get("workflow_id") or "").strip() or None
+    try:
+        resolution = get_autopilot_client().resolve_workflow(
+            req.description,
+            requested_workflow_id=requested,
+        )
+    except (PluginLifecycleError, OSError, RuntimeError, ValueError) as exc:
+        logger.info("Workflow resolution unavailable; continuing with the generic task plan: %s", type(exc).__name__)
+        return _empty_workflow_resolution(
+            req.description,
+            status="unavailable",
+            reason="Across Autopilot is not installed or available; continuing with a generic task plan.",
+            requested_workflow_id=requested,
+        )
+    if resolution.get("schema_version") != "across-workflow-resolution/1.0":
+        logger.info("Ignoring an incompatible workflow resolution payload")
+        return _empty_workflow_resolution(
+            req.description,
+            status="incompatible",
+            reason="Across Autopilot returned an incompatible workflow result; continuing with a generic task plan.",
+            requested_workflow_id=requested,
+        )
+    return dict(resolution)
+
+
+def _workflow_resolution_status(resolution: Mapping[str, Any]) -> Dict[str, Any]:
+    selected = resolution.get("selected_workflow")
+    inferred_status = "selected" if isinstance(selected, Mapping) else "not_selected"
+    status = str(resolution.get("resolution_status") or inferred_status).strip() or inferred_status
+    result = {
+        "status": status,
+        "reason": str(resolution.get("reason") or ""),
+    }
+    requested = str(resolution.get("requested_workflow_id") or "").strip()
+    if requested:
+        result["requested_workflow_id"] = requested
+    return result
+
+
+def _apply_workflow_resolution_to_capability_plan(
+    plan: Dict[str, Any],
+    resolution: Mapping[str, Any],
+) -> None:
+    plan["workflow_plan"] = _public_workflow_plan(resolution)
+    plan["workflow_status"] = _workflow_resolution_status(resolution)
+    plan["execution_plan"] = _workflow_execution_contract(resolution)
+
+    workflow_status = plan["workflow_status"]
+    requested = str(workflow_status.get("requested_workflow_id") or "").strip()
+    if not requested or workflow_status.get("status") == "selected":
+        return
+
+    decisions = list(plan.get("required_user_decisions") or ())
+    if not any(str(item.get("id") or "") == "install_requested_workflow" for item in decisions):
+        decisions.append({
+            "id": "install_requested_workflow",
+            "kind": "missing_capability",
+            "required": True,
+            "title": "Install Across Autopilot to use the requested Workflow Pack.",
+            "workflow_id": requested,
+        })
+    plan["required_user_decisions"] = decisions
+
+
+def _public_workflow_plan(resolution: Mapping[str, Any]) -> Dict[str, Any] | None:
+    selected = resolution.get("selected_workflow")
+    if not isinstance(selected, Mapping):
+        return None
+    execution = selected.get("execution") if isinstance(selected.get("execution"), Mapping) else {}
+    return {
+        "workflow_id": str(selected.get("id") or ""),
+        "title": str(selected.get("title") or ""),
+        "summary": str(selected.get("user_summary") or selected.get("description") or ""),
+        "reason": str(selected.get("reason") or ""),
+        "confidence": float(selected.get("confidence") or 0),
+        "route": str(execution.get("route") or "local"),
+    }
+
+
+def _workflow_execution_contract(resolution: Mapping[str, Any]) -> Dict[str, Any]:
+    selected = resolution.get("selected_workflow")
+    if not isinstance(selected, Mapping):
+        return {"workflow_id": None, "route": "local", "phases": ["local-run"]}
+    execution = selected.get("execution") if isinstance(selected.get("execution"), Mapping) else {}
+    route = str(execution.get("route") or "local").strip().lower()
+    if route not in {"local", "worker"}:
+        route = "local"
+    phases = [str(item) for item in execution.get("phases") or () if str(item).strip()]
+    if not phases:
+        phases = ["local-run"] if route == "local" else ["local-plan", "remote-run", "local-verify"]
+    return {
+        "workflow_id": str(selected.get("id") or "") or None,
+        "route": route,
+        "phases": phases[:16],
+    }
+
+
+def _worker_parent_subtasks(expected_outputs: List[str]) -> List[Dict[str, Any]]:
+    """Represent one generic remote execution without inventing local Agent work."""
+    return [{
+        "id": "worker-execution",
+        "description": "Execute the selected workflow on an approved Worker and return verified evidence.",
+        "path": expected_outputs[0],
+        "agent": "across-worker",
+        "wave": 1,
+        "priority": 1,
+        "dependencies": [],
+    }]
+
+
+def _validated_workflow_execution_plan(
+    payload: Mapping[str, Any],
+    *,
+    expected_contract: Mapping[str, Any],
+) -> Dict[str, Any]:
+    if payload.get("schema_version") != "across-workflow-execution-plan/1.0":
+        raise ValueError("Autopilot returned an incompatible Workflow Pack execution plan")
+    workflow_id = str(payload.get("workflow_id") or "").strip()
+    if not workflow_id or workflow_id != str(expected_contract.get("workflow_id") or "").strip():
+        raise ValueError("Autopilot Workflow Pack execution plan does not match the resolved workflow")
+    contract = payload.get("execution_contract") if isinstance(payload.get("execution_contract"), Mapping) else {}
+    route = str(contract.get("route") or "").strip().lower()
+    if route not in {"local", "worker"} or route != str(expected_contract.get("route") or "").strip().lower():
+        raise ValueError("Autopilot Workflow Pack execution route does not match the resolved workflow")
+    deliverables: List[str] = []
+    for raw in payload.get("deliverables") or ():
+        value = str(raw or "").strip().replace("\\", "/")
+        parts = [part for part in value.split("/") if part and part != "."]
+        if not value or value.startswith("/") or any(part == ".." for part in parts):
+            raise ValueError("Autopilot Workflow Pack execution plan contains an unsafe deliverable")
+        if value not in deliverables:
+            deliverables.append(value)
+    if not deliverables:
+        raise ValueError("Autopilot Workflow Pack execution plan has no deliverables")
+    subtasks = [dict(item) for item in payload.get("subtasks") or () if isinstance(item, Mapping)]
+    if not subtasks:
+        raise ValueError("Autopilot Workflow Pack execution plan has no task plan")
+    for item in subtasks:
+        if str(item.get("path") or "") not in deliverables:
+            raise ValueError("Autopilot Workflow Pack subtask references an undeclared deliverable")
+    plan = dict(payload)
+    plan["deliverables"] = deliverables
+    plan["subtasks"] = subtasks
+    plan["execution_contract"] = dict(contract)
+    return plan
+
+
+def _autopilot_agent_adapters_for_plan(plan: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    adapter = plan.get("adapter") if isinstance(plan.get("adapter"), Mapping) else {}
+    if str(adapter.get("type") or "") != "autopilot-workflow":
+        raise ValueError("Local Workflow Pack execution requires the Autopilot workflow adapter")
+    workflow_id = str(adapter.get("workflow_id") or plan.get("workflow_id") or "").strip()
+    loop_spec_id = str(adapter.get("loop_spec_id") or "").strip()
+    if not workflow_id or not loop_spec_id:
+        raise ValueError("Autopilot workflow adapter metadata is incomplete")
+    runtime_state_roots = [
+        ecosystem_home() / "data" / "across-autopilot",
+        ecosystem_home() / "data" / "across-context",
+    ]
+    for runtime_state_root in runtime_state_roots:
+        runtime_state_root.mkdir(parents=True, exist_ok=True)
+    return {
+        "across-autopilot": {
+            "type": "command",
+            "command": autopilot_workflow_adapter_command(workflow_id, loop_spec_id),
+            "description": "AAA host adapter for a resolved Across Autopilot Workflow Pack.",
+            "sandboxPolicy": {
+                "network_policy": "adapter_scoped",
+                "filesystem_policy": {
+                    "mode": "run_scoped",
+                    # The workflow may write declared deliverables inside the
+                    # project and its own durable run evidence under the
+                    # managed Autopilot data root. Nothing else is writable.
+                    "runtime_state_roots": [str(path) for path in runtime_state_roots],
+                },
+                "execution": {
+                    "timeout_seconds": 300,
+                    "refresh_timeout_on_output": True,
+                    # Across Orchestrator deliberately caps every adapter wall
+                    # budget at one hour.  Keep the host-generated Autopilot
+                    # policy inside that public contract so a resolved
+                    # Workflow Pack can actually start.
+                    "max_wall_timeout_seconds": 3600,
+                },
+            },
+        }
+    }
 
 
 def _required_capability_plan_error(plan: Mapping[str, Any]) -> HTTPException | None:
@@ -14540,35 +15616,100 @@ async def _submit_auto_orchestrated_task(
     plugin = get_orchestrator_plugin_manager()
     plugin_status = plugin.implementation_status(probe=True)
     if plugin_status.get("implementation") == "external" and plugin_status.get("available"):
-        capability_plan = _derive_auto_task_capability_plan(req, plugin_status=plugin_status)
+        workflow_resolution = await asyncio.to_thread(_resolve_task_workflow, req)
+        execution_contract = _workflow_execution_contract(workflow_resolution)
+        capability_plan = _derive_auto_task_capability_plan(
+            req,
+            plugin_status=plugin_status,
+            workflow_resolution=workflow_resolution,
+        )
         plan_error = _required_capability_plan_error(capability_plan)
         if plan_error is not None:
             raise plan_error
         try:
-            deliverables = _deliverables_for_external_task(req)
-            planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
+            worker_job_plan: Dict[str, Any] | None = None
+            workflow_execution_plan: Dict[str, Any] | None = None
+            if execution_contract.get("workflow_id"):
+                raw_execution_plan = await asyncio.to_thread(
+                    get_autopilot_client().build_execution_plan,
+                    workflow_id=str(execution_contract.get("workflow_id") or ""),
+                    user_goal=req.description,
+                    project_id=f"aaa-plan-{uuid.uuid4().hex}",
+                    live_model=bool(capability_plan.get("chosen_providers")),
+                )
+                workflow_execution_plan = _validated_workflow_execution_plan(
+                    raw_execution_plan,
+                    expected_contract=execution_contract,
+                )
+                deliverables = list(workflow_execution_plan["deliverables"])
+                planned_subtasks = list(workflow_execution_plan["subtasks"])
+                if execution_contract.get("route") == "worker":
+                    raw_worker_plan = workflow_execution_plan.get("worker_job_plan")
+                    if not isinstance(raw_worker_plan, Mapping):
+                        raise ValueError("Autopilot Worker execution plan has no Worker Job plan")
+                    worker_job_plan = dict(raw_worker_plan)
+                    owner_agent = "across-worker"
+                    agent_adapters = {}
+                else:
+                    owner_agent = "across-autopilot"
+                    agent_adapters = _autopilot_agent_adapters_for_plan(workflow_execution_plan)
+            else:
+                deliverables = _deliverables_for_external_task(req)
+                planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
+                owner_agent = _external_owner_agent(req)
+                agent_adapters = _agent_adapters_for_external_task(req)
             submit_kwargs = {
                 "goal": req.description,
                 "project_dir": req.project_dir or _default_external_orchestrator_project_dir(),
                 "deliverables": deliverables,
-                "agent": _external_owner_agent(req),
+                "agent": owner_agent,
                 "subtasks": planned_subtasks,
                 "strict_dependency": req.strict_dependency,
                 "task_types": req.task_types,
-                "agent_adapters": _agent_adapters_for_external_task(req),
+                "agent_adapters": agent_adapters,
             }
             if "metadata" in inspect.signature(plugin.submit_task).parameters:
-                submit_kwargs["metadata"] = {"capability_plan": capability_plan}
+                submit_kwargs["metadata"] = {
+                    "capability_plan": capability_plan,
+                    "project_signals": dict(req.project_signals or {}),
+                    "workflow_resolution": workflow_resolution,
+                    "execution_contract": execution_contract,
+                    "execution_plan": workflow_execution_plan,
+                }
             task = await asyncio.to_thread(
                 plugin.submit_task,
                 **submit_kwargs,
             )
+            worker_execution = None
+            workflow_id = str(execution_contract.get("workflow_id") or "")
+            if execution_contract.get("route") == "worker":
+                task_id = str(task.get("task_id") or "")
+                try:
+                    worker_execution = await asyncio.to_thread(
+                        get_worker_task_bridge().submit_workflow,
+                        task_id=task_id,
+                        goal=req.description,
+                        project_dir=req.project_dir,
+                        job_plan=worker_job_plan,
+                    )
+                except Exception:
+                    try:
+                        await asyncio.to_thread(
+                            plugin.cancel_task,
+                            task_id,
+                            reason="worker_job_planning_or_submission_failed",
+                        )
+                    except Exception:
+                        logger.exception("Unable to cancel the parent task after Worker dispatch failed")
+                    raise
             return AutoTaskResponse(
                 task_id=str(task.get("task_id") or ""),
                 status=str(task.get("status") or "created"),
                 message="Task submitted to external Across Orchestrator",
                 implementation="external",
                 external_task=True,
+                worker_job_id=str(worker_execution.get("job_id") or "") if worker_execution else None,
+                execution_route="worker" if worker_execution else "local",
             )
         except OrchestratorPluginUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc))
@@ -14649,7 +15790,7 @@ async def run_external_task(task_id: str):
         plugin = get_orchestrator_plugin_manager()
         task_payload = await asyncio.to_thread(plugin.run_task, task_id)
         evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-        return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
+        return _sanitize_public_payload(await _external_task_info_with_worker(task_payload, evidence=evidence))
     except OrchestratorPluginUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
@@ -14670,7 +15811,7 @@ async def get_task_status(task_id: str):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(plugin.get_task, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-            return _sanitize_public_payload(external_task_to_app_info(task_payload, evidence=evidence))
+            return _sanitize_public_payload(await _external_task_info_with_worker(task_payload, evidence=evidence))
 
         _repair_task_dispatch_if_possible(task_id, reason="api_status_poll")
 
@@ -14836,6 +15977,21 @@ def _comma_separated_values(value: Optional[str]) -> List[str]:
     ]
 
 
+def _worker_expected_outputs(projected: Mapping[str, Any]) -> List[str]:
+    """Read the output contract from a generic Worker-backed Task projection."""
+    remote = projected.get("remote_execution") if isinstance(projected.get("remote_execution"), Mapping) else {}
+    delivery = projected.get("delivery_report") if isinstance(projected.get("delivery_report"), Mapping) else {}
+    manifest = projected.get("requirement_manifest") if isinstance(projected.get("requirement_manifest"), Mapping) else {}
+    declared = list(remote.get("expected_outputs") or delivery.get("required_files") or ())
+    if not declared:
+        declared = [
+            item.get("path")
+            for item in manifest.get("deliverables") or ()
+            if isinstance(item, Mapping)
+        ]
+    return sorted({str(item).strip() for item in declared if str(item or "").strip()})
+
+
 @app.get("/api/tasks/{task_id}/quality-benchmark")
 async def get_task_quality_benchmark(
     task_id: str,
@@ -14850,7 +16006,22 @@ async def get_task_quality_benchmark(
     from .task_review.quality_benchmark import evaluate_delivery_benchmark
 
     if _is_external_orchestrator_task(task_id):
-        evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
+        plugin = get_orchestrator_plugin_manager()
+        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        projected = await _external_task_info_with_worker(task_payload)
+        if projected.get("remote_execution"):
+            declared_outputs = _worker_expected_outputs(projected)
+            report = evaluate_delivery_benchmark(
+                [_sanitize_public_payload(projected)],
+                benchmark_id=benchmark_id or f"worker-{task_id}-release-{__version__}",
+                expected_files=_comma_separated_values(expected_files) or declared_outputs,
+                required_probes=_comma_separated_values(required_probes),
+                min_quality_score=min_quality_score,
+                max_remediation_attempts=max_remediation_attempts,
+            )
+            report["app_version"] = __version__
+            return _redact_sensitive_evidence(report)
+        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
         report = build_external_quality_benchmark(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -14892,7 +16063,53 @@ async def get_task_evidence_bundle(
     from .task_review.quality_benchmark import evaluate_delivery_benchmark
 
     if _is_external_orchestrator_task(task_id):
-        evidence = await asyncio.to_thread(get_orchestrator_plugin_manager().get_evidence_bundle, task_id)
+        plugin = get_orchestrator_plugin_manager()
+        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        projected = await _external_task_info_with_worker(task_payload)
+        if projected.get("remote_execution"):
+            payload = _sanitize_public_payload(projected)
+            expected = _comma_separated_values(expected_files) or _worker_expected_outputs(projected)
+            probes = _comma_separated_values(required_probes)
+            benchmark = evaluate_delivery_benchmark(
+                [payload],
+                benchmark_id=benchmark_id or f"worker-{task_id}-evidence-{__version__}",
+                expected_files=expected,
+                required_probes=probes,
+                min_quality_score=min_quality_score,
+                max_remediation_attempts=max_remediation_attempts,
+            )
+            benchmark["app_version"] = __version__
+            sanitized = _redact_sensitive_evidence(payload)
+            return {
+                "schema_version": "1.0",
+                "app_version": __version__,
+                "generated_at": time.time(),
+                "task_id": sanitized.get("task_id"),
+                "description": sanitized.get("description"),
+                "task_status": sanitized.get("status"),
+                "task_types": sanitized.get("task_types") or [],
+                "delivery_mode": sanitized.get("delivery_mode") or "composite",
+                "project_dir": sanitized.get("project_dir"),
+                "owner_agent": sanitized.get("owner_agent"),
+                "allowed_subtask_agents": sanitized.get("allowed_subtask_agents") or [],
+                "delivery_contract": sanitized.get("owner_delivery_contract") or {},
+                "requirement_manifest": sanitized.get("requirement_manifest") or {},
+                "last_owner_decision": sanitized.get("last_owner_decision") or {},
+                "quality_health": sanitized.get("quality_health") or {},
+                "delivery_report": sanitized.get("delivery_report") or {},
+                "observability": sanitized.get("observability") or {},
+                "artifacts": sanitized.get("artifacts") or [],
+                "acceptance_records": sanitized.get("acceptance_records") or [],
+                "benchmark": _redact_sensitive_evidence(benchmark),
+                "audit": {
+                    "read_only": True,
+                    "repair_or_resume_triggered": False,
+                    "secrets_redacted": True,
+                    "expected_files": expected,
+                    "required_probes": probes,
+                },
+            }
+        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
         bundle = external_evidence_to_app_bundle(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -15183,10 +16400,28 @@ async def cancel_task(task_id: str):
     """Cancel a task and all its subtasks."""
     try:
         if _is_external_orchestrator_task(task_id):
-            raise HTTPException(
-                status_code=409,
-                detail="Task is owned by external Across Orchestrator; local lifecycle controls are unavailable.",
+            bridge = get_worker_task_bridge()
+            plugin = get_orchestrator_plugin_manager()
+            if bridge.optional_status(task_id) is not None:
+                task_payload, worker_result = await asyncio.gather(
+                    asyncio.to_thread(plugin.cancel_task, task_id, reason="cancelled_by_user"),
+                    asyncio.to_thread(bridge.cancel, task_id, reason="task_cancelled_by_user"),
+                )
+                return {
+                    "status": str(task_payload.get("status") or "cancelled"),
+                    "task_id": task_id,
+                    "worker_execution": worker_result,
+                }
+            task_payload = await asyncio.to_thread(
+                plugin.cancel_task,
+                task_id,
+                reason="cancelled_by_user",
             )
+            return {
+                "status": str(task_payload.get("status") or "cancelled"),
+                "task_id": task_id,
+                "worker_execution": None,
+            }
         task = _task_state.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")

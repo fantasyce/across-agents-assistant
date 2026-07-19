@@ -1,3 +1,7 @@
+import asyncio
+import time
+
+import pytest
 from fastapi.testclient import TestClient
 
 from across_agents_assistant.api_server import app
@@ -60,6 +64,37 @@ def _quality_row(task_id: str, *, score: int = 90, gate: str = "passed"):
             }
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_release_evaluation_does_not_block_core_api_event_loop(monkeypatch):
+    import across_agents_assistant.api_server as api_server
+
+    class SlowExternalTasks:
+        def list_task_summaries(self):
+            time.sleep(0.15)
+            return []
+
+    class FakePersistence:
+        def get_task_summaries(self, *, limit=50, offset=0):
+            return ([], 0)
+
+    class FakeState:
+        _persistence = FakePersistence()
+
+        def get_all_tasks(self):
+            return []
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: SlowExternalTasks())
+    monkeypatch.setattr(api_server, "load_agent_interop_e2e_latest", lambda: _interop_payload())
+    started_at = time.perf_counter()
+    evaluation = asyncio.create_task(api_server._release_evaluation_payload())
+    await asyncio.sleep(0.02)
+
+    assert time.perf_counter() - started_at < 0.1
+    assert not evaluation.done()
+    assert (await evaluation)["evaluated_task_count"] == 0
 
 
 def test_release_evaluation_endpoint_uses_lightweight_task_rows(monkeypatch):

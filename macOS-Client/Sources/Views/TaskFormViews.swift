@@ -27,7 +27,6 @@ struct TaskNewTaskForm: View {
     @State private var capabilityPreflight: AgentCapabilityPreflightResponse?
     @State private var isPreflightingCapabilities = false
     @State private var capabilityPreflightError: String?
-    @State private var appliedSimpleStartDraftId: String?
     private let repositoryAccessOwner = "task-orchestration"
 
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
@@ -136,23 +135,6 @@ struct TaskNewTaskForm: View {
            repositoryStore.beginAccess(owner: repositoryAccessOwner) {
             projectDir = selectedPath
         }
-    }
-
-    private func applySimpleStartDraftIfNeeded() {
-        guard let draft = viewModel.simpleStartDraft else {
-            appliedSimpleStartDraftId = nil
-            return
-        }
-        guard appliedSimpleStartDraftId != draft.id else { return }
-
-        taskDescription = draft.taskDescription
-        selectedDeliveryTaskTypes = draft.deliveryTaskTypes
-        applyDefaultProjectPathIfNeeded()
-        selectedOwnerAgent = "auto"
-        selectedSubtaskAgents.removeAll()
-        useAllSubtaskAgents = true
-        strictDependency = true
-        appliedSimpleStartDraftId = draft.id
     }
 
     var body: some View {
@@ -423,13 +405,9 @@ struct TaskNewTaskForm: View {
         }
         .onAppear {
             applyDefaultProjectPathIfNeeded()
-            applySimpleStartDraftIfNeeded()
             if !availableOwnerAgents.contains(where: { $0.id == selectedOwnerAgent }) {
                 selectedOwnerAgent = "auto"
             }
-        }
-        .onChange(of: viewModel.simpleStartDraft?.id) {
-            applySimpleStartDraftIfNeeded()
         }
         .onChange(of: availableOwnerAgents.map(\.id)) {
             let ids = availableOwnerAgents.map(\.id)

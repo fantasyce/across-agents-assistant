@@ -664,7 +664,16 @@ struct QualityGateGitHubRemote: Decodable, Equatable {
         pullRequest = try container.decodeIfPresent(QualityGateRemotePullRequest.self, forKey: .pullRequest)
         ciWatch = try container.decodeIfPresent(QualityGateRemoteCIWatch.self, forKey: .ciWatch)
         operations = try container.decodeIfPresent([QualityGateRemoteOperation].self, forKey: .operations) ?? []
-        errors = try container.decodeIfPresent([String].self, forKey: .errors) ?? []
+        if let decodedErrors = try? container.decode([String].self, forKey: .errors) {
+            errors = decodedErrors
+        } else if let legacyErrors = try? container.decode(String.self, forKey: .errors),
+                  let data = legacyErrors.data(using: .utf8),
+                  let decodedErrors = try? JSONDecoder().decode([String].self, from: data) {
+            // Older sanitized receipts encoded the error array as a JSON string.
+            errors = decodedErrors
+        } else {
+            errors = []
+        }
         auditHash = try container.decodeIfPresent(String.self, forKey: .auditHash)
     }
 

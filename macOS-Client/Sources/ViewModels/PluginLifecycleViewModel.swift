@@ -85,12 +85,22 @@ final class PluginLifecycleViewModel: ObservableObject {
         agentLoopEvidenceSummary?.memoryCandidates?.candidates ?? []
     }
 
+    var pendingMemoryCount: Int {
+        max(
+            memories.filter { $0.status == "pending" }.count,
+            agentLoopMemoryMetrics?.totals?.pendingCount ?? 0
+        )
+    }
+
     func load(probe: Bool = false) async {
         await loadPlugins(probe: probe)
         await loadMemories()
     }
 
     func loadForProductShell(maxAttempts: Int = 4) async {
+        let memoryMetricsTask = Task { @MainActor in
+            await self.loadAgentLoopMemoryMetrics()
+        }
         for attempt in 0..<max(1, maxAttempts) {
             await loadPlugins()
             if !plugins.isEmpty || Task.isCancelled {
@@ -100,8 +110,9 @@ final class PluginLifecycleViewModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+        await memoryMetricsTask.value
         guard !Task.isCancelled else { return }
-        await loadMemories()
+        await loadMemories(refreshMetrics: false)
     }
 
     @discardableResult
@@ -217,7 +228,7 @@ final class PluginLifecycleViewModel: ObservableObject {
         return false
     }
 
-    func loadMemories() async {
+    func loadMemories(refreshMetrics: Bool = true) async {
         isLoadingMemories = true
         errorMessage = nil
         defer { isLoadingMemories = false }
@@ -235,10 +246,11 @@ final class PluginLifecycleViewModel: ObservableObject {
             } else {
                 memories = try await fetchMemories(status: memoryStatusFilter)
             }
-            await loadAgentLoopMemoryMetrics()
+            if refreshMetrics {
+                await loadAgentLoopMemoryMetrics()
+            }
         } catch {
             errorMessage = error.localizedDescription
-            agentLoopMemoryMetrics = nil
         }
     }
 

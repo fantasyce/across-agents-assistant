@@ -21,8 +21,9 @@ struct AutopilotWorkbenchView: View {
     private var lineColor: Color { colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10) }
     private var textColor: Color { colorScheme == .dark ? .legacyTextDark : .legacyTextLight }
 
-    private let summaryColumns = [GridItem(.adaptive(minimum: 148), spacing: 12)]
+    private let summaryColumns = [GridItem(.adaptive(minimum: 176), spacing: 18)]
     private let sectionColumns = [GridItem(.adaptive(minimum: 280), spacing: 14)]
+    private let sectionCardHeight: CGFloat = 176
     private let sectionOrder = [
         "self_iteration",
         "triggers",
@@ -63,7 +64,7 @@ struct AutopilotWorkbenchView: View {
             .minimalPageContentFrame()
         }
         .overlay {
-            if viewModel.isWorking {
+            if viewModel.isWorking && viewModel.activeActionID == nil {
                 ProgressView()
                     .controlSize(.small)
                     .padding(18)
@@ -102,14 +103,12 @@ struct AutopilotWorkbenchView: View {
                 }
             }
             MinimalIconButton(
-                systemName: "checkmark.seal",
-                label: appPreferences.text("workbench.ensure"),
+                systemName: "play.circle.fill",
+                label: appPreferences.text("workbench.selfCheck"),
                 isDisabled: viewModel.isWorking || viewModel.isLoading
             ) {
                 Task {
-                    await viewModel.ensureSelfIterationPlan(
-                        successMessage: appPreferences.text("workbench.action.ensure.success")
-                    )
+                    await viewModel.load(refresh: true)
                 }
             }
             MinimalIconButton(
@@ -216,7 +215,11 @@ struct AutopilotWorkbenchView: View {
                         .foregroundColor(statusColor("failed"))
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let evidence = evidenceViewModel.payload?.objectValue {
-                    DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails) {
+                    MinimalDisclosureSection(
+                        title: localizedStatus(evidenceStatus(evidence)),
+                        detail: appPreferences.text("workbench.focusedEvidence.subtitle"),
+                        isExpanded: $showsFocusedEvidenceDetails
+                    ) {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(target.runID)
                                 .font(.system(size: 10, design: .monospaced))
@@ -246,16 +249,7 @@ struct AutopilotWorkbenchView: View {
                                 }
                             }
                         }
-                        .padding(.top, 8)
-                    } label: {
-                        Label(
-                            localizedStatus(evidenceStatus(evidence)),
-                            systemImage: statusIcon(evidenceStatus(evidence))
-                        )
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(statusColor(evidenceStatus(evidence)))
                     }
-                    .tint(.secondary)
                 }
             }
             .padding(14)
@@ -323,13 +317,7 @@ struct AutopilotWorkbenchView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(AcrossTheme.recessedFill(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
-                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
-        )
+        .padding(.vertical, 10)
     }
 
     private func readinessErrorPanel(_ error: String) -> some View {
@@ -356,17 +344,12 @@ struct AutopilotWorkbenchView: View {
                 Task { await workspaceReadiness.load(refresh: true) }
             }
         }
-        .padding(14)
-        .background(AcrossTheme.recessedFill(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
-                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
-        )
+        .padding(.vertical, 8)
     }
 
     private func agentWorkspaceReadinessPanel(_ snapshot: AgentWorkspaceReadinessSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let readyAgents = snapshot.agents.filter(\.available)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -398,8 +381,8 @@ struct AutopilotWorkbenchView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 138), spacing: 10)], spacing: 10) {
                 workspaceMetric(
                     appPreferences.text("workbench.workspace.readyAgents"),
-                    "\(snapshot.readyAgentIds.count)/\(snapshot.agents.count)",
-                    snapshot.readyAgentIds.isEmpty ? "unavailable" : "ready"
+                    "\(readyAgents.count)",
+                    readyAgents.isEmpty ? "unavailable" : "ready"
                 )
                 workspaceMetric(
                     appPreferences.text("workbench.workspace.isolation"),
@@ -418,13 +401,13 @@ struct AutopilotWorkbenchView: View {
                 )
             }
 
-            if !snapshot.agents.isEmpty {
+            if !readyAgents.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(appPreferences.text("workbench.workspace.agents"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(textColor)
 
-                    ForEach(snapshot.agents.prefix(5)) { agent in
+                    ForEach(readyAgents.prefix(5)) { agent in
                         HStack(spacing: 8) {
                             Image(systemName: "terminal")
                                 .font(.system(size: 11, weight: .semibold))
@@ -435,17 +418,9 @@ struct AutopilotWorkbenchView: View {
                                 .foregroundColor(textColor)
                                 .lineLimit(1)
                             Spacer()
-                            if let reason = agent.reason, !reason.isEmpty {
-                                Text(reason)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
                             StatusChip(
-                                status: agent.available ? "ready" : "not_installed",
-                                label: agent.available
-                                    ? appPreferences.text("workbench.status.ready")
-                                    : appPreferences.text("workbench.agent.optionalNotInstalled")
+                                status: "ready",
+                                label: appPreferences.text("workbench.status.ready")
                             )
                         }
                         .padding(.vertical, 2)
@@ -474,13 +449,7 @@ struct AutopilotWorkbenchView: View {
                 }
             }
         }
-        .padding(14)
-        .background(AcrossTheme.panelFill(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
-                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
-        )
+        .padding(.vertical, 4)
     }
 
     private func workspaceMetric(_ title: String, _ value: String, _ status: String) -> some View {
@@ -500,28 +469,66 @@ struct AutopilotWorkbenchView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(AcrossTheme.recessedFill(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
+        .padding(.vertical, 4)
     }
 
     private func summaryGrid(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
-        LazyVGrid(columns: summaryColumns, spacing: 12) {
+        LazyVGrid(columns: summaryColumns, spacing: 10) {
             summaryTile(appPreferences.text("workbench.status"), value: localizedWorkbenchStatus(snapshot), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
             summaryTile(appPreferences.text("workbench.runs"), value: "\(snapshot.summary.completedRunCount)/\(snapshot.summary.runCount)", systemName: "checklist", color: statusColor(snapshot.summary.failedRunCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.triggers"), value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)", systemName: "timer", color: statusColor(snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"))
             summaryTile(appPreferences.text("workbench.capabilities"), value: "\(snapshot.summary.capabilityReadyCount)", systemName: "sparkles.rectangle.stack", color: statusColor(snapshot.summary.registryHealthStatus))
             summaryTile(appPreferences.text("workbench.memory"), value: "\(snapshot.summary.pendingMemoryCount)", systemName: "brain", color: statusColor(snapshot.summary.pendingMemoryCount > 0 ? "attention" : "passed"))
-            summaryTile(appPreferences.text("workbench.scheduler"), value: snapshot.summary.schedulerRunning ? appPreferences.text("workbench.running") : appPreferences.text("workbench.stopped"), systemName: snapshot.summary.schedulerRunning ? "play.fill" : "stop.fill", color: statusColor(snapshot.summary.schedulerRunning ? "passed" : "attention"))
+            summaryTile(
+                appPreferences.text("workbench.scheduler"),
+                value: snapshot.summary.registeredTriggerCount == 0
+                    ? appPreferences.text("workbench.notConfigured")
+                    : (snapshot.summary.schedulerRunning ? appPreferences.text("workbench.running") : appPreferences.text("workbench.stopped")),
+                systemName: snapshot.summary.schedulerRunning ? "play.fill" : "stop.fill",
+                color: statusColor(snapshot.summary.registeredTriggerCount == 0 || snapshot.summary.schedulerRunning ? "passed" : "attention")
+            )
             summaryTile(appPreferences.text("workbench.ecosystem"), value: "\(snapshot.summary.ecosystemReadyRouteCount)/\(snapshot.summary.ecosystemRouteCount)", systemName: "point.3.connected.trianglepath.dotted", color: statusColor(snapshot.summary.ecosystemRouteCount == snapshot.summary.ecosystemReadyRouteCount ? "passed" : "attention"))
-            summaryTile(appPreferences.text("workbench.agentPlugins"), value: "\(snapshot.summary.readyAgentPluginCount)/\(snapshot.summary.agentPluginCount)", systemName: "puzzlepiece.extension", color: statusColor(snapshot.summary.agentPluginCount == snapshot.summary.readyAgentPluginCount && snapshot.summary.agentPluginCount > 0 ? "passed" : "attention"))
-            summaryTile(appPreferences.text("workbench.interopE2E"), value: localizedStatus(snapshot.summary.agentInteropE2EStatus), systemName: "point.3.connected.trianglepath.dotted", color: statusColor(snapshot.summary.agentInteropE2EStatus))
+            summaryTile(
+                appPreferences.text("workbench.agentPlugins"),
+                value: snapshot.summary.agentPluginCount == 0
+                    ? appPreferences.text("workbench.notConfigured")
+                    : "\(snapshot.summary.readyAgentPluginCount)/\(snapshot.summary.agentPluginCount)",
+                systemName: "puzzlepiece.extension",
+                color: statusColor(snapshot.summary.agentPluginCount == 0 || snapshot.summary.agentPluginCount == snapshot.summary.readyAgentPluginCount ? "passed" : "attention")
+            )
+            summaryTile(
+                appPreferences.text("workbench.interopE2E"),
+                value: localizedStatus(snapshot.summary.agentInteropE2EStatus),
+                systemName: "point.3.connected.trianglepath.dotted",
+                color: statusColor(snapshot.summary.agentInteropE2EStatus)
+            )
         }
     }
 
     private func actionSection(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader(appPreferences.text("workbench.actions"), subtitle: snapshot.generatedAt.map { "\(appPreferences.text("workbench.generatedAt")) \($0)" })
+
+            if let notice = viewModel.actionNotice {
+                HStack(alignment: .top, spacing: 8) {
+                    if notice.status == "running" {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: statusIcon(notice.status))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(statusColor(notice.status))
+                            .frame(width: 16, height: 16)
+                    }
+                    Text(notice.message)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(notice.status == "failed" ? statusColor("failed") : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+            }
 
             if snapshot.actions.isEmpty {
                 Text(appPreferences.text("workbench.noActions"))
@@ -542,7 +549,27 @@ struct AutopilotWorkbenchView: View {
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
-                            Spacer()
+                            Spacer(minLength: 12)
+                            Button {
+                                run(action)
+                            } label: {
+                                Group {
+                                    if viewModel.activeActionID == action.id {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: 18, weight: .semibold))
+                                    }
+                                }
+                                .frame(width: 32, height: 32)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(AcrossTheme.accent)
+                            .disabled(viewModel.isWorking || viewModel.isLoading)
+                            .accessibilityLabel(localizedActionTitle(action))
+                            .accessibilityHint(localizedActionReason(action))
+                            .help(localizedActionTitle(action))
                         }
                         .padding(11)
                         .background(fieldColor)
@@ -554,36 +581,66 @@ struct AutopilotWorkbenchView: View {
     }
 
     private func sectionsGrid(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionHeader(appPreferences.text("workbench.sections"), subtitle: nil)
-
-            LazyVGrid(columns: sectionColumns, spacing: 14) {
-                ForEach(orderedSections(snapshot), id: \.id) { section in
-                    sectionPanel(section)
-                }
+        LazyVGrid(columns: sectionColumns, spacing: 14) {
+            ForEach(orderedSections(snapshot), id: \.id) { section in
+                sectionPanel(section)
             }
         }
     }
 
     private func technicalEvidenceSection(_ snapshot: AutopilotWorkbenchSnapshot) -> some View {
-        DisclosureGroup(isExpanded: $showsTechnicalEvidence) {
+        MinimalDisclosureSection(
+            title: appPreferences.text("workbench.sections"),
+            detail: appPreferences.text("workbench.technicalEvidence.subtitle"),
+            isExpanded: $showsTechnicalEvidence
+        ) {
             sectionsGrid(snapshot)
-                .padding(.top, 14)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(appPreferences.text("workbench.technicalEvidence"))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(textColor)
-                Text(appPreferences.text("workbench.technicalEvidence.subtitle"))
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+        }
+    }
+
+    private func run(_ action: AutopilotWorkbenchAction) {
+        Task {
+            switch action.id {
+            case "ensure_self_iteration_plan":
+                await viewModel.ensureSelfIterationPlan(
+                    successMessage: appPreferences.text("workbench.action.ensure.success"),
+                    actionID: action.id,
+                    runningMessage: appPreferences.text("workbench.action.running")
+                )
+            case "start_trigger_scheduler":
+                await viewModel.startScheduler(
+                    successMessage: appPreferences.text("workbench.action.schedulerStarted.success"),
+                    actionID: action.id,
+                    runningMessage: appPreferences.text("workbench.action.running")
+                )
+            case "run_queued_trigger":
+                await viewModel.tickTriggers(
+                    successMessage: appPreferences.text("workbench.action.tick.success"),
+                    actionID: action.id,
+                    runningMessage: appPreferences.text("workbench.action.running")
+                )
+            case "run_agent_interop_e2e":
+                await viewModel.runAgentInteropE2E(
+                    successMessage: appPreferences.text("workbench.action.interop.success"),
+                    failureMessage: appPreferences.text("workbench.action.interop.failed"),
+                    runningMessage: appPreferences.text("workbench.action.interop.running"),
+                    actionID: action.id
+                )
+            case "advance_evaluation_telemetry", "advance_agent_plugin_runtime":
+                await viewModel.checkEcosystemAction(
+                    action,
+                    runningMessage: appPreferences.text("workbench.action.running"),
+                    successMessage: appPreferences.text("workbench.action.check.success"),
+                    attentionMessage: appPreferences.text("workbench.action.check.attention"),
+                    failureMessage: appPreferences.text("workbench.action.check.failed")
+                )
+            default:
+                viewModel.reportUnsupportedAction(
+                    actionID: action.id,
+                    message: appPreferences.text("workbench.action.unsupported")
+                )
             }
         }
-        .tint(.secondary)
-        .padding(14)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
     }
 
     private func orderedSections(_ snapshot: AutopilotWorkbenchSnapshot) -> [AutopilotWorkbenchSection] {
@@ -596,17 +653,15 @@ struct AutopilotWorkbenchView: View {
     }
 
     private func sectionPanel(_ section: AutopilotWorkbenchSection) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
+        let visibleSummary = Array(summaryPairs(for: section).prefix(3))
+        let visibleItems = Array(section.items.prefix(max(0, 4 - visibleSummary.count)))
+        return VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 8) {
                 Image(systemName: statusIcon(section.status))
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(statusColor(section.status))
                     .frame(width: 18, height: 18)
-                Text(
-                    section.id == "self_iteration"
-                        ? appPreferences.text("workbench.section.loopEngineering")
-                        : section.title
-                )
+                Text(localizedSectionTitle(section))
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(textColor)
                     .lineLimit(1)
@@ -617,7 +672,7 @@ struct AutopilotWorkbenchView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(summaryPairs(for: section), id: \.key) { pair in
+                ForEach(visibleSummary, id: \.key) { pair in
                     HStack(alignment: .top, spacing: 8) {
                         Text(displayKey(pair.key))
                             .font(.system(size: 11, weight: .medium))
@@ -635,10 +690,10 @@ struct AutopilotWorkbenchView: View {
                 }
             }
 
-            if !section.items.isEmpty {
+            if !visibleItems.isEmpty {
                 Divider().opacity(0.35)
                 VStack(alignment: .leading, spacing: 5) {
-                    ForEach(Array(section.items.prefix(3).enumerated()), id: \.offset) { _, item in
+                    ForEach(Array(visibleItems.enumerated()), id: \.offset) { _, item in
                         Text(item.objectValue.map(compactObjectSummary) ?? item.description)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
@@ -652,11 +707,14 @@ struct AutopilotWorkbenchView: View {
 
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 220, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: sectionCardHeight, maxHeight: sectionCardHeight, alignment: .topLeading)
         .clipped()
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
+        .background(AcrossTheme.panelFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        )
     }
 
     private func summaryPairs(for section: AutopilotWorkbenchSection) -> [(key: String, value: AutopilotWorkbenchJSONValue)] {
@@ -721,11 +779,8 @@ struct AutopilotWorkbenchView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .frame(minHeight: 58)
-        .background(cardColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(lineColor, lineWidth: 1))
+        .padding(.vertical, 4)
+        .frame(minHeight: 46)
     }
 
     private func banner(_ text: String, color: Color) -> some View {
@@ -755,8 +810,10 @@ struct AutopilotWorkbenchView: View {
         switch status {
         case "passed", "ready", "active":
             return Color(hex: "30d158")
-        case "attention", "unknown", "unavailable", "paused", "not_run":
+        case "attention", "unknown", "unavailable":
             return Color(hex: "ff9f0a")
+        case "paused", "not_run", "not_configured":
+            return .secondary
         case "failed":
             return Color(hex: "ff453a")
         default:
@@ -770,8 +827,10 @@ struct AutopilotWorkbenchView: View {
             return "checkmark.circle.fill"
         case "failed":
             return "xmark.octagon.fill"
-        case "attention", "paused", "not_run":
+        case "attention":
             return "exclamationmark.triangle.fill"
+        case "paused", "not_run", "not_configured":
+            return "minus.circle"
         default:
             return "questionmark.circle.fill"
         }
@@ -783,6 +842,12 @@ struct AutopilotWorkbenchView: View {
 
     private func localizedActionTitle(_ action: AutopilotWorkbenchAction) -> String {
         localizedActionText(action, suffix: "title", fallback: action.title)
+    }
+
+    private func localizedSectionTitle(_ section: AutopilotWorkbenchSection) -> String {
+        let key = "workbench.section.\(section.id)"
+        let localized = appPreferences.text(key)
+        return localized == key ? section.title : localized
     }
 
     private func localizedActionReason(_ action: AutopilotWorkbenchAction) -> String {
@@ -811,10 +876,10 @@ struct AutopilotWorkbenchView: View {
            summary.failedRunCount == 0,
            summary.pendingTriggerCount == 0,
            summary.promotionReadyCount == 0,
-           summary.schedulerRunning,
-           summary.selfIterationStatus == "active",
+           (summary.registeredTriggerCount == 0 || summary.schedulerRunning),
+           ["active", "not_registered", "paused"].contains(summary.selfIterationStatus),
            summary.registryHealthStatus == "passed",
-           summary.agentInteropE2EStatus == "passed" {
+           ["passed", "not_run"].contains(summary.agentInteropE2EStatus) {
             return appPreferences.text("workbench.status.review")
         }
         return localizedStatus(snapshot.status)

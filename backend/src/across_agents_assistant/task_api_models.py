@@ -69,6 +69,7 @@ class TaskInfo(BaseModel):
     quality_health: Dict[str, Any] = Field(default_factory=dict)
     delivery_report: Dict[str, Any] = Field(default_factory=dict)
     observability: Dict[str, Any] = Field(default_factory=dict)
+    remote_execution: Optional[Dict[str, Any]] = None
     review_status: str = "pending"
     accepted_at: Optional[float] = None
 
@@ -137,6 +138,8 @@ class AutoTaskResponse(BaseModel):
     message: str
     implementation: str = "external"
     external_task: bool = False
+    worker_job_id: Optional[str] = None
+    execution_route: str = "local"
 
 
 class TaskCapabilityPlanRequest(BaseModel):
@@ -150,6 +153,9 @@ class TaskCapabilityPlanResponse(BaseModel):
     chosen_capabilities: List[Dict[str, Any]] = Field(default_factory=list)
     chosen_providers: List[str] = Field(default_factory=list)
     hidden_defaults: Dict[str, Any] = Field(default_factory=dict)
+    workflow_plan: Optional[Dict[str, Any]] = None
+    workflow_status: Dict[str, Any] = Field(default_factory=dict)
+    execution_plan: Dict[str, Any] = Field(default_factory=dict)
     required_user_decisions: List[Dict[str, Any]] = Field(default_factory=list)
     automatic: bool
 

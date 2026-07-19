@@ -3,40 +3,36 @@ import SwiftUI
 
 struct MinimalRunsOverviewView: View {
     @ObservedObject private var viewModel: TaskOrchestrationViewModel
-    @ObservedObject private var qualityGate: QualityGateViewModel
-    @ObservedObject private var settingsViewModel: SettingsViewModel
     @ObservedObject private var preferences: AppPreferences
     @Binding private var showsRunHistory: Bool
 
-    private let defaultProjectPath: String?
     private let automaticallyLoads: Bool
-    private let onOpenReviewQueue: () -> Void
+    private let onStartWork: () -> Void
 
     @State private var searchText = ""
     @State private var showsInspector = false
     @State private var destination: RunDestination = .home
     @State private var taskPendingCancellationID: String?
-    @State private var showsReleaseE2EConfirmation = false
+    @State private var showsTaskDescription = false
+    @State private var showsWaveDetails = false
+    @State private var selectedWaveNumber: Int?
+    @State private var showsArtifactDetails = false
+    @State private var showsAllArtifacts = false
+    @State private var showsObservabilityDetails = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(
         viewModel: TaskOrchestrationViewModel,
-        qualityGate: QualityGateViewModel,
-        settingsViewModel: SettingsViewModel,
         preferences: AppPreferences,
         showsRunHistory: Binding<Bool>,
-        defaultProjectPath: String? = nil,
         automaticallyLoads: Bool = true,
-        onOpenReviewQueue: @escaping () -> Void
+        onStartWork: @escaping () -> Void
     ) {
         self.viewModel = viewModel
-        self.qualityGate = qualityGate
-        self.settingsViewModel = settingsViewModel
         self.preferences = preferences
         _showsRunHistory = showsRunHistory
-        self.defaultProjectPath = defaultProjectPath
         self.automaticallyLoads = automaticallyLoads
-        self.onOpenReviewQueue = onOpenReviewQueue
+        self.onStartWork = onStartWork
     }
 
     var body: some View {
@@ -80,11 +76,25 @@ struct MinimalRunsOverviewView: View {
                 setRunHistoryVisible(false)
             }
         }
+        .onChange(of: viewModel.selectedTask?.taskId) {
+            showsTaskDescription = false
+            showsWaveDetails = false
+            selectedWaveNumber = nil
+            showsArtifactDetails = false
+            showsAllArtifacts = false
+            showsObservabilityDetails = false
+        }
+        .sheet(item: $viewModel.selectedArtifactPreview) { preview in
+            artifactPreviewSheet(preview)
+        }
         .sheet(item: $viewModel.selectedEvidenceBundle, onDismiss: {
             viewModel.closeEvidenceBundle()
         }) { bundle in
             TaskEvidenceBundleSheet(
                 bundle: bundle,
+                resultContract: viewModel.selectedTask.map {
+                    AcrossVisualResultFactory.make(task: $0)
+                },
                 isLoading: viewModel.isLoadingTaskEvidence,
                 errorMessage: viewModel.taskEvidenceError,
                 exportedURL: viewModel.exportedEvidenceBundleURL,
@@ -122,29 +132,12 @@ struct MinimalRunsOverviewView: View {
         } message: {
             Text(preferences.text("tasks.cancelConfirmMessage"))
         }
-        .confirmationDialog(
-            preferences.text("tasks.releaseE2E.confirmTitle"),
-            isPresented: $showsReleaseE2EConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(preferences.text("tasks.releaseE2E.run")) {
-                viewModel.startReleaseE2E()
-            }
-            Button(preferences.text("system.cancel"), role: .cancel) {}
-        } message: {
-            Text(preferences.text("tasks.releaseE2E.confirmMessage"))
-        }
     }
 
     @ViewBuilder
     private var headerActions: some View {
         switch destination {
         case .home:
-            MinimalIconButton(
-                systemName: "clock.arrow.circlepath",
-                label: preferences.text("tasks.sidebar"),
-                action: { setRunHistoryVisible(true) }
-            )
             MinimalIconButton(
                 systemName: "arrow.clockwise",
                 label: preferences.text("tasks.overview.refresh"),
@@ -157,11 +150,13 @@ struct MinimalRunsOverviewView: View {
                 label: preferences.text("tasks.new"),
                 isDisabled: viewModel.isOrchestratorPluginUnavailable
             ) {
-                destination = .tasks
-                viewModel.enterWorkflowPicker()
+                onStartWork()
             }
         case .tasks:
             if isShowingTaskDetail {
+                if let task = viewModel.selectedTask {
+                    lifecycleControls(task)
+                }
                 MinimalIconButton(
                     systemName: "sidebar.right",
                     label: preferences.text("tasks.inspector"),
@@ -175,38 +170,16 @@ struct MinimalRunsOverviewView: View {
                     viewModel.loadTasks()
                 }
             }
-        case .quality:
-            MinimalIconButton(
-                systemName: "play.fill",
-                label: preferences.text("gate.run"),
-                isDisabled: qualityGate.draft.validationError != nil || qualityGate.isRunning
-            ) {
-                Task { await qualityGate.run() }
-            }
-        case .release:
-            MinimalIconButton(
-                systemName: "arrow.clockwise",
-                label: preferences.text("tasks.releaseEvaluation.refresh"),
-                isDisabled: viewModel.isLoadingReleaseEvaluation
-            ) {
-                viewModel.loadReleaseEvaluation()
-            }
-            MinimalIconButton(
-                systemName: "checklist.checked",
-                label: preferences.text("tasks.releaseE2E.run"),
-                isDisabled: viewModel.isStartingReleaseE2E || viewModel.isOrchestratorPluginUnavailable
-            ) {
-                showsReleaseE2EConfirmation = true
-            }
         }
     }
 
     private var headerTitle: String {
         switch destination {
         case .home: return preferences.text("tasks.overview.title")
-        case .tasks: return preferences.text("tasks.overview.newTask")
-        case .quality: return preferences.text("tasks.overview.quality")
-        case .release: return preferences.text("tasks.overview.release")
+        case .tasks:
+            return isShowingTaskDetail
+                ? preferences.text("tasks.result.title")
+                : preferences.text("tasks.overview.newTask")
         }
     }
 
@@ -222,17 +195,6 @@ struct MinimalRunsOverviewView: View {
             runOverview
         case .tasks:
             taskWorkspace
-        case .quality:
-            QualityGateOperationsView(
-                operations: qualityGate,
-                preferences: preferences,
-                activeProjectPath: defaultProjectPath,
-                onOpenFullWorkflow: { destination = .tasks },
-                onOpenReviewQueue: onOpenReviewQueue,
-                showsCommandBar: false
-            )
-        case .release:
-            releaseOverview
         }
     }
 
@@ -240,58 +202,36 @@ struct MinimalRunsOverviewView: View {
         ZStack(alignment: .topLeading) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(preferences.text("tasks.overview.prompt"))
-                            .font(.title3.weight(.semibold))
-                    }
-
-                    VStack(spacing: 0) {
-                        runActionRow(
-                            title: preferences.text("tasks.overview.newTask"),
-                            detail: preferences.text("tasks.overview.newTask.detail"),
-                            systemName: "plus.circle"
-                        ) {
-                            destination = .tasks
-                            viewModel.enterWorkflowPicker()
-                        }
-                        Divider().padding(.leading, 42)
-                        runActionRow(
-                            title: preferences.text("tasks.overview.quality"),
-                            detail: preferences.text("tasks.overview.quality.detail"),
-                            systemName: "checkmark.shield"
-                        ) {
-                            destination = .quality
-                        }
-                        Divider().padding(.leading, 42)
-                        runActionRow(
-                            title: preferences.text("tasks.overview.release"),
-                            detail: preferences.text("tasks.overview.release.detail"),
-                            systemName: "shippingbox"
-                        ) {
-                            destination = .release
-                            viewModel.loadReleaseEvaluation()
-                        }
-                    }
-
-                    Divider()
-
                     VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                            TextField(preferences.text("tasks.search"), text: $searchText)
+                                .textFieldStyle(.plain)
+                                .accessibilityLabel(Text(preferences.text("tasks.search")))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(AcrossTheme.recessedFill(for: colorScheme))
+                        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.controlCornerRadius))
+
                         MinimalSectionHeader(
                             preferences.text("tasks.overview.recent"),
-                            detail: viewModel.tasks.isEmpty ? nil : "\(viewModel.tasks.count)"
+                            detail: viewModel.tasks.isEmpty ? nil : "\(filteredTasks.count)"
                         )
 
                         if viewModel.isLoading && viewModel.tasks.isEmpty {
                             ProgressView()
                                 .controlSize(.small)
                                 .frame(maxWidth: .infinity, minHeight: 72)
-                        } else if viewModel.tasks.isEmpty {
+                        } else if filteredTasks.isEmpty {
                             Text(preferences.text("tasks.overview.recent.empty"))
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                         } else {
-                            ForEach(viewModel.tasks.prefix(6)) { task in
+                            ForEach(filteredTasks) { task in
                                 Button {
                                     destination = .tasks
                                     viewModel.selectTask(task.taskId)
@@ -301,6 +241,17 @@ struct MinimalRunsOverviewView: View {
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                            }
+
+                            if viewModel.hasMoreTasks {
+                                Button(preferences.text("tasks.loadMore")) {
+                                    viewModel.loadMoreTasks()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(AcrossTheme.accent)
+                                .disabled(viewModel.isLoadingMoreTasks)
+                                .padding(.top, 6)
                             }
                         }
                     }
@@ -321,40 +272,6 @@ struct MinimalRunsOverviewView: View {
             }
         }
         .clipped()
-    }
-
-    private func runActionRow(
-        title: String,
-        detail: String,
-        systemName: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: systemName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.primary)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 16)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private var taskWorkspace: some View {
@@ -378,141 +295,6 @@ struct MinimalRunsOverviewView: View {
             }
         }
         .clipped()
-    }
-
-    @ViewBuilder
-    private var releaseOverview: some View {
-        if viewModel.isLoadingReleaseEvaluation && viewModel.releaseEvaluation == nil {
-            MinimalWorkflowStateView(
-                state: .loading,
-                title: preferences.text("tasks.releaseEvaluation.refresh")
-            )
-        } else if let error = viewModel.releaseEvaluationError,
-                  viewModel.releaseEvaluation == nil {
-            MinimalWorkflowStateView(
-                state: .error,
-                title: preferences.text("tasks.releaseEvaluation"),
-                detail: error,
-                actionTitle: preferences.text("system.retry")
-            ) {
-                viewModel.loadReleaseEvaluation()
-            }
-        } else if let summary = viewModel.releaseEvaluation {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    HStack(spacing: 0) {
-                        releaseValue(
-                            preferences.text("tasks.releaseEvaluation.readiness"),
-                            preferences.statusText(summary.releaseReadiness)
-                        )
-                        Divider().frame(height: 38)
-                        releaseValue(
-                            preferences.text("tasks.releaseEvaluation.passRate"),
-                            "\(summary.passRatePercent)%"
-                        )
-                        Divider().frame(height: 38)
-                        releaseValue(
-                            preferences.text("tasks.releaseEvaluation.score"),
-                            summary.averageFinalQualityScore.map(String.init) ?? "-"
-                        )
-                        Divider().frame(height: 38)
-                        releaseValue(
-                            preferences.text("tasks.releaseEvaluation.evidence"),
-                            "\(summary.releaseEvidenceCount)"
-                        )
-                    }
-
-                    if let recommendation = summary.recommendation, !recommendation.isEmpty {
-                        Text(recommendation)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        MinimalSectionHeader(
-                            preferences.text("tasks.releaseCenter.checklist"),
-                            detail: "\(summary.readinessChecks.count)"
-                        )
-                        ForEach(summary.readinessChecks.prefix(8)) { check in
-                            HStack(spacing: 10) {
-                                Image(systemName: StatusPalette.systemImage(for: check.status))
-                                    .foregroundStyle(StatusPalette.tone(for: check.status).foreground)
-                                    .accessibilityHidden(true)
-                                Text(check.label)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(preferences.statusText(check.status))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(minHeight: 34)
-                            .help(check.message)
-                            .accessibilityLabel(Text("\(check.label), \(preferences.statusText(check.status)), \(check.message)"))
-                        }
-                    }
-
-                    if !summary.recentEvaluations.isEmpty {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 4) {
-                            MinimalSectionHeader(preferences.text("tasks.releaseCenter.recent"))
-                            ForEach(summary.recentEvaluations.prefix(5)) { task in
-                                Button {
-                                    destination = .tasks
-                                    viewModel.selectTask(task.taskId)
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: StatusPalette.systemImage(for: task.status))
-                                            .foregroundStyle(StatusPalette.tone(for: task.status).foreground)
-                                        Text(task.description)
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Spacer()
-                                        Text(task.finalQualityScore.map(String.init) ?? "-")
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    .frame(minHeight: 36)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    if let error = viewModel.releaseE2EError, !error.isEmpty {
-                        MinimalNoticeBar(message: error, status: "error")
-                    }
-                }
-                .minimalPageContentFrame(topPadding: 12)
-            }
-        } else {
-            MinimalWorkflowStateView(
-                state: .empty,
-                title: preferences.text("tasks.releaseEvaluation.empty"),
-                actionTitle: preferences.text("tasks.releaseEvaluation.refresh")
-            ) {
-                viewModel.loadReleaseEvaluation()
-            }
-        }
-    }
-
-    private func releaseValue(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3.weight(.semibold))
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
     }
 
     private var filteredTasks: [TaskOrchestrationViewModel.TaskSummary] {
@@ -616,29 +398,21 @@ struct MinimalRunsOverviewView: View {
     }
 
     private func runRow(_ task: TaskOrchestrationViewModel.TaskSummary) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .center, spacing: 9) {
             Image(systemName: StatusPalette.systemImage(for: task.status))
                 .foregroundStyle(StatusPalette.tone(for: task.status).foreground)
                 .frame(width: 16)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.description)
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    Text(preferences.statusText(task.status))
-                    if task.totalCount > 0 {
-                        Text("\(task.completedCount)/\(task.totalCount)")
-                    }
-                    if let ownerAgent = task.ownerAgent {
-                        Text(ownerAgent)
-                    }
-                }
+            Text(conciseTaskTitle(task.description))
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 12)
+            Text(preferences.statusText(task.status))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 7)
         .accessibilityElement(children: .combine)
     }
 
@@ -646,11 +420,7 @@ struct MinimalRunsOverviewView: View {
     private var runDetail: some View {
         switch viewModel.viewMode {
         case .createForm:
-            TaskNewTaskForm(
-                viewModel: viewModel,
-                settingsVM: settingsViewModel,
-                defaultProjectPath: defaultProjectPath
-            )
+            emptyRunState
         case .releaseCenter:
             emptyRunState
         case .detail:
@@ -692,46 +462,55 @@ struct MinimalRunsOverviewView: View {
                 }
             }
         } else {
-            SimpleStartWorkflowView(
-                viewModel: viewModel,
-                defaultProjectPath: defaultProjectPath
-            )
+            MinimalWorkflowStateView(
+                state: .empty,
+                title: preferences.text("tasks.overview.newTask"),
+                detail: preferences.text("tasks.overview.newTask.detail"),
+                actionTitle: preferences.text("tasks.overview.newTask")
+            ) {
+                onStartWork()
+            }
         }
     }
 
     private func selectedRun(_ task: TaskOrchestrationViewModel.TaskDetail) -> some View {
-        ScrollView {
+        return ScrollView {
             VStack(spacing: 0) {
-                runHeader(task)
-                Divider()
-
-                VStack(alignment: .leading, spacing: 16) {
-                    AcrossVisualResultOverview(
-                        contract: AcrossVisualResultFactory.make(task: task),
-                        preferences: preferences
+                VStack(alignment: .leading, spacing: 14) {
+                    AcrossTaskResultOverview(
+                        task: task,
+                        preferences: preferences,
+                        viewModel: viewModel,
+                        onOpenEvidence: {
+                            openEvidence(for: task)
+                        }
                     )
 
-                    DisclosureGroup(preferences.text("tasks.description"), isExpanded: .constant(true)) {
-                        Text(task.description)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                    }
-
                     if let qualityHealth = task.qualityHealth {
-                        Divider()
                         qualitySection(qualityHealth, report: task.deliveryReport)
                     }
 
+                    if let remote = task.remoteExecution {
+                        remoteExecutionRoute(remote)
+                    }
+
+                    MinimalDisclosureSection(
+                        title: preferences.text("tasks.description"),
+                        detail: conciseTaskTitle(task.description),
+                        isExpanded: $showsTaskDescription
+                    ) {
+                        Text(task.description)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     if !task.waves.isEmpty {
-                        Divider()
                         waveSection(task.waves)
                     } else if !task.subtasks.isEmpty {
-                        Divider()
                         subtaskSection(task.subtasks)
                     } else if task.status == "decomposing" {
-                        Divider()
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
@@ -741,13 +520,11 @@ struct MinimalRunsOverviewView: View {
                     }
 
                     if !task.artifacts.isEmpty {
-                        Divider()
                         artifactSection(task.artifacts)
                     }
 
                     if let observability = task.observability,
                        !observability.timeline.isEmpty || !observability.qualityGates.isEmpty {
-                        Divider()
                         observabilitySection(observability)
                     }
                 }
@@ -757,54 +534,14 @@ struct MinimalRunsOverviewView: View {
         }
     }
 
-    private func runHeader(_ task: TaskOrchestrationViewModel.TaskDetail) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(task.taskId)
-                    .font(.headline.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let projectDir = task.projectDir {
-                    Text(projectDir)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 10)
-            MinimalWorkflowStatusLabel(status: task.status)
-
-            if canShowEvidence(for: task) {
-                MinimalIconButton(
-                    systemName: "doc.text.magnifyingglass",
-                    label: preferences.text("tasks.evidence.view"),
-                    isDisabled: viewModel.isLoadingTaskEvidence
-                ) {
-                    AcrossLearningProgressStore.shared.record([
-                        AcrossLearningEvent(kind: .evidenceInspected, sourceID: task.taskId)
-                    ])
-                    viewModel.loadTaskEvidenceBundle(
-                        task.taskId,
-                        releaseGate: isReleaseE2ETask(task)
-                    )
-                }
-                MinimalIconButton(
-                    systemName: "square.and.arrow.down",
-                    label: preferences.text("tasks.evidence.export"),
-                    isDisabled: viewModel.isLoadingTaskEvidence
-                ) {
-                    viewModel.exportTaskEvidenceBundle(
-                        task.taskId,
-                        releaseGate: isReleaseE2ETask(task)
-                    )
-                }
-            }
-
-            lifecycleControls(task)
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 54)
+    private func openEvidence(for task: TaskOrchestrationViewModel.TaskDetail) {
+        AcrossLearningProgressStore.shared.record([
+            AcrossLearningEvent(kind: .evidenceInspected, sourceID: task.taskId)
+        ])
+        viewModel.loadTaskEvidenceBundle(
+            task.taskId,
+            releaseGate: isReleaseE2ETask(task)
+        )
     }
 
     @ViewBuilder
@@ -845,19 +582,32 @@ struct MinimalRunsOverviewView: View {
         _ health: TaskOrchestrationQualityHealth,
         report: TaskOrchestrationDeliveryReport?
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            MinimalSectionHeader(preferences.text("tasks.deliveryHealth"))
-            MinimalKeyValueRow(
-                preferences.text("tasks.delivery"),
-                value: preferences.statusText(health.deliveryQuality)
-            )
-            MinimalKeyValueRow(
-                preferences.text("tasks.orchestration"),
-                value: preferences.statusText(health.orchestrationHealth)
-            )
-            MinimalKeyValueRow(
-                preferences.text("tasks.score"),
-                value: report?.qualityReport?.finalQualityScore.map(String.init) ?? "-"
+        let score = report?.qualityReport?.finalQualityScore.map(String.init) ?? "-"
+        let delivery = preferences.statusText(health.deliveryQuality)
+        let orchestration = preferences.statusText(health.orchestrationHealth)
+        let hasIssue = !(health.deliveryQualityReport?.missingRequired ?? []).isEmpty
+            || !(health.deliveryQualityReport?.failedConstraints ?? []).isEmpty
+        let status = hasIssue ? "failed" : health.deliveryQuality
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: StatusPalette.systemImage(for: status))
+                    .foregroundStyle(StatusPalette.tone(for: status).foreground)
+                    .accessibilityHidden(true)
+                Text(
+                    String(
+                        format: preferences.text("tasks.delivery.summary"),
+                        delivery,
+                        orchestration,
+                        score
+                    )
+                )
+                .font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                "\(preferences.text("tasks.deliveryHealth")): \(delivery), \(orchestration), \(score)"
             )
 
             ForEach(health.deliveryQualityReport?.missingRequired ?? [], id: \.self) { item in
@@ -879,34 +629,84 @@ struct MinimalRunsOverviewView: View {
     }
 
     private func waveSection(_ waves: [TaskOrchestrationWaveDetail]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            MinimalSectionHeader(preferences.text("tasks.waves"), detail: "\(waves.count)")
-            ForEach(waves) { wave in
-                DisclosureGroup {
+        MinimalDisclosureSection(
+            title: preferences.text("tasks.waves"),
+            detail: String(format: preferences.text("tasks.waves.summary"), waves.count),
+            isExpanded: $showsWaveDetails
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 132), spacing: 8)],
+                    spacing: 8
+                ) {
+                    ForEach(waves) { wave in
+                        Button {
+                            selectedWaveNumber = selectedWaveNumber == wave.waveNumber
+                                ? nil
+                                : wave.waveNumber
+                        } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: StatusPalette.systemImage(for: wave.status))
+                                    .foregroundStyle(StatusPalette.tone(for: wave.status).foreground)
+                                    .accessibilityHidden(true)
+                                Text(String(format: preferences.text("tasks.waveNumber"), wave.waveNumber))
+                                    .font(.system(size: 12, weight: .medium))
+                                Spacer(minLength: 4)
+                                Image(systemName: selectedWaveNumber == wave.waveNumber ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 34)
+                            .background(
+                                selectedWaveNumber == wave.waveNumber
+                                    ? AcrossTheme.accent.opacity(0.10)
+                                    : Color.secondary.opacity(0.05)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            "\(String(format: preferences.text("tasks.waveNumber"), wave.waveNumber)), \(preferences.statusText(wave.status))"
+                        )
+                        .accessibilityValue(
+                            selectedWaveNumber == wave.waveNumber
+                                ? preferences.text("tasks.section.expanded")
+                                : preferences.text("tasks.section.collapsed")
+                        )
+                    }
+                }
+
+                if let selectedWave = waves.first(where: { $0.waveNumber == selectedWaveNumber }) {
                     VStack(spacing: 0) {
-                        ForEach(wave.subtasks) { subtask in
+                        ForEach(selectedWave.subtasks) { subtask in
                             subtaskRow(subtask)
-                            if subtask.id != wave.subtasks.last?.id { Divider() }
+                            if subtask.id != selectedWave.subtasks.last?.id {
+                                Divider().opacity(0.45)
+                            }
                         }
                     }
-                    .padding(.top, 6)
-                } label: {
-                    HStack {
-                        Text(String(format: preferences.text("tasks.waveNumber"), wave.waveNumber))
-                        Spacer()
-                        MinimalWorkflowStatusLabel(status: wave.status)
-                    }
+                    .padding(.horizontal, 2)
                 }
             }
         }
     }
 
     private func subtaskSection(_ subtasks: [TaskOrchestrationSubtaskDetail]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            MinimalSectionHeader(preferences.text("tasks.subtasksLabel"), detail: "\(subtasks.count)")
-            ForEach(subtasks) { subtask in
-                subtaskRow(subtask)
-                if subtask.id != subtasks.last?.id { Divider() }
+        MinimalDisclosureSection(
+            title: preferences.text("tasks.subtasksLabel"),
+            detail: String(format: preferences.text("tasks.subtasks.summary"), subtasks.count),
+            isExpanded: $showsWaveDetails
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(subtasks) { subtask in
+                    subtaskRow(subtask)
+                    if subtask.id != subtasks.last?.id {
+                        Divider().opacity(0.45)
+                    }
+                }
             }
         }
     }
@@ -939,44 +739,139 @@ struct MinimalRunsOverviewView: View {
     }
 
     private func artifactSection(_ artifacts: [TaskOrchestrationArtifact]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            MinimalSectionHeader(preferences.text("tasks.artifacts"), detail: "\(artifacts.count)")
-            ForEach(artifacts) { artifact in
-                HStack(spacing: 10) {
-                    Image(systemName: "doc")
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(artifact.fileName)
-                            .font(.callout)
-                        Text(artifact.filePath)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+        MinimalDisclosureSection(
+            title: preferences.text("tasks.artifacts"),
+            detail: String(format: preferences.text("tasks.artifacts.summary"), artifacts.count),
+            isExpanded: $showsArtifactDetails
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(visibleArtifacts(artifacts).enumerated()), id: \.element.id) { index, artifact in
+                    Button {
+                        viewModel.previewArtifact(artifact)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "doc")
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                            Text(artifact.fileName)
+                                .font(.callout)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(artifact.fileSize)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            if viewModel.isLoadingArtifactPreview {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else if artifact.filePath.hasPrefix("/api/workers/artifacts/") {
+                                Image(systemName: "eye")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .contentShape(Rectangle())
                     }
-                    Spacer()
-                    Text(artifact.fileSize)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .disabled(!artifact.filePath.hasPrefix("/api/workers/artifacts/") || viewModel.isLoadingArtifactPreview)
+                    .accessibilityLabel("\(preferences.text("tasks.artifacts")): \(artifact.fileName)")
+                    .accessibilityHint(preferences.text("tasks.artifacts.previewHint"))
+                    .padding(.vertical, 7)
+
+                    if index < visibleArtifacts(artifacts).count - 1 {
+                        Divider().opacity(0.35)
+                    }
                 }
-                .padding(.vertical, 7)
-                Divider()
+
+                if artifacts.count > 8 {
+                    Button {
+                        showsAllArtifacts.toggle()
+                    } label: {
+                        Label(
+                            showsAllArtifacts
+                                ? preferences.text("tasks.artifacts.showLess")
+                                : String(
+                                    format: preferences.text("tasks.artifacts.showMore"),
+                                    artifacts.count - 8
+                                ),
+                            systemImage: showsAllArtifacts ? "chevron.up" : "chevron.down"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AcrossTheme.accent)
+                    .padding(.top, 8)
+                }
             }
         }
     }
 
+    private func visibleArtifacts(_ artifacts: [TaskOrchestrationArtifact]) -> [TaskOrchestrationArtifact] {
+        showsAllArtifacts ? artifacts : Array(artifacts.prefix(8))
+    }
+
+    private func conciseTaskTitle(_ description: String) -> String {
+        let firstLine = description
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard firstLine.count > 72 else {
+            return firstLine.isEmpty ? preferences.text("tasks.result.title") : firstLine
+        }
+        return String(firstLine.prefix(69)) + "…"
+    }
+
+    private func artifactPreviewSheet(_ preview: TaskOrchestrationViewModel.ArtifactPreview) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text")
+                    .foregroundStyle(AcrossTheme.accent)
+                Text(preview.fileName)
+                    .font(.headline)
+                Spacer()
+                Button {
+                    viewModel.closeArtifactPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(preferences.text("settings.close"))
+            }
+
+            ScrollView {
+                Text(preview.content)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 640, minHeight: 460)
+    }
+
     private func observabilitySection(_ observability: TaskOrchestrationTaskObservability) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            MinimalSectionHeader(
-                preferences.text("tasks.observability"),
-                detail: observability.qualityScore.map(String.init)
-            )
-            DisclosureGroup(preferences.text("tasks.timeline")) {
+        MinimalDisclosureSection(
+            title: preferences.text("tasks.observability"),
+            detail: String(
+                format: preferences.text("tasks.observability.summary"),
+                observability.timeline.count,
+                observability.qualityGates.count
+            ),
+            isExpanded: $showsObservabilityDetails
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                if !observability.timeline.isEmpty {
+                    Text(preferences.text("tasks.timeline"))
+                        .font(.system(size: 12, weight: .semibold))
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(observability.timeline) { event in
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: StatusPalette.systemImage(for: event.status ?? "observed"))
                                 .foregroundStyle(StatusPalette.tone(for: event.status ?? "observed").foreground)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(event.label ?? event.kind)
                                     .font(.caption.weight(.medium))
@@ -989,22 +884,46 @@ struct MinimalRunsOverviewView: View {
                         }
                     }
                 }
-                .padding(.top, 8)
-            }
-            DisclosureGroup(preferences.text("tasks.observability.gates")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(observability.qualityGates) { gate in
-                        HStack {
-                            Text(gate.adapterId)
-                                .font(.caption.monospaced())
-                            Spacer()
-                            MinimalWorkflowStatusLabel(status: gate.status)
+
+                if !observability.qualityGates.isEmpty {
+                    Text(preferences.text("tasks.observability.gates"))
+                        .font(.system(size: 12, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(observability.qualityGates) { gate in
+                            HStack {
+                                Text(gate.adapterId)
+                                    .font(.caption.monospaced())
+                                    .lineLimit(1)
+                                Spacer()
+                                MinimalWorkflowStatusLabel(status: gate.status)
+                            }
                         }
                     }
                 }
-                .padding(.top, 8)
             }
         }
+    }
+
+    private func remoteExecutionRoute(_ execution: TaskOrchestrationRemoteExecution) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.connected.to.line.below")
+                .foregroundStyle(AcrossTheme.accent)
+                .accessibilityHidden(true)
+            Text(execution.nodeId ?? preferences.text("tasks.remoteExecution.waitingNode"))
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 12)
+            Text(
+                execution.phases
+                    .map { preferences.text("tasks.remoteExecution.phase.\($0.id)") }
+                    .joined(separator: "  ›  ")
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(preferences.text("tasks.remoteExecution.title"))
     }
 
     @ViewBuilder
@@ -1058,12 +977,6 @@ struct MinimalRunsOverviewView: View {
         .formStyle(.grouped)
     }
 
-    private func canShowEvidence(for task: TaskOrchestrationViewModel.TaskDetail) -> Bool {
-        ["completed", "completed_with_failures"].contains(task.status)
-            || task.qualityHealth != nil
-            || task.deliveryReport != nil
-    }
-
     private func canCancel(_ status: String) -> Bool {
         !["completed", "completed_with_failures", "failed", "cancelled", "suspended", "paused"]
             .contains(status)
@@ -1078,6 +991,4 @@ struct MinimalRunsOverviewView: View {
 private enum RunDestination: String {
     case home
     case tasks
-    case quality
-    case release
 }

@@ -17,14 +17,8 @@ struct QualityGateOperationsView: View {
         VStack(spacing: 0) {
             if showsCommandBar {
                 commandBar
-                Rectangle().fill(AcrossTheme.separator(for: colorScheme)).frame(height: 1)
             }
-            HSplitView {
-                gateForm
-                    .frame(minWidth: 285, idealWidth: 320, maxWidth: 380)
-                resultContent
-                    .frame(minWidth: 520, maxWidth: .infinity)
-            }
+            pageContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AcrossTheme.canvasFill(for: colorScheme))
@@ -52,6 +46,21 @@ struct QualityGateOperationsView: View {
                 "This will push the selected feature branch, create or update a draft pull request, watch CI, and publish the gate result. Credentials remain host-managed and are never entered or stored here.",
                 "这会推送所选功能分支、创建或更新草稿 PR、等待 CI，并发布质量门结果。凭据始终由主机管理，不会在此输入或保存。"
             ))
+        }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        if let result = operations.result {
+            QualityGateResultView(result: result, preferences: preferences)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    configurationContent
+                    executionFeedback
+                }
+                .minimalPageContentFrame(topPadding: 12)
+            }
         }
     }
 
@@ -99,106 +108,95 @@ struct QualityGateOperationsView: View {
         .background(AcrossTheme.panelFill(for: colorScheme))
     }
 
-    private var gateForm: some View {
-        VStack(spacing: 0) {
+    private var configurationContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            MinimalSectionHeader(
+                preferences.text("gate.form.title"),
+                detail: localized(
+                    "Choose a repository and how Across may inspect it.",
+                    "选择代码仓库，并确认 Across 可以如何检查。"
+                )
+            )
+
+            repositorySelector
+            operationModeSelector
+
+            MinimalDisclosureSection(
+                title: localized("Advanced settings", "高级设置"),
+                isExpanded: $showsAdvancedOptions
+            ) {
+                advancedSettings
+            }
+
+            if let validationError = operations.draft.validationError {
+                Label(localizedValidationError(validationError), systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(StatusPalette.tone(for: "attention").foreground)
+            }
+
             HStack {
-                Text(preferences.text("gate.form.title"))
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer()
-                Image(systemName: "slider.horizontal.3")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(AcrossTheme.separator(for: colorScheme)).frame(height: 1)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 13) {
-                    repositorySelector
-                    operationModeSelector
-
-                    DisclosureGroup(
-                        localized("Advanced settings", "高级设置"),
-                        isExpanded: $showsAdvancedOptions
-                    ) {
-                        VStack(alignment: .leading, spacing: 13) {
-                            HStack(spacing: 8) {
-                                gateTextField(preferences.text("gate.form.base"), text: $operations.draft.baseRef)
-                                gateTextField(preferences.text("gate.form.head"), text: $operations.draft.headRef)
-                            }
-                            gateTextField(preferences.text("gate.form.branch"), text: $operations.draft.branch)
-                            gateTextField(preferences.text("gate.form.commit"), text: $operations.draft.commit)
-                            gateTextField(preferences.text("gate.form.ciPath"), text: $operations.draft.ciPath)
-
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(preferences.text("gate.form.ciWait"))
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                Stepper(value: $operations.draft.ciWaitSeconds, in: 0...900, step: 10) {
-                                    Text(String(format: preferences.text("gate.form.seconds"), operations.draft.ciWaitSeconds))
-                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                }
-                                .accessibilityLabel(Text(preferences.text("gate.form.ciWait")))
-                            }
-
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(preferences.text("gate.form.maxRepairs"))
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                Stepper(value: $operations.draft.maxRepairs, in: 0...10) {
-                                    Text(operations.draft.maxRepairs == 0
-                                        ? preferences.text("gate.form.plannedOnly")
-                                        : "\(operations.draft.maxRepairs)")
-                                        .font(.system(size: 11, weight: .semibold))
-                                }
-                                .accessibilityLabel(Text(preferences.text("gate.form.maxRepairs")))
-                            }
-
-                            if operations.draft.operationMode == .localReadOnly {
-                                Toggle(preferences.text("gate.form.draftPR"), isOn: $operations.draft.draftPR)
-                                    .toggleStyle(.checkbox)
-                                    .font(.system(size: 11))
-                                    .help(preferences.text("gate.form.draftPRHelp"))
-                            } else {
-                                remoteSettings
-                            }
-
-                            EvidencePanel(
-                                title: preferences.text("gate.form.safety"),
-                                summary: preferences.text("gate.form.safetyDetail"),
-                                status: "ready",
-                                statusLabel: preferences.statusText("ready")
-                            ) {
-                                Text(preferences.text("gate.form.noRemoteMutation"))
-                                    .font(.system(size: 9))
-                            }
-                        }
-                        .padding(.top, 10)
+                Label(
+                    operations.draft.operationMode == .localReadOnly
+                        ? preferences.text("gate.form.noRemoteMutation")
+                        : localized("GitHub changes require confirmation.", "GitHub 修改需要再次确认。"),
+                    systemImage: "lock.shield"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                Spacer(minLength: 16)
+                Button {
+                    Task { await operations.run() }
+                } label: {
+                    if operations.isRunning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label(preferences.text("gate.run"), systemImage: "play.fill")
                     }
-                    .font(.system(size: 11, weight: .medium))
-
-                    if let validationError = operations.draft.validationError {
-                        Label(localizedValidationError(validationError), systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 10))
-                            .foregroundStyle(StatusPalette.tone(for: "attention").foreground)
-                    }
-
                 }
-                .padding(12)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(operations.draft.validationError != nil || operations.isRunning || !repositoryStore.isAccessing)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityHint(Text(preferences.text("gate.runHelp")))
             }
         }
-        .background(AcrossTheme.panelFill(for: colorScheme))
+    }
+
+    private var advancedSettings: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 8) {
+                gateTextField(preferences.text("gate.form.base"), text: $operations.draft.baseRef)
+                gateTextField(preferences.text("gate.form.head"), text: $operations.draft.headRef)
+            }
+            gateTextField(preferences.text("gate.form.branch"), text: $operations.draft.branch)
+            gateTextField(preferences.text("gate.form.commit"), text: $operations.draft.commit)
+            gateTextField(preferences.text("gate.form.ciPath"), text: $operations.draft.ciPath)
+
+            Stepper(value: $operations.draft.ciWaitSeconds, in: 0...900, step: 10) {
+                Text("\(preferences.text("gate.form.ciWait"))  ·  \(String(format: preferences.text("gate.form.seconds"), operations.draft.ciWaitSeconds))")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            Stepper(value: $operations.draft.maxRepairs, in: 0...10) {
+                Text("\(preferences.text("gate.form.maxRepairs"))  ·  \(operations.draft.maxRepairs)")
+                    .font(.system(size: 11, weight: .medium))
+            }
+
+            if operations.draft.operationMode == .localReadOnly {
+                Toggle(preferences.text("gate.form.draftPR"), isOn: $operations.draft.draftPR)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11))
+                    .help(preferences.text("gate.form.draftPRHelp"))
+            } else {
+                remoteSettings
+            }
+        }
     }
 
     @ViewBuilder
-    private var resultContent: some View {
-        if operations.isRunning && operations.result == nil {
+    private var executionFeedback: some View {
+        if operations.isRunning {
             runningContent
-        } else if let result = operations.result {
-            QualityGateResultView(result: result, preferences: preferences)
+                .frame(minHeight: 150)
         } else if let error = operations.errorMessage {
             OperationalContentStateView(
                 state: .error(error),
@@ -218,16 +216,6 @@ struct QualityGateOperationsView: View {
                     .accessibilityLabel(Text(failure.recoveryHint))
                 }
             }
-        } else if operations.draft.repoRoot.isEmpty {
-            OperationalContentStateView(
-                state: .disabled(preferences.text("gate.selectRepository")),
-                title: preferences.text("gate.selectRepository")
-            )
-        } else {
-            OperationalContentStateView(
-                state: .disabled(preferences.text("gate.noResult.detail")),
-                title: preferences.text("gate.noResult")
-            )
         }
     }
 

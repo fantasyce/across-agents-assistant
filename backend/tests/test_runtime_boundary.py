@@ -196,10 +196,10 @@ def test_product_runtime_env_ignores_protected_plugin_install_sources(tmp_path):
         "ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
         "ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
     }
-    assert _install_source(_known_plugin("across-context"), safe_env) == "git+https://github.com/fantasyce/across-context.git#v0.10.0"
-    assert _install_source(_known_plugin("across-orchestrator"), safe_env) == "git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0"
-    assert _install_source(_known_plugin("across-autopilot"), safe_env) == "git+https://github.com/fantasyce/across-autopilot.git#v0.4.0"
-    assert DEFAULT_ORCHESTRATOR_INSTALL_SOURCE == "git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0"
+    assert _install_source(_known_plugin("across-context"), safe_env) == "git+https://github.com/fantasyce/across-context.git#v0.11.0"
+    assert _install_source(_known_plugin("across-orchestrator"), safe_env) == "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3"
+    assert _install_source(_known_plugin("across-autopilot"), safe_env) == "git+https://github.com/fantasyce/across-autopilot.git#v0.5.0"
+    assert DEFAULT_ORCHESTRATOR_INSTALL_SOURCE == "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3"
 
 
 def test_developer_mode_preserves_protected_plugin_install_sources(tmp_path):

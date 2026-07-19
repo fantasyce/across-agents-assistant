@@ -43,6 +43,22 @@ enum LocalAppPaths {
         subdir("evidence")
     }
 
+    static var autopilotWorkbenchSnapshotCache: URL {
+        let cacheDirectory: URL
+        if hasAllowedAppHomeOverride {
+            cacheDirectory = subdir("cache")
+        } else {
+            cacheDirectory = acrossRoot
+                .appendingPathComponent("cache", isDirectory: true)
+                .appendingPathComponent("across-agents-assistant", isDirectory: true)
+            try? FileManager.default.createDirectory(
+                at: cacheDirectory,
+                withIntermediateDirectories: true
+            )
+        }
+        return cacheDirectory.appendingPathComponent("autopilot-workbench-snapshot.json")
+    }
+
     static var backendSocketPath: String {
         runDir.appendingPathComponent("across-agents.sock").path
     }

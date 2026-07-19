@@ -149,6 +149,27 @@ def host_agent_adapter_command(agent_id: str) -> list[str]:
     return command
 
 
+def autopilot_workflow_adapter_command(workflow_id: str, loop_spec_id: str) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            "autopilot-workflow-adapter",
+            "--workflow-id",
+            str(workflow_id),
+            "--loop-spec",
+            str(loop_spec_id),
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "across_agents_assistant.autopilot_workflow_adapter",
+        "--workflow-id",
+        str(workflow_id),
+        "--loop-spec",
+        str(loop_spec_id),
+    ]
+
+
 def _normalize_external_agent_id(agent_id: Any) -> str:
     return str(agent_id or "").strip().lower()
 

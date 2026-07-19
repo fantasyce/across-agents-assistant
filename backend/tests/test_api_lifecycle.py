@@ -3,6 +3,8 @@
 import json
 import os
 import signal
+import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -10,6 +12,34 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+
+
+def test_backend_api_socket_is_restricted_to_the_current_user():
+    import across_agents_assistant.api_server as srv
+
+    with tempfile.TemporaryDirectory(prefix="aaa-sock-", dir="/tmp") as directory:
+        socket_path = Path(directory) / "api.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(socket_path))
+            socket_path.chmod(0o666)
+            assert srv._restrict_api_socket_permissions(socket_path) is True
+            assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
+        finally:
+            listener.close()
+
+
+def test_backend_api_socket_is_private_from_initial_bind():
+    import across_agents_assistant.api_server as srv
+
+    with tempfile.TemporaryDirectory(prefix="aaa-sock-", dir="/tmp") as directory:
+        socket_path = Path(directory) / "api.sock"
+        listener = srv._bind_private_api_socket(socket_path)
+        try:
+            assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
+            assert listener.getsockname() == str(socket_path)
+        finally:
+            listener.close()
 
 
 def test_importing_api_server_does_not_run_orphan_recovery():
@@ -153,6 +183,7 @@ def test_startup_restores_configured_self_iteration_scheduler():
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -191,7 +222,11 @@ os.environ["ACROSS_AGENTS_HOME"] = str(app_home)
 import across_agents_assistant.api_server as srv
 
 with TestClient(srv.app):
+    deadline = time.monotonic() + 2.0
     status = srv.get_autopilot_trigger_scheduler().status()
+    while not status["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = srv.get_autopilot_trigger_scheduler().status()
     trigger = srv.get_autopilot_trigger_registry().list()["triggers"][0]
     print(f"SCHEDULER_RUNNING={status['running']}")
     print(f"SCHEDULE_DAILY_TIME={trigger['schedule']['daily_time']}")

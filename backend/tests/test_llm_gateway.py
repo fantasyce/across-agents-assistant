@@ -1,6 +1,6 @@
 import pytest
 
-from across_agents_assistant.llm_gateway.base_adapter import LLMResponse
+from across_agents_assistant.llm_gateway.base_adapter import ChatCompletionRequest, LLMResponse
 from across_agents_assistant.llm_gateway.config import LLMConfig, LLMProviderConfig, ModelInfo
 from across_agents_assistant.llm_gateway.gateway import LLMGateway
 from across_agents_assistant.llm_gateway.minimax_adapter import MiniMaxAdapter
@@ -54,6 +54,23 @@ def test_adapter_timeout_seconds_can_be_configured(monkeypatch):
 
     monkeypatch.setenv("ACROSS_LLM_MINIMAX_CHAT_TIMEOUT_SECONDS", "240")
     assert adapter.timeout_seconds(default=180.0) == 240.0
+
+
+def test_request_timeout_seconds_overrides_provider_default(monkeypatch):
+    monkeypatch.setenv("ACROSS_LLM_MINIMAX_CHAT_TIMEOUT_SECONDS", "210")
+    adapter = MiniMaxAdapter(LLMProviderConfig(
+        provider_id="minimax",
+        name="MiniMax",
+        api_key_env="MINIMAX_API_KEY",
+        endpoint="https://example.invalid",
+    ))
+    request = ChatCompletionRequest(messages=[], model="test", timeout_seconds=45)
+
+    assert adapter.request_timeout_seconds(request, default=180.0) == 45.0
+    assert adapter.request_timeout_seconds(
+        ChatCompletionRequest(messages=[], model="test"),
+        default=180.0,
+    ) == 210.0
 
 
 @pytest.mark.asyncio

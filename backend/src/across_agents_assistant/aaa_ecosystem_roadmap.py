@@ -236,7 +236,9 @@ def _trust_sandbox_section(
         _check("agent_plugin_trust_policy", bool(agent_plugin_runtime), "Generic agent plugin runtime reports trust policy, mutation boundary, and approval status."),
     ]
     failed_required = [item for item in checks[:4] if item["status"] != "passed"]
-    status = "failed" if failed_required else "attention" if any(item["status"] != "passed" for item in checks[4:]) else "passed"
+    # MCP and generic Agent plugins are optional integrations. Their absence is
+    # visible in the item list but must not downgrade the required trust gates.
+    status = "failed" if failed_required else "passed"
     return _section(
         "trust_sandbox",
         "Trust And Sandbox",
@@ -279,7 +281,7 @@ def _evaluation_telemetry_section(
         "failed"
         if ops_status == "failed"
         else "attention"
-        if failed or readiness == "blocked" or not (release_evidence_ready or interop_evidence_ready)
+        if failed or readiness == "blocked" or (run_count > 0 and not (release_evidence_ready or interop_evidence_ready))
         else "passed"
     )
     items = [
@@ -460,16 +462,6 @@ def _actions(sections: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "title": f"Advance {str(section.get('title') or route_id)}",
                 "reason": f"{str(section.get('title') or route_id)} is {status}.",
                 "endpoint": section.get("endpoint"),
-            }
-        )
-    if not actions:
-        actions.append(
-            {
-                "id": "continue_ecosystem_e2e",
-                "priority": "low",
-                "title": "Continue ecosystem E2E",
-                "reason": "All AAA ecosystem routes are ready.",
-                "endpoint": ROUTE_ENDPOINTS["roadmap"],
             }
         )
     return actions[:8]

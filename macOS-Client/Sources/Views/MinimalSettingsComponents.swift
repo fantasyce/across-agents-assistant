@@ -109,11 +109,7 @@ struct MinimalSettingsSection<Content: View>: View {
                 }
             }
 
-            VStack(spacing: 0) {
-                Divider()
-                content()
-                Divider()
-            }
+            content()
         }
     }
 }

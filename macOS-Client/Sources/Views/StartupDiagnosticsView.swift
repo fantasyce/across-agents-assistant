@@ -5,6 +5,7 @@ struct StartupDiagnosticsView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var appPreferences: AppPreferences
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showingChecks = false
     @State private var showingPassedChecks = false
     @State private var showingPaths = false
     @State private var showingRuntime = false
@@ -55,17 +56,15 @@ struct StartupDiagnosticsView: View {
                     HStack(spacing: 7) {
                         if settingsViewModel.isRunningReleaseVerification {
                             ProgressView()
-                                .scaleEffect(0.6)
+                                .controlSize(.mini)
                                 .frame(width: 12, height: 12)
                         } else {
                             Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 11, weight: .semibold))
                         }
                         Text(appPreferences.text(settingsViewModel.isRunningReleaseVerification ? "releaseVerification.running" : "releaseVerification.run"))
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(settingsViewModel.isRunningReleaseVerification)
@@ -76,21 +75,20 @@ struct StartupDiagnosticsView: View {
                     HStack(spacing: 7) {
                         if settingsViewModel.isLoadingStartupDiagnostics {
                             ProgressView()
-                                .scaleEffect(0.6)
+                                .controlSize(.mini)
                                 .frame(width: 12, height: 12)
                         } else {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 11, weight: .semibold))
                         }
                         Text(appPreferences.text("settings.refresh"))
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
                 }
                 .buttonStyle(.bordered)
                 .disabled(settingsViewModel.isLoadingStartupDiagnostics)
             }
+            .controlSize(.small)
         }
     }
 
@@ -127,90 +125,91 @@ struct StartupDiagnosticsView: View {
     private func checksSection(_ report: StartupDiagnosticsReport) -> some View {
         let attentionChecks = report.checks.filter { !isNormal($0.status) }
         let normalChecks = report.checks.filter { isNormal($0.status) }
-        return diagnosticsSection(
+        return MinimalDisclosureSection(
             title: appPreferences.text("diagnostics.checks"),
-            subtitle: appPreferences.text("diagnostics.checks.subtitle")
+            detail: checksSummary(report),
+            isExpanded: $showingChecks
         ) {
-            VStack(spacing: 0) {
-                ForEach(attentionChecks) { check in
-                    checkRow(check)
+            VStack(spacing: 12) {
+                if !attentionChecks.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(attentionChecks) { check in
+                            checkRow(check)
+                        }
+                    }
                 }
 
                 if !normalChecks.isEmpty {
-                    DisclosureGroup(isExpanded: $showingPassedChecks) {
+                    MinimalDisclosureSection(
+                        title: appPreferences.text("diagnostics.passed"),
+                        detail: "\(normalChecks.count)",
+                        isExpanded: $showingPassedChecks
+                    ) {
                         VStack(spacing: 0) {
                             ForEach(normalChecks) { check in
                                 checkRow(check)
                             }
                         }
-                    } label: {
-                        HStack {
-                            Label(appPreferences.text("diagnostics.passed"), systemImage: "checkmark.circle")
-                            Spacer()
-                            Text("\(normalChecks.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.vertical, 10)
                     }
                 }
             }
         }
     }
 
+    private func checksSummary(_ report: StartupDiagnosticsReport) -> String {
+        var parts: [String] = []
+        if report.summary.failed > 0 {
+            parts.append("\(report.summary.failed) \(appPreferences.text("diagnostics.failed"))")
+        }
+        if report.summary.warnings > 0 {
+            parts.append("\(report.summary.warnings) \(appPreferences.text("diagnostics.warnings"))")
+        }
+        parts.append("\(report.summary.passed) \(appPreferences.text("diagnostics.passed"))")
+        return parts.joined(separator: " · ")
+    }
+
     private func pathsSection(_ report: StartupDiagnosticsReport) -> some View {
-        diagnosticsSection(
+        MinimalDisclosureSection(
             title: appPreferences.text("diagnostics.paths"),
-            subtitle: appPreferences.text("diagnostics.paths.subtitle")
+            detail: appPreferences.text("diagnostics.paths.subtitle"),
+            isExpanded: $showingPaths
         ) {
-            DisclosureGroup(isExpanded: $showingPaths) {
-                VStack(spacing: 0) {
-                    pathRow(title: "App Home", path: report.paths.appHome, canOpen: true)
-                    pathRow(title: "Logs", path: report.paths.logsDir, canOpen: true)
-                    pathRow(title: "Evidence", path: report.paths.evidenceDir, canOpen: true)
-                    pathRow(title: "Socket", path: report.paths.socketPath, canOpen: false)
-                    pathRow(title: "Database", path: report.paths.databasePath, canOpen: false)
-                }
-            } label: {
-                Label(appPreferences.text("diagnostics.paths"), systemImage: "folder")
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.vertical, 10)
+            VStack(spacing: 0) {
+                pathRow(title: appPreferences.text("diagnostics.path.appHome"), path: report.paths.appHome, canOpen: true)
+                pathRow(title: appPreferences.text("diagnostics.path.logs"), path: report.paths.logsDir, canOpen: true)
+                pathRow(title: appPreferences.text("diagnostics.path.evidence"), path: report.paths.evidenceDir, canOpen: true)
+                pathRow(title: appPreferences.text("diagnostics.path.socket"), path: report.paths.socketPath, canOpen: false)
+                pathRow(title: appPreferences.text("diagnostics.path.database"), path: report.paths.databasePath, canOpen: false)
             }
         }
     }
 
     private func runtimeSection(_ report: StartupDiagnosticsReport) -> some View {
-        diagnosticsSection(
+        MinimalDisclosureSection(
             title: appPreferences.text("diagnostics.runtime"),
-            subtitle: appPreferences.text("diagnostics.runtime.subtitle")
+            detail: appPreferences.text("diagnostics.runtime.subtitle"),
+            isExpanded: $showingRuntime
         ) {
-            DisclosureGroup(isExpanded: $showingRuntime) {
-                HStack(spacing: 12) {
-                    metricTile(title: "PID", value: "\(report.runtime.pid)", color: .blue)
-                    metricTile(title: appPreferences.text("diagnostics.tasks"), value: "\(report.runtime.knownTasks)", color: .blue)
-                    metricTile(
-                        title: appPreferences.text("diagnostics.persistence"),
-                        value: appPreferences.text(report.runtime.persistenceInitialized ? "system.yes" : "system.no"),
-                        color: report.runtime.persistenceInitialized ? .green : .orange
-                    )
-                    metricTile(title: appPreferences.text("diagnostics.uptime"), value: uptimeString(report.runtime.uptimeSec), color: .blue)
-                }
-                .padding(.bottom, 10)
-            } label: {
-                Label(appPreferences.text("diagnostics.runtime"), systemImage: "waveform.path.ecg")
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.vertical, 10)
+            HStack(spacing: 12) {
+                metricTile(title: "PID", value: "\(report.runtime.pid)", color: .blue)
+                metricTile(title: appPreferences.text("diagnostics.tasks"), value: "\(report.runtime.knownTasks)", color: .blue)
+                metricTile(
+                    title: appPreferences.text("diagnostics.persistence"),
+                    value: appPreferences.text(report.runtime.persistenceInitialized ? "system.yes" : "system.no"),
+                    color: report.runtime.persistenceInitialized ? .green : .orange
+                )
+                metricTile(title: appPreferences.text("diagnostics.uptime"), value: uptimeString(report.runtime.uptimeSec), color: .blue)
             }
         }
     }
 
     private var releaseVerificationSection: some View {
-        diagnosticsSection(
+        MinimalDisclosureSection(
             title: appPreferences.text("releaseVerification.title"),
-            subtitle: appPreferences.text("releaseVerification.subtitle")
+            detail: appPreferences.text("releaseVerification.subtitle"),
+            isExpanded: $showingReleaseDetails
         ) {
-            DisclosureGroup(isExpanded: $showingReleaseDetails) {
-                VStack(spacing: 10) {
+            VStack(spacing: 10) {
                 if let report = settingsViewModel.releaseVerificationReport {
                     releaseVerificationOverview(report)
                     if let latest = report.latestReleaseE2E {
@@ -233,21 +232,6 @@ struct StartupDiagnosticsView: View {
                         .foregroundColor(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                }
-                .padding(.bottom, 10)
-            } label: {
-                HStack {
-                    Label(appPreferences.text("releaseVerification.latest"), systemImage: "checkmark.seal")
-                    Spacer()
-                    if let report = settingsViewModel.releaseVerificationReport {
-                        MinimalStatusLabel(
-                            text: localizedStatus(report.status),
-                            color: statusColor(report.status)
-                        )
-                    }
-                }
-                .font(.system(size: 12, weight: .medium))
-                .padding(.vertical, 10)
             }
         }
     }
@@ -646,16 +630,6 @@ struct StartupDiagnosticsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func diagnosticsSection<Content: View>(
-        title: String,
-        subtitle: String,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        MinimalSettingsSection(title: title, subtitle: subtitle) {
-            content()
-        }
-    }
-
     private func checkRow(_ check: StartupDiagnosticsCheck) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: iconName(check.status))
@@ -667,28 +641,22 @@ struct StartupDiagnosticsView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(check.title)
+                    Text(localizedCheckTitle(check))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(textColor)
                     Text(localizedStatus(check.status))
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(statusColor(check.status))
                 }
-                Text(check.detail)
+                Text(localizedCheckDetail(check))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let remediation = check.remediation, !remediation.isEmpty {
+                if let remediation = localizedCheckRemediation(check) {
                     Text(remediation)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(statusColor(check.status))
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                if !check.metadataString.isEmpty {
-                    Text(check.metadataString)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
                 }
             }
 
@@ -696,6 +664,80 @@ struct StartupDiagnosticsView: View {
         }
         .padding(12)
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func localizedCheckTitle(_ check: StartupDiagnosticsCheck) -> String {
+        let key = "diagnostics.check.\(check.id).title"
+        let localized = appPreferences.text(key)
+        return localized == key ? check.title : localized
+    }
+
+    private func localizedCheckDetail(_ check: StartupDiagnosticsCheck) -> String {
+        let passed = isNormal(check.status)
+        let key: String
+        switch check.id {
+        case "backend_health":
+            key = "diagnostics.check.backend_health.detail"
+        case "app_home", "logs_dir", "run_dir", "tmp_dir", "evidence_dir", "backend_socket", "database":
+            key = passed ? "diagnostics.check.path.ready" : "diagnostics.check.path.unavailable"
+        case "provider_keys":
+            key = passed ? "diagnostics.check.provider_keys.ready" : "diagnostics.check.provider_keys.missing"
+        case "task_runtime":
+            key = passed ? "diagnostics.check.task_runtime.ready" : "diagnostics.check.task_runtime.unavailable"
+        case "orchestrator_plugin":
+            key = passed ? "diagnostics.check.orchestrator_plugin.ready" : "diagnostics.check.orchestrator_plugin.unavailable"
+        case "worker_network_runtime":
+            if metadataBool("configured", in: check) == false {
+                key = "diagnostics.check.worker_network_runtime.disabled"
+            } else if passed {
+                key = "diagnostics.check.worker_network_runtime.ready"
+            } else {
+                key = "diagnostics.check.worker_network_runtime.unavailable"
+            }
+        case "worker_nodes":
+            let count = metadataInt("node_count", in: check)
+            if count == 0 {
+                return appPreferences.text("diagnostics.check.worker_nodes.empty")
+            }
+            return String(
+                format: appPreferences.text("diagnostics.check.worker_nodes.count"),
+                metadataInt("online_count", in: check),
+                count
+            )
+        default:
+            return appPreferences.resolvedLocaleIdentifier == "zh-Hans"
+                ? appPreferences.text(passed ? "diagnostics.check.generic.ready" : "diagnostics.check.generic.attention")
+                : check.detail
+        }
+        return appPreferences.text(key)
+    }
+
+    private func localizedCheckRemediation(_ check: StartupDiagnosticsCheck) -> String? {
+        guard let raw = check.remediation, !raw.isEmpty else { return nil }
+        let key = "diagnostics.check.\(check.id).remediation"
+        let localized = appPreferences.text(key)
+        if localized != key { return localized }
+        return appPreferences.resolvedLocaleIdentifier == "zh-Hans"
+            ? appPreferences.text("diagnostics.check.generic.remediation")
+            : raw
+    }
+
+    private func metadataInt(_ key: String, in check: StartupDiagnosticsCheck) -> Int {
+        guard let value = check.metadata[key] else { return 0 }
+        switch value {
+        case .number(let number): return Int(number)
+        case .string(let string): return Int(string) ?? 0
+        default: return 0
+        }
+    }
+
+    private func metadataBool(_ key: String, in check: StartupDiagnosticsCheck) -> Bool? {
+        guard let value = check.metadata[key] else { return nil }
+        switch value {
+        case .bool(let bool): return bool
+        case .string(let string): return string.lowercased() == "true"
+        default: return nil
+        }
     }
 
     private func pathRow(title: String, path: String, canOpen: Bool) -> some View {

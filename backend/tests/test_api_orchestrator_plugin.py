@@ -247,6 +247,10 @@ class FakeHTTPOrchestrator:
                     owner.status = "completed"
                     self._json(_task(owner.task_id, owner.project_dir, "completed"))
                     return
+                if self.path == f"/tasks/{owner.task_id}/cancel":
+                    owner.status = "cancelled"
+                    self._json(_task(owner.task_id, owner.project_dir, "cancelled"))
+                    return
                 if self.path == "/loops":
                     owner.last_loop_submit = payload
                     self._json(owner._loop_payload("pending"), 201)
@@ -599,7 +603,7 @@ def test_completed_external_task_acceptance_is_persistent_and_idempotent(monkeyp
     assert summary["review_status"] == "accepted"
 
 
-def test_external_orchestrator_tasks_reject_legacy_lifecycle_controls(monkeypatch, tmp_path):
+def test_external_orchestrator_tasks_allow_host_cancel_but_reject_pause_and_resume(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
@@ -625,11 +629,16 @@ def test_external_orchestrator_tasks_reject_legacy_lifecycle_controls(monkeypatc
             client.post(f"/api/tasks/{task_id}/cancel"),
         ]
 
-    assert [response.status_code for response in responses] == [409, 409, 409]
-    assert all("external Across Orchestrator" in response.json()["detail"] for response in responses)
+    assert [response.status_code for response in responses] == [409, 409, 200]
+    assert all("external Across Orchestrator" in response.json()["detail"] for response in responses[:2])
+    assert responses[2].json() == {
+        "status": "cancelled",
+        "task_id": task_id,
+        "worker_execution": None,
+    }
     assert ("POST", f"/tasks/{task_id}/pause") not in server.requests
     assert ("POST", f"/tasks/{task_id}/resume") not in server.requests
-    assert ("POST", f"/tasks/{task_id}/cancel") not in server.requests
+    assert ("POST", f"/tasks/{task_id}/cancel") in server.requests
 
 
 def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):

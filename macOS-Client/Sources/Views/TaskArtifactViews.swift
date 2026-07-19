@@ -3,11 +3,20 @@ import AppKit
 
 struct ArtifactFileList: View {
     let artifacts: [TaskOrchestrationViewModel.Artifact]
+    let onPreview: (TaskOrchestrationViewModel.Artifact) -> Void
 
     @State private var isArtifactsExpanded = false
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
+
+    init(
+        artifacts: [TaskOrchestrationViewModel.Artifact],
+        onPreview: @escaping (TaskOrchestrationViewModel.Artifact) -> Void = { _ in }
+    ) {
+        self.artifacts = artifacts
+        self.onPreview = onPreview
+    }
 
     private var displayArtifacts: [TaskOrchestrationViewModel.Artifact] {
         var bestByPath: [String: (index: Int, artifact: TaskOrchestrationViewModel.Artifact)] = [:]
@@ -29,39 +38,19 @@ struct ArtifactFileList: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: { isArtifactsExpanded.toggle() }) {
-                HStack(spacing: 6) {
-                    Text(appPreferences.text("tasks.artifacts"))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("(\(displayArtifacts.count))")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-
-                    Image(systemName: "doc.on.doc.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(AcrossTheme.accent)
-
-                    Image(systemName: isArtifactsExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-
-            if isArtifactsExpanded {
-                VStack(spacing: 4) {
-                    ForEach(displayArtifacts) { artifact in
-                        ArtifactRow(artifact: artifact)
+        MinimalDisclosureSection(
+            title: appPreferences.text("tasks.artifacts"),
+            detail: "\(displayArtifacts.count)",
+            isExpanded: $isArtifactsExpanded
+        ) {
+            VStack(spacing: 4) {
+                ForEach(displayArtifacts) { artifact in
+                    ArtifactRow(artifact: artifact) {
+                        onPreview(artifact)
                     }
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isArtifactsExpanded)
     }
 
     private func artifactDisplayKey(_ artifact: TaskOrchestrationViewModel.Artifact) -> String {
@@ -99,33 +88,56 @@ struct ArtifactFileList: View {
 
 struct ArtifactRow: View {
     let artifact: TaskOrchestrationViewModel.Artifact
+    let onPreview: () -> Void
 
     @State private var isHovered = false
     @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var appPreferences: AppPreferences
     private var theme: TaskTheme { TaskTheme(colorScheme: colorScheme) }
 
+    private var supportsPreview: Bool {
+        artifact.filePath.hasPrefix("/api/workers/artifacts/")
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            SVGIconView(name: getFileIconName(fileName: artifact.fileName), size: 16)
+        Button {
+            if supportsPreview {
+                onPreview()
+            } else {
+                NSWorkspace.shared.selectFile(artifact.filePath, inFileViewerRootedAtPath: "")
+            }
+        } label: {
+            HStack(spacing: 10) {
+                SVGIconView(name: getFileIconName(fileName: artifact.fileName), size: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(artifact.fileName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.strongText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(artifact.fileName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.strongText)
 
-                Text(artifact.filePath)
+                    Text(artifact.filePath)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Text(artifact.fileSize)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+
+                if supportsPreview {
+                    Image(systemName: "eye")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .accessibilityHidden(true)
+                }
             }
-
-            Spacer()
-
-            Text(artifact.fileSize)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(isHovered ? theme.hoverBackground : Color.clear)
@@ -136,8 +148,43 @@ struct ArtifactRow: View {
                 isHovered = hovering
             }
         }
-        .onTapGesture {
-            NSWorkspace.shared.selectFile(artifact.filePath, inFileViewerRootedAtPath: "")
+        .accessibilityLabel(artifact.fileName)
+        .accessibilityHint(
+            supportsPreview
+                ? appPreferences.text("tasks.artifacts.previewHint")
+                : appPreferences.text("diagnostics.openPath")
+        )
+    }
+}
+
+struct TaskArtifactPreviewSheet: View {
+    let preview: TaskOrchestrationViewModel.ArtifactPreview
+    let onClose: () -> Void
+    @EnvironmentObject private var appPreferences: AppPreferences
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text")
+                    .foregroundStyle(AcrossTheme.accent)
+                Text(preview.fileName)
+                    .font(.headline)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(appPreferences.text("settings.close"))
+            }
+
+            ScrollView {
+                Text(preview.content)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+        .padding(20)
+        .frame(minWidth: 640, minHeight: 460)
     }
 }

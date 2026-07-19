@@ -73,10 +73,7 @@ private func checkNavigationShape() {
     )
 
     let preferences = source("macOS-Client/Sources/Models/AppPreferences.swift")
-    let expectedChineseTitles = [
-        "operations.reviewQueue": "待你确认",
-        "operations.assist": "工作",
-    ]
+    let expectedChineseTitles = ["operations.assist": "工作"]
     for (key, title) in expectedChineseTitles {
         check(
             preferences.contains("\"\(key)\": \"\(title)\""),
@@ -87,8 +84,10 @@ private func checkNavigationShape() {
     let sidebar = source("macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift")
     let visibleBody = sidebar.components(separatedBy: "private func sectionLabel").first ?? sidebar
     check(visibleBody.contains("ForEach(OperationsWorkbenchSurface.primary)"), "Main navigation must render the Work destination")
-    check(visibleBody.contains("if reviewCount > 0"), "Review must remain hidden when there is nothing to decide")
-    check(visibleBody.contains("navigationRow(.humanReview"), "Review must appear when a decision is waiting")
+    check(visibleBody.contains("attentionSurfaces.contains(surface)"), "Pending work must mark its owning surface")
+    check(visibleBody.contains("Circle()"), "Pending work must use a quiet attention dot")
+    check(!visibleBody.contains("reviewCount"), "The sidebar must not restore a global review counter")
+    check(!visibleBody.contains("navigationRow(.humanReview"), "Review must not return as a duplicate destination")
     check(!visibleBody.contains("secondaryRow("), "Management links must not expand the main navigation")
     check(sidebar.contains(".focused($focusedSurface"), "Keyboard focus must remain tracked without a system outline")
     check(sidebar.contains(".focusEffectDisabled()"), "Main navigation must suppress blue system focus borders")
@@ -98,9 +97,10 @@ private func checkNavigationShape() {
     let settingsCases = settingsCategories.split(separator: "\n").filter {
         $0.trimmingCharacters(in: .whitespaces).hasPrefix("case ")
     }
-    check(settingsCases.count == 7, "Settings navigation must expose seven clear flat destinations")
+    check(settingsCases.count == 8, "Settings navigation must expose eight clear flat destinations")
     check(settings.contains("case plugins"), "Settings must expose Plugin Center directly")
     check(settings.contains("case mcp"), "Settings must expose MCP directly")
+    check(settings.contains("case workers"), "Settings must expose Devices & Workers directly")
     check(!settings.contains("case pluginsAndConnections"), "Plugin Center and MCP must not share one destination")
     check(!settings.contains("case advanced"), "Settings must not hide all product capabilities behind Advanced")
     check(!settings.contains("case workbench"), "Settings must not duplicate Loop Engineering")
@@ -108,6 +108,7 @@ private func checkNavigationShape() {
     check(settings.contains("case capabilities"), "Capabilities must have a direct destination")
     check(settings.contains("PluginLifecycleView"), "Plugin Center must render directly")
     check(settings.contains("MCPPreferencesView"), "MCP settings must render directly")
+    check(settings.contains("DevicesWorkersSettingsView"), "Devices & Workers settings must render directly")
     check(settings.contains("ForEach(SettingsHubCategory.allCases)"), "Settings must render the flat navigation")
     check(settings.contains("switch selectedCategory"), "Settings content must follow the visible category selection")
     check(settings.contains("private var windowControls"), "Settings must integrate controls into the sidebar")
@@ -195,7 +196,7 @@ private func checkWindowChrome() {
     let mainSidebar = slice(
         source("macOS-Client/Sources/Views/MainPanelSidebar.swift"),
         from: "var leftSidebar: some View",
-        to: "private var contextDrawerLabel"
+        to: "var projectChatSidebar"
     )
     check(!mainSidebar.contains("Divider()"), "Main sidebar must use spacing instead of horizontal section rules")
 }
@@ -234,7 +235,6 @@ private func checkPrimaryPageVisualLanguage() {
         "macOS-Client/Sources/Views/MainPanelToolbar.swift",
         "macOS-Client/Sources/Views/OperationsWorkbenchSidebar.swift",
         "macOS-Client/Sources/Views/OperationsWorkbenchShell.swift",
-        "macOS-Client/Sources/Views/HumanReviewQueueView.swift",
         "macOS-Client/Sources/Views/MainPanelChat.swift",
         "macOS-Client/Sources/Views/UnifiedWorkView.swift",
     ]
@@ -274,19 +274,18 @@ private func checkCriticalInteractionContracts() {
     let actions = source("macOS-Client/Sources/Views/MainPanelActions.swift")
     check(actions.contains("submitProtectedTask"), "Work must support protected delivery")
     check(actions.contains("taskTypes: [\"functional\", \"artifact\"]"), "Protected delivery must check behavior and artifacts")
-    check(actions.contains("selectedOperationsSurface = .autopilot"), "Agent Loop review items must route to Loop Engineering")
+    let operationsModel = source("macOS-Client/Sources/Models/OperationsWorkbenchModels.swift")
+    check(operationsModel.contains("normalizedSource.contains(\"agent loop\") ? .autopilot : .qualityGate"), "Agent Loop review dots must route to Loop Engineering")
     check(!actions.contains("openSettings(.workbench)"), "Loop Engineering must not reopen a duplicate Settings workbench")
 
     let runs = source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
+    let visualResults = source("macOS-Client/Sources/Views/AcrossVisualResultViews.swift")
     let minimalControls = source("macOS-Client/Sources/Views/MinimalWorkflowComponents.swift")
     let loopWorkbench = source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
     let memory = source("macOS-Client/Sources/Views/EvidenceMemoryOperationsViews.swift")
-    let simpleStart = source("macOS-Client/Sources/Views/TaskWorkflowStartViews.swift")
     let qualityGate = source("macOS-Client/Sources/Views/QualityGateOperationsView.swift")
     let workspaceViewModel = source("macOS-Client/Sources/ViewModels/AgentWorkspaceOperationsViewModel.swift")
     let projectSetup = source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")
-    check(runs.contains("showsReleaseE2EConfirmation = true"), "Complex E2E must require confirmation")
-    check(runs.contains("tasks.releaseE2E.confirmMessage"), "Complex E2E must explain cost and duration")
     check(runs.contains("RunDestination"), "Runs must use hierarchical destinations")
     check(runs.contains("private var runOverview"), "Runs must start from one workflow-oriented overview")
     check(minimalControls.contains(".frame(width: 32, height: 30)"), "Primary page icon buttons must use one stable size")
@@ -296,20 +295,73 @@ private func checkCriticalInteractionContracts() {
     check(loopWorkbench.contains("MinimalIconButton("), "Loop Engineering must use the shared header icon buttons")
     check(!loopWorkbench.contains("private func iconButton("), "Loop Engineering must not keep a separate toolbar style")
     check(loopWorkbench.contains("@State private var showsTechnicalEvidence = false"), "Loop Engineering technical evidence must start collapsed")
-    check(loopWorkbench.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"), "Loop Engineering raw diagnostics must use progressive disclosure")
+    check(loopWorkbench.contains("title: appPreferences.text(\"workbench.sections\")"), "Loop Engineering must expose one Operational Sections title")
+    check(loopWorkbench.contains("isExpanded: $showsTechnicalEvidence"), "Operational Sections must use the shared disclosure control")
+    check(!loopWorkbench.contains("sectionHeader(appPreferences.text(\"workbench.sections\")"), "Operational Sections must not repeat its title after expansion")
+    check(minimalControls.contains("struct MinimalDisclosureSection"), "Progressive disclosure must use one shared interaction")
+    check(minimalControls.contains("isExpanded.toggle()"), "The whole disclosure row must toggle its content")
+    check(minimalControls.contains("isExpanded ? \"chevron.down\" : \"chevron.right\""), "Disclosure arrows must sit on the right")
+    check(minimalControls.contains(".contentShape(Rectangle())"), "Disclosure labels must be fully clickable")
+    check(!loopWorkbench.contains("DisclosureGroup(isExpanded: $showsTechnicalEvidence)"), "Technical evidence must not keep the leading native disclosure arrow")
+    check(!loopWorkbench.contains("minHeight: 220, maxHeight: 220"), "Technical evidence must align naturally instead of using fixed card canvases")
     check(!loopWorkbench.contains("if let endpoint = action.endpoint"), "Loop Engineering actions must not expose internal endpoints")
     check(!loopWorkbench.contains("if let endpoint = section.endpoint"), "Loop Engineering sections must not expose internal endpoints")
+    check(loopWorkbench.contains("label: appPreferences.text(\"workbench.selfCheck\")"), "Loop Engineering must expose a one-click self-check beside the title")
+    let workspaceReadiness = slice(
+        loopWorkbench,
+        from: "private func agentWorkspaceReadinessPanel",
+        to: "private func summaryGrid"
+    )
+    check(!workspaceReadiness.contains("AcrossTheme.panelFill"), "The singleton Agent Workspace section must stay flat")
+    check(!workspaceReadiness.contains("AcrossTheme.recessedFill"), "Agent Workspace metrics must not become nested cards")
+    let operationalCards = slice(
+        loopWorkbench,
+        from: "private func sectionPanel",
+        to: "private func summaryPairs"
+    )
+    check(operationalCards.contains("AcrossTheme.panelFill"), "Repeated Operational Sections must render as peer cards")
     check(memory.contains("systemName: \"wand.and.stars\""), "Memory suggestions must use an icon command")
     check(runs.contains("systemName: \"plus\""), "New Workflow must use the shared icon command")
     check(!runs.contains("runCenterTabs"), "Runs must not expose module tabs")
     check(!runs.contains("pickerStyle(.segmented)"), "Runs must not present Tasks, Quality, and Release as segmented modules")
     check(!runs.contains("private var releaseMenu"), "Runs must not restore the legacy checkmark dropdown")
     check(!runs.contains("showsQualityGate"), "Quality must not open as a separate sheet")
-    check(!simpleStart.contains("accentHex"), "Workflow choices must not use colored category accents")
-    check(!simpleStart.contains("SimpleStartWorkflowCard"), "Workflow choices must remain a compact list")
+    check(runs.contains("onStartWork()"), "Workflow creation must route to the universal Work composer")
+    check(!runs.contains("SimpleStartWorkflowView"), "Workflow must not expose preset task templates")
+    check(!runs.contains("TaskNewTaskForm("), "Workflow must not keep a duplicate task composer")
+    check(!runs.contains("runActionRow("), "Workflow history must not expose fixed task shortcuts")
+    check(!runs.contains("destination = .quality"), "Code quality must be selected from the universal task goal")
+    check(!runs.contains("destination = .release"), "Release checks must be selected from the universal task goal")
     check(runs.contains("@State private var showsInspector = false"), "Run inspector must start closed")
+    check(runs.contains("@State private var showsTaskDescription = false"), "Task descriptions must start collapsed")
+    check(runs.contains("isExpanded: $showsTaskDescription"), "Task descriptions must use the shared disclosure row")
+    check(!runs.contains("DisclosureGroup(isExpanded: $showsTaskDescription)"), "Task descriptions must not keep a leading disclosure arrow")
+    check(runs.contains("@State private var showsWaveDetails = false"), "Task batches must start collapsed")
+    check(runs.contains("isExpanded: $showsWaveDetails"), "Task batches must use the shared disclosure row")
+    check(!runs.contains("DisclosureGroup(isExpanded: $showsWaveDetails)"), "Task batches must not keep a leading disclosure arrow")
+    check(runs.contains("@State private var showsArtifactDetails = false"), "Task artifacts must start collapsed")
+    check(runs.contains("isExpanded: $showsArtifactDetails"), "Task artifacts must use the shared disclosure row")
+    check(!runs.contains("DisclosureGroup(isExpanded: $showsArtifactDetails)"), "Task artifacts must not keep a leading disclosure arrow")
+    check(runs.contains("Text(conciseTaskTitle(task.description))"), "Recent workflows must show a concise one-line title")
+    check(runs.contains("Array(artifacts.prefix(8))"), "Large artifact collections must be capped before explicit expansion")
+    check(visualResults.contains("preferences.text(\"tasks.review.accept\")"), "Completed work that needs review must expose a real decision action")
+    check(visualResults.contains("viewModel.acceptTaskResult(task.taskId)"), "Accept Result must persist through the task API")
+    check(runs.contains("AcrossTaskResultOverview("), "Workflow results must use the shared result decision component")
+    check(runs.contains("isShowingTaskDetail\n                ? preferences.text(\"tasks.result.title\")"), "Completed work must replace the Start Task title with Task Result")
+    check(!runs.contains("runHeader(task)"), "Task results must not repeat a second title row inside the page")
+    check(visualResults.contains("primaryActionTitle"), "The result summary must support a real primary action")
+    let resultOverview = slice(
+        visualResults,
+        from: "struct AcrossVisualResultOverview",
+        to: "struct AcrossTrustCompassView"
+    )
+    check(!resultOverview.contains("DisclosureGroup"), "Task results must keep evidence detail out of the decision surface")
+    check(!resultOverview.contains("AcrossEvidenceRouteView"), "Task results must not expose internal evidence routes")
+    check(resultOverview.contains("result.review.awaiting"), "Pending human review must be named explicitly")
+    check(!visualResults.contains("AcrossTheme.recessedFill"), "The result summary must not restore a large gray recessed card")
     check(qualityGate.contains("@State private var showsAdvancedOptions = false"), "Quality advanced options must start collapsed")
-    check(qualityGate.contains("DisclosureGroup("), "Quality advanced options must remain progressively disclosed")
+    check(qualityGate.contains("MinimalDisclosureSection("), "Quality advanced options must use the shared disclosure row")
+    check(!qualityGate.contains("DisclosureGroup("), "Quality advanced options must not restore the leading native arrow")
     check(!workspaceViewModel.contains("workspace-readiness-"), "Repository setup errors must not become review items")
     check(projectSetup.contains("workspace.repositoryRequired.title"), "Project setup must explain the repository requirement")
     check(projectSetup.contains("chooseRepository"), "Project setup must provide an immediate repository action")
@@ -318,6 +370,17 @@ private func checkCriticalInteractionContracts() {
     let taskSidebar = source("macOS-Client/Sources/Views/TaskOrchestrationSidebar.swift")
     check(taskDetail.contains("tasks.cancelConfirmTitle"), "Detailed task cancellation must require confirmation")
     check(releaseCenter.contains("tasks.releaseE2E.confirmTitle"), "Release Center E2E must require confirmation")
+    check(releaseCenter.contains("@State private var showsDecisionBasis = false"), "Evidence decision basis must start collapsed")
+    check(releaseCenter.contains("@State private var showsVerificationScope = false"), "Evidence verification scope must start collapsed")
+    check(releaseCenter.contains("@State private var showsResultDetails = false"), "Evidence run details must start collapsed")
+    check(releaseCenter.contains("isExpanded: $showsDecisionBasis"), "Evidence decision basis must be available on demand")
+    check(releaseCenter.contains("isExpanded: $showsVerificationScope"), "Evidence scope must be available on demand")
+    check(releaseCenter.contains("isExpanded: $showsResultDetails"), "Evidence run details must be available on demand")
+    check(!releaseCenter.contains("DisclosureGroup(isExpanded: $showsDecisionBasis)"), "Evidence rows must not keep leading disclosure arrows")
+    check(!releaseCenter.contains("AcrossEvidenceRouteView("), "Evidence bundles must not expose internal evidence routes")
+    check(!releaseCenter.contains("AcrossLoopTrailView("), "Evidence bundles must not expose internal loop trails")
+    check(!releaseCenter.contains("AcrossDecisionMarkView("), "Evidence bundles must not expose raw decision credentials")
+    check(!releaseCenter.contains("Text(bundle.releaseReadinessSummary)"), "Evidence must not expose a raw backend summary in the default surface")
     check(taskSidebar.contains("tasks.releaseE2E.confirmTitle"), "Task sidebar E2E must require confirmation")
 
     let mainPanel = source("macOS-Client/Sources/Views/MainPanelView.swift")
@@ -338,7 +401,7 @@ private func checkCriticalInteractionContracts() {
     check(unifiedWork.contains("systemName: \"plus\""), "Work details must expose New Work as an icon action")
     check(unifiedWork.contains("TaskDetailPanel("), "Technical details must be embedded for the selected task")
     check(!protectedDelivery.contains("showTaskOrchestration = true"), "Technical details must not open the all-workflows overlay")
-    check(protectedDelivery.contains("acceptTaskResult"), "Accepting a result must persist through the task API")
+    check(unifiedWork.contains("AcrossTaskResultOverview("), "Work and Workflow must share one result decision component")
     check(chat.contains("AutopilotEvidenceTarget("), "Open evidence must bind the beginner run and evidence route")
     check(chat.contains("autopilotEvidenceTarget = target"), "Open evidence must preserve its run-specific target")
     check(mainPanel.contains("if selectedOperationsSurface != .autopilot"), "Leaving Loop Engineering must clear stale evidence routing")
@@ -346,7 +409,7 @@ private func checkCriticalInteractionContracts() {
     check(shell.contains("AutopilotWorkbenchView(evidenceTarget: autopilotEvidenceTarget)"), "Loop Engineering must receive the selected evidence target")
     check(loopWorkbench.contains(".task(id: evidenceTarget)"), "Loop Engineering must load evidence when the selected run changes")
     check(loopWorkbench.contains("@State private var showsFocusedEvidenceDetails = false"), "Focused technical evidence must start collapsed")
-    if let disclosure = loopWorkbench.range(of: "DisclosureGroup(isExpanded: $showsFocusedEvidenceDetails)"),
+    if let disclosure = loopWorkbench.range(of: "isExpanded: $showsFocusedEvidenceDetails"),
        let runID = loopWorkbench.range(of: "Text(target.runID)") {
         check(runID.lowerBound > disclosure.lowerBound, "Raw run identifiers must stay behind focused technical evidence disclosure")
     } else {
@@ -375,21 +438,15 @@ private func checkCriticalInteractionContracts() {
     check(session.contains("func activateProject(matchingDirectory directory: String?)"), "Sessions must support project activation from work ownership")
     check(tasks.contains("URLQueryItem(name: \"project_dir\""), "Recent work must request the active project only")
 
-    let review = source("macOS-Client/Sources/Views/MinimalReviewInboxView.swift")
     let project = source("macOS-Client/Sources/Views/MinimalProjectWorkspaceView.swift")
     check(!runs.contains("NavigationSplitView"), "Run history must not install a system window sidebar")
-    check(!review.contains("NavigationSplitView"), "Review inbox must not install a system window sidebar")
-    check(review.contains("review.count.one"), "Review count must use a grammatical singular label")
-    check(review.contains("preferences.text(\"review.total\")"), "Review inspector must use a non-format total label")
-    check(!review.contains("preferences.text(\"review.count\"),\n                    value:"), "Review inspector must not expose a format placeholder as a label")
     check(!project.contains("NavigationSplitView"), "Project workspace must not install a system window sidebar")
     check(project.contains("HSplitView"), "Project workspace must retain its fixed operational panes")
     check(runs.contains("private var runHistoryDrawer"), "Run history must use the floating drawer")
-    check(review.contains("private var reviewInboxDrawer"), "Review inbox must use the floating drawer")
     check(runs.contains(".onTapGesture { setRunHistoryVisible(false) }"), "Floating run history must close when clicking outside")
 
     let mainSidebarSource = source("macOS-Client/Sources/Views/MainPanelSidebar.swift")
-    check(mainSidebarSource.contains("setContextDrawerVisible(!showsContextDrawer)"), "Context drawer toggle must live in the main sidebar chrome")
+    check(!mainSidebarSource.contains("contextDrawerLabel"), "The removed review destination must not leave sidebar chrome behind")
 }
 
 @main

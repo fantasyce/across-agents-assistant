@@ -48,14 +48,19 @@ struct AutopilotWorkbenchSnapshot: Decodable, Equatable {
     }
 
     var needsAttention: Bool {
-        status != "passed"
+        let schedulerNeedsAttention = summary.registeredTriggerCount > 0 && !summary.schedulerRunning
+        let blockingOptionalStatuses: Set<String> = ["attention", "warning", "failed", "blocked", "degraded", "error"]
+        let selfIterationNeedsAttention = blockingOptionalStatuses.contains(summary.selfIterationStatus)
+        let interopNeedsAttention = blockingOptionalStatuses.contains(summary.agentInteropE2EStatus)
+
+        return status != "passed"
             || summary.failedRunCount > 0
             || summary.pendingMemoryCount > 0
             || summary.pendingTriggerCount > 0
             || summary.promotionReadyCount > 0
-            || !summary.schedulerRunning
-            || summary.selfIterationStatus != "active"
-            || summary.agentInteropE2EStatus != "passed"
+            || schedulerNeedsAttention
+            || selfIterationNeedsAttention
+            || interopNeedsAttention
     }
 }
 

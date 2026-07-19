@@ -12,8 +12,8 @@ func testOperationsWorkbenchPrimarySurfaces() {
         "The first screen must expose one clear work surface"
     )
     assert(
-        OperationsWorkbenchSurface.allCases.contains(.humanReview),
-        "Human Review must remain globally reachable"
+        !OperationsWorkbenchSurface.allCases.map(\.rawValue).contains("humanReview"),
+        "Review work belongs to its owning product surface"
     )
     assert(
         OperationsWorkbenchSurface.allCases.contains(.assist),
@@ -79,6 +79,16 @@ func testHumanReviewQueueCoverage() {
     for kind in HumanReviewKind.allCases {
         assert(queue.count(for: kind) == 1, "Missing review category: \(kind.rawValue)")
     }
+
+    let routed = HumanReviewQueueSnapshot(signals: [
+        HumanReviewSignal(id: "memory", kind: .pendingMemory, title: "Memory", detail: "fixture", status: "pending", source: "Context"),
+        HumanReviewSignal(id: "workflow", kind: .manualGate, title: "Workflow", detail: "fixture", status: "pending", source: "Quality Gate"),
+        HumanReviewSignal(id: "loop", kind: .promotion, title: "Loop", detail: "fixture", status: "pending", source: "Agent Loop"),
+        HumanReviewSignal(id: "assist", kind: .permission, title: "Assist", detail: "fixture", status: "pending", source: "Assist"),
+        HumanReviewSignal(id: "settings", kind: .pluginRepair, title: "Plugin", detail: "fixture", status: "pending", source: "Plugin Center"),
+    ])
+    assert(routed.attentionSurfaces == [.memory, .qualityGate, .autopilot, .assist], "Review dots must follow their owning surface")
+    assert(routed.needsSettingsAttention, "Plugin repair must mark Settings")
 }
 
 func testAccessibilityAndFocusContracts() {

@@ -138,7 +138,7 @@ struct MemorySearchOperationsTests {
     }
 
     @Test func mergedRetrievalDecodesRankingRoutesAndDistilledProvenance() throws {
-        let payload = Data("""
+        let payload = Data(#"""
         {
           "strategy": "weighted-reciprocal-rank-fusion",
           "routes": ["keyword", "embedding", "evidence_graph", "project_profile", "loop_recall"],
@@ -170,7 +170,7 @@ struct MemorySearchOperationsTests {
             {"route": "embedding", "result_count": 2, "projection_used": true}
           ]
         }
-        """.utf8)
+        """#.utf8)
 
         let decoded = try JSONDecoder().decode(MemoryMergedRetrieveResponse.self, from: payload)
         let result = try #require(decoded.results.first)

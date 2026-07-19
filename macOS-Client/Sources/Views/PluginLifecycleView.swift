@@ -187,16 +187,38 @@ struct PluginLifecycleView: View {
     }
 
     private func pluginCard(_ plugin: AcrossPluginStatus) -> some View {
-        DisclosureGroup(isExpanded: Binding(
-            get: { expandedPluginIds.contains(plugin.pluginId) },
-            set: { expanded in
-                if expanded {
-                    expandedPluginIds.insert(plugin.pluginId)
-                } else {
-                    expandedPluginIds.remove(plugin.pluginId)
+        MinimalDisclosureRow(
+            isExpanded: Binding(
+                get: { expandedPluginIds.contains(plugin.pluginId) },
+                set: { expanded in
+                    if expanded {
+                        expandedPluginIds.insert(plugin.pluginId)
+                    } else {
+                        expandedPluginIds.remove(plugin.pluginId)
+                    }
+                }
+            ),
+            accessibilityLabel: plugin.displayName
+        ) {
+            HStack(alignment: .center, spacing: 10) {
+                pluginIcon(for: plugin.pluginId)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(plugin.displayName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(textColor)
+                        .lineLimit(1)
+                    Text(pluginSummary(plugin))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
             }
-        )) {
+            .padding(.vertical, 10)
+        } trailing: {
+            pluginPrimaryAction(plugin)
+        } content: {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     metadataChip(plugin.version?.isEmpty == false ? "v\(plugin.version!)" : appPreferences.text("plugins.versionUnknown"))
@@ -236,35 +258,14 @@ struct PluginLifecycleView: View {
             }
             .padding(.leading, 28)
             .padding(.bottom, 12)
-        } label: {
-            HStack(alignment: .center, spacing: 10) {
-                pluginIcon(for: plugin.pluginId)
-                    .frame(width: 24, height: 24)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(plugin.displayName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(textColor)
-                        .lineLimit(1)
-                    Text(pluginSummary(plugin))
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                pluginPrimaryAction(plugin)
-            }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
     private func capabilityTagRow(_ plugin: AcrossPluginStatus) -> some View {
-        HStack(spacing: 8) {
-            if plugin.supportsAgentLoopRuntime {
+        if plugin.supportsAgentLoopRuntime {
+            HStack(spacing: 8) {
                 metadataChip(appPreferences.text("plugins.loop.runtime"))
                 if plugin.supportsAgentLoopV2 {
                     metadataChip(appPreferences.text("plugins.loop.v2"))
@@ -272,20 +273,14 @@ struct PluginLifecycleView: View {
                 if plugin.supportsCheckpoints {
                     metadataChip(appPreferences.text("plugins.loop.checkpoints"))
                 }
-            } else {
-                Color.clear.frame(height: 22)
             }
         }
-        .frame(height: 22, alignment: .leading)
     }
 
     @ViewBuilder
     private func compatibilityRow(_ plugin: AcrossPluginStatus) -> some View {
         if let required = plugin.compatibility?.requiredHostVersion {
             pathRow(appPreferences.text("plugins.compatibility"), required)
-                .frame(height: 28, alignment: .topLeading)
-        } else {
-            Color.clear.frame(height: 28)
         }
     }
 
@@ -340,8 +335,6 @@ struct PluginLifecycleView: View {
                         agentLoopTimelineRow(viewModel.agentLoopEvents, source: viewModel.agentLoopTimelineSource)
                     }
                 }
-            } else {
-                Color.clear.frame(height: viewModel.agentLoopEvents.isEmpty ? 22 : 50)
             }
         }
     }
@@ -399,7 +392,10 @@ struct PluginLifecycleView: View {
             if let summary = viewModel.agentLoopEvidenceSummary {
                 Divider().opacity(0.25)
                 healthDetailLine(appPreferences.text("plugins.loop.detailReleaseEvidence"), hostReleaseEvidenceSummary(summary.hostReleaseEvidence))
-                DisclosureGroup(isExpanded: $showingLoopEvidenceDetails) {
+                MinimalDisclosureSection(
+                    title: appPreferences.text("plugins.loop.evidenceDetails"),
+                    isExpanded: $showingLoopEvidenceDetails
+                ) {
                     VStack(alignment: .leading, spacing: 8) {
                         hostReleaseEvidenceDetailLines(summary.hostReleaseEvidence)
                         healthDetailLine(appPreferences.text("plugins.loop.detailAudit"), auditSummary(summary.eventAudit))
@@ -410,11 +406,6 @@ struct PluginLifecycleView: View {
                         healthDetailLine(appPreferences.text("plugins.loop.detailMemory"), memoryCandidateSummary(summary.memoryCandidates))
                         memoryCandidateDetailLines(summary.memoryCandidates)
                     }
-                    .padding(.top, 4)
-                } label: {
-                    Text(appPreferences.text("plugins.loop.evidenceDetails"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(textColor)
                 }
             }
         }

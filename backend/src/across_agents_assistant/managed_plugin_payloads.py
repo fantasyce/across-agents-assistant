@@ -18,6 +18,7 @@ PAYLOAD_SCHEMA = "across-managed-plugin-payloads/1.0"
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _MAX_ARCHIVE_FILES = 20_000
 _MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+_ORCHESTRATOR_COMPATIBILITY_TIMEOUT_SECONDS = 60
 
 
 class ManagedPluginPayloadError(RuntimeError):
@@ -214,7 +215,7 @@ def validate_orchestrator_runtime_compatibility(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=15,
+            timeout=_ORCHESTRATOR_COMPATIBILITY_TIMEOUT_SECONDS,
             check=False,
         )
     except Exception as exc:

@@ -111,7 +111,7 @@ struct AgentIconView: View {
                 .font(.system(size: size * 0.4, weight: .bold))
                 .foregroundColor(colorScheme == .dark ? .white : .legacyTextLight)
                 .frame(width: size, height: size)
-                .background(gradientBackground)
+                .background(iconBackground)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
         }
     }
@@ -120,14 +120,8 @@ struct AgentIconView: View {
         String(name.split(separator: ".").last ?? "").prefix(2).uppercased()
     }
 
-    private var gradientBackground: LinearGradient {
-        LinearGradient(
-            colors: colorScheme == .dark
-                ? [Color(hex: "292524"), Color(hex: "1c1917")]
-                : [Color.white, Color(hex: "f3f4f6")],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+    private var iconBackground: Color {
+        colorScheme == .dark ? AcrossTheme.recessedFill(for: colorScheme) : Color(nsColor: .controlBackgroundColor)
     }
 
     private func loadSVGImage(named: String) -> NSImage? {

@@ -11,15 +11,21 @@ AUTOPILOT_LOCAL_SOURCE=${ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT:-}
 ORCHESTRATOR_LOCAL_SOURCE=${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}
 
 NODE_VERSION="22.17.1"
-CONTEXT_VERSION="0.10.0"
-CONTEXT_COMMIT="d0d8a6b5356509535bf8a64c94faa842a6b85bb0"
-CONTEXT_SHA256="00c92b42bf8387ee5d5f8cc8ea76a8e76b622164d8a90e29020a73a6eef36a3e"
-AUTOPILOT_VERSION="0.4.0"
-AUTOPILOT_COMMIT="7799e3f7d8016a5f8d40d84fcb60b85c63db6d9b"
-AUTOPILOT_SHA256="48af2b5c8733816121195cd65514ddde42bf521a9ae0b6243338287ba98d3cfb"
-ORCHESTRATOR_VERSION="0.9.0"
-ORCHESTRATOR_COMMIT="5daaceb4de27a5c186bc08e5e2e265e938bdda91"
-ORCHESTRATOR_SHA256="98b892a3ff3f3960ffc4b58855a0e18cb826956679f18949963c3a64315f1fe1"
+CONTEXT_VERSION="0.11.0"
+CONTEXT_COMMIT="24768104d613c52e081b3ca7a9d5b3dbd6886b72"
+CONTEXT_SHA256="60282662a3a773dc2c2053cd3ea144f48d624c8a6bae331dd0979d05f6aa4057"
+AUTOPILOT_VERSION="0.5.0"
+AUTOPILOT_COMMIT="38dc92b66c9bca2c53594806c84bbc17b60d7300"
+AUTOPILOT_SHA256="1fac3399a3c2b79c40bfb0ab2f9d1899655e639224322e84ee557fe8ea5ab201"
+ORCHESTRATOR_VERSION="0.10.3"
+ORCHESTRATOR_COMMIT="605a6157a1871e5fd7e35d827c0f51903430761e"
+ORCHESTRATOR_SHA256="765bbf997f6f3ee866d45e0542c61becf961a687531894ea40a296aafa0d83fb"
+CONTEXT_SOURCE_KIND="released-pin"
+AUTOPILOT_SOURCE_KIND="released-pin"
+ORCHESTRATOR_SOURCE_KIND="released-pin"
+CONTEXT_SOURCE_DIRTY=false
+AUTOPILOT_SOURCE_DIRTY=false
+ORCHESTRATOR_SOURCE_DIRTY=false
 
 if [[ -n "$CONTEXT_LOCAL_SOURCE" ]]; then
     CONTEXT_LOCAL_SOURCE=$(cd "$CONTEXT_LOCAL_SOURCE" && pwd)
@@ -29,6 +35,10 @@ if [[ -n "$CONTEXT_LOCAL_SOURCE" ]]; then
     fi
     CONTEXT_VERSION=$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)".*/\1/p' "$CONTEXT_LOCAL_SOURCE/package.json" | head -1)
     CONTEXT_COMMIT=$(git -C "$CONTEXT_LOCAL_SOURCE" rev-parse HEAD)
+    CONTEXT_SOURCE_KIND="local-candidate"
+    if [[ -n "$(git -C "$CONTEXT_LOCAL_SOURCE" status --porcelain --untracked-files=all)" ]]; then
+        CONTEXT_SOURCE_DIRTY=true
+    fi
 fi
 
 if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
@@ -39,6 +49,10 @@ if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
     fi
     AUTOPILOT_VERSION=$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)".*/\1/p' "$AUTOPILOT_LOCAL_SOURCE/package.json" | head -1)
     AUTOPILOT_COMMIT=$(git -C "$AUTOPILOT_LOCAL_SOURCE" rev-parse HEAD)
+    AUTOPILOT_SOURCE_KIND="local-candidate"
+    if [[ -n "$(git -C "$AUTOPILOT_LOCAL_SOURCE" status --porcelain --untracked-files=all)" ]]; then
+        AUTOPILOT_SOURCE_DIRTY=true
+    fi
 fi
 
 if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
@@ -49,6 +63,10 @@ if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
     fi
     ORCHESTRATOR_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ORCHESTRATOR_LOCAL_SOURCE/pyproject.toml" | head -1)
     ORCHESTRATOR_COMMIT=$(git -C "$ORCHESTRATOR_LOCAL_SOURCE" rev-parse HEAD)
+    ORCHESTRATOR_SOURCE_KIND="local-candidate"
+    if [[ -n "$(git -C "$ORCHESTRATOR_LOCAL_SOURCE" status --porcelain --untracked-files=all)" ]]; then
+        ORCHESTRATOR_SOURCE_DIRTY=true
+    fi
 fi
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -209,6 +227,16 @@ fi
 ORCHESTRATOR_BUILD_ROOT="$PROJECT_ROOT/build/managed-plugin-orchestrator"
 rm -rf "$ORCHESTRATOR_BUILD_ROOT"
 mkdir -p "$ORCHESTRATOR_BUILD_ROOT/dist" "$ORCHESTRATOR_BUILD_ROOT/work" "$ORCHESTRATOR_BUILD_ROOT/spec"
+# Install the producer-declared runtime dependencies into the isolated build
+# interpreter before PyInstaller analyzes the local/released source. Worker
+# modules are loaded lazily by CLI subcommands, so the host backend dependency
+# set alone is not sufficient to produce a working listener binary.
+"$BUILD_PYTHON" -m pip install --quiet --disable-pip-version-check "$ORCHESTRATOR_SOURCE_ROOT"
+PYTHONPATH="$ORCHESTRATOR_SOURCE_ROOT/src" "$BUILD_PYTHON" - <<'PY'
+import cryptography
+import psutil
+import across_orchestrator.worker_runtime
+PY
 # PyInstaller serializes hash-backed Python collections into the embedded PKG
 # archive. Keep the hash seed and build epoch fixed so rebuilding the same
 # Orchestrator source produces the same PKG hash, Mach-O UUID, and executable
@@ -239,6 +267,14 @@ if ! "$ORCHESTRATOR_RUNTIME_DIR/across-orchestrator" serve --help 2>&1 | grep -q
     echo "ERROR: Bundled Across Orchestrator does not support the AAA client-project-root sidecar contract." >&2
     exit 1
 fi
+if ! "$ORCHESTRATOR_RUNTIME_DIR/across-orchestrator" worker-control-server --help 2>&1 | grep -q -- "--socket"; then
+    echo "ERROR: Bundled Across Orchestrator does not expose the private Worker control server." >&2
+    exit 1
+fi
+if ! "$ORCHESTRATOR_RUNTIME_DIR/across-orchestrator" worker-listener --help 2>&1 | grep -q -- "--model-gateway-url"; then
+    echo "ERROR: Bundled Across Orchestrator does not expose the Worker listener contract." >&2
+    exit 1
+fi
 
 cat > "$OUTPUT_DIR/manifest.json" <<JSON
 {
@@ -257,6 +293,8 @@ cat > "$OUTPUT_DIR/manifest.json" <<JSON
     "across-context": {
       "version": "$CONTEXT_VERSION",
       "commit": "$CONTEXT_COMMIT",
+      "source_kind": "$CONTEXT_SOURCE_KIND",
+      "source_dirty": $CONTEXT_SOURCE_DIRTY,
       "runtime": "node",
       "archive": "packages/across-context-$CONTEXT_VERSION.tar.gz",
       "sha256": "$CONTEXT_SHA256",
@@ -267,6 +305,8 @@ cat > "$OUTPUT_DIR/manifest.json" <<JSON
     "across-orchestrator": {
       "version": "$ORCHESTRATOR_VERSION",
       "commit": "$ORCHESTRATOR_COMMIT",
+      "source_kind": "$ORCHESTRATOR_SOURCE_KIND",
+      "source_dirty": $ORCHESTRATOR_SOURCE_DIRTY,
       "runtime": "native",
       "executable": "runtimes/orchestrator-$ORCHESTRATOR_VERSION/across-orchestrator",
       "sha256": "$ORCHESTRATOR_BINARY_SHA256",
@@ -276,6 +316,8 @@ cat > "$OUTPUT_DIR/manifest.json" <<JSON
     "across-autopilot": {
       "version": "$AUTOPILOT_VERSION",
       "commit": "$AUTOPILOT_COMMIT",
+      "source_kind": "$AUTOPILOT_SOURCE_KIND",
+      "source_dirty": $AUTOPILOT_SOURCE_DIRTY,
       "runtime": "node",
       "archive": "packages/across-autopilot-$AUTOPILOT_VERSION.tar.gz",
       "sha256": "$AUTOPILOT_SHA256",

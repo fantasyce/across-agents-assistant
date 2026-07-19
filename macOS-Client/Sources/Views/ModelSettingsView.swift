@@ -4,6 +4,7 @@ import AppKit
 struct ModelSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var expandedCard: String? = nil
+    @State private var showingUnconfiguredLocalAgents = false
     @State private var showingUnconfiguredProviders = false
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject var appPreferences: AppPreferences
@@ -21,6 +22,14 @@ struct ModelSettingsView: View {
         viewModel.cloudLLMs.filter { !viewModel.isKeyConfigured($0.id) }
     }
 
+    private var readyLocalAgents: [AgentConfig] {
+        viewModel.availableLocalAgents
+    }
+
+    private var unconfiguredLocalAgents: [AgentConfig] {
+        viewModel.localAgents.filter { !viewModel.isLocalAgentAvailable($0.id) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if !embeddedInHub {
@@ -36,8 +45,6 @@ struct ModelSettingsView: View {
                 .minimalPageContentFrame()
             }
             .background(bgColor)
-
-            statusFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
@@ -56,8 +63,44 @@ struct ModelSettingsView: View {
     private var localAgentSection: some View {
         MinimalSettingsSection(title: appPreferences.text("models.localAgent")) {
             VStack(spacing: 10) {
-                ForEach(viewModel.localAgents) { agent in
+                ForEach(readyLocalAgents) { agent in
                     localAgentView(agent)
+                }
+                if readyLocalAgents.isEmpty {
+                    MinimalSettingsNotice(
+                        text: appPreferences.text("models.localAgent.empty"),
+                        color: .secondary,
+                        systemImage: "terminal"
+                    )
+                }
+                if !unconfiguredLocalAgents.isEmpty {
+                    Button {
+                        showingUnconfiguredLocalAgents.toggle()
+                    } label: {
+                        HStack {
+                            Label(
+                                "\(appPreferences.text("models.notConfigured")) (\(unconfiguredLocalAgents.count))",
+                                systemImage: "plus.circle"
+                            )
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .rotationEffect(.degrees(showingUnconfiguredLocalAgents ? 180 : 0))
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 10)
+
+                    if showingUnconfiguredLocalAgents {
+                        VStack(spacing: 10) {
+                            ForEach(unconfiguredLocalAgents) { agent in
+                                localAgentView(agent)
+                            }
+                        }
+                        .padding(.bottom, 10)
+                    }
                 }
             }
             .padding(.vertical, 10)
@@ -167,80 +210,4 @@ struct ModelSettingsView: View {
         .accessibilityLabel(Text(appPreferences.text("models.openCapabilities")))
     }
 
-    // MARK: - Status Footer
-
-    private var statusFooter: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.3)
-
-            HStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
-                        ForEach(statusIndicators, id: \.id) { indicator in
-                            statusDot(indicator: indicator)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                Button(action: { viewModel.checkAll() }) {
-                    if viewModel.isCheckingKeys {
-                        ProgressView().controlSize(.small).frame(width: 24, height: 24)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 24, height: 24)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(viewModel.isCheckingKeys)
-                .help(appPreferences.text("models.refreshAll"))
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-        }
-        .background(.bar)
-    }
-
-    private var statusIndicators: [StatusIndicator] {
-        var items: [StatusIndicator] = []
-
-        for llm in viewModel.cloudLLMs {
-            let configured = viewModel.isKeyConfigured(llm.id)
-            items.append(StatusIndicator(
-                id: "cloud-\(llm.id)",
-                label: llm.name,
-                isOK: configured
-            ))
-        }
-
-        for agent in viewModel.localAgents {
-            let installed = agent.status == .installed
-            items.append(StatusIndicator(
-                id: "local-\(agent.id)",
-                label: agent.name,
-                isOK: installed
-            ))
-        }
-
-        return items
-    }
-
-    private func statusDot(indicator: StatusIndicator) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(indicator.isOK ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange))
-                .frame(width: 5, height: 5)
-            Text(indicator.label)
-                .font(.system(size: 10, weight: .regular))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-        }
-    }
-}
-
-private struct StatusIndicator {
-    let id: String
-    let label: String
-    let isOK: Bool
 }

@@ -94,7 +94,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             request.model,
             len(messages),
         )
-        async with httpx.AsyncClient(timeout=self.timeout_seconds(default=180.0), trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=self.request_timeout_seconds(request, default=180.0), trust_env=False) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

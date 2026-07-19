@@ -53,8 +53,9 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.9.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.3"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
+_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 60.0
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
 )
@@ -135,6 +136,56 @@ def _is_executable_file(path: Optional[str]) -> bool:
         return False
     candidate = Path(str(path)).expanduser()
     return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+_MACH_O_MAGICS = {
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xce",
+    b"\xcf\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+}
+
+
+def _is_mach_o_executable(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) in _MACH_O_MAGICS
+    except OSError:
+        return False
+
+
+def _bundled_native_command_target(command_path: str) -> Optional[Path]:
+    """Resolve the native payload behind either a managed binary or its wrapper.
+
+    Live E2E intentionally points an isolated AAA home at a separately installed
+    Orchestrator command. In that topology the executable is no longer underneath
+    the test home, so provenance alone cannot identify its PyInstaller cold-start
+    cost. Detect the native executable itself, including the small host wrapper,
+    without executing untrusted shell text.
+    """
+
+    candidate = Path(command_path).expanduser()
+    if _is_mach_o_executable(candidate):
+        return candidate
+    try:
+        wrapper = candidate.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if len(wrapper) > 4096 or not wrapper.startswith("#!/bin/sh"):
+        return None
+    expected_fragment = '../plugins/across-orchestrator/venv/bin/across-orchestrator'
+    if expected_fragment not in wrapper.replace('"', "").replace("'", ""):
+        return None
+    payload = candidate.parent / ".." / "plugins" / ORCHESTRATOR_PLUGIN_ID / "venv" / "bin" / "across-orchestrator"
+    try:
+        payload = payload.resolve()
+    except OSError:
+        return None
+    return payload if _is_mach_o_executable(payload) else None
 
 
 def _sha256_file(path: Path) -> str:
@@ -743,7 +794,7 @@ class OrchestratorPluginInstaller:
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=30,
+                timeout=_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS,
                 env=self._env(),
                 check=False,
             )
@@ -763,6 +814,9 @@ class OrchestratorPluginInstaller:
                     "mcp": {"command": str(self.wrapper_path), "args": ["mcp"]},
                 },
             }
+            bundled_version = str((self._bundled_payload or {}).get("version") or "").strip()
+            if bundled_version:
+                manifest["version"] = bundled_version
         self.install_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -997,7 +1051,11 @@ class OrchestratorPluginManager:
         install_status: Dict[str, Any],
         command_path: Optional[str],
     ) -> bool:
-        if install_status.get("runtime") != "bundled_native" or not command_path:
+        if not command_path:
+            return False
+        if _bundled_native_command_target(command_path) is not None:
+            return True
+        if install_status.get("runtime") != "bundled_native":
             return False
         try:
             resolved = Path(command_path).resolve()
@@ -1008,6 +1066,12 @@ class OrchestratorPluginManager:
         except OSError:
             return False
         return resolved in managed_paths
+
+    def _sidecar_startup_timeout(self, command_path: str) -> float:
+        timeout = self.config.connect_timeout
+        if self._managed_runtime_requires_sidecar(self.install_status(), command_path):
+            return max(timeout, _BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS)
+        return timeout
 
     def install_plugin(self) -> Dict[str, Any]:
         status = self.installer.install()
@@ -1042,6 +1106,7 @@ class OrchestratorPluginManager:
         strict_dependency: bool = False,
         task_types: Optional[List[str]] = None,
         agent_adapters: Optional[Dict[str, Dict[str, Any]]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         deliverables = deliverables or ["README.md"]
@@ -1055,6 +1120,7 @@ class OrchestratorPluginManager:
             task_types=task_types,
             subtasks=subtasks,
             agent_adapters=agent_adapters,
+            metadata=metadata,
         )
         if self._transport == "http":
             task = self._http_post("/tasks", payload)
@@ -1076,10 +1142,20 @@ class OrchestratorPluginManager:
                     "--agent-adapters-json",
                     json.dumps(agent_adapters, ensure_ascii=False, separators=(",", ":")),
                 ])
+            if metadata:
+                args.extend([
+                    "--metadata-json",
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                ])
             args.append("--json")
             task = self._cli_json(args)
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
-        if self.config.auto_run:
+        execution_contract = (metadata or {}).get("execution_contract")
+        remote_managed = (
+            isinstance(execution_contract, dict)
+            and str(execution_contract.get("route") or "").strip().lower() == "worker"
+        )
+        if self.config.auto_run and not remote_managed:
             self.start_task_async(str(task.get("task_id") or ""))
         return task
 
@@ -1110,6 +1186,15 @@ class OrchestratorPluginManager:
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         if self.config.auto_run:
             self.start_task_async(str(task.get("task_id") or ""))
+        return task
+
+    def cancel_task(self, task_id: str, *, reason: str = "cancelled_by_user") -> Dict[str, Any]:
+        self._ensure_external()
+        if self._transport == "http":
+            task = self._http_post(f"/tasks/{task_id}/cancel", {"reason": reason})
+        else:
+            task = self._cli_json(["cancel", task_id, "--reason", reason, "--json"])
+        self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         return task
 
     def start_task_async(self, task_id: str) -> None:
@@ -1321,11 +1406,22 @@ class OrchestratorPluginManager:
             return _parse_sse_json_events(text)
         return self.get_agent_loop_events(loop_id, after_sequence=after_sequence)
 
-    def list_task_summaries(self) -> List[Dict[str, Any]]:
+    def list_task_summaries(self, *, refresh: bool = False) -> List[Dict[str, Any]]:
+        """Return the app-owned task index without starting the sidecar by default.
+
+        Sidebar and release-overview reads must stay cheap during host startup.
+        Full task hydration remains available explicitly and through ``get_task``
+        when the user opens a task.
+        """
         summaries: List[Dict[str, Any]] = []
         for record in self.index.list_records():
             task_id = str(record.get("task_id") or "")
             if not task_id:
+                continue
+            if not refresh:
+                fallback = dict(record)
+                fallback["status"] = fallback.get("status") or "suspended"
+                summaries.append(fallback)
                 continue
             try:
                 task = self.get_task(task_id)
@@ -1483,7 +1579,7 @@ class OrchestratorPluginManager:
                 cwd="/",
             )
 
-        deadline = time.time() + self.config.connect_timeout
+        deadline = time.time() + self._sidecar_startup_timeout(command_path)
         last_error: Optional[Exception] = None
         while time.time() < deadline:
             if self._sidecar_process and self._sidecar_process.poll() is not None:

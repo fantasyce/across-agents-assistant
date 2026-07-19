@@ -19,19 +19,12 @@ extension MainPanelView {
                 autopilotEvidenceTarget: autopilotEvidenceTarget,
                 activeProjectPath: operationalProjectPath,
                 productProgress: productProgress,
-                reviewSnapshot: humanReviewSnapshot,
-                reviewIsLoading: pluginLifecycleViewModel.isLoadingPlugins
-                    || pluginLifecycleViewModel.isLoadingMemories
-                    || workspaceOperationsViewModel.isLoading,
-                reviewErrorMessage: pluginLifecycleViewModel.errorMessage ?? workspaceOperationsViewModel.errorMessage,
-                onOpenTaskOrchestration: {
-                    activeSettingsHubTab = nil
-                    showTaskOrchestration = true
+                onStartWork: {
+                    selectedOperationsSurface = .assist
+                    startNewProtectedWork()
                 },
                 onOpenPluginCenter: { openSettings(.plugins) },
-                onOpenModels: { openSettings(.models) },
-                onRefreshReviewQueue: refreshHumanReviewQueue,
-                onOpenReviewItem: openHumanReviewItem
+                onOpenModels: { openSettings(.models) }
             )
         }
     }
@@ -58,7 +51,7 @@ extension MainPanelView {
     }
 
     private var shouldShowAssistHeader: Bool {
-        !appPreferences.automaticDeliveryProtection
+        workSubmissionMode.usesDirectAgent
     }
 
 
@@ -74,7 +67,7 @@ extension MainPanelView {
                 onboardingView
             }
         case .ready:
-            if appPreferences.automaticDeliveryProtection {
+            if workSubmissionMode.usesProtectedDelivery {
                 if taskOrchestrationViewModel.selectedTask != nil || taskOrchestrationViewModel.isSubmittingTask {
                     protectedDeliveryContent
                 } else {
@@ -99,14 +92,6 @@ extension MainPanelView {
             onBack: returnToWorkHome,
             onChooseProject: viewModel.chooseExistingProjectFolder,
             onNewWork: startNewProtectedWork,
-            onAccept: {
-                guard let taskID = taskOrchestrationViewModel.selectedTask?.taskId else { return }
-                taskOrchestrationViewModel.acceptTaskResult(taskID) {
-                    showsSelectedTaskDetails = false
-                    taskOrchestrationViewModel.enterWorkflowPicker()
-                    viewModel.inputText = ""
-                }
-            },
             onContinue: {
                 let priorGoal = taskOrchestrationViewModel.selectedTask?.description ?? ""
                 viewModel.inputText = String(
@@ -299,14 +284,13 @@ extension MainPanelView {
                     inputAttachmentShelf
                 }
 
-                if automaticDeliveryNeedsSetup {
+                if showsOrchestratorUpgradeHint {
                     UnifiedDeliverySetupNotice(
                         isInstalling: taskOrchestrationViewModel.isInstallingOrchestratorPlugin,
                         canInstall: taskOrchestrationViewModel.canInstallOrchestratorPlugin,
                         errorMessage: taskOrchestrationViewModel.orchestratorPluginError,
                         preferences: appPreferences,
-                        onInstall: taskOrchestrationViewModel.installOrchestratorPlugin,
-                        onUseDirectMode: { appPreferences.automaticDeliveryProtection = false }
+                        onInstall: taskOrchestrationViewModel.installOrchestratorPlugin
                     )
                     .padding(.horizontal, 12)
                     .padding(.top, 10)
@@ -354,7 +338,7 @@ extension MainPanelView {
                         )
                     }
 
-                    if !appPreferences.automaticDeliveryProtection {
+                    if workSubmissionMode.usesDirectAgent {
                         MinimalAssistantAgentPicker(
                             agents: visibleAgentsForSelection,
                             selectedAgentID: viewModel.selectedAgentId,
@@ -378,7 +362,7 @@ extension MainPanelView {
                         onToggleMute: { viewModel.isMuted.toggle() }
                     )
 
-                    if canUseAgentFeatures {
+                    if canUseAgentFeatures && !taskOrchestrationViewModel.isOrchestratorPluginUnavailable {
                         Toggle(isOn: $appPreferences.automaticDeliveryProtection) {
                             Label(
                                 appPreferences.text("work.automaticCheck"),

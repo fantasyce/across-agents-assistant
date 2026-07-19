@@ -10,6 +10,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "== FrontendDesignAudit =="
+python3 scripts/audit_frontend_design.py
+
 echo "== AppPreferencesBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/AppPreferencesBehavior.swift \
@@ -101,14 +104,6 @@ swiftc -parse-as-library \
   macOS-Client/Sources/ViewModels/QualityGateViewModel.swift \
   -o "$TMP_DIR/QualityGateRemoteBehavior"
 "$TMP_DIR/QualityGateRemoteBehavior"
-
-echo "== SimpleStartWorkflowBehavior =="
-swiftc -parse-as-library \
-  macOS-Client/Tests/SimpleStartWorkflowBehavior.swift \
-  macOS-Client/Sources/Models/SimpleStartWorkflowModels.swift \
-  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
-  -o "$TMP_DIR/SimpleStartWorkflowBehavior"
-"$TMP_DIR/SimpleStartWorkflowBehavior"
 
 echo "== ReleaseVerificationBehavior =="
 swiftc -parse-as-library \

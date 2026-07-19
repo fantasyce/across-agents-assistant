@@ -14,14 +14,9 @@ struct OperationsWorkbenchShell: View {
     let autopilotEvidenceTarget: AutopilotEvidenceTarget?
     let activeProjectPath: String?
     let productProgress: AcrossProductProgressSnapshot
-    let reviewSnapshot: HumanReviewQueueSnapshot
-    let reviewIsLoading: Bool
-    let reviewErrorMessage: String?
-    let onOpenTaskOrchestration: () -> Void
+    let onStartWork: () -> Void
     let onOpenPluginCenter: () -> Void
     let onOpenModels: () -> Void
-    let onRefreshReviewQueue: () -> Void
-    let onOpenReviewItem: (HumanReviewSignal) -> Void
 
     var body: some View {
         switch selection {
@@ -30,18 +25,15 @@ struct OperationsWorkbenchShell: View {
                 operations: workspaces,
                 preferences: preferences,
                 activeProjectPath: activeProjectPath,
-                onOpenReviewQueue: { selection = .humanReview }
+                onOpenReviewQueue: { selection = .qualityGate }
             )
             .environmentObject(preferences)
         case .qualityGate:
             MinimalRunsOverviewView(
                 viewModel: tasks,
-                qualityGate: qualityGate,
-                settingsViewModel: settings,
                 preferences: preferences,
                 showsRunHistory: $showsContextDrawer,
-                defaultProjectPath: activeProjectPath,
-                onOpenReviewQueue: { selection = .humanReview }
+                onStartWork: onStartWork
             )
         case .evidence:
             EvidenceOperationsView(
@@ -65,23 +57,18 @@ struct OperationsWorkbenchShell: View {
                 progress: productProgress,
                 preferences: preferences,
                 onOpenModels: onOpenModels,
-                onOpenPlugins: onOpenPluginCenter
-            )
-        case .humanReview:
-            MinimalReviewInboxView(
-                snapshot: reviewSnapshot,
-                pendingMemories: lifecycle.memories.filter { $0.status == "pending" },
-                preferences: preferences,
-                showsInbox: $showsContextDrawer,
-                isLoading: reviewIsLoading,
-                errorMessage: reviewErrorMessage,
-                onRefresh: onRefreshReviewQueue,
-                onOpen: onOpenReviewItem,
-                onApproveMemories: { memories in
-                    await lifecycle.updateMemories(memories, status: "active")
-                },
-                onArchiveMemories: { memories in
-                    await lifecycle.updateMemories(memories, status: "archived")
+                onOpenPlugins: onOpenPluginCenter,
+                onStartMission: { mission in
+                    switch mission {
+                    case .talk:
+                        selection = .assist
+                    case .memory:
+                        selection = .memory
+                    case .loop:
+                        selection = .autopilot
+                    case .verifiedTask, .evidence, .review, .workflow, .repair, .compare, .release:
+                        selection = .qualityGate
+                    }
                 }
             )
         case .assist:

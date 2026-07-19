@@ -103,6 +103,83 @@ struct VisualResultContractTests {
         #expect(result.trustCompass.sectors.count == 4)
     }
 
+    @Test func provisionalBlockingEvidenceDoesNotMislabelAnActiveTask() throws {
+        let task = try decodeTask("""
+        {
+          "task_id": "task-running-provisional-gate",
+          "description": "Still producing final evidence",
+          "status": "running",
+          "subtasks": [],
+          "waves": [],
+          "artifacts": [],
+          "review_status": "pending",
+          "delivery_report": {
+            "quality_gate": "failed",
+            "failed_constraints": ["provisional gate"]
+          }
+        }
+        """)
+
+        let result = AcrossVisualResultFactory.make(task: task)
+
+        #expect(result.verdict == .inProgress)
+        #expect(result.nextAction == .wait)
+    }
+
+    @Test func pendingHumanDecisionIsGuidanceRatherThanAnError() throws {
+        let task = try decodeTask("""
+        {
+          "task_id": "task-review",
+          "description": "Review a verified delivery",
+          "status": "completed",
+          "subtasks": [],
+          "waves": [],
+          "artifacts": [{
+            "id": "report",
+            "file_name": "report.md",
+            "file_path": "report.md",
+            "file_size": "1 KB"
+          }],
+          "review_status": "pending",
+          "quality_health": {"delivery_quality": "passed", "orchestration_health": "healthy"}
+        }
+        """)
+
+        let result = AcrossVisualResultFactory.make(task: task)
+
+        #expect(result.verdict == .needsReview)
+        #expect(result.attentionStack.first(where: { $0.id == "review" })?.priority == .inspectSoon)
+    }
+
+    @Test func acceptedResultNeverReturnsToAwaitingConfirmationWhenAuxiliaryProofIsPartial() throws {
+        let task = try decodeTask("""
+        {
+          "task_id": "task-accepted-partial-proof",
+          "description": "Accepted remote delivery",
+          "status": "completed",
+          "subtasks": [],
+          "waves": [],
+          "artifacts": [{
+            "id": "report",
+            "file_name": "report.md",
+            "file_path": "report.md",
+            "file_size": "1 KB"
+          }],
+          "review_status": "accepted"
+        }
+        """)
+
+        let result = AcrossVisualResultFactory.make(task: task)
+        let decision = AcrossTaskResultDecision(task: task)
+
+        #expect(result.trustCompass.state(for: .proof) == .partial)
+        #expect(result.verdict == .ready)
+        #expect(result.nextAction == .inspectEvidence)
+        #expect(decision.isAccepted)
+        #expect(!decision.canAccept)
+        #expect(decision.canInspectEvidence)
+    }
+
     @Test func currentSchemaDecodesAndUnknownSchemaFallsBack() throws {
         let contract = AcrossVisualResultContract(
             taskID: "task-1",

@@ -132,15 +132,10 @@ private struct PermissionDropdownButton: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Text(selectedState.title(localeIdentifier: localeIdentifier))
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .frame(width: 7, height: 7, alignment: .center)
-            }
-            .foregroundStyle(tint)
+            Text(selectedState.title(localeIdentifier: localeIdentifier))
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .foregroundStyle(tint)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

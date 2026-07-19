@@ -22,6 +22,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
     let qualityHealth: TaskOrchestrationQualityHealth?
     let deliveryReport: TaskOrchestrationDeliveryReport?
     let observability: TaskOrchestrationTaskObservability?
+    let remoteExecution: TaskOrchestrationRemoteExecution?
     let reviewStatus: String
     let acceptedAt: Double?
 
@@ -47,6 +48,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
         case qualityHealth = "quality_health"
         case deliveryReport = "delivery_report"
         case observability
+        case remoteExecution = "remote_execution"
         case reviewStatus = "review_status"
         case acceptedAt = "accepted_at"
     }
@@ -73,6 +75,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
         qualityHealth: TaskOrchestrationQualityHealth? = nil,
         deliveryReport: TaskOrchestrationDeliveryReport? = nil,
         observability: TaskOrchestrationTaskObservability? = nil,
+        remoteExecution: TaskOrchestrationRemoteExecution? = nil,
         reviewStatus: String = "pending",
         acceptedAt: Double? = nil
     ) {
@@ -97,6 +100,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
         self.qualityHealth = qualityHealth
         self.deliveryReport = deliveryReport
         self.observability = observability
+        self.remoteExecution = remoteExecution
         self.reviewStatus = reviewStatus
         self.acceptedAt = acceptedAt
     }
@@ -126,6 +130,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
         qualityHealth = try container.decodeIfPresent(TaskOrchestrationQualityHealth.self, forKey: .qualityHealth)
         deliveryReport = try container.decodeIfPresent(TaskOrchestrationDeliveryReport.self, forKey: .deliveryReport)
         observability = try container.decodeIfPresent(TaskOrchestrationTaskObservability.self, forKey: .observability)
+        remoteExecution = try container.decodeIfPresent(TaskOrchestrationRemoteExecution.self, forKey: .remoteExecution)
         reviewStatus = try container.decodeIfPresent(String.self, forKey: .reviewStatus) ?? "pending"
         acceptedAt = try container.decodeIfPresent(Double.self, forKey: .acceptedAt)
     }
@@ -162,6 +167,7 @@ struct TaskOrchestrationTaskDetail: Decodable {
             qualityHealth: qualityHealth,
             deliveryReport: deliveryReport,
             observability: observability,
+            remoteExecution: remoteExecution,
             reviewStatus: reviewStatus ?? self.reviewStatus,
             acceptedAt: acceptedAt ?? self.acceptedAt
         )
@@ -170,6 +176,38 @@ struct TaskOrchestrationTaskDetail: Decodable {
     var supportsHostLocalLifecycleControls: Bool {
         !externalTask
     }
+}
+
+struct TaskOrchestrationRemoteExecution: Codable {
+    let jobId: String
+    let runId: String
+    let status: String
+    let nodeId: String?
+    let attempt: Int
+    let manifestHash: String?
+    let cleanupStatus: String?
+    let reasonCategory: String?
+    let terminal: Bool
+    let phases: [TaskOrchestrationRemoteExecutionPhase]
+
+    enum CodingKeys: String, CodingKey {
+        case jobId = "job_id"
+        case runId = "run_id"
+        case status
+        case nodeId = "node_id"
+        case attempt
+        case manifestHash = "manifest_hash"
+        case cleanupStatus = "cleanup_status"
+        case reasonCategory = "reason_category"
+        case terminal
+        case phases
+    }
+}
+
+struct TaskOrchestrationRemoteExecutionPhase: Codable, Identifiable {
+    let id: String
+    let title: String
+    let status: String
 }
 
 struct TaskOrchestrationOwnerDecisionSummary: Codable {
@@ -251,6 +289,56 @@ struct TaskOrchestrationSubtaskDetail: Codable, Identifiable {
         case waitingOnDependencies = "waiting_on_dependencies"
         case blockedReason = "blocked_reason"
         case runningForSeconds = "running_for_seconds"
+    }
+
+    init(
+        subtaskId: String,
+        description: String,
+        agentId: String,
+        status: String,
+        progress: Double,
+        outputFile: String?,
+        duration: Double?,
+        errorMessage: String?,
+        fixPlan: String?,
+        waveNumber: Int,
+        ownerDecision: TaskOrchestrationOwnerDecisionSummary?,
+        waitingOnDependencies: [String],
+        blockedReason: String?,
+        runningForSeconds: Double?
+    ) {
+        self.subtaskId = subtaskId
+        self.description = description
+        self.agentId = agentId
+        self.status = status
+        self.progress = progress
+        self.outputFile = outputFile
+        self.duration = duration
+        self.errorMessage = errorMessage
+        self.fixPlan = fixPlan
+        self.waveNumber = waveNumber
+        self.ownerDecision = ownerDecision
+        self.waitingOnDependencies = waitingOnDependencies
+        self.blockedReason = blockedReason
+        self.runningForSeconds = runningForSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        subtaskId = try container.decode(String.self, forKey: .subtaskId)
+        description = try container.decode(String.self, forKey: .description)
+        agentId = try container.decode(String.self, forKey: .agentId)
+        status = try container.decode(String.self, forKey: .status)
+        progress = try container.decode(Double.self, forKey: .progress)
+        outputFile = try container.decodeIfPresent(String.self, forKey: .outputFile)
+        duration = try container.decodeIfPresent(Double.self, forKey: .duration)
+        errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+        fixPlan = try container.decodeIfPresent(String.self, forKey: .fixPlan)
+        waveNumber = try container.decode(Int.self, forKey: .waveNumber)
+        ownerDecision = try container.decodeIfPresent(TaskOrchestrationOwnerDecisionSummary.self, forKey: .ownerDecision)
+        waitingOnDependencies = try container.decodeIfPresent([String].self, forKey: .waitingOnDependencies) ?? []
+        blockedReason = try container.decodeIfPresent(String.self, forKey: .blockedReason)
+        runningForSeconds = try container.decodeIfPresent(Double.self, forKey: .runningForSeconds)
     }
 }
 

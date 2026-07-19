@@ -59,7 +59,7 @@ class DeepseekAdapter(BaseLLMAdapter):
         logger.info(f"Deepseek request: url={url}, model={request.model}, "
                      f"messages_count={len(messages)}, max_tokens={request.max_tokens}")
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds(default=180.0), trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=self.request_timeout_seconds(request, default=180.0), trust_env=False) as client:
             response = await client.post(url, headers=headers, json=payload)
 
             if response.status_code != 200:

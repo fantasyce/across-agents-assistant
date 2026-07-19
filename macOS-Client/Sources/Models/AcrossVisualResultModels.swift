@@ -62,7 +62,7 @@ enum AcrossRunVerdict: String, Codable, Equatable {
     var systemImage: String {
         switch self {
         case .ready: return "checkmark.seal.fill"
-        case .needsReview: return "eye.circle.fill"
+        case .needsReview: return "hand.raised.fill"
         case .blocked: return "exclamationmark.octagon.fill"
         case .inProgress: return "circle.dotted.circle.fill"
         case .cancelled: return "xmark.circle.fill"
@@ -348,8 +348,19 @@ enum AcrossVisualResultFactory {
 
     private static func verdict(_ task: TaskOrchestrationTaskDetail, compass: AcrossTrustCompass) -> AcrossRunVerdict {
         if task.status == "cancelled" { return .cancelled }
-        if task.status == "failed" || compass.sectors.contains(where: { $0.state == .blocked }) { return .blocked }
-        if !["completed", "completed_with_failures", "failed", "cancelled"].contains(task.status) { return .inProgress }
+        if task.status == "failed" { return .blocked }
+        // Quality evidence can be partial or temporarily negative while a run
+        // is still producing its final gates.  A non-terminal task must remain
+        // visibly in progress; only a terminal result may be presented as
+        // blocked and actionable.
+        if !["completed", "completed_with_failures"].contains(task.status) { return .inProgress }
+        let reviewStatus = normalized(task.reviewStatus)
+        if reviewStatus == "rejected" { return .blocked }
+        if compass.sectors.contains(where: { $0.state == .blocked }) { return .blocked }
+        // A recorded human acceptance is the terminal review decision. Missing
+        // or partial auxiliary evidence may still be inspected, but it must not
+        // put an accepted result back into an "awaiting confirmation" state.
+        if ["accepted", "approved"].contains(reviewStatus) { return .ready }
         if compass.sectors.allSatisfy({ $0.state == .confirmed }) { return .ready }
         return .needsReview
     }
@@ -415,7 +426,7 @@ enum AcrossVisualResultFactory {
             items.append(AcrossAttentionItem(id: "blocked", priority: .actNow, titleKey: "result.attention.resolveBlocked", detail: qualityIssues(task).first))
         }
         if normalized(task.reviewStatus) == "pending" && ["completed", "completed_with_failures"].contains(task.status) {
-            items.append(AcrossAttentionItem(id: "review", priority: .actNow, titleKey: "result.attention.reviewDelivery", detail: nil))
+            items.append(AcrossAttentionItem(id: "review", priority: .inspectSoon, titleKey: "result.attention.reviewDelivery", detail: nil))
         }
         if compass.state(for: .proof) == .missing {
             items.append(AcrossAttentionItem(id: "proof", priority: .inspectSoon, titleKey: "result.attention.addProof", detail: nil))
@@ -467,5 +478,30 @@ enum AcrossVisualResultFactory {
 
     private static func normalized(_ value: String) -> String {
         value.lowercased().filter(\.isLetter)
+    }
+}
+
+struct AcrossTaskResultDecision {
+    let isTerminal: Bool
+    let isAccepted: Bool
+    let isRejected: Bool
+    let canAccept: Bool
+    let canInspectEvidence: Bool
+
+    init(task: TaskOrchestrationTaskDetail) {
+        let status = task.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let review = task.reviewStatus
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        isTerminal = ["completed", "completed_with_failures", "failed", "cancelled"].contains(status)
+        isAccepted = ["accepted", "approved"].contains(review)
+        isRejected = review == "rejected"
+        canAccept = status == "completed" && !isAccepted && !isRejected
+        canInspectEvidence = ["completed", "completed_with_failures"].contains(status)
+            || task.qualityHealth != nil
+            || task.deliveryReport != nil
     }
 }

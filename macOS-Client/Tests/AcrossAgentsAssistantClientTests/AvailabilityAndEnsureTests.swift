@@ -5,9 +5,62 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct AvailabilityAndEnsureTests {
-    private func makeViewModel() -> SettingsViewModel {
-        UnixSocketProtocol.register()
-        let vm = SettingsViewModel(bootstrapOnInit: false, loadPersisted: false)
+    private actor BackendKeyStub {
+        private var providers: [String: String]
+
+        init(configuredProviders: Set<String> = []) {
+            providers = [
+                "deepseek": configuredProviders.contains("deepseek") ? "configured" : "not_configured",
+                "minimax": configuredProviders.contains("minimax") ? "configured" : "not_configured",
+            ]
+        }
+
+        func load(_ request: URLRequest) throws -> (Data, URLResponse) {
+            let url = try #require(request.url)
+            let method = request.httpMethod ?? "GET"
+            let statusCode: Int
+            let data: Data
+
+            switch (method, url.path) {
+            case ("GET", "/api/health"):
+                statusCode = 200
+                data = Data(#"{"status":"ok"}"#.utf8)
+            case ("GET", "/api/keys/status"):
+                statusCode = 200
+                data = try JSONEncoder().encode(["providers": providers])
+            case ("POST", "/api/keys"):
+                let keys = try JSONDecoder().decode([String: String].self, from: request.httpBody ?? Data())
+                for (provider, key) in keys where !key.isEmpty {
+                    providers[provider] = "configured"
+                }
+                statusCode = 200
+                data = Data(#"{"status":"ok"}"#.utf8)
+            default:
+                statusCode = 404
+                data = Data(#"{"detail":"not found"}"#.utf8)
+            }
+
+            let response = try #require(HTTPURLResponse(
+                url: url,
+                statusCode: statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            ))
+            return (data, response)
+        }
+
+        func status(for provider: String) -> String? {
+            providers[provider]
+        }
+    }
+
+    private func makeViewModel(backend: BackendKeyStub = BackendKeyStub()) -> SettingsViewModel {
+        let vm = SettingsViewModel(
+            bootstrapOnInit: false,
+            loadPersisted: false,
+            backendBase: "http://isolated-backend",
+            backendDataLoader: { request in try await backend.load(request) }
+        )
         vm.localAgents = [.localAgent, .hermes, .claude, .codex]
         vm.cloudLLMs = [.deepSeek, .miniMax]
         vm.apiKeyStatusCache = [:]
@@ -94,7 +147,8 @@ struct AvailabilityAndEnsureTests {
 
     @Test
     func ensureChatAgentReadySyncsConfiguredCloudProviderToBackend() async throws {
-        let vm = makeViewModel()
+        let backend = BackendKeyStub()
+        let vm = makeViewModel(backend: backend)
         vm.cloudLLMs[0].apiKey = "deepseek-test-key"
         vm.apiKeyStatusCache["deepseek"] = "configured"
         refreshAvailabilityState(for: vm)
@@ -103,13 +157,12 @@ struct AvailabilityAndEnsureTests {
 
         #expect(result == nil)
 
-        let status = try await fetchBackendKeyStatus()
-        #expect(status["deepseek"] == "configured")
+        #expect(await backend.status(for: "deepseek") == "configured")
     }
 
     @Test
     func ensureTaskSubmissionReadyAllowsBackendConfiguredCloudProviderWithoutLocalApiKey() async {
-        let vm = makeViewModel()
+        let vm = makeViewModel(backend: BackendKeyStub(configuredProviders: ["deepseek"]))
         vm.cloudLLMs[0].apiKey = nil
         vm.apiKeyStatusCache["deepseek"] = "configured"
         refreshAvailabilityState(for: vm)
@@ -121,7 +174,7 @@ struct AvailabilityAndEnsureTests {
 
     @Test
     func ensureChatAgentReadyAllowsBackendConfiguredCloudProviderWithoutLocalApiKey() async {
-        let vm = makeViewModel()
+        let vm = makeViewModel(backend: BackendKeyStub(configuredProviders: ["deepseek"]))
         vm.cloudLLMs[0].apiKey = nil
         vm.apiKeyStatusCache["deepseek"] = "configured"
         refreshAvailabilityState(for: vm)
@@ -136,17 +189,4 @@ struct AvailabilityAndEnsureTests {
         #expect(SessionViewModel.longRunningAgentRequestTimeout >= 600)
     }
 
-    private func fetchBackendKeyStatus() async throws -> [String: String] {
-        let url = URL(string: "http://backend/api/keys/status")!
-        let (data, response) = try await URLSession.shared.data(from: url)
-        let httpResponse = try #require(response as? HTTPURLResponse)
-        #expect(httpResponse.statusCode == 200)
-
-        struct Response: Decodable {
-            let providers: [String: String]
-        }
-
-        let decoded = try JSONDecoder().decode(Response.self, from: data)
-        return decoded.providers
-    }
 }

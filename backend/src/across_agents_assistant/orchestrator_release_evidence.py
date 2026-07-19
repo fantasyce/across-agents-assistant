@@ -57,6 +57,50 @@ def _artifact_integrity_passed(evidence: Dict[str, Any], expected_files: List[st
     return all(path in present for path in expected_files)
 
 
+def _is_app_grade_evidence(evidence: Dict[str, Any]) -> bool:
+    contract = evidence.get("contract") or {}
+    return bool(evidence.get("app_grade")) or contract.get("engine") == "app_grade_release_e2e"
+
+
+def _evaluate_generic_orchestrator_quality(
+    evidence: Dict[str, Any],
+    *,
+    expected_files: Optional[List[str]] = None,
+    required_probes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    contract = evidence.get("contract") or {}
+    quality = evidence.get("quality") or {}
+    expected = list(expected_files or contract.get("requiredArtifacts") or [])
+    gate_statuses = dict(quality.get("gates") or {})
+    checks: Dict[str, bool] = {
+        "task_completed": str(evidence.get("status") or "").strip().lower() == "completed",
+        "artifact_integrity": _artifact_integrity_passed(evidence, expected),
+        "orchestrator_quality": _status_is_passed(quality.get("status")),
+    }
+    probes = list(required_probes or [])
+    for probe in probes:
+        checks[probe] = _status_is_passed(gate_statuses.get(probe))
+    failures = [f"{check} did not pass" for check, passed in checks.items() if not passed]
+    passed = all(checks.values())
+    produced_files = sorted(
+        str(item.get("path"))
+        for item in evidence.get("artifacts") or []
+        if item.get("present") and item.get("path")
+    )
+    return {
+        "status": "passed" if passed else "failed",
+        "quality_gate": "passed" if passed else "failed",
+        "delivery_quality": "passed" if passed else "failed",
+        "quality_score": 100 if passed else int(100 * sum(checks.values()) / max(1, len(checks))),
+        "checks": checks,
+        "failures": failures,
+        "produced_files": produced_files,
+        "required_files": expected,
+        "required_probes": probes,
+        "gate_results": gate_statuses,
+    }
+
+
 def evaluate_app_grade_quality(
     evidence: Dict[str, Any],
     *,
@@ -122,10 +166,18 @@ def build_external_quality_benchmark(
     benchmark_id: str,
     app_version: Optional[str] = None,
 ) -> Dict[str, Any]:
-    quality = evaluate_app_grade_quality(
-        evidence,
-        expected_files=expected_files,
-        required_probes=required_probes,
+    quality = (
+        evaluate_app_grade_quality(
+            evidence,
+            expected_files=expected_files,
+            required_probes=required_probes,
+        )
+        if _is_app_grade_evidence(evidence)
+        else _evaluate_generic_orchestrator_quality(
+            evidence,
+            expected_files=expected_files,
+            required_probes=required_probes,
+        )
     )
     status = "passed" if quality["status"] == "passed" and quality["quality_score"] >= min_quality_score else "failed"
     scenario = {
@@ -176,7 +228,8 @@ def external_evidence_to_app_bundle(
         or (evidence.get("contract") or {}).get("requiredArtifacts")
         or []
     )
-    probes = list(required_probes or DEFAULT_RELEASE_REQUIRED_PROBES)
+    app_grade = _is_app_grade_evidence(evidence)
+    probes = list(required_probes or (DEFAULT_RELEASE_REQUIRED_PROBES if app_grade else []))
     benchmark = build_external_quality_benchmark(
         evidence,
         expected_files=expected,
@@ -193,10 +246,16 @@ def external_evidence_to_app_bundle(
         "task_id": evidence.get("task_id") or "",
         "description": evidence.get("goal"),
         "task_status": evidence.get("status") or "unknown",
-        "task_types": ["functional", "artifact"],
-        "delivery_mode": "composite",
+        "task_types": list((evidence.get("metadata") or {}).get("task_types") or ["functional", "artifact"]),
+        "delivery_mode": str((evidence.get("metadata") or {}).get("delivery_mode") or "composite"),
         "project_dir": evidence.get("project_root"),
-        "owner_agent": (evidence.get("contract") or {}).get("engine") or "app-grade",
+        "owner_agent": (
+            (evidence.get("contract") or {}).get("engine")
+            or next(
+                (str(item.get("agent")) for item in evidence.get("subtasks") or [] if item.get("agent")),
+                "across-orchestrator",
+            )
+        ),
         "allowed_subtask_agents": sorted({str(item.get("agent") or "app-grade") for item in evidence.get("subtasks") or []}),
         "delivery_contract": evidence.get("contract") or {},
         "requirement_manifest": {

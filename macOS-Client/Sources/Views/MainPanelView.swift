@@ -15,7 +15,6 @@ struct MainPanelView: View {
     // State for interactive buttons
     @State var selectedOperationsSurface: OperationsWorkbenchSurface = .assist
     @State var activeSettingsHubTab: SettingsHubTab? = nil
-    @State var showTaskOrchestration = false
     @State var showsSelectedTaskDetails = false
     @State var showsContextDrawer = false
     @State var autopilotEvidenceTarget: AutopilotEvidenceTarget?
@@ -41,11 +40,12 @@ struct MainPanelView: View {
     @State var dragStartWidth: Double = 0
     @State var scrollAnchorId: String? = nil
     @State var mcpPollingTimer: Timer? = nil
+    @State var didLoadProductShell = false
     @State var isNewProjectMenuHovered = false
     @State var windowContentWidth: CGFloat = 1280
 
     var windowLayoutSize: AcrossWindowLayoutSize {
-        windowContentWidth >= 1400 ? .expanded : .regular
+        windowContentWidth >= 1220 ? .expanded : .regular
     }
 
     var visibleLocalAgents: [AgentModel] {
@@ -66,6 +66,13 @@ struct MainPanelView: View {
         settingsViewModel.availabilityBootstrapState == .ready && settingsViewModel.hasAnyAvailableAgents
     }
 
+    var workSubmissionMode: WorkSubmissionMode {
+        WorkSubmissionMode.resolve(
+            automaticDeliveryProtection: appPreferences.automaticDeliveryProtection,
+            orchestratorUnavailable: taskOrchestrationViewModel.isOrchestratorPluginUnavailable
+        )
+    }
+
     var canUseBeginnerMissionInput: Bool {
         appPreferences.automaticDeliveryProtection
             && productProgress.isUnlocked(.selfIteration)
@@ -80,6 +87,7 @@ struct MainPanelView: View {
 
     var shouldUseInputForBeginnerMission: Bool {
         canUseBeginnerMissionInput
+            && !canUseAgentFeatures
             && taskOrchestrationViewModel.tasks.isEmpty
             && beginnerMissionViewModel.result == nil
     }
@@ -135,21 +143,20 @@ struct MainPanelView: View {
     }
 
     var isProtectedTaskRunning: Bool {
-        guard appPreferences.automaticDeliveryProtection else { return false }
+        guard workSubmissionMode.usesProtectedDelivery else { return false }
         if taskOrchestrationViewModel.isSubmittingTask { return true }
         guard let status = taskOrchestrationViewModel.selectedTask?.status else { return false }
         return !TaskOrchestrationStateReducers.isTerminalStatus(status)
     }
 
     var isViewingAcceptedTask: Bool {
-        appPreferences.automaticDeliveryProtection
+        workSubmissionMode.usesProtectedDelivery
             && taskOrchestrationViewModel.selectedTask?.reviewStatus == "accepted"
     }
 
-    var automaticDeliveryNeedsSetup: Bool {
-        appPreferences.automaticDeliveryProtection
+    var showsOrchestratorUpgradeHint: Bool {
+        workSubmissionMode.showsOrchestratorUpgradeHint
             && canUseAgentFeatures
-            && taskOrchestrationViewModel.isOrchestratorPluginUnavailable
     }
 
     var humanReviewSnapshot: HumanReviewQueueSnapshot {
@@ -178,6 +185,9 @@ struct MainPanelView: View {
 
     var humanReviewSignals: [HumanReviewSignal] {
         var signals: [HumanReviewSignal] = []
+
+        signals.append(contentsOf: qualityGateViewModel.reviewSignals)
+        signals.append(contentsOf: workspaceOperationsViewModel.reviewSignals)
 
         if let request = viewModel.pendingApproval {
             signals.append(
@@ -218,8 +228,8 @@ struct MainPanelView: View {
             )
         }
 
-        let pendingMemories = pluginLifecycleViewModel.memories.filter { $0.status == "pending" }
-        if !pendingMemories.isEmpty {
+        let pendingMemoryCount = pluginLifecycleViewModel.pendingMemoryCount
+        if pendingMemoryCount > 0 {
             signals.append(
                 HumanReviewSignal(
                     id: "memory-review-batch",
@@ -227,7 +237,7 @@ struct MainPanelView: View {
                     title: appPreferences.text("review.memory.batch.title"),
                     detail: String(
                         format: appPreferences.text("review.memory.batch.detail"),
-                        pendingMemories.count
+                        pendingMemoryCount
                     ),
                     status: "pending",
                     source: "Context"
@@ -244,7 +254,7 @@ struct MainPanelView: View {
             centerResizer
             centerArea
             if selectedOperationsSurface == .assist
-                && !appPreferences.automaticDeliveryProtection
+                && workSubmissionMode.usesDirectAgent
                 && settingsViewModel.shouldShowRightSidebar
             {
                 rightResizer
@@ -289,15 +299,6 @@ struct MainPanelView: View {
             }
             syncSelectedAgentToAvailability()
         }
-        .task {
-            async let lifecycleLoad: Void = pluginLifecycleViewModel.loadForProductShell()
-            taskOrchestrationViewModel.updateProjectDirectoryFilter(
-                viewModel.activeProjectPath,
-                reload: false
-            )
-            taskOrchestrationViewModel.loadTasks()
-            _ = await lifecycleLoad
-        }
         .onDisappear {
             mcpPollingTimer?.invalidate()
             if speechInput.state.isActive {
@@ -331,13 +332,8 @@ struct MainPanelView: View {
 
     private var observedPanel: some View {
         synchronizedPanel
-        .onChange(of: humanReviewSnapshot.totalCount) {
-            if humanReviewSnapshot.totalCount == 0, selectedOperationsSurface == .humanReview {
-                selectedOperationsSurface = .assist
-            }
-        }
         .onChange(of: productProgress.unlockedSurfaces) {
-            let allowed = Set([OperationsWorkbenchSurface.assist, .humanReview] + productProgress.unlockedSurfaces)
+            let allowed = Set([OperationsWorkbenchSurface.assist] + productProgress.unlockedSurfaces)
             if !allowed.contains(selectedOperationsSurface) {
                 selectedOperationsSurface = .assist
             }
@@ -375,9 +371,8 @@ struct MainPanelView: View {
 
     var body: some View {
         observedPanel
-        .background(OverlayCmdWInterceptor(isActive: activeSettingsHubTab != nil || showTaskOrchestration, onClose: {
+        .background(OverlayCmdWInterceptor(isActive: activeSettingsHubTab != nil, onClose: {
             activeSettingsHubTab = nil
-            showTaskOrchestration = false
         }))
         .transaction { transaction in
             if appPreferences.reduceMotion {
@@ -385,19 +380,15 @@ struct MainPanelView: View {
                 transaction.animation = nil
             }
         }
-        .accessibilityHidden(activeSettingsHubTab != nil || showTaskOrchestration)
+        .accessibilityHidden(activeSettingsHubTab != nil)
         .overlay(TrafficLightHider().frame(width: 0, height: 0).allowsHitTesting(false))
         .overlay(
             MainPanelOverlayHost(
                 session: viewModel,
-                taskOrchestration: taskOrchestrationViewModel,
                 settings: settingsViewModel,
                 preferences: appPreferences,
                 settingsTab: activeSettingsHubTab,
-                showsTaskOrchestration: showTaskOrchestration,
-                activeProjectPath: viewModel.activeProjectPath,
-                onCloseSettings: { activeSettingsHubTab = nil },
-                onCloseTaskOrchestration: { showTaskOrchestration = false }
+                onCloseSettings: { activeSettingsHubTab = nil }
             )
         )
     }

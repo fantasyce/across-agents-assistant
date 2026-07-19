@@ -66,11 +66,16 @@ struct CapabilityProgressView: View {
     @ObservedObject var preferences: AppPreferences
     let onOpenModels: () -> Void
     let onOpenPlugins: () -> Void
+    let onStartMission: (AcrossLearningMissionKind) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
     private var installedCapabilities: [AcrossProductCapability] {
         progress.capabilities.filter(\.isUnlocked)
+    }
+
+    private var componentColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 148), spacing: 12), count: 4)
     }
 
     var body: some View {
@@ -88,8 +93,7 @@ struct CapabilityProgressView: View {
 
     private var header: some View {
         MinimalPageHeader(
-            title: preferences.text("growth.title"),
-            subtitle: preferences.text(progress.levelKey)
+            title: preferences.text("growth.title")
         ) {}
     }
 
@@ -113,10 +117,12 @@ struct CapabilityProgressView: View {
                 }
                 .padding(.vertical, 10)
             } else {
-                ForEach(installedCapabilities) { capability in
-                    CapabilityStateRow(capability: capability, preferences: preferences)
-                    if capability.id != installedCapabilities.last?.id {
-                        Divider().padding(.leading, 70)
+                LazyVGrid(columns: componentColumns, alignment: .center, spacing: 12) {
+                    ForEach(installedCapabilities) { capability in
+                        CapabilityComponentTile(
+                            capability: capability,
+                            preferences: preferences
+                        )
                     }
                 }
             }
@@ -125,7 +131,12 @@ struct CapabilityProgressView: View {
     }
 
     private var learningPathSection: some View {
-        CapabilityPathView(progress: progress.learning, preferences: preferences)
+        CapabilityPathView(
+            progress: progress.learning,
+            preferences: preferences,
+            onStartMission: onStartMission,
+            onOpenPlugins: onOpenPlugins
+        )
     }
 
     private var achievementSection: some View {
@@ -284,126 +295,88 @@ struct MinimalAutopilotCapabilityView: View {
 private struct CapabilityPathView: View {
     let progress: AcrossLearningProgressSnapshot
     @ObservedObject var preferences: AppPreferences
+    let onStartMission: (AcrossLearningMissionKind) -> Void
+    let onOpenPlugins: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private var regularMissions: [AcrossLearningMission] {
-        progress.missions.filter { !$0.isChallenge }
-    }
-
-    private var challenges: [AcrossLearningMission] {
-        progress.missions.filter(\.isChallenge)
+    private var nextMission: AcrossLearningMission? {
+        progress.recommendedMission ?? progress.missions.first { !$0.isComplete }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "map.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AcrossTheme.accent)
+        Group {
+            if let mission = nextMission {
+                HStack(spacing: 16) {
+                    PixelAtlasReward(
+                        atlas: mission.isChallenge ? .challengeRewards : .journeyNodes,
+                        index: missionArtworkIndex(mission),
+                        isUnlocked: mission.isAvailable
+                    )
+                    .frame(width: 64, height: 64)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(preferences.text("growth.path.title"))
-                        .font(.system(size: 17, weight: .semibold))
-                    Text(preferences.text(progress.level.titleKey))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
 
-            if let recommended = progress.recommendedMission {
-                HStack(spacing: 10) {
-                    Image(systemName: recommended.kind.systemImage)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(AcrossTheme.accent)
-                        .frame(width: 30, height: 30)
-                        .background(AcrossTheme.accent.opacity(0.1))
-                        .clipShape(Circle())
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(preferences.text("growth.path.next"))
-                            .font(.system(size: 10, weight: .medium))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(preferences.text("growth.challenge.next"))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                        Text(preferences.text(recommended.kind.titleKey))
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    Spacer()
-                    Image(systemName: "arrow.right")
+                        Text(preferences.text(mission.kind.titleKey))
+                            .font(.system(size: 17, weight: .semibold))
+                        Text(
+                            preferences.text(
+                                mission.isAvailable
+                                    ? mission.kind.detailKey
+                                    : "growth.path.unavailable"
+                            )
+                        )
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
-                .padding(11)
-                .background(AcrossTheme.accent.opacity(colorScheme == .dark ? 0.14 : 0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .accessibilityElement(children: .combine)
-            }
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 112, maximum: 152), spacing: 8)],
-                alignment: .leading,
-                spacing: 8
-            ) {
-                ForEach(regularMissions) { mission in
-                    missionNode(mission)
-                }
-            }
-
-            if !challenges.isEmpty {
-                HStack(spacing: 8) {
-                    Text(preferences.text("growth.challenge.title"))
-                        .font(.system(size: 12, weight: .semibold))
-                    Rectangle()
-                        .fill(AcrossTheme.separator(for: colorScheme))
-                        .frame(height: 1)
-                }
-                HStack(spacing: 8) {
-                    ForEach(challenges) { mission in
-                        missionNode(mission)
+                        .lineLimit(2)
                     }
+
+                    Spacer(minLength: 12)
+
+                    Button {
+                        start(mission)
+                    } label: {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(AcrossTheme.accent)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(preferences.text(mission.kind.titleKey))
+                    .accessibilityHint(
+                        preferences.text(
+                            mission.isAvailable
+                                ? mission.kind.detailKey
+                                : "growth.path.unavailable"
+                        )
+                    )
+                    .help(preferences.text(mission.kind.titleKey))
                 }
+                .padding(14)
+                .frame(maxWidth: .infinity, minHeight: 94, alignment: .leading)
+                .background(AcrossTheme.recessedFill(for: colorScheme))
+                .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                        .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+                )
+            } else {
+                Text(preferences.text("growth.challenge.complete"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(preferences.text("growth.path.title"))
     }
 
-    private func missionNode(_ mission: AcrossLearningMission) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                PixelAtlasReward(
-                    atlas: mission.isChallenge ? .challengeRewards : .journeyNodes,
-                    index: missionArtworkIndex(mission),
-                    isUnlocked: mission.isAvailable
-                )
-                .frame(width: 34, height: 34)
-                Spacer()
-                Image(systemName: mission.isComplete ? "checkmark.circle.fill" : (mission.isAvailable ? "circle" : "lock.fill"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(mission.isComplete ? Color(hex: "#248A3D") : .secondary)
-                    .accessibilityHidden(true)
-            }
-            Text(preferences.text(mission.kind.titleKey))
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(2)
-            Text(preferences.text(mission.kind.detailKey))
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+    private func start(_ mission: AcrossLearningMission) {
+        if mission.isAvailable {
+            onStartMission(mission.kind)
+        } else {
+            onOpenPlugins()
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
-        .background(Color.secondary.opacity(mission.isAvailable ? 0.055 : 0.025))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
-        }
-        .opacity(mission.isAvailable ? 1 : 0.52)
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(preferences.text(
-            mission.isComplete ? "growth.path.complete" : (mission.isAvailable ? "growth.path.available" : "growth.path.unavailable")
-        ))
     }
 
     private func missionArtworkIndex(_ mission: AcrossLearningMission) -> Int {
@@ -415,6 +388,56 @@ private struct CapabilityPathView: View {
             }
         }
         return AcrossLearningMissionKind.allCases.firstIndex(of: mission.kind) ?? 0
+    }
+}
+
+private struct CapabilityComponentTile: View {
+    let capability: AcrossProductCapability
+    @ObservedObject var preferences: AppPreferences
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Group {
+                if let artworkIndex = capability.artworkIndex {
+                    PixelAtlasReward(
+                        atlas: .capabilities,
+                        index: artworkIndex,
+                        isUnlocked: capability.isUnlocked
+                    )
+                } else {
+                    Image(systemName: capability.systemImage)
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundStyle(AcrossTheme.accent)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(width: 96, height: 96)
+
+            Text(capability.titleKey.map(preferences.text) ?? capability.title)
+                .font(.system(size: 13, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .center)
+
+            Text(capability.detailKey.map(preferences.text) ?? capability.detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .top)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .center)
+        .background(AcrossTheme.recessedFill(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AcrossTheme.Metrics.cardCornerRadius)
+                .stroke(AcrossTheme.separator(for: colorScheme), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 }
 
