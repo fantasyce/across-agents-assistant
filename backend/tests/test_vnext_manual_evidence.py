@@ -22,7 +22,7 @@ from across_agents_assistant.release_evidence import (
 
 APP = {
     "app_path": "/Applications/Across Agents Assistant.app",
-    "version": "0.13.1",
+    "version": "0.13.2",
     "bundle_identifier": "app.acrossagents.assistant",
     "executable_sha256": "a" * 64,
 }
@@ -377,7 +377,7 @@ def validate(gate_id, payload, tmp_path):
         gate_id,
         payload,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
     )
 
 
@@ -414,7 +414,7 @@ def test_candidate_fingerprint_is_required_and_can_bind_the_installed_binary(tmp
     with info_path.open("wb") as handle:
         plistlib.dump({
             "CFBundleIdentifier": "app.acrossagents.assistant",
-            "CFBundleShortVersionString": "0.13.1",
+            "CFBundleShortVersionString": "0.13.2",
             "CFBundleExecutable": "AcrossAgentsAssistant",
         }, handle)
     monkeypatch.setattr(
@@ -424,7 +424,7 @@ def test_candidate_fingerprint_is_required_and_can_bind_the_installed_binary(tmp
     bound = ui_payload(tmp_path)
     bound["candidate"] = {
         "app_path": str(app_path),
-        "version": "0.13.1",
+        "version": "0.13.2",
         "bundle_identifier": "app.acrossagents.assistant",
         "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
     }
@@ -432,7 +432,7 @@ def test_candidate_fingerprint_is_required_and_can_bind_the_installed_binary(tmp
         "packaged_ui_sweep",
         bound,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
         verify_installed_candidate=True,
     ) == ("passed", None)
     executable.write_bytes(b"changed candidate")
@@ -440,7 +440,7 @@ def test_candidate_fingerprint_is_required_and_can_bind_the_installed_binary(tmp
         "packaged_ui_sweep",
         bound,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
         verify_installed_candidate=True,
     )[1]
 
@@ -495,19 +495,19 @@ def test_complete_real_voice_sessions_pass(tmp_path):
 
 def test_release_decision_accepts_only_a_bounded_voice_waiver():
     assert validate_release_decision(
-        release_decision_payload(), expected_version="0.13.1"
+        release_decision_payload(), expected_version="0.13.2"
     ) == ("passed", None)
 
     overclaim = release_decision_payload()
     overclaim["voice_hardware_gate"]["no_full_coverage_claim"] = False
     assert "no_full_coverage_claim" in validate_release_decision(
-        overclaim, expected_version="0.13.1"
+        overclaim, expected_version="0.13.2"
     )[1]
 
     private = release_decision_payload()
     private["voice_hardware_gate"]["transcript"] = "private speech"
     assert "audio or transcript" in validate_release_decision(
-        private, expected_version="0.13.1"
+        private, expected_version="0.13.2"
     )[1]
 
 
@@ -559,7 +559,7 @@ def test_complete_synthetic_beginner_evidence_passes_without_claiming_humans(tmp
     assert validate_synthetic_beginner_evidence(
         payload,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
     ) == ("passed", None)
 
     false_human_claim = deepcopy(payload)
@@ -567,7 +567,7 @@ def test_complete_synthetic_beginner_evidence_passes_without_claiming_humans(tmp
     assert "must not claim to be human" in validate_synthetic_beginner_evidence(
         false_human_claim,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
     )[1]
 
     missing_limitations = deepcopy(payload)
@@ -575,7 +575,7 @@ def test_complete_synthetic_beginner_evidence_passes_without_claiming_humans(tmp
     assert "non-human limitations" in validate_synthetic_beginner_evidence(
         missing_limitations,
         report_root=tmp_path,
-        expected_version="0.13.1",
+        expected_version="0.13.2",
     )[1]
 
 

@@ -503,6 +503,10 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
                             "state": "online_idle",
                             "transport": "direct",
                             "last_seen_at": 1234.5,
+                            "capability_manifest": {
+                                **capability(),
+                                "worker_version": "0.10.5",
+                            },
                         }
                     ]
                 }
@@ -556,6 +560,7 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
     live = client.get("/api/worker-control").json()
     assert live["nodes"][0]["state"] == "online_idle"
     assert live["nodes"][0]["last_seen_at"] == 1234.5
+    assert live["nodes"][0]["capability_manifest"]["worker_version"] == "0.10.5"
     assert live["health"]["online_count"] == 1
     assert presence_wait_budgets[-1] == 1.0
     drained = client.post("/api/worker-control/nodes/node-test/actions", json={"action": "drain"})

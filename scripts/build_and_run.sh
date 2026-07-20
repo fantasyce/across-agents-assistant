@@ -76,6 +76,13 @@ stop_matching "$APP_NAME.app/Contents/Resources/backend/backend"
 # re-parented to launchd. Remove only the formal AAA control-server command;
 # Codex/plugin MCP processes and remote Workers are deliberately out of scope.
 stop_matching "worker-control-server --socket $HOME/.across/run/across-agents-assistant/worker-control.sock"
+# A startup/quit race can also re-parent the three network children after the
+# descendant list above was captured. Match only the formal AAA listener and
+# gateways by their private runtime paths so a rebuild cannot leave a stale
+# process consuming a replaced managed Orchestrator payload.
+stop_matching "worker-listener .*--artifact-root $HOME/.across/data/across-agents-assistant/worker-artifacts"
+stop_matching "worker-model-gateway .*--client-ca $HOME/.across/data/across-agents-assistant/worker-pki/ca-certificate.pem"
+stop_matching "worker-enrollment-gateway .*--private-key $HOME/.across/data/across-agents-assistant/worker-pki/server-key.pem"
 rm -f "$HOME/.across/run/across-agents-assistant/across-agents.lock" \
       "$HOME/.across/run/across-agents-assistant/across-agents.sock" \
       "$HOME/.across/run/across-agents-assistant/worker-control.sock"
