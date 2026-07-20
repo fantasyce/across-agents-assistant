@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.3 - 2026-07-20
+
+### Fixed
+
+- Updated the bundled Across Autopilot to `v0.5.1`, which resets inherited
+  PyInstaller bootloader state before launching independent packaged tools.
+  This restores Orchestrator dispatch from the formally packaged AAA App.
+
 ## 0.13.2 - 2026-07-20
 
 ### Fixed

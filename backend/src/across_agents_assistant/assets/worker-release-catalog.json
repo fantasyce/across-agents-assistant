@@ -26,8 +26,8 @@
   },
   "workflow_packs": {
     "scenario-simulation": {
-      "url": "https://github.com/fantasyce/across-autopilot/releases/download/v0.5.0/across-scenario-simulation-worker-pack-0.5.0.tar.gz",
-      "sha256": "68fe087e66f4422c034bc68f376f83ecd1dcba612f828af993720106efccfb4b"
+      "url": "https://github.com/fantasyce/across-autopilot/releases/download/v0.5.1/across-scenario-simulation-worker-pack-0.5.1.tar.gz",
+      "sha256": "d4052203f6c4c936526e224f274d43d169a9886953c830dde6a8286b40188020"
     }
   }
 }

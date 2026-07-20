@@ -12,7 +12,7 @@ func testPluginStatusDecodesAgentLoopCapabilities() throws {
       "plugin_id": "across-orchestrator",
       "display_name": "Across Orchestrator",
       "kind": "task-runtime",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "status": "installed",
       "installed": true,
       "available": true,
