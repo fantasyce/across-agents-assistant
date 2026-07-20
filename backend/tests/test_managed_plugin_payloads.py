@@ -181,7 +181,7 @@ def test_managed_payload_rejects_archive_path_traversal(tmp_path):
     ("plugin_id", "package_name", "version", "install"),
     [
         ("across-context", "@across/context", "0.11.0", run_context_plugin_lifecycle_action),
-        ("across-autopilot", "@across/autopilot", "0.5.1", run_autopilot_plugin_lifecycle_action),
+        ("across-autopilot", "@across/autopilot", "0.5.2", run_autopilot_plugin_lifecycle_action),
     ],
 )
 def test_one_click_node_install_does_not_require_npm_or_git(

@@ -51,10 +51,10 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.3` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.4` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.0` |
 | Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.5` |
-| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.1` |
+| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.2` |
 
 Install or repair the three optional components from **Settings → Plugins**.
 Packaged builds carry verified plugin payloads, so the one-click path does not
@@ -70,7 +70,7 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.13.3` Includes
+## What `v0.13.4` Includes
 
 - One generic Work entry with goal-driven Autopilot resolution; starter cards
   and scenario-specific host fields no longer define the task model.
@@ -88,6 +88,11 @@ require the user to install Git, npm, Node, or Python.
 - Managed plugin install, repair, upgrade, rollback, and uninstall coverage for
   all three first-party plugins, including runtime reconnect and provenance
   verification after a formal app rebuild.
+- Packaged Autopilot now delegates Orchestrator work through the host-owned
+  private socket, avoiding nested packaged-process startup limits while keeping
+  the standalone CLI fallback. Completed runs retain Orchestrator and Context
+  identifiers so the app can trace one goal across planning, execution, memory,
+  and review.
 - Live Worker cards now follow the authenticated capability manifest after an
   in-place update, and formal rebuilds reclaim any stale AAA-owned Worker
   network child before replacing managed plugin payloads.

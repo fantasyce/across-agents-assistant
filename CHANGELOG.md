@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.4 - 2026-07-20
+
+### Fixed
+
+- Updated the bundled Across Autopilot to `v0.5.2`, which delegates packaged
+  Orchestrator work through AAA's private host socket instead of starting a
+  second packaged runtime from inside the formal App.
+- Kept standalone Autopilot CLI execution as a fallback, limited host-model
+  callbacks to workflows that declare a model policy, and retained the
+  Orchestrator and Context identifiers in completed run records for end-to-end
+  evidence tracing.
+
 ## 0.13.3 - 2026-07-20
 
 ### Fixed
