@@ -1084,6 +1084,14 @@ def merge_coordinator_presence(
             node["transport"] = transport
         if live.get("last_seen_at") is not None:
             node["last_seen_at"] = live.get("last_seen_at")
+        # Enrollment captures the initial hardware/capability snapshot, but a
+        # managed Worker may later update in place. The connected Coordinator
+        # has the freshly probed manifest from the authenticated hello, so use
+        # it for the live UI instead of leaving the device card on an old
+        # Worker version until the user re-registers the machine.
+        live_capability = live.get("capability_manifest")
+        if isinstance(live_capability, Mapping):
+            node["capability_manifest"] = dict(live_capability)
 
     health = host_snapshot.get("health")
     if isinstance(health, dict):

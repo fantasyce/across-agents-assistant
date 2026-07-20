@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.2 - 2026-07-20
+
+### Fixed
+
+- Projected the authenticated Coordinator capability manifest into the device
+  view so an in-place Worker upgrade appears immediately without re-registering
+  the machine.
+- Updated the managed Orchestrator and Worker catalog to `v0.10.5`, whose
+  status command reports the atomically activated runtime after update or
+  rollback.
+- Hardened formal rebuild cleanup against a startup/quit race that could leave
+  an AAA-owned Worker listener or gateway consuming a replaced plugin runtime.
+
 ## 0.13.1 - 2026-07-20
 
 ### Fixed

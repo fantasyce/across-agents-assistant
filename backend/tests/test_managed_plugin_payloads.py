@@ -261,10 +261,10 @@ def test_one_click_node_install_does_not_require_npm_or_git(
 def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(monkeypatch, tmp_path):
     payload_root = tmp_path / "payloads"
     native = _write_executable(
-        payload_root / "runtimes" / "orchestrator-0.10.4" / "across-orchestrator",
+        payload_root / "runtimes" / "orchestrator-0.10.5" / "across-orchestrator",
         "#!/bin/sh\n"
         "case \"$1\" in\n"
-        "  plugin-manifest) printf '{\"id\":\"across-orchestrator\",\"displayName\":\"Across Orchestrator\",\"kind\":\"task-runtime\",\"version\":\"0.10.4\"}\\n' ;;\n"
+        "  plugin-manifest) printf '{\"id\":\"across-orchestrator\",\"displayName\":\"Across Orchestrator\",\"kind\":\"task-runtime\",\"version\":\"0.10.5\"}\\n' ;;\n"
         "  plugin-status) printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n' ;;\n"
         "  serve) [ \"$2\" = \"--help\" ] && printf '%s\\n' '  --allow-client-project-roots' ;;\n"
         "  *) printf '{}\\n' ;;\n"
@@ -274,7 +274,7 @@ def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(m
         payload_root,
         {
             "across-orchestrator": {
-                "version": "0.10.4",
+                "version": "0.10.5",
                 "commit": "b" * 40,
                 "runtime": "native",
                 "executable": str(native.relative_to(payload_root)),
@@ -302,7 +302,7 @@ def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(m
     assert status["integrity_ok"] is True
     assert status["runtime"] == "bundled_native"
     assert status["python"] is None
-    assert status["source"] == "bundle://across-orchestrator/0.10.4"
+    assert status["source"] == "bundle://across-orchestrator/0.10.5"
     assert api_status["install"]["strategy"] == "bundled-native"
     assert api_status["install"]["requires_external_tools"] is False
     assert api_status["manifest"]["lifecycle"]["install"]["strategy"] == "bundled-native"
