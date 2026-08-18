@@ -11,6 +11,25 @@ struct AppleMinimalUIContractTests {
         #expect(AppPreferences.localizedString("status.not_configured", localeIdentifier: "zh-Hans") == "未配置")
     }
 
+    @Test
+    func protectedTaskSubmissionKeepsTheDraftAndExplainsCapabilityBlocks() throws {
+        #expect(AppPreferences.localizedString(
+            "work.submit.remoteWorkflowRequired",
+            localeIdentifier: "zh-Hans"
+        ).contains("远端 Worker"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.orchestratorUnavailable",
+            localeIdentifier: "zh-Hans"
+        ).contains("输入已经保留"))
+
+        let actions = try Self.source("macOS-Client/Sources/Views/MainPanelActions.swift")
+        let emptyState = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        #expect(actions.contains("guard submitted else { return }"))
+        #expect(emptyState.contains("submissionErrorMessage"))
+        #expect(emptyState.contains("compatible_worker_workflow_required"))
+        #expect(emptyState.contains("External Across Orchestrator runtime is unavailable."))
+    }
+
     @Test @MainActor
     func mainNavigationKeepsOneWorkDestinationAndRoutesAttentionToOwners() throws {
         let visibleTitles = OperationsWorkbenchSurface.primary.map {

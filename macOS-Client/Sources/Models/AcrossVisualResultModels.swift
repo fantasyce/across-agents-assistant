@@ -312,7 +312,7 @@ enum AcrossVisualResultFactory {
             return .blocked
         }
         let failed = qualityIssues(task)
-        if !failed.isEmpty { return .blocked }
+        if !failed.isEmpty { return .partial }
         let passedRequired = !requiredGates.isEmpty && requiredGates.allSatisfy {
             ["pass", "passed", "complete", "completed"].contains(normalized($0.status))
         }
@@ -325,7 +325,7 @@ enum AcrossVisualResultFactory {
 
     private static func safetyState(_ task: TaskOrchestrationTaskDetail) -> AcrossEvidenceState {
         if hasBlockingQualityStatus(task) { return .blocked }
-        if !qualityIssues(task).isEmpty { return .blocked }
+        if !qualityIssues(task).isEmpty { return .partial }
         if let report = task.deliveryReport?.qualityReport,
            (report.manualRequiredCount ?? 0) > 0 || (report.skippedRequiredCount ?? 0) > 0 {
             return .partial
@@ -470,9 +470,35 @@ enum AcrossVisualResultFactory {
             task.qualityHealth?.orchestrationHealth,
             task.qualityHealth?.qualityGate,
         ]
-        let blocking = ["failed", "failure", "blocked", "error", "inconsistent"]
         return values.compactMap { $0 }.contains { value in
-            blocking.contains(where: { normalized(value).contains($0) })
+            isBlockingQualityStatus(value)
+        }
+    }
+
+    private static func isBlockingQualityStatus(_ value: String) -> Bool {
+        let compact = normalized(value)
+        if [
+            "completedwithfailures",
+            "partial",
+            "completed",
+            "complete",
+            "passed",
+            "pass",
+            "healthy",
+            "pending",
+            "running"
+        ].contains(compact) {
+            return false
+        }
+        if ["failed", "failure", "blocked", "error", "inconsistent"].contains(compact) {
+            return true
+        }
+        let tokens = value
+            .lowercased()
+            .split { !$0.isLetter }
+            .map(String.init)
+        return tokens.contains { token in
+            ["failed", "failure", "blocked", "error", "inconsistent"].contains(token)
         }
     }
 
@@ -486,6 +512,7 @@ struct AcrossTaskResultDecision {
     let isAccepted: Bool
     let isRejected: Bool
     let canAccept: Bool
+    let canReject: Bool
     let canInspectEvidence: Bool
 
     init(task: TaskOrchestrationTaskDetail) {
@@ -499,9 +526,29 @@ struct AcrossTaskResultDecision {
         isTerminal = ["completed", "completed_with_failures", "failed", "cancelled"].contains(status)
         isAccepted = ["accepted", "approved"].contains(review)
         isRejected = review == "rejected"
-        canAccept = status == "completed" && !isAccepted && !isRejected
+        canAccept = Self.isSuccessfulDelivery(task) && !isAccepted && !isRejected
+        canReject = isTerminal && !isAccepted && !isRejected && !canAccept
         canInspectEvidence = ["completed", "completed_with_failures"].contains(status)
             || task.qualityHealth != nil
             || task.deliveryReport != nil
+    }
+
+    private static func isSuccessfulDelivery(_ task: TaskOrchestrationTaskDetail) -> Bool {
+        guard task.status == "completed" else { return false }
+        let gate = (task.deliveryReport?.qualityGate ?? task.qualityHealth?.qualityGate ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let blockingGates = Set(["failed", "failure", "blocked", "error", "partial", "inconsistent"])
+        let artifactFailure = task.artifacts.contains {
+            ["missing", "stale", "rejected", "failed", "cancelled"].contains(($0.status ?? "").lowercased())
+        }
+        return !blockingGates.contains(gate)
+            && task.deliveryReport?.qualityReport?.canComplete != false
+            && (task.deliveryReport?.missingRequired.isEmpty ?? true)
+            && (task.deliveryReport?.failedConstraints.isEmpty ?? true)
+            && (task.qualityHealth?.terminalInconsistencies.isEmpty ?? true)
+            && (task.qualityHealth?.activeRemediationSubtasks.isEmpty ?? true)
+            && (task.deliveryReport?.nextAction?.isEmpty ?? true)
+            && !artifactFailure
     }
 }

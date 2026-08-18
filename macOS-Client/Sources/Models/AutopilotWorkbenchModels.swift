@@ -69,9 +69,11 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
     let completedRunCount: Int
     let failedRunCount: Int
     let pendingTriggerCount: Int
+    let claimedTriggerCount: Int
     let registeredTriggerCount: Int
     let activeTriggerCount: Int
     let schedulerRunning: Bool
+    let schedulerTickInProgress: Bool
     let selfIterationStatus: String
     let capabilityReadyCount: Int
     let registryHealthStatus: String
@@ -92,9 +94,11 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
         case completedRunCount = "completed_run_count"
         case failedRunCount = "failed_run_count"
         case pendingTriggerCount = "pending_trigger_count"
+        case claimedTriggerCount = "claimed_trigger_count"
         case registeredTriggerCount = "registered_trigger_count"
         case activeTriggerCount = "active_trigger_count"
         case schedulerRunning = "scheduler_running"
+        case schedulerTickInProgress = "scheduler_tick_in_progress"
         case selfIterationStatus = "self_iteration_status"
         case capabilityReadyCount = "capability_ready_count"
         case registryHealthStatus = "registry_health_status"
@@ -117,9 +121,11 @@ struct AutopilotWorkbenchSummary: Decodable, Equatable {
         completedRunCount = try container.decodeIfPresent(Int.self, forKey: .completedRunCount) ?? 0
         failedRunCount = try container.decodeIfPresent(Int.self, forKey: .failedRunCount) ?? 0
         pendingTriggerCount = try container.decodeIfPresent(Int.self, forKey: .pendingTriggerCount) ?? 0
+        claimedTriggerCount = try container.decodeIfPresent(Int.self, forKey: .claimedTriggerCount) ?? 0
         registeredTriggerCount = try container.decodeIfPresent(Int.self, forKey: .registeredTriggerCount) ?? 0
         activeTriggerCount = try container.decodeIfPresent(Int.self, forKey: .activeTriggerCount) ?? 0
         schedulerRunning = try container.decodeIfPresent(Bool.self, forKey: .schedulerRunning) ?? false
+        schedulerTickInProgress = try container.decodeIfPresent(Bool.self, forKey: .schedulerTickInProgress) ?? false
         selfIterationStatus = try container.decodeIfPresent(String.self, forKey: .selfIterationStatus) ?? "unknown"
         capabilityReadyCount = try container.decodeIfPresent(Int.self, forKey: .capabilityReadyCount) ?? 0
         registryHealthStatus = try container.decodeIfPresent(String.self, forKey: .registryHealthStatus) ?? "unknown"

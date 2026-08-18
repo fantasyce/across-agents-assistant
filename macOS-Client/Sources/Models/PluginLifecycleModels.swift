@@ -167,6 +167,7 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
     let status: String
     let installed: Bool
     let available: Bool
+    let integrityOkay: Bool
     let probe: Bool
     let manifestExists: Bool
     let manifestPath: String
@@ -189,6 +190,7 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
         case status
         case installed
         case available
+        case integrityOkay = "integrity_ok"
         case probe
         case manifestExists = "manifest_exists"
         case manifestPath = "manifest_path"
@@ -212,6 +214,8 @@ struct AcrossPluginStatus: Decodable, Identifiable, Equatable {
         status = try container.decode(String.self, forKey: .status)
         installed = try container.decode(Bool.self, forKey: .installed)
         available = try container.decode(Bool.self, forKey: .available)
+        integrityOkay = try container.decodeIfPresent(Bool.self, forKey: .integrityOkay)
+            ?? (status != "needs_repair" && available)
         probe = try container.decode(Bool.self, forKey: .probe)
         manifestExists = try container.decode(Bool.self, forKey: .manifestExists)
         manifestPath = try container.decode(String.self, forKey: .manifestPath)

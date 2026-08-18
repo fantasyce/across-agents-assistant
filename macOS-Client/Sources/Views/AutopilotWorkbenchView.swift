@@ -476,7 +476,16 @@ struct AutopilotWorkbenchView: View {
         LazyVGrid(columns: summaryColumns, spacing: 10) {
             summaryTile(appPreferences.text("workbench.status"), value: localizedWorkbenchStatus(snapshot), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
             summaryTile(appPreferences.text("workbench.runs"), value: "\(snapshot.summary.completedRunCount)/\(snapshot.summary.runCount)", systemName: "checklist", color: statusColor(snapshot.summary.failedRunCount > 0 ? "attention" : "passed"))
-            summaryTile(appPreferences.text("workbench.triggers"), value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)", systemName: "timer", color: statusColor(snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"))
+            summaryTile(
+                appPreferences.text("workbench.triggers"),
+                value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)",
+                systemName: snapshot.summary.claimedTriggerCount > 0 || snapshot.summary.schedulerTickInProgress ? "arrow.triangle.2.circlepath" : "timer",
+                color: statusColor(
+                    snapshot.summary.claimedTriggerCount > 0 || snapshot.summary.schedulerTickInProgress
+                        ? "active"
+                        : snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"
+                )
+            )
             summaryTile(appPreferences.text("workbench.capabilities"), value: "\(snapshot.summary.capabilityReadyCount)", systemName: "sparkles.rectangle.stack", color: statusColor(snapshot.summary.registryHealthStatus))
             summaryTile(appPreferences.text("workbench.memory"), value: "\(snapshot.summary.pendingMemoryCount)", systemName: "brain", color: statusColor(snapshot.summary.pendingMemoryCount > 0 ? "attention" : "passed"))
             summaryTile(
@@ -808,8 +817,10 @@ struct AutopilotWorkbenchView: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "passed", "ready", "active":
+        case "passed", "ready":
             return Color(hex: "30d158")
+        case "active":
+            return Color(hex: "64d2ff")
         case "attention", "unknown", "unavailable":
             return Color(hex: "ff9f0a")
         case "paused", "not_run", "not_configured":
@@ -823,8 +834,10 @@ struct AutopilotWorkbenchView: View {
 
     private func statusIcon(_ status: String) -> String {
         switch status {
-        case "passed", "ready", "active":
+        case "passed", "ready":
             return "checkmark.circle.fill"
+        case "active":
+            return "arrow.triangle.2.circlepath.circle.fill"
         case "failed":
             return "xmark.octagon.fill"
         case "attention":

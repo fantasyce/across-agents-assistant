@@ -158,9 +158,11 @@ extension MainPanelView {
                     ownerAgent: ownerAgent,
                     projectDir: projectPath,
                     strictDependency: true
-                )
-                viewModel.inputText = ""
-                viewModel.attachedFiles = []
+                ) { submitted in
+                    guard submitted else { return }
+                    viewModel.inputText = ""
+                    viewModel.attachedFiles = []
+                }
             }
         }
     }

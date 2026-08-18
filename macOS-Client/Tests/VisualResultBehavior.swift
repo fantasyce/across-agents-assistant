@@ -74,6 +74,28 @@ struct VisualResultBehavior {
         precondition(blocked.trustCompass.state(for: .safety) == .blocked)
         precondition(blocked.nextAction == .repair)
 
+        let partialWorkerTask = try JSONDecoder().decode(
+            TaskOrchestrationTaskDetail.self,
+            from: Data("""
+            {
+              "task_id": "visual-worker-partial",
+              "description": "Worker result needs review",
+              "status": "completed_with_failures",
+              "subtasks": [],
+              "waves": [],
+              "artifacts": [{"id":"report","file_name":"report.md","file_path":"report.md","file_size":"1 KB","status":"verified"}],
+              "review_status": "pending",
+              "quality_health": {"delivery_quality":"partial","quality_gate":"partial"},
+              "delivery_report": {"quality_gate":"partial","final_status":"completed_with_failures","failed_constraints":["worker_model_degraded"],"quality_report":{"can_complete":false,"final_quality_score":60}}
+            }
+            """.utf8)
+        )
+        let partialWorker = AcrossVisualResultFactory.make(task: partialWorkerTask)
+        let partialDecision = AcrossTaskResultDecision(task: partialWorkerTask)
+        precondition(partialWorker.verdict == .needsReview)
+        precondition(!partialDecision.canAccept)
+        precondition(partialDecision.canReject)
+
         let runningTask = try JSONDecoder().decode(
             TaskOrchestrationTaskDetail.self,
             from: Data("""

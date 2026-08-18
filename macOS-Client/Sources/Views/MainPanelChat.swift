@@ -110,6 +110,7 @@ extension MainPanelView {
             isBeginnerMissionAvailable: productProgress.isUnlocked(.selfIteration),
             beginnerMission: beginnerMissionViewModel,
             beginnerGoal: viewModel.inputText,
+            submissionErrorMessage: taskOrchestrationViewModel.errorMessage,
             preferences: appPreferences,
             onChooseProject: viewModel.chooseExistingProjectFolder,
             onRunBeginnerMission: runBeginnerMission,

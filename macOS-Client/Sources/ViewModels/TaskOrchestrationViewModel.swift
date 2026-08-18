@@ -8,6 +8,7 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isSubmittingTask = false
     @Published var isAcceptingTask = false
+    @Published var isRejectingTask = false
     @Published var isLoadingMoreTasks = false
     @Published var hasMoreTasks = false
     @Published var searchText = ""
@@ -285,6 +286,68 @@ class TaskOrchestrationViewModel: ObservableObject {
             } catch {
                 errorMessage = error.localizedDescription
                 isAcceptingTask = false
+            }
+        }
+    }
+
+    func rejectTaskResult(_ taskId: String, onRejected: @escaping () -> Void) {
+        Task { @MainActor in
+            guard !isRejectingTask else { return }
+            guard selectedTask?.taskId == taskId else { return }
+            isRejectingTask = true
+            errorMessage = nil
+
+            guard let baseURL else {
+                errorMessage = "Server URL not configured"
+                isRejectingTask = false
+                return
+            }
+
+            do {
+                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/reject")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    let detail = Self.backendErrorMessage(from: data)
+                    throw NSError(
+                        domain: "TaskReview",
+                        code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                        userInfo: [NSLocalizedDescriptionKey: detail ?? "Unable to reject this result"]
+                    )
+                }
+
+                let review = try JSONDecoder().decode(TaskReviewResponse.self, from: data)
+                if let task = selectedTask, task.taskId == review.taskId {
+                    selectedTask = task.replacing(
+                        reviewStatus: review.reviewStatus,
+                        acceptedAt: review.acceptedAt
+                    )
+                }
+                tasks = tasks.map { summary in
+                    guard summary.taskId == review.taskId else { return summary }
+                    return TaskSummary(
+                        taskId: summary.taskId,
+                        description: summary.description,
+                        status: summary.status,
+                        progress: summary.progress,
+                        completedCount: summary.completedCount,
+                        totalCount: summary.totalCount,
+                        projectDir: summary.projectDir,
+                        ownerAgent: summary.ownerAgent,
+                        deliveryMode: summary.deliveryMode,
+                        externalTask: summary.externalTask,
+                        reviewStatus: review.reviewStatus,
+                        acceptedAt: review.acceptedAt
+                    )
+                }
+                isRejectingTask = false
+                onRejected()
+            } catch {
+                errorMessage = error.localizedDescription
+                isRejectingTask = false
             }
         }
     }
@@ -756,12 +819,14 @@ class TaskOrchestrationViewModel: ObservableObject {
         ownerAgent: String,
         allowedSubtaskAgents: [String] = [],
         projectDir: String?,
-        strictDependency: Bool = true
+        strictDependency: Bool = true,
+        onCompletion: ((Bool) -> Void)? = nil
     ) {
         Task { @MainActor in
             guard !isSubmittingTask else { return }
             guard !isOrchestratorPluginUnavailable else {
                 errorMessage = orchestratorPluginUnavailableMessage
+                onCompletion?(false)
                 return
             }
             isSubmittingTask = true
@@ -772,6 +837,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 errorMessage = "Server URL not configured"
                 isSubmittingTask = false
                 isLoading = false
+                onCompletion?(false)
                 return
             }
 
@@ -817,19 +883,27 @@ class TaskOrchestrationViewModel: ObservableObject {
                         loadTasks()
                         // P0-5: initial polling quickly detects whether the task leaves decomposing.
                         startInitialPolling(for: newTaskId)
+                        onCompletion?(true)
                     } else {
                         viewMode = .empty
+                        onCompletion?(false)
                     }
                 } else {
                     // Try to parse error detail from response
                     if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let detail = errorJson["detail"] as? String {
+                       let detail = errorJson["detail"] as? [String: Any],
+                       let decisionIDs = detail["decision_ids"] as? [String],
+                       decisionIDs.contains("compatible_worker_workflow_required") {
+                        errorMessage = "compatible_worker_workflow_required"
+                    } else if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let detail = errorJson["detail"] as? String {
                         errorMessage = detail
                     } else if let text = String(data: data, encoding: .utf8), !text.isEmpty {
                         errorMessage = text
                     } else {
                         errorMessage = "Failed to submit task (HTTP \(httpResponse.statusCode))"
                     }
+                    onCompletion?(false)
                 }
 
                 isSubmittingTask = false
@@ -838,6 +912,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 isSubmittingTask = false
                 isLoading = false
+                onCompletion?(false)
             }
         }
     }
@@ -1154,7 +1229,10 @@ class TaskOrchestrationViewModel: ObservableObject {
                 subtasks: update.subtasks,
                 waves: update.waves,
                 ownerSessionId: update.ownerSessionId,
-                lastOwnerDecision: update.lastOwnerDecision
+                lastOwnerDecision: update.lastOwnerDecision,
+                qualityHealth: update.qualityHealth,
+                deliveryReport: update.deliveryReport,
+                remoteExecution: update.remoteExecution
             )
             selectedTask = updatedTask
             task = updatedTask

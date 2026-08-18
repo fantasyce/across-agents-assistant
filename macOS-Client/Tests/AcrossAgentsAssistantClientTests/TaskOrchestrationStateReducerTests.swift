@@ -5,6 +5,7 @@ struct TaskOrchestrationStateReducerTests {
     @Test func businessProgressIgnoresLifecycleAndRepairSubtasks() {
         let subtasks = [
             makeSubtask("build-api", status: "completed"),
+            makeSubtask("worker-job", status: "completed_with_failures"),
             makeSubtask("task-decompose", status: "completed"),
             makeSubtask("st-quality-required", status: "completed"),
             makeSubtask("build-api-integration-fix-1", status: "completed"),
@@ -14,8 +15,8 @@ struct TaskOrchestrationStateReducerTests {
 
         let counts = TaskOrchestrationStateReducers.businessProgress(in: subtasks)
 
-        #expect(counts.completed == 1)
-        #expect(counts.total == 2)
+        #expect(counts.completed == 2)
+        #expect(counts.total == 3)
     }
 
     @Test func pollResponseMergeBuildsUpdatedDetailAndSummary() {

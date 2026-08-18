@@ -142,6 +142,9 @@ struct TaskOrchestrationTaskDetail: Decodable {
         artifacts: [TaskOrchestrationArtifact]? = nil,
         ownerSessionId: String? = nil,
         lastOwnerDecision: TaskOrchestrationOwnerDecisionSummary? = nil,
+        qualityHealth: TaskOrchestrationQualityHealth? = nil,
+        deliveryReport: TaskOrchestrationDeliveryReport? = nil,
+        remoteExecution: TaskOrchestrationRemoteExecution? = nil,
         reviewStatus: String? = nil,
         acceptedAt: Double? = nil
     ) -> TaskOrchestrationTaskDetail {
@@ -164,10 +167,10 @@ struct TaskOrchestrationTaskDetail: Decodable {
             lastOwnerDecision: lastOwnerDecision ?? self.lastOwnerDecision,
             error: error,
             hasRequirementManifest: hasRequirementManifest,
-            qualityHealth: qualityHealth,
-            deliveryReport: deliveryReport,
+            qualityHealth: qualityHealth ?? self.qualityHealth,
+            deliveryReport: deliveryReport ?? self.deliveryReport,
             observability: observability,
-            remoteExecution: remoteExecution,
+            remoteExecution: remoteExecution ?? self.remoteExecution,
             reviewStatus: reviewStatus ?? self.reviewStatus,
             acceptedAt: acceptedAt ?? self.acceptedAt
         )

@@ -777,7 +777,9 @@ struct TaskEvidenceBundleSheet: View {
     private var evidenceVerdict: some View {
         let passed = ["passed", "completed"].contains(bundle.benchmark.status)
             && ["completed", "passed"].contains(bundle.taskStatus)
-        let repairCount = bundle.benchmark.summary.maxRemediationAttempts
+        // maxRemediationAttempts is the configured ceiling, not evidence that
+        // repair actually ran.  Only scenario receipts can prove attempts.
+        let repairCount = bundle.benchmark.scenarios.map(\.remediationAttempts).max() ?? 0
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
@@ -822,10 +824,10 @@ struct TaskEvidenceBundleSheet: View {
                 )
                 compactEvidenceState(
                     appPreferences.text("tasks.observability.remediation"),
-                    value: repairCount == 0
-                        ? appPreferences.text("tasks.evidence.noRepair")
-                        : "\(repairCount)",
-                    status: repairCount == 0 ? "passed" : "partial"
+                    value: repairCount > 0
+                        ? "\(repairCount)"
+                        : appPreferences.text(passed ? "tasks.evidence.noRepair" : "tasks.evidence.repairPending"),
+                    status: passed && repairCount == 0 ? "passed" : "partial"
                 )
             }
         }
@@ -897,6 +899,19 @@ struct TaskEvidenceBundleSheet: View {
                         Text("\(scenario.qualityScore)")
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
+                    }
+
+                    if let report = bundle.resultReport?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !report.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(appPreferences.text("tasks.evidence.resultReport"))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text(report)
+                                .font(.system(size: 11))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                     }
 
                     evidenceList(title: appPreferences.text("tasks.evidence.producedFiles"), values: scenario.producedFiles)

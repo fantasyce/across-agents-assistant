@@ -516,6 +516,7 @@ struct TaskEvidenceBundle: Decodable, Identifiable {
     let projectDir: String?
     let ownerAgent: String?
     let allowedSubtaskAgents: [String]
+    let resultReport: String?
     let benchmark: TaskQualityBenchmark
     let audit: TaskEvidenceAudit
 
@@ -533,6 +534,7 @@ struct TaskEvidenceBundle: Decodable, Identifiable {
         case projectDir = "project_dir"
         case ownerAgent = "owner_agent"
         case allowedSubtaskAgents = "allowed_subtask_agents"
+        case resultReport = "result_report"
         case benchmark
         case audit
     }
@@ -550,6 +552,7 @@ struct TaskEvidenceBundle: Decodable, Identifiable {
         projectDir = try container.decodeIfPresent(String.self, forKey: .projectDir)
         ownerAgent = try container.decodeIfPresent(String.self, forKey: .ownerAgent)
         allowedSubtaskAgents = try container.decodeIfPresent([String].self, forKey: .allowedSubtaskAgents) ?? []
+        resultReport = try container.decodeIfPresent(String.self, forKey: .resultReport)
         benchmark = try container.decode(TaskQualityBenchmark.self, forKey: .benchmark)
         audit = try container.decode(TaskEvidenceAudit.self, forKey: .audit)
     }

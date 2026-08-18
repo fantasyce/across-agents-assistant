@@ -37,11 +37,10 @@ struct AcrossTaskCapabilityPresentation: Equatable {
             ?? 0
         if ["failed", "cancelled", "blocked"].contains(task.status)
             || missing > 0
-            || failedConstraints > 0
-            || task.error?.isEmpty == false {
+            || (task.error?.isEmpty == false && task.status != "completed_with_failures") {
             return .blocked
         }
-        if task.status == "completed_with_failures" || task.reviewStatus != "accepted" {
+        if failedConstraints > 0 || task.status == "completed_with_failures" || task.reviewStatus != "accepted" {
             return .needsReview
         }
         return .ready
