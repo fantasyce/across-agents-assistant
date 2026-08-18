@@ -3,11 +3,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import calendar
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -424,6 +423,9 @@ class AutopilotTriggerScheduler:
         self._last_dispatch_count = 0
         self._last_dispatch_status: str | None = None
         self._tick_count = 0
+        self._tick_in_progress = False
+        self._tick_started_at: str | None = None
+        self._stop_requested = False
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -441,6 +443,9 @@ class AutopilotTriggerScheduler:
                 "last_dispatch_status": self._last_dispatch_status,
                 "last_error": self._last_error,
                 "tick_count": self._tick_count,
+                "tick_in_progress": self._tick_in_progress,
+                "tick_started_at": self._tick_started_at,
+                "stop_requested": self._stop_requested,
             }
 
     def start(
@@ -463,6 +468,7 @@ class AutopilotTriggerScheduler:
             self._run_queued_triggers = self.default_run_queued_triggers if run_queued_triggers is None else bool(run_queued_triggers)
             self._max_runs_per_tick = max(1, int(max_runs_per_tick or self.default_max_runs_per_tick))
             self._stop_event.clear()
+            self._stop_requested = False
             self._started_at = _now()
             self._last_error = None
             self._thread = threading.Thread(target=self._run, name="across-autopilot-trigger-scheduler", daemon=True)
@@ -474,10 +480,11 @@ class AutopilotTriggerScheduler:
         with self._lock:
             thread = self._thread
             self._stop_event.set()
+            self._stop_requested = True
         if thread is not None:
             thread.join(timeout=2.0)
         with self._lock:
-            if self._thread is thread:
+            if self._thread is thread and (thread is None or not thread.is_alive()):
                 self._thread = None
         return self.status()
 
@@ -489,6 +496,9 @@ class AutopilotTriggerScheduler:
             self._tick()
 
     def _tick(self) -> dict[str, Any]:
+        with self._lock:
+            self._tick_in_progress = True
+            self._tick_started_at = _now()
         try:
             client = self.client_factory()
             result = self.registry.tick(client)
@@ -498,7 +508,7 @@ class AutopilotTriggerScheduler:
                 else {"status": "disabled", "items": []}
             )
             if dispatch["items"]:
-                result = {**result, "status": "dispatched", "dispatch": dispatch}
+                result = {**result, "status": dispatch["status"], "dispatch": dispatch}
             else:
                 result = {**result, "dispatch": dispatch}
             with self._lock:
@@ -507,7 +517,11 @@ class AutopilotTriggerScheduler:
                 self._last_tick_status = str(result.get("status") or "unknown")
                 self._last_dispatch_count = len(dispatch["items"])
                 self._last_dispatch_status = str(dispatch.get("status") or "unknown")
-                self._last_error = None
+                self._last_error = (
+                    "One or more queued triggers failed to dispatch."
+                    if dispatch.get("status") in {"failed", "partial"}
+                    else None
+                )
             return result
         except Exception as exc:  # pragma: no cover - defensive runtime telemetry
             with self._lock:
@@ -522,6 +536,9 @@ class AutopilotTriggerScheduler:
                 "status": "failed",
                 "error": str(exc)[:500],
             }
+        finally:
+            with self._lock:
+                self._tick_in_progress = False
 
 
 def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
@@ -558,9 +575,18 @@ def _dispatch_queued_triggers(client: Any, *, limit: int) -> dict[str, Any]:
                     "error": str(exc)[:500],
                 }
             )
+    failed_count = sum(1 for item in dispatched if item.get("status") == "failed")
+    if not dispatched:
+        dispatch_status = "idle"
+    elif failed_count == len(dispatched):
+        dispatch_status = "failed"
+    elif failed_count:
+        dispatch_status = "partial"
+    else:
+        dispatch_status = "dispatched"
     return {
         "schema_version": "across-aaa-autopilot-trigger-dispatch-tick/1.0",
-        "status": "dispatched" if dispatched else "idle",
+        "status": dispatch_status,
         "items": dispatched,
         "skipped_stale": stale,
     }
@@ -733,6 +759,10 @@ def _parse_iso(value: Any) -> float | None:
     if not value:
         return None
     try:
-        return float(calendar.timegm(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
+        text = str(value).strip()
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
     except Exception:
         return None

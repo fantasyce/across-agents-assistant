@@ -74,6 +74,71 @@ def test_gate_uses_managed_autopilot_contract(monkeypatch, tmp_path: Path):
     assert payload["gate_verdict"] == "pass"
 
 
+def test_trigger_dispatch_claims_before_preparation_and_runs_claimed_item(monkeypatch, tmp_path: Path):
+    calls = []
+
+    def fake_run(args, *, env=None, timeout=60, allowed_returncodes=None, cwd=None):
+        calls.append(list(args))
+        if args[1] == "claim-trigger":
+            return {
+                "status": "claimed",
+                "trigger": {
+                    "trigger_id": "trg-two-phase",
+                    "spec_id": "generic-loop",
+                },
+            }
+        if args[1] == "run-claimed-trigger":
+            return {"status": "completed", "run": {"run_id": "run-two-phase"}}
+        raise AssertionError(args)
+
+    client = AutopilotClient(env={"ACROSS_HOME": str(tmp_path / "across")})
+    monkeypatch.setattr(autopilot_client, "run_autopilot_cli_json", fake_run)
+    monkeypatch.setattr(
+        AutopilotClient,
+        "_refresh_source_mirrors_if_needed",
+        lambda self, spec: calls.append(["prepare", spec]),
+    )
+    monkeypatch.setattr(AutopilotClient, "_candidate_retention_required", lambda self, spec: False)
+
+    result = client.run_trigger("trg-two-phase")
+
+    assert result["status"] == "completed"
+    assert calls == [
+        ["loop", "claim-trigger", "--json", "--trigger-id", "trg-two-phase", "--lease-ms", "300000"],
+        ["prepare", "generic-loop"],
+        ["loop", "run-claimed-trigger", "--trigger-id", "trg-two-phase", "--json"],
+    ]
+
+
+def test_trigger_dispatch_releases_claim_when_preparation_fails(monkeypatch, tmp_path: Path):
+    calls = []
+
+    def fake_run(args, *, env=None, timeout=60, allowed_returncodes=None, cwd=None):
+        calls.append(list(args))
+        if args[1] == "claim-trigger":
+            return {"status": "claimed", "trigger": {"trigger_id": "trg-release", "spec_id": "generic-loop"}}
+        if args[1] == "release-trigger":
+            return {"status": "pending", "trigger": {"trigger_id": "trg-release", "status": "pending"}}
+        raise AssertionError(args)
+
+    client = AutopilotClient(env={"ACROSS_HOME": str(tmp_path / "across")})
+    monkeypatch.setattr(autopilot_client, "run_autopilot_cli_json", fake_run)
+    monkeypatch.setattr(AutopilotClient, "_candidate_retention_required", lambda self, spec: False)
+    monkeypatch.setattr(
+        AutopilotClient,
+        "_refresh_source_mirrors_if_needed",
+        lambda self, spec: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+
+    with pytest.raises(RuntimeError, match="offline"):
+        client.run_trigger("trg-release")
+
+    assert calls[0][1] == "claim-trigger"
+    assert calls[1][1] == "release-trigger"
+    assert "--retry-after-ms" in calls[1]
+    assert not any(call[1:2] == ["run-claimed-trigger"] for call in calls)
+
+
 def test_gate_passes_explicit_remote_intent_and_preserves_redacted_recovery_evidence(monkeypatch, tmp_path: Path):
     captured = {}
     github_token = "github_pat_fixture_remote_credential"

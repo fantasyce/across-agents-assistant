@@ -5,6 +5,8 @@ from across_agents_assistant.external_task_planning import (
     external_owner_agent,
     external_subtask_agents,
     host_agent_adapter_command,
+    is_read_only_external_task,
+    requests_remote_worker,
     planned_subtasks_for_external_task,
 )
 
@@ -38,8 +40,48 @@ def test_parallel_planning_leaves_dependencies_empty():
     deliverables = deliverables_for_external_task(req)
     subtasks = planned_subtasks_for_external_task(req, deliverables)
 
-    assert deliverables == ["README.md"]
+    assert deliverables == ["across-results/task-report.md"]
     assert subtasks == []
+
+
+def test_read_only_project_files_are_inputs_not_declared_outputs():
+    req = ExternalTaskPlanningRequest(
+        description="只读检查 README.md、llms.txt 和 across.product.json，不得修改任何文件。",
+        task_types=["functional", "artifact"],
+    )
+
+    assert is_read_only_external_task(req) is True
+    assert deliverables_for_external_task(req) == ["across-results/task-review.md"]
+
+
+def test_remote_worker_request_is_a_route_constraint_not_a_workflow_hint():
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="请通过远端 Worker 完成一次普通风险分析。"
+    )) is True
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="请在本机整理会议行动项。"
+    )) is False
+
+
+def test_remote_worker_discussion_or_negative_claim_is_not_an_execution_request():
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="核对普通目标、Workflow Pack 和远端 Worker 的职责边界。"
+    )) is False
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="不要声称使用过远端 Worker，也不得虚构远端执行结果。"
+    )) is False
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="Please explain the remote Worker boundary without running on a remote Worker."
+    )) is False
+
+
+def test_remote_worker_explicit_execution_request_remains_detectable():
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="请通过远端 Worker 执行这项风险分析。"
+    )) is True
+    assert requests_remote_worker(ExternalTaskPlanningRequest(
+        description="Use a remote Worker to execute this review."
+    )) is True
 
 
 def test_multiple_lines_in_same_wave_have_unique_ids_and_wave_dependencies():
@@ -97,6 +139,24 @@ def test_negative_file_clause_is_not_treated_as_required_delivery():
     )
 
     assert deliverables_for_external_task(req) == ["app.py"]
+
+
+def test_chinese_read_only_task_is_classified_without_treating_mentioned_file_as_writable():
+    req = ExternalTaskPlanningRequest(
+        description="只读检查 README、版本号和插件声明，不要修改任何文件。",
+        task_types=["functional", "artifact"],
+    )
+
+    assert is_read_only_external_task(req) is True
+
+
+def test_content_constraint_is_not_misclassified_as_read_only_task():
+    req = ExternalTaskPlanningRequest(
+        description="Update README.md, but README.md must not mention npm.",
+        task_types=["artifact"],
+    )
+
+    assert is_read_only_external_task(req) is False
 
 
 def test_owner_and_subtask_agent_defaults_are_host_controlled():

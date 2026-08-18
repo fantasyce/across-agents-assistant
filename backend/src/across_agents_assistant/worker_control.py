@@ -31,6 +31,7 @@ from .worker_pki import WorkerCertificateAuthority
 
 WORKER_CONTROL_SCHEMA = "across-aaa-worker-control/1.0"
 WORKER_CONTROL_COMMAND_TIMEOUT_SECONDS = 45.0
+WORKER_PRESENCE_REFRESH_TIMEOUT_SECONDS = 1.5
 WORKER_CONTROL_STARTUP_TIMEOUT_SECONDS = 60.0
 NODE_STATES = {
     "pending_approval",
@@ -931,10 +932,12 @@ class WorkerOrchestratorClient:
         *,
         timeout_seconds: float = WORKER_CONTROL_COMMAND_TIMEOUT_SECONDS,
         socket_path: str | Path | None = None,
+        allow_cli_fallback: bool = True,
     ):
         self.command = command or _orchestrator_command()
         self.timeout_seconds = timeout_seconds
         self.socket_path = Path(socket_path).expanduser().resolve() if socket_path else run_dir() / "worker-control.sock"
+        self.allow_cli_fallback = bool(allow_cli_fallback)
 
     def call(self, action: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if not _ID.fullmatch(str(action or "")):
@@ -945,6 +948,8 @@ class WorkerOrchestratorClient:
                 return self._call_socket(request)
             except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
                 pass
+        if not self.allow_cli_fallback:
+            raise WorkerControlError("Across Orchestrator is unavailable.", code="orchestrator_unavailable", status_code=503)
         try:
             completed = subprocess.run(
                 [*self.command, "worker-control", "--json"],
@@ -957,7 +962,12 @@ class WorkerOrchestratorClient:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise WorkerControlError("Across Orchestrator is unavailable.", code="orchestrator_unavailable", status_code=503) from exc
         if completed.returncode != 0:
-            raise WorkerControlError("Across Orchestrator rejected the Worker operation.", code="orchestrator_operation_failed", status_code=502)
+            try:
+                error_payload = json.loads(completed.stdout or "{}")
+            except json.JSONDecodeError:
+                error_payload = {}
+            code = str(error_payload.get("code") or "orchestrator_operation_failed")
+            raise WorkerControlError("Across Orchestrator rejected the Worker operation.", code=code, status_code=409 if "budget" in code else 502)
         try:
             value = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
@@ -984,8 +994,15 @@ class WorkerOrchestratorClient:
                 if chunk.endswith(b"\n"):
                     break
         value = json.loads(b"".join(chunks))
-        if not isinstance(value, dict) or value.get("status") == "error":
-            raise ValueError("worker control socket rejected the operation")
+        if not isinstance(value, dict):
+            raise ValueError("worker control socket returned an invalid response")
+        if value.get("status") == "error":
+            code = str(value.get("code") or "orchestrator_operation_failed")
+            raise WorkerControlError(
+                "Across Orchestrator rejected the Worker operation.",
+                code=code,
+                status_code=409 if "budget" in code else 502,
+            )
         return _safe_public(value)
 
 
@@ -999,12 +1016,21 @@ class WorkerCoordinatorPresenceCache:
 
     def __init__(
         self,
-        client_factory: Callable[[], WorkerOrchestratorClient] = WorkerOrchestratorClient,
+        client_factory: Callable[[], WorkerOrchestratorClient] | None = None,
         *,
         refresh_interval_seconds: float = 1.0,
         clock: Callable[[], float] = time.monotonic,
     ):
-        self.client_factory = client_factory
+        self.client_factory = client_factory or (
+            # Presence is a read-only projection. During cold start, wait for
+            # the long-lived private control socket instead of repeatedly
+            # spawning short-timeout one-shot PyInstaller runtimes. Those
+            # fallbacks can outlive a timeout and contend with the real server.
+            lambda: WorkerOrchestratorClient(
+                timeout_seconds=WORKER_PRESENCE_REFRESH_TIMEOUT_SECONDS,
+                allow_cli_fallback=False,
+            )
+        )
         self.refresh_interval_seconds = max(1.0, float(refresh_interval_seconds))
         self.clock = clock
         self._lock = threading.RLock()
@@ -1082,8 +1108,18 @@ def merge_coordinator_presence(
             node["state"] = state
         if transport in TRANSPORTS:
             node["transport"] = transport
+        # AAA owns approval, while the Coordinator owns the live drain state.
+        # A completed update clears draining in the Coordinator before the
+        # Worker reconnects; mirror that authoritative value so the device
+        # does not remain visually or operationally stuck after recovery.
+        if isinstance(live.get("draining"), bool):
+            node["draining"] = bool(live.get("draining"))
         if live.get("last_seen_at") is not None:
             node["last_seen_at"] = live.get("last_seen_at")
+        for key in ("transport_quality", "current_job", "recent_result"):
+            if key in live:
+                value = live.get(key)
+                node[key] = _safe_public(dict(value)) if isinstance(value, Mapping) else value
         # Enrollment captures the initial hardware/capability snapshot, but a
         # managed Worker may later update in place. The connected Coordinator
         # has the freshly probed manifest from the authenticated hello, so use
@@ -1195,37 +1231,65 @@ class WorkerNetworkRuntimeManager:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            listener_running = self._process_running(self._listener_process)
-            control_running = self._process_running(self._control_process)
-            gateway_running = self._process_running(self._gateway_process)
-            enrollment_running = self._process_running(self._enrollment_process)
-            relay_running = sum(self._process_running(item) for item in self._relay_processes.values())
-            snapshot = self.store.snapshot()
-            configured = bool(snapshot.get("listener", {}).get("enabled") or snapshot.get("relay", {}).get("enabled"))
-            if control_running and listener_running and gateway_running and enrollment_running:
-                state = "running"
-            elif control_running and snapshot.get("relay", {}).get("enabled") and relay_running == len(self._relay_processes):
-                state = "running" if relay_running else "waiting_for_approved_worker"
-            elif configured and self._last_error:
-                state = "degraded"
-            else:
-                state = "stopped"
+            return self._status_locked()
+
+    def status_nowait(self) -> dict[str, Any]:
+        if not self._lock.acquire(blocking=False):
             return {
-                "status": state,
-                "listener_running": listener_running,
-                "control_server_running": control_running,
-                "model_gateway_running": gateway_running,
-                "enrollment_gateway_running": enrollment_running,
-                "listener_pid": int(self._listener_process.pid) if listener_running else None,
-                "control_server_pid": int(self._control_process.pid) if control_running else None,
-                "model_gateway_pid": int(self._gateway_process.pid) if gateway_running else None,
-                "enrollment_gateway_pid": int(self._enrollment_process.pid) if enrollment_running else None,
+                "status": "starting",
+                "listener_running": None,
+                "control_server_running": None,
+                "model_gateway_running": None,
+                "enrollment_gateway_running": None,
+                "listener_pid": None,
+                "control_server_pid": None,
+                "model_gateway_pid": None,
+                "enrollment_gateway_pid": None,
                 "relay_session_count": len(self._relay_processes),
-                "relay_running_count": relay_running,
+                "relay_running_count": None,
                 "last_error": self._last_error,
-                "tls_minimum": "1.3" if configured else None,
+                "tls_minimum": None,
                 "host_credentials_copied": False,
+                "reconcile_in_progress": True,
             }
+        try:
+            return self._status_locked()
+        finally:
+            self._lock.release()
+
+    def _status_locked(self) -> dict[str, Any]:
+        listener_running = self._process_running(self._listener_process)
+        control_running = self._process_running(self._control_process)
+        gateway_running = self._process_running(self._gateway_process)
+        enrollment_running = self._process_running(self._enrollment_process)
+        relay_running = sum(self._process_running(item) for item in self._relay_processes.values())
+        snapshot = self.store.snapshot()
+        configured = bool(snapshot.get("listener", {}).get("enabled") or snapshot.get("relay", {}).get("enabled"))
+        if control_running and listener_running and gateway_running and enrollment_running:
+            state = "running"
+        elif control_running and snapshot.get("relay", {}).get("enabled") and relay_running == len(self._relay_processes):
+            state = "running" if relay_running else "waiting_for_approved_worker"
+        elif configured and self._last_error:
+            state = "degraded"
+        else:
+            state = "stopped"
+        return {
+            "status": state,
+            "listener_running": listener_running,
+            "control_server_running": control_running,
+            "model_gateway_running": gateway_running,
+            "enrollment_gateway_running": enrollment_running,
+            "listener_pid": int(self._listener_process.pid) if listener_running else None,
+            "control_server_pid": int(self._control_process.pid) if control_running else None,
+            "model_gateway_pid": int(self._gateway_process.pid) if gateway_running else None,
+            "enrollment_gateway_pid": int(self._enrollment_process.pid) if enrollment_running else None,
+            "relay_session_count": len(self._relay_processes),
+            "relay_running_count": relay_running,
+            "last_error": self._last_error,
+            "tls_minimum": "1.3" if configured else None,
+            "host_credentials_copied": False,
+            "reconcile_in_progress": False,
+        }
 
     def _start_control_locked(self) -> None:
         orchestrator = list(self.orchestrator_command or _orchestrator_command())

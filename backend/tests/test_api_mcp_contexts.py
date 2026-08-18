@@ -1,10 +1,40 @@
 import json
 import textwrap
+import asyncio
 
 from fastapi.testclient import TestClient
 
 from across_agents_assistant.api_server import app
 from across_agents_assistant.tools.mcp_client import mcp_manager
+from across_agents_assistant.tools.mcp_client import MCPClientManager
+
+
+def test_mcp_manager_shutdown_closes_all_stdio_stacks_and_clears_runtime_state():
+    closed = []
+
+    class FakeStack:
+        def __init__(self, server_id):
+            self.server_id = server_id
+
+        async def aclose(self):
+            closed.append(self.server_id)
+
+    manager = MCPClientManager()
+    manager.sessions = {"filesystem": object(), "sqlite": object()}
+    manager._exit_stacks = {
+        "filesystem": FakeStack("filesystem"),
+        "sqlite": FakeStack("sqlite"),
+    }
+    manager.server_tools = {"filesystem": [], "sqlite": []}
+    manager._connecting = {"local_kb"}
+
+    asyncio.run(manager.shutdown())
+
+    assert set(closed) == {"filesystem", "sqlite"}
+    assert manager.sessions == {}
+    assert manager._exit_stacks == {}
+    assert manager.server_tools == {}
+    assert manager._connecting == set()
 
 
 def test_mcp_contexts_report_across_context_implementation(tmp_path):

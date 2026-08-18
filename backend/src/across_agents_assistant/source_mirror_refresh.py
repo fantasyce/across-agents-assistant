@@ -6,7 +6,9 @@ import signal
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -76,6 +78,10 @@ CANDIDATE_SOURCE_SPECS = {
     "aaa-self-iteration-product",
 }
 
+_source_mirror_cancel_event = threading.Event()
+_active_git_processes_lock = threading.Lock()
+_active_git_processes: set[subprocess.Popen[str]] = set()
+
 
 class SourceMirrorRefreshError(RuntimeError):
     """Raised when source mirrors cannot be prepared safely."""
@@ -117,6 +123,7 @@ def refresh_source_mirrors(env: Mapping[str, str] | None = None) -> dict[str, An
     and outside the loop runtime.
     """
 
+    _source_mirror_cancel_event.clear()
     merged = _merged_env(env)
     if str(merged.get("ACROSS_AAA_SOURCE_MIRROR_REFRESH") or "").strip().lower() in {
         "0",
@@ -494,6 +501,7 @@ def _clone_release_sources(
 ) -> tuple[dict[str, Path], dict[str, dict[str, Any]]]:
     sources: dict[str, Path] = {}
     metadata: dict[str, dict[str, Any]] = {}
+    clone_specs: dict[str, tuple[str, str, Path]] = {}
     for repo_id in repo_ids:
         spec = _release_source_spec(repo_id, env)
         url = str(spec.get("url") or "").strip()
@@ -503,14 +511,23 @@ def _clone_release_sources(
                 f"Release source is unavailable: {repo_id}",
                 payload={"repo": repo_id, "reason": "release_source_unavailable", "url": url, "ref": ref},
             )
-        target = tmp_root / repo_id
-        _git_clone(url, ref, target, repo_id, env)
-        sources[repo_id] = target
+        clone_specs[repo_id] = (url, ref, tmp_root / repo_id)
         metadata[repo_id] = {
             "source_mode": "release_source",
             "source_url": url,
             "source_ref": ref,
         }
+    with ThreadPoolExecutor(max_workers=min(len(clone_specs), len(REQUIRED_SOURCE_REPOS))) as pool:
+        futures = {
+            pool.submit(_git_clone, url, ref, target, repo_id, env): repo_id
+            for repo_id, (url, ref, target) in clone_specs.items()
+        }
+        for future in as_completed(futures):
+            repo_id = futures[future]
+            future.result()
+            sources[repo_id] = clone_specs[repo_id][2]
+    sources = {repo_id: sources[repo_id] for repo_id in repo_ids}
+    metadata = {repo_id: metadata[repo_id] for repo_id in repo_ids}
     return sources, metadata
 
 
@@ -570,9 +587,14 @@ def _git_clone(url: str, ref: str, target: Path, repo_id: str, env: Mapping[str,
     ]
     failures: list[dict[str, Any]] = []
     for index, (strategy, args) in enumerate(attempts):
+        if _source_mirror_cancel_event.is_set():
+            raise SourceMirrorRefreshError(
+                f"Source mirror refresh cancelled: {repo_id}",
+                payload={"repo": repo_id, "reason": "source_mirror_refresh_cancelled"},
+            )
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        proc = _run_git(args, Path("/"), timeout=timeout, include_cwd=False)
+        proc = _run_git(args, Path("/"), timeout=timeout, include_cwd=False, cancellable=True)
         if proc.returncode == 0:
             return
         failures.append(
@@ -603,10 +625,10 @@ def _git_clone_timeout_seconds(env: Mapping[str, str]) -> int:
     raw = str(env.get("ACROSS_AAA_SOURCE_MIRROR_CLONE_TIMEOUT_SECONDS") or "").strip()
     if raw:
         try:
-            return max(30, min(int(raw), 900))
+            return max(10, min(int(raw), 300))
         except ValueError:
             pass
-    return 180
+    return 30
 
 
 def _primary_source_mirror_root(env: Mapping[str, str]) -> Path:
@@ -707,7 +729,14 @@ def _git(args: list[str], cwd: Path, *, check: bool = True, timeout: int = 30) -
     return proc.stdout
 
 
-def _run_git(args: list[str], cwd: Path, *, timeout: int, include_cwd: bool = True) -> subprocess.CompletedProcess[str]:
+def _run_git(
+    args: list[str],
+    cwd: Path,
+    *,
+    timeout: int,
+    include_cwd: bool = True,
+    cancellable: bool = False,
+) -> subprocess.CompletedProcess[str]:
     command = ["git", "-C", str(cwd), *args] if include_cwd else ["git", *args]
     proc: subprocess.Popen[str] | None = None
     try:
@@ -719,6 +748,11 @@ def _run_git(args: list[str], cwd: Path, *, timeout: int, include_cwd: bool = Tr
             env=_git_env(),
             start_new_session=True,
         )
+        if cancellable:
+            with _active_git_processes_lock:
+                _active_git_processes.add(proc)
+            if _source_mirror_cancel_event.is_set():
+                _terminate_process_group(proc, signal.SIGTERM)
         stdout, stderr = proc.communicate(timeout=timeout)
         return subprocess.CompletedProcess(command, proc.returncode, stdout=stdout, stderr=stderr)
     except subprocess.TimeoutExpired as exc:
@@ -738,6 +772,36 @@ def _run_git(args: list[str], cwd: Path, *, timeout: int, include_cwd: bool = Tr
             stdout=stdout or "",
             stderr=(stderr or "") or f"git command timed out after {timeout}s",
         )
+    finally:
+        if cancellable and proc is not None:
+            with _active_git_processes_lock:
+                _active_git_processes.discard(proc)
+
+
+def cancel_active_source_mirror_refreshes(*, grace_seconds: float = 2.0) -> dict[str, Any]:
+    """Cancel task-owned Git process groups before the host process exits."""
+
+    _source_mirror_cancel_event.set()
+    with _active_git_processes_lock:
+        active = list(_active_git_processes)
+    for proc in active:
+        if proc.poll() is None:
+            _terminate_process_group(proc, signal.SIGTERM)
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    for proc in active:
+        remaining = deadline - time.monotonic()
+        if proc.poll() is not None or remaining <= 0:
+            continue
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            pass
+    killed = 0
+    for proc in active:
+        if proc.poll() is None:
+            killed += 1
+            _terminate_process_group(proc, signal.SIGKILL)
+    return {"status": "cancelled", "process_count": len(active), "killed_count": killed}
 
 
 def _terminate_process_group(proc: subprocess.Popen[str], sig: int) -> None:

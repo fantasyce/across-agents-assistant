@@ -17,7 +17,7 @@ from across_agents_assistant.task_review.quality_benchmark import evaluate_deliv
 EXPECTED_OUTPUTS = ("report.md", "result.json", "evidence.json")
 
 
-def _worker_job_plan(*, workflow_id="remote-analysis", timeout_seconds=90):
+def _worker_job_plan(*, workflow_id="remote-analysis", timeout_seconds=90, quality_contract=None):
     input_payload = {"goal": "Complete a bounded remote analysis."}
     input_bytes = json.dumps(
         input_payload,
@@ -40,7 +40,7 @@ def _worker_job_plan(*, workflow_id="remote-analysis", timeout_seconds=90):
         "budgets": {"timeout_seconds": timeout_seconds},
         "required_capabilities": {"workflow_runtimes": [f"{workflow_id}/1.0"]},
     }
-    return {
+    plan = {
         "schema_version": "across-workflow-worker-job-plan/1.0",
         "workflow_id": workflow_id,
         "workflow_title": "Remote Analysis",
@@ -53,6 +53,9 @@ def _worker_job_plan(*, workflow_id="remote-analysis", timeout_seconds=90):
         "inputs": {"input.json": input_payload},
         "expected_outputs": list(EXPECTED_OUTPUTS),
     }
+    if quality_contract is not None:
+        plan["quality_contract"] = quality_contract
+    return plan
 
 
 class FakeWorkerClient:
@@ -83,6 +86,37 @@ class FakeWorkerClient:
             self.job["cancel_reason"] = payload["reason"]
             return dict(self.job)
         raise AssertionError(action)
+
+
+def _install_worker_artifact(logical_name: str, payload: bytes, *, artifact_id: str | None = None) -> dict:
+    artifact_id = artifact_id or f"artifact-{sha256(logical_name.encode()).hexdigest()[:24]}"
+    directory = data_file("worker-artifacts") / artifact_id
+    directory.mkdir(parents=True)
+    digest = sha256(payload).hexdigest()
+    (directory / "artifact.bin").write_bytes(payload)
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "across-worker-artifact/1.0",
+                "artifact_id": artifact_id,
+                "logical_name": logical_name,
+                "media_type": "application/json" if logical_name.endswith(".json") else "text/markdown",
+                "size": len(payload),
+                "sha256": digest,
+                "upload_status": "complete",
+                "verification_status": "verified",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "artifact_id": artifact_id,
+        "logical_name": logical_name,
+        "size": len(payload),
+        "sha256": digest,
+    }
 
 
 def test_generic_bridge_submits_autopilot_planned_job_and_tracks_normal_task(tmp_path):
@@ -195,6 +229,29 @@ def test_bridge_rejects_a_worker_plan_whose_input_hash_does_not_match(tmp_path):
     assert client.calls == []
 
 
+def test_bridge_rejects_an_unbounded_or_unknown_quality_contract(tmp_path):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    plan = _worker_job_plan(quality_contract={
+        "schema_version": "across-workflow-output-quality/1.0",
+        "artifact": "unknown.json",
+        "assertions": [{"kind": "equals", "path": ["status"], "value": "completed"}],
+    })
+
+    try:
+        bridge.submit_workflow(
+            task_id="task-invalid-quality-contract",
+            goal="Bounded remote analysis",
+            project_dir=str(tmp_path),
+            job_plan=plan,
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "worker_job_plan_invalid"
+    else:
+        raise AssertionError("An unknown quality artifact must not reach a Worker")
+    assert client.calls == []
+
+
 def test_cached_status_never_contacts_worker_runtime(tmp_path):
     client = FakeWorkerClient()
     bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
@@ -237,26 +294,27 @@ def test_worker_status_reads_do_not_reorder_task_history(tmp_path):
 
 
 def test_worker_completion_projects_verified_status_and_artifacts_onto_parent_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
     client = FakeWorkerClient()
     bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
     bridge.submit_workflow(
         task_id="task-parent",
         goal="Bounded remote analysis",
         project_dir=str(tmp_path),
-        job_plan=_worker_job_plan(),
+        job_plan=_worker_job_plan(quality_contract={
+            "schema_version": "across-workflow-output-quality/1.0",
+            "artifact": "result.json",
+            "assertions": [{"kind": "equals", "path": ["status"], "value": "completed"}],
+        }),
     )
     monkeypatch.setattr(
         "across_agents_assistant.worker_task_bridge.remember_worker_context_outcome",
         lambda **kwargs: {"id": "memory-1", "status": "pending"},
     )
     artifacts = [
-        {
-            "artifact_id": f"artifact-{index}",
-            "logical_name": name,
-            "size": index + 1,
-            "sha256": sha256(name.encode()).hexdigest(),
-        }
-        for index, name in enumerate(EXPECTED_OUTPUTS)
+        _install_worker_artifact("report.md", b"# Report\n\nComplete delivery.\n"),
+        _install_worker_artifact("result.json", json.dumps({"status": "completed"}, sort_keys=True).encode()),
+        _install_worker_artifact("evidence.json", json.dumps({"quality_gates": {"required_artifacts_present": True}}, sort_keys=True).encode()),
     ]
     receipt = {
         "schema_version": "across-worker-evidence/1.0",
@@ -296,6 +354,7 @@ def test_worker_completion_projects_verified_status_and_artifacts_onto_parent_ta
     assert projected["status"] == "completed"
     assert projected["progress"] == 1
     assert projected["quality_health"]["quality_gate"] == "passed"
+    assert projected["delivery_report"]["checks"]["output_contract_satisfied"] is True
     assert {item["name"] for item in projected["artifacts"]} == set(EXPECTED_OUTPUTS)
     assert all(item["status"] == "accepted" for item in projected["artifacts"])
     assert projected["acceptance_records"][0]["decision"] == "approve"
@@ -308,7 +367,165 @@ def test_worker_completion_projects_verified_status_and_artifacts_onto_parent_ta
     assert benchmark["scenarios"][0]["quality_score"] == 100
 
 
+def test_worker_completion_with_degraded_model_usage_requires_review(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    bridge.submit_workflow(
+        task_id="task-degraded",
+        goal="Bounded remote analysis",
+        project_dir=str(tmp_path),
+        job_plan=_worker_job_plan(),
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.worker_task_bridge.remember_worker_context_outcome",
+        lambda **kwargs: {"id": "memory-degraded", "status": "pending"},
+    )
+    result = {
+        "status": "completed",
+        "rounds": 2,
+        "narrative_timeline": [
+            {"round": 1, "summary": "Detailed result.", "role_states": [{"role": "A"}]},
+            {"round": 2, "summary": "Round 2: 参与者 1 moved toward cooperation, 参与者 2 moved toward conflict.", "role_states": []},
+        ],
+        "model_usage": {"degraded": True, "failed_calls": 1, "fallback_rounds": [2]},
+    }
+    artifacts = [
+        _install_worker_artifact("report.md", b"# Report\n\nRound 2: Participant 1 moved toward cooperation.\n"),
+        _install_worker_artifact("result.json", json.dumps(result, ensure_ascii=False, sort_keys=True).encode()),
+        _install_worker_artifact("evidence.json", json.dumps({"model_usage": result["model_usage"]}, sort_keys=True).encode()),
+        _install_worker_artifact("model-usage.json", json.dumps(result["model_usage"], sort_keys=True).encode()),
+    ]
+    receipt = {
+        "schema_version": "across-worker-evidence/1.0",
+        "run_id": client.job["run_id"],
+        "job_id": client.job["job_id"],
+        "node": {"node_id": "node-test", "platform": "macos/arm64"},
+        "terminal_state": "completed",
+        "artifacts": artifacts,
+        "quality_gates": {"required_artifacts_present": True},
+        "cleanup_status": "complete",
+    }
+    receipt["receipt_hash"] = sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    client.job.update({
+        "status": "completed",
+        "node_id": "node-test",
+        "attempt": 1,
+        "cleanup_status": "complete",
+        "evidence_receipt": receipt,
+    })
+
+    remote = bridge.status("task-degraded")
+    projected = bridge.project_task_info(
+        {
+            "task_id": "task-degraded",
+            "status": "pending",
+            "progress": 0,
+            "subtasks": [{"subtask_id": "sub-1", "status": "pending", "progress": 0}],
+            "waves": [],
+            "observability": {},
+        },
+        remote,
+    )
+    summary = bridge.project_task_summary(
+        {"task_id": "task-degraded", "status": "completed", "progress": 1, "completed_count": 1, "total_count": 1},
+        bridge.cached_status("task-degraded") or remote,
+    )
+
+    assert projected["status"] == "completed_with_failures"
+    assert projected["completed_count"] == 1
+    assert summary["status"] == "completed_with_failures"
+    assert summary["completed_count"] == 1
+    assert projected["quality_health"]["delivery_quality"] == "partial"
+    assert projected["quality_health"]["quality_gate"] == "partial"
+    assert projected["delivery_report"]["quality_score"] == 60
+    assert "worker_model_degraded" in projected["delivery_report"]["failed_constraints"]
+    assert "worker_report_placeholder_content" in projected["delivery_report"]["failed_constraints"]
+    assert all(item["status"] == "verified" for item in projected["artifacts"])
+    benchmark = evaluate_delivery_benchmark(
+        [projected],
+        benchmark_id="worker-degraded",
+        expected_files=EXPECTED_OUTPUTS,
+    )
+    assert benchmark["status"] == "failed"
+
+
+def test_worker_completion_requires_the_autopilot_declared_semantic_output_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    contract = {
+        "schema_version": "across-workflow-output-quality/1.0",
+        "artifact": "result.json",
+        "assertions": [
+            {"kind": "equals", "path": ["runtime_version"], "value": "1.1.16"},
+            {"kind": "collection_contains", "path": ["roles"], "field": "label", "values": ["居民代表林宁", "物业经理周凯", "施工负责人陈雨"]},
+            {"kind": "not_equals", "path": ["conclusion"], "value": "The next round remains uncertain without a model annotation."},
+        ],
+    }
+    bridge.submit_workflow(
+        task_id="task-semantic-contract",
+        goal="Bounded remote analysis",
+        project_dir=str(tmp_path),
+        job_plan=_worker_job_plan(quality_contract=contract),
+    )
+    monkeypatch.setattr(
+        "across_agents_assistant.worker_task_bridge.remember_worker_context_outcome",
+        lambda **kwargs: {"id": "memory-semantic", "status": "pending"},
+    )
+    artifacts = [
+        _install_worker_artifact("report.md", b"# Report\n\nFiles exist, but the semantic output is stale.\n"),
+        _install_worker_artifact("result.json", json.dumps({
+            "status": "completed",
+            "runtime_version": "1.1.14",
+            "roles": [{"label": "参与者 1"}, {"label": "参与者 2"}],
+            "conclusion": "The next round remains uncertain without a model annotation.",
+        }, ensure_ascii=False, sort_keys=True).encode()),
+        _install_worker_artifact("evidence.json", json.dumps({"quality_gates": {"required_artifacts_present": True}}, sort_keys=True).encode()),
+    ]
+    receipt = {
+        "schema_version": "across-worker-evidence/1.0",
+        "run_id": client.job["run_id"],
+        "job_id": client.job["job_id"],
+        "node": {"node_id": "node-test", "platform": "macos/arm64"},
+        "terminal_state": "completed",
+        "artifacts": artifacts,
+        "quality_gates": {"required_artifacts_present": True},
+        "cleanup_status": "complete",
+    }
+    receipt["receipt_hash"] = sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    client.job.update({
+        "status": "completed",
+        "node_id": "node-test",
+        "attempt": 1,
+        "cleanup_status": "complete",
+        "evidence_receipt": receipt,
+    })
+
+    remote = bridge.status("task-semantic-contract")
+    projected = bridge.project_task_info({
+        "task_id": "task-semantic-contract",
+        "status": "pending",
+        "progress": 0,
+        "subtasks": [{"subtask_id": "sub-1", "status": "pending", "progress": 0}],
+        "waves": [],
+        "observability": {},
+    }, remote)
+
+    assert projected["status"] == "completed_with_failures"
+    assert projected["delivery_report"]["quality_score"] == 60
+    assert projected["delivery_report"]["checks"]["output_contract_satisfied"] is False
+    assert "worker_quality_contract_equals:runtime_version" in projected["delivery_report"]["failed_constraints"]
+    assert "worker_quality_contract_collection:roles.label" in projected["delivery_report"]["failed_constraints"]
+    assert "worker_quality_contract_not_equals:conclusion" in projected["delivery_report"]["failed_constraints"]
+
+
 def test_public_usage_redaction_recovers_the_hash_valid_terminal_event_receipt(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "across-home"))
     client = FakeWorkerClient()
     bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
     bridge.submit_workflow(
@@ -322,13 +539,9 @@ def test_public_usage_redaction_recovers_the_hash_valid_terminal_event_receipt(t
         lambda **kwargs: {"id": "memory-redacted", "status": "pending"},
     )
     artifacts = [
-        {
-            "artifact_id": f"artifact-redacted-{index}",
-            "logical_name": name,
-            "size": index + 1,
-            "sha256": sha256(name.encode()).hexdigest(),
-        }
-        for index, name in enumerate(EXPECTED_OUTPUTS)
+        _install_worker_artifact("report.md", b"# Report\n\nComplete delivery.\n"),
+        _install_worker_artifact("result.json", json.dumps({"status": "completed"}, sort_keys=True).encode()),
+        _install_worker_artifact("evidence.json", json.dumps({"quality_gates": {"required_artifacts_present": True}}, sort_keys=True).encode()),
     ]
     signed_receipt = {
         "schema_version": "across-worker-evidence/1.0",

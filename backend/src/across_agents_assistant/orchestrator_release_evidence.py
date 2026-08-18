@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 
@@ -22,6 +23,41 @@ DEFAULT_RELEASE_REQUIRED_PROBES = [
     "api_service",
     "cli_generic",
 ]
+
+_MAX_INLINE_RESULT_REPORT_CHARS = 24_000
+
+
+def _read_only_result_report(evidence: Dict[str, Any]) -> Optional[str]:
+    metadata = evidence.get("metadata") or {}
+    host_metadata = metadata.get("host_metadata") or {}
+    if str(host_metadata.get("intent_mode") or "").strip().lower() != "read_only_analysis":
+        return None
+
+    executions = evidence.get("sandbox_executions") or metadata.get("sandbox_executions") or []
+    for execution in reversed(list(executions)):
+        receipt = execution.get("receipt") if isinstance(execution, dict) else None
+        if not isinstance(receipt, dict) and isinstance(execution, dict) and isinstance(execution.get("output"), dict):
+            receipt = execution
+        output = receipt.get("output") if isinstance(receipt, dict) else None
+        stdout = output.get("stdout") if isinstance(output, dict) else None
+        if not isinstance(stdout, str) or not stdout.strip():
+            continue
+        for line in reversed(stdout.splitlines()):
+            try:
+                payload = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            report = payload.get("output") if isinstance(payload, dict) else None
+            if not isinstance(report, str) or not report.strip():
+                continue
+            clean = report.strip()
+            heading_index = clean.find("\n# ")
+            if heading_index >= 0:
+                clean = clean[heading_index + 1 :]
+            if len(clean) > _MAX_INLINE_RESULT_REPORT_CHARS:
+                clean = clean[:_MAX_INLINE_RESULT_REPORT_CHARS].rstrip() + "\n\n…"
+            return clean
+    return None
 
 
 def _status_is_passed(value: Any) -> bool:
@@ -277,6 +313,7 @@ def external_evidence_to_app_bundle(
             "source": "across_orchestrator",
             "checks": (benchmark.get("external_quality") or {}).get("checks", {}),
         },
+        "result_report": _read_only_result_report(evidence),
         "observability": {"orchestrator_plugin": {"implementation": "external"}},
         "artifacts": evidence.get("artifacts") or [],
         "acceptance_records": [],

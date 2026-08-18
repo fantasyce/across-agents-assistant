@@ -6,6 +6,8 @@ from typing import Any, Mapping
 import base64
 import json
 import os
+import re
+import stat
 import tempfile
 import threading
 import time
@@ -61,6 +63,7 @@ class WorkerTaskBridge:
             "workflow_id": workflow_id,
             "workflow_title": str(plan.get("workflow_title") or workflow_id),
             "expected_outputs": list(plan.get("expected_outputs") or manifest.get("expected_outputs") or ()),
+            "quality_contract": plan.get("quality_contract"),
             "execution_phases": list((plan.get("execution_contract") or {}).get("phases") or ()),
             "created_at": time.time(),
             "goal_hash": sha256(goal.encode()).hexdigest(),
@@ -91,16 +94,28 @@ class WorkerTaskBridge:
             link["updated_at"] = time.time()
         else:
             link.setdefault("updated_at", float(link.get("created_at") or time.time()))
-        with self._lock:
-            state = self._read()
-            state["tasks"][task_id] = link
-            self._write(state)
         if status in TERMINAL_WORKER_STATES and not link.get("memory_recorded_at"):
             self._record_terminal_memory(task_id, link, job)
             with self._lock:
                 link = dict(self._read()["tasks"].get(task_id) or link)
-        public_link = {key: value for key, value in link.items() if key not in {"project_dir", "goal_hash"}}
         receipt = _trusted_evidence_receipt(job)
+        if status in TERMINAL_WORKER_STATES:
+            link.update({
+                "node_id": job.get("node_id"),
+                "attempt": int(job.get("attempt") or 0),
+                "manifest_hash": job.get("manifest_hash"),
+                "scheduling_decision": job.get("scheduling_decision"),
+                "evidence_receipt": receipt,
+                "verified_evidence": _valid_evidence_receipt(receipt),
+                "resource_usage": job.get("resource_usage") or {},
+                "cleanup_status": job.get("cleanup_status"),
+                "reason_category": job.get("reason_category") or job.get("cancel_reason") or job.get("last_lease_failure"),
+            })
+        with self._lock:
+            state = self._read()
+            state["tasks"][task_id] = link
+            self._write(state)
+        public_link = {key: value for key, value in link.items() if key not in {"project_dir", "goal_hash"}}
         return {
             **public_link,
             "node_id": job.get("node_id"),
@@ -145,19 +160,33 @@ class WorkerTaskBridge:
         if not expected and remote.get("terminal"):
             expected = set(produced)
         artifacts_ok = expected.issubset(produced)
-        passed = status == "completed" and verified and artifacts_ok
+        quality = _worker_delivery_quality(
+            status=status,
+            terminal=terminal,
+            verified=verified,
+            artifacts_ok=artifacts_ok,
+            expected=expected,
+            produced=produced,
+            receipt=receipt,
+            descriptors=descriptors,
+            quality_contract=remote.get("quality_contract"),
+        )
+        passed = quality["delivery_quality"] == "passed"
+        projected_status = status
+        if status == "completed" and quality["delivery_quality"] != "passed":
+            projected_status = "completed_with_failures"
 
         subtasks = []
         for raw in info.get("subtasks") or []:
             item = dict(raw)
-            item["status"] = status if terminal else ("running" if status == "running" else "pending")
+            item["status"] = projected_status if terminal else ("running" if status == "running" else "pending")
             item["progress"] = progress
-            if status in {"failed", "cancelled"}:
+            if projected_status in {"failed", "cancelled", "completed_with_failures"}:
                 item["error_message"] = str(remote.get("reason_category") or worker_state)
             subtasks.append(item)
         info["subtasks"] = subtasks
         for wave in info.get("waves") or []:
-            wave["status"] = status if terminal else ("running" if status == "running" else "pending")
+            wave["status"] = projected_status if terminal else ("running" if status == "running" else "pending")
             wave["subtasks"] = subtasks
 
         artifacts = []
@@ -180,57 +209,69 @@ class WorkerTaskBridge:
             })
 
         produced_files = sorted(produced)
+        produced_required_files = sorted(produced.intersection(expected)) if expected else produced_files
         quality_checks = {
             **dict(receipt.get("quality_gates") or {}),
             "artifact_integrity": artifacts_ok,
             "evidence_receipt": verified,
+            **quality["checks"],
         }
         delivery_report = {
-            "quality_gate": "passed" if passed else "failed" if terminal else "pending",
-            "final_status": status,
-            "summary": "Worker delivery verified." if passed else "Worker delivery is still running." if not terminal else "Worker delivery did not pass verification.",
+            "quality_gate": quality["quality_gate"],
+            "final_status": projected_status,
+            "summary": quality["summary"],
             "required_total": len(expected),
             "accepted_total": len(expected) if passed else len(produced.intersection(expected)),
             "missing_required": sorted(expected - produced),
-            "failed_constraints": [] if verified else (["evidence_receipt_invalid"] if terminal else []),
-            "status": "passed" if passed else "failed" if terminal else "pending",
+            "failed_constraints": quality["failed_constraints"],
+            "status": quality["delivery_quality"],
             "source": "remote_worker",
             "required_files": sorted(expected),
             "produced_files": produced_files,
-            "produced_required": produced_files,
+            "produced_required": produced_required_files,
             "checks": quality_checks,
-            "quality_score": 100 if passed else 0,
-            "final_quality_score": 100 if passed else 0,
-            "failures": [] if passed else sorted(expected - produced),
+            "quality_score": quality["quality_score"],
+            "final_quality_score": quality["quality_score"],
+            "failures": quality["failed_constraints"] or sorted(expected - produced),
             "quality_report": {
-                "quality_gate": "passed" if passed else "failed" if terminal else "pending",
-                "quality_score": 100 if passed else 0,
-                "final_quality_score": 100 if passed else 0,
-                "required_failed_count": 0 if passed else max(1, len(expected - produced)) if terminal else 0,
+                "quality_gate": quality["quality_gate"],
+                "quality_score": quality["quality_score"],
+                "final_quality_score": quality["quality_score"],
+                "can_complete": passed,
+                "required_failed_count": 0 if passed else 1 if terminal else 0,
                 "manual_required_count": 0,
                 "required_skipped_count": 0,
                 "checks": quality_checks,
             },
         }
 
+        remote_projection = {
+            **dict(remote),
+            "delivery_quality": quality["delivery_quality"],
+            "quality_gate": quality["quality_gate"],
+            "quality_score": quality["quality_score"],
+            "failed_constraints": quality["failed_constraints"],
+        }
+
         info.update({
-            "status": status,
+            "status": projected_status,
             "progress": progress,
-            "completed_count": len(subtasks) if status == "completed" else 0,
+            "completed_count": len(subtasks) if projected_status in {"completed", "completed_with_failures"} else 0,
             "total_count": len(subtasks),
             "artifacts": artifacts,
             "artifact_versions": {item["name"]: 1 for item in artifacts},
-            "error": str(remote.get("reason_category") or worker_state) if status == "failed" else None,
-            "remote_execution": dict(remote),
+            "error": str(remote.get("reason_category") or quality["summary"] or worker_state) if projected_status in {"failed", "completed_with_failures"} else None,
+            "remote_execution": remote_projection,
             "quality_health": {
                 "manifest_total": len(expected),
                 "manifest_required": len(expected),
                 "manifest_accepted": len(expected) if passed else len(produced.intersection(expected)),
                 "manifest_missing": len(expected - produced),
-                "quality_gate": "passed" if passed else "failed" if terminal else "pending",
-                "delivery_quality": "passed" if passed else "failed" if terminal else "pending",
+                "quality_gate": quality["quality_gate"],
+                "delivery_quality": quality["delivery_quality"],
                 "delivery_quality_report": delivery_report,
-                "orchestration_health": "passed" if passed else status,
+                "orchestration_health": "passed" if terminal and status == "completed" else status,
+                "next_repair_action": None if passed else "rerun_worker_task" if terminal else None,
             },
             "delivery_report": delivery_report,
             "observability": {
@@ -275,10 +316,36 @@ class WorkerTaskBridge:
         result = dict(summary)
         status = _task_status_for_worker_state(str(remote.get("status") or "queued"))
         total = int(result.get("total_count") or 0)
+        terminal = bool(remote.get("terminal"))
+        receipt = remote.get("evidence_receipt") if isinstance(remote.get("evidence_receipt"), Mapping) else {}
+        verified = _valid_evidence_receipt(receipt)
+        descriptors = [item for item in receipt.get("artifacts") or [] if isinstance(item, Mapping)]
+        produced = {str(item.get("logical_name") or "") for item in descriptors}
+        expected = {
+            str(item)
+            for item in remote.get("expected_outputs") or ()
+            if str(item).strip()
+        }
+        if not expected and terminal:
+            expected = set(produced)
+        quality = _worker_delivery_quality(
+            status=status,
+            terminal=terminal,
+            verified=verified,
+            artifacts_ok=expected.issubset(produced),
+            expected=expected,
+            produced=produced,
+            receipt=receipt,
+            descriptors=descriptors,
+            quality_contract=remote.get("quality_contract"),
+        )
+        if status == "completed" and quality["delivery_quality"] != "passed":
+            status = "completed_with_failures"
+        completed_count = total if status in {"completed", "completed_with_failures"} else 0
         result.update({
             "status": status,
             "progress": _worker_progress(str(remote.get("status") or "queued")),
-            "completed_count": total if status == "completed" else 0,
+            "completed_count": completed_count,
         })
         return result
 
@@ -398,6 +465,306 @@ class WorkerTaskBridge:
         os.replace(temporary, self.path)
 
 
+def _worker_delivery_quality(
+    *,
+    status: str,
+    terminal: bool,
+    verified: bool,
+    artifacts_ok: bool,
+    expected: set[str],
+    produced: set[str],
+    receipt: Mapping[str, Any],
+    descriptors: list[Mapping[str, Any]],
+    quality_contract: Any = None,
+) -> dict[str, Any]:
+    constraints: list[str] = []
+    checks: dict[str, bool] = {}
+
+    if not terminal:
+        return {
+            "delivery_quality": "pending",
+            "quality_gate": "pending",
+            "quality_score": 0,
+            "failed_constraints": [],
+            "checks": checks,
+            "summary": "Worker delivery is still running.",
+        }
+
+    if status != "completed":
+        constraints.append(f"worker_job_{status or 'failed'}")
+    if not verified:
+        constraints.append("evidence_receipt_invalid")
+    missing = sorted(expected - produced)
+    if not artifacts_ok:
+        constraints.extend(f"missing_artifact:{item}" for item in missing)
+
+    model_usage = _worker_model_usage(receipt=receipt, descriptors=descriptors)
+    model_constraints = _worker_model_constraints(model_usage)
+    constraints.extend(model_constraints)
+    checks["model_not_degraded"] = not model_constraints
+
+    content_constraints = _worker_content_constraints(descriptors)
+    constraints.extend(content_constraints)
+    checks["content_not_placeholder"] = not content_constraints
+
+    contract_constraints = _worker_contract_constraints(descriptors, quality_contract)
+    constraints.extend(contract_constraints)
+    checks["output_contract_satisfied"] = not contract_constraints
+
+    if not constraints:
+        return {
+            "delivery_quality": "passed",
+            "quality_gate": "passed",
+            "quality_score": 100,
+            "failed_constraints": [],
+            "checks": checks,
+            "summary": "Worker delivery verified.",
+        }
+
+    integrity_constraints = [
+        item for item in constraints
+        if item == "evidence_receipt_invalid"
+        or item.startswith("missing_artifact:")
+        or item.startswith("worker_job_")
+    ]
+    partial = status == "completed" and verified and artifacts_ok and not integrity_constraints
+    return {
+        "delivery_quality": "partial" if partial else "failed",
+        "quality_gate": "partial" if partial else "failed",
+        "quality_score": 60 if partial else 0,
+        "failed_constraints": constraints,
+        "checks": checks,
+        "summary": (
+            "Worker delivery completed but needs review before acceptance."
+            if partial
+            else "Worker delivery did not pass verification."
+        ),
+    }
+
+
+def _worker_model_usage(*, receipt: Mapping[str, Any], descriptors: list[Mapping[str, Any]]) -> Mapping[str, Any]:
+    for logical_name in ("model-usage.json", "evidence.json", "result.json"):
+        payload, error = _read_worker_json_artifact(descriptors, logical_name)
+        if error:
+            return {"artifact_read_error": logical_name}
+        if not isinstance(payload, Mapping):
+            continue
+        if logical_name == "model-usage.json":
+            return dict(payload)
+        nested = payload.get("model_usage")
+        if isinstance(nested, Mapping):
+            return dict(nested)
+    nested = receipt.get("model_usage")
+    return dict(nested) if isinstance(nested, Mapping) else {}
+
+
+def _worker_model_constraints(model_usage: Mapping[str, Any]) -> list[str]:
+    constraints: list[str] = []
+    if not model_usage:
+        return constraints
+    if model_usage.get("artifact_read_error"):
+        return [f"worker_quality_artifact_unreadable:{model_usage['artifact_read_error']}"]
+    if bool(model_usage.get("degraded")):
+        constraints.append("worker_model_degraded")
+    failed_calls = _nonnegative_int(model_usage.get("failed_calls"))
+    if failed_calls > 0:
+        constraints.append(f"worker_model_failed_calls:{failed_calls}")
+    fallback_rounds = model_usage.get("fallback_rounds")
+    if isinstance(fallback_rounds, list) and fallback_rounds:
+        constraints.append("worker_model_fallback_rounds:" + ",".join(str(item) for item in fallback_rounds[:12]))
+    last_failure = str(model_usage.get("last_failure_category") or "").strip()
+    if last_failure:
+        constraints.append(f"worker_model_last_failure:{last_failure[:80]}")
+    return constraints
+
+
+def _worker_content_constraints(descriptors: list[Mapping[str, Any]]) -> list[str]:
+    constraints: list[str] = []
+    result, result_error = _read_worker_json_artifact(descriptors, "result.json", max_bytes=2 * 1024 * 1024)
+    if result_error:
+        constraints.append("worker_result_unreadable")
+    elif isinstance(result, Mapping):
+        timeline = result.get("narrative_timeline")
+        if isinstance(timeline, list):
+            fallback_rounds = []
+            for item in timeline:
+                if not isinstance(item, Mapping):
+                    continue
+                summary = str(item.get("summary") or "")
+                role_states = item.get("role_states")
+                if _looks_like_placeholder_text(summary) or role_states == []:
+                    fallback_rounds.append(str(item.get("round") or "?"))
+            if fallback_rounds:
+                constraints.append("worker_result_placeholder_rounds:" + ",".join(fallback_rounds[:12]))
+
+    report, report_error = _read_worker_text_artifact(descriptors, "report.md", max_bytes=512 * 1024)
+    if report_error:
+        constraints.append("worker_report_unreadable")
+    elif report and _looks_like_placeholder_text(report):
+        constraints.append("worker_report_placeholder_content")
+    return constraints
+
+
+def _worker_contract_constraints(
+    descriptors: list[Mapping[str, Any]],
+    quality_contract: Any,
+) -> list[str]:
+    if not isinstance(quality_contract, Mapping):
+        return []
+    artifact = str(quality_contract.get("artifact") or "")
+    payload, error = _read_worker_json_artifact(descriptors, artifact, max_bytes=2 * 1024 * 1024)
+    if error or not isinstance(payload, Mapping):
+        return [f"worker_quality_contract_artifact_unreadable:{artifact}"]
+    constraints: list[str] = []
+    for assertion in quality_contract.get("assertions") or ():
+        if not isinstance(assertion, Mapping):
+            continue
+        kind = str(assertion.get("kind") or "")
+        path = [str(item) for item in assertion.get("path") or ()]
+        path_label = ".".join(path)
+        found, actual = _json_path_value(payload, path)
+        if kind == "equals":
+            if not found or actual != assertion.get("value"):
+                constraints.append(f"worker_quality_contract_equals:{path_label}")
+        elif kind == "not_equals":
+            if not found or actual == assertion.get("value"):
+                constraints.append(f"worker_quality_contract_not_equals:{path_label}")
+        elif kind == "collection_contains":
+            field = str(assertion.get("field") or "")
+            required = list(assertion.get("values") or ())
+            actual_values = [item.get(field) for item in actual if isinstance(item, Mapping)] if found and isinstance(actual, list) else []
+            if any(value not in actual_values for value in required):
+                constraints.append(f"worker_quality_contract_collection:{path_label}.{field}")
+    return constraints
+
+
+def _json_path_value(payload: Any, path: list[str]) -> tuple[bool, Any]:
+    value = payload
+    for segment in path:
+        if not isinstance(value, Mapping) or segment not in value:
+            return False, None
+        value = value[segment]
+    return True, value
+
+
+def _looks_like_placeholder_text(value: str) -> bool:
+    text = str(value or "")
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("lorem ipsum", "todo:", "tbd", "placeholder")):
+        return True
+    return bool(re.search(r"\bround\s+\d+\s*:\s*(?:participant|参与者)\s*\d+.*moved toward", text, re.I))
+
+
+def _read_worker_json_artifact(
+    descriptors: list[Mapping[str, Any]],
+    logical_name: str,
+    *,
+    max_bytes: int = 512 * 1024,
+) -> tuple[Any, str | None]:
+    text, error = _read_worker_text_artifact(descriptors, logical_name, max_bytes=max_bytes)
+    if error or text is None:
+        return None, error
+    try:
+        return json.loads(text), None
+    except json.JSONDecodeError:
+        return None, "json_invalid"
+
+
+def _read_worker_text_artifact(
+    descriptors: list[Mapping[str, Any]],
+    logical_name: str,
+    *,
+    max_bytes: int,
+) -> tuple[str | None, str | None]:
+    payload, error = _read_worker_artifact_bytes(descriptors, logical_name, max_bytes=max_bytes)
+    if error or payload is None:
+        return None, error
+    try:
+        return payload.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, "utf8_invalid"
+
+
+def _read_worker_artifact_bytes(
+    descriptors: list[Mapping[str, Any]],
+    logical_name: str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes | None, str | None]:
+    descriptor = next((item for item in descriptors if str(item.get("logical_name") or "") == logical_name), None)
+    if descriptor is None:
+        return None, None
+    artifact_id = str(descriptor.get("artifact_id") or "")
+    expected_hash = str(descriptor.get("sha256") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", artifact_id) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        return None, "descriptor_invalid"
+    directory = _worker_artifact_directory(artifact_id)
+    if directory is None:
+        return None, "artifact_missing"
+    try:
+        manifest_bytes = _read_worker_artifact_member(directory, "manifest.json", max_bytes=64 * 1024)
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        payload = _read_worker_artifact_member(directory, "artifact.bin", max_bytes=max_bytes)
+    except (OSError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, "artifact_unreadable"
+    if (
+        str(manifest.get("artifact_id") or "") != artifact_id
+        or str(manifest.get("logical_name") or "") != logical_name
+        or manifest.get("upload_status") != "complete"
+        or manifest.get("verification_status") != "verified"
+        or str(manifest.get("sha256") or "") != expected_hash
+        or int(manifest.get("size") or -1) != len(payload)
+        or sha256(payload).hexdigest() != expected_hash
+    ):
+        return None, "artifact_unverified"
+    return payload, None
+
+
+def _worker_artifact_directory(artifact_id: str) -> Path | None:
+    root = data_file("worker-artifacts").resolve()
+    try:
+        for entry in root.iterdir():
+            if entry.name != artifact_id:
+                continue
+            if entry.is_symlink() or not entry.is_dir():
+                return None
+            directory = entry.resolve(strict=True)
+            return directory if directory.parent == root else None
+    except OSError:
+        return None
+    return None
+
+
+def _read_worker_artifact_member(directory: Path, name: str, *, max_bytes: int) -> bytes:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    member_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = os.open(directory, directory_flags)
+    try:
+        member_fd = os.open(name, member_flags, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        member_stat = os.fstat(member_fd)
+        if not stat.S_ISREG(member_stat.st_mode) or member_stat.st_size > max_bytes:
+            raise OSError("Worker artifact member is invalid")
+        with os.fdopen(member_fd, "rb") as handle:
+            member_fd = -1
+            payload = handle.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise OSError("Worker artifact member is too large")
+            return payload
+    finally:
+        if member_fd >= 0:
+            os.close(member_fd)
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _valid_evidence_receipt(value: Any) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -455,7 +822,7 @@ def _task_status_for_worker_state(value: str) -> str:
         return "cancelled"
     if state in {"failed", "lost", "expired"}:
         return "failed"
-    if state in {"leased", "starting", "running", "uploading", "waiting_review"}:
+    if state in {"leased", "starting", "preparing", "running", "waiting_model", "uploading", "verifying", "waiting_review"}:
         return "running"
     return "pending"
 
@@ -465,8 +832,11 @@ def _worker_progress(value: str) -> float:
         "queued": 0.1,
         "leased": 0.2,
         "starting": 0.3,
+        "preparing": 0.35,
         "running": 0.65,
+        "waiting_model": 0.68,
         "uploading": 0.85,
+        "verifying": 0.92,
         "waiting_review": 0.95,
         "completed": 1.0,
         "failed": 1.0,
@@ -514,7 +884,51 @@ def _validated_worker_job_plan(value: Mapping[str, Any]) -> tuple[dict[str, Any]
         raise WorkerControlError("Worker Job output contract is invalid.", code="worker_job_plan_invalid", status_code=422)
     plan["workflow_id"] = workflow_id
     plan["expected_outputs"] = expected_outputs
+    plan["quality_contract"] = _validated_output_quality_contract(plan.get("quality_contract"), expected_outputs)
     return plan, manifest, input_bytes
+
+
+def _validated_output_quality_contract(value: Any, expected_outputs: list[str]) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or value.get("schema_version") != "across-workflow-output-quality/1.0":
+        raise WorkerControlError("Worker Job quality contract is invalid.", code="worker_job_plan_invalid", status_code=422)
+    artifact = str(value.get("artifact") or "").strip()
+    assertions = value.get("assertions")
+    if artifact not in expected_outputs or not isinstance(assertions, list) or not 1 <= len(assertions) <= 32:
+        raise WorkerControlError("Worker Job quality contract is invalid.", code="worker_job_plan_invalid", status_code=422)
+    normalized: list[dict[str, Any]] = []
+    scalar_types = (str, int, float, bool, type(None))
+    for raw in assertions:
+        if not isinstance(raw, Mapping):
+            raise WorkerControlError("Worker Job quality assertion is invalid.", code="worker_job_plan_invalid", status_code=422)
+        kind = str(raw.get("kind") or "")
+        path = raw.get("path")
+        if kind not in {"equals", "not_equals", "collection_contains"} or not isinstance(path, list) or not 1 <= len(path) <= 8:
+            raise WorkerControlError("Worker Job quality assertion is invalid.", code="worker_job_plan_invalid", status_code=422)
+        clean_path = [str(item) for item in path]
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", item) for item in clean_path):
+            raise WorkerControlError("Worker Job quality assertion path is invalid.", code="worker_job_plan_invalid", status_code=422)
+        item: dict[str, Any] = {"kind": kind, "path": clean_path}
+        if kind in {"equals", "not_equals"}:
+            scalar = raw.get("value")
+            if not isinstance(scalar, scalar_types) or (isinstance(scalar, str) and len(scalar) > 1000):
+                raise WorkerControlError("Worker Job quality assertion value is invalid.", code="worker_job_plan_invalid", status_code=422)
+            item["value"] = scalar
+        else:
+            field = str(raw.get("field") or "")
+            values = raw.get("values")
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", field) or not isinstance(values, list) or not 1 <= len(values) <= 64:
+                raise WorkerControlError("Worker Job collection assertion is invalid.", code="worker_job_plan_invalid", status_code=422)
+            if any(not isinstance(entry, scalar_types) or (isinstance(entry, str) and len(entry) > 1000) for entry in values):
+                raise WorkerControlError("Worker Job collection assertion is invalid.", code="worker_job_plan_invalid", status_code=422)
+            item.update({"field": field, "values": list(values)})
+        normalized.append(item)
+    return {
+        "schema_version": "across-workflow-output-quality/1.0",
+        "artifact": artifact,
+        "assertions": normalized,
+    }
 
 
 def _job_input_bytes(value: Any) -> bytes:

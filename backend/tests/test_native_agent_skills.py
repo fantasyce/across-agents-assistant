@@ -315,7 +315,7 @@ def test_auto_task_includes_installed_native_skill_context(monkeypatch, tmp_path
     assert captured == {
         "goal": "Design a plugin system.",
         "project_dir": str(tmp_path / "project"),
-        "deliverables": ["README.md"],
+        "deliverables": ["across-results/task-report.md"],
         "agent": "claude",
         "subtasks": [],
         "strict_dependency": True,

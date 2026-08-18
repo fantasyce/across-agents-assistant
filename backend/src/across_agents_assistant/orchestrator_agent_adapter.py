@@ -20,25 +20,41 @@ _KIMI_INTERNAL_FAILURE_RE = re.compile(
 
 def build_orchestrator_agent_message(task: dict[str, Any], subtask: dict[str, Any]) -> str:
     path = str(subtask.get("path") or "README.md")
+    read_only = _is_read_only_task(task)
     lines = [
         f"Task goal: {task.get('goal') or ''}",
         f"Subtask goal: {subtask.get('goal') or subtask.get('description') or f'Produce {path}.'}",
-        f"Required output file: {path}",
     ]
+    if read_only:
+        lines.append(f"Inspection anchor (read-only): {path}")
+    else:
+        lines.append(f"Required output file: {path}")
     dependencies = subtask.get("dependencies") or []
     if dependencies:
         lines.append("Dependency subtask ids: " + ", ".join(str(item) for item in dependencies))
     wave = subtask.get("wave")
     if wave:
         lines.append(f"Wave: {wave}")
-    lines.extend(
-        [
-            "",
-            "Complete only this subtask. Create or edit the required output file inside the project directory.",
-            "Do not complete downstream subtasks unless they are explicitly part of this subtask.",
-        ]
-    )
+    lines.append("")
+    if read_only:
+        lines.extend(
+            [
+                "Complete this as a read-only analysis. Do not create, edit, rename, or delete any project file.",
+                "Return the requested report in your final response; the host will preserve it as task evidence.",
+            ]
+        )
+    else:
+        lines.append(
+            "Complete only this subtask. Create or edit the required output file inside the project directory."
+        )
+    lines.append("Do not complete downstream subtasks unless they are explicitly part of this subtask.")
     return "\n".join(lines)
+
+
+def _is_read_only_task(task: dict[str, Any]) -> bool:
+    metadata = task.get("metadata") or {}
+    host_metadata = metadata.get("host_metadata") or {}
+    return str(host_metadata.get("intent_mode") or "").strip().lower() == "read_only_analysis"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,10 +78,12 @@ def main(argv: list[str] | None = None) -> int:
     project_dir = str(task.get("project_root") or os.getcwd())
     subtask_id = str(subtask.get("subtask_id") or "")
     path = str(subtask.get("path") or "README.md")
+    read_only = _is_read_only_task(task)
     context = {
         "task_id": str(task.get("task_id") or ""),
         "subtask_id": subtask_id,
-        "allowed_writable_files": [path],
+        "allowed_writable_files": [] if read_only else [path],
+        "read_only": read_only,
         "orchestrator_task": task,
         "orchestrator_subtask": subtask,
     }

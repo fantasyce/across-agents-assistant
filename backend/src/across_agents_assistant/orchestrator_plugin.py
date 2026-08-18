@@ -55,7 +55,13 @@ logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
 DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.5"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
-_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 60.0
+# The self-contained runtime is a PyInstaller executable.  A first launch can
+# take longer on macOS while Gatekeeper and the page cache inspect it, and it
+# previously crossed the 60-second boundary when Worker helpers started at the
+# same time.  The host now serializes the sidecar warm-up before Worker
+# reconciliation; this larger hard ceiling prevents a healthy cold start from
+# being reported as a permanent plugin failure.
+_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 120.0
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
 )
@@ -1109,7 +1115,7 @@ class OrchestratorPluginManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
-        deliverables = deliverables or ["README.md"]
+        deliverables = deliverables or ["across-results/task-report.md"]
         agent = agent or "demo"
         payload = _protocol_build_external_task_submission_payload(
             goal=goal,
@@ -1126,7 +1132,7 @@ class OrchestratorPluginManager:
             task = self._http_post("/tasks", payload)
         else:
             args = ["submit", goal, "--project", project_dir, "--agent", agent]
-            for deliverable in deliverables or ["README.md"]:
+            for deliverable in deliverables or ["across-results/task-report.md"]:
                 args.extend(["--deliverable", deliverable])
             for task_type in payload.get("taskTypes", []):
                 args.extend(["--task-type", task_type])

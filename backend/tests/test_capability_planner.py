@@ -41,6 +41,28 @@ def test_automatic_capability_plan_has_zero_user_decisions(monkeypatch):
     assert body["automatic"] is True
 
 
+def test_explicit_remote_worker_request_without_matching_pack_is_blocked(monkeypatch):
+    plugins = [_plugin("across-orchestrator", capabilities=["task_execution"])]
+    monkeypatch.setattr(api_server, "discover_across_plugins", lambda **_: plugins)
+    monkeypatch.setattr(api_server, "_known_provider_ids", lambda: ("openai",))
+    monkeypatch.setattr(api_server, "_provider_has_backend_key", lambda provider_id: provider_id == "openai")
+    monkeypatch.setattr(api_server, "load_llm_config", lambda: SimpleNamespace(primary_provider="openai"))
+
+    request = api_server.AutoTaskRequest(
+        description="请通过远端 Worker 完成普通停水应急计划；这不是世界模拟。",
+        task_types=["functional", "artifact"],
+    )
+    plan = api_server._derive_auto_task_capability_plan(
+        request,
+        plugin_status={"available": True},
+        workflow_resolution=api_server._empty_workflow_resolution(request.description),
+    )
+
+    assert [item["id"] for item in plan["required_user_decisions"]] == [
+        "compatible_worker_workflow_required"
+    ]
+
+
 def test_ambiguous_capability_plan_requires_only_provider_selection():
     plugins = [
         _plugin("review-a", capabilities=["repository_review"]),
@@ -143,6 +165,41 @@ def test_auto_task_forwards_automatic_capability_plan_as_metadata(monkeypatch, t
         "route": "local",
         "phases": ["local-run"],
     }
+    assert captured["metadata"]["intent_mode"] == "delivery"
+
+
+def test_auto_task_marks_explicit_read_only_intent_in_host_metadata(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakePlugin:
+        def implementation_status(self, probe=True):
+            return {"implementation": "external", "available": True}
+
+        def submit_task(self, *, metadata=None, **kwargs):
+            captured["metadata"] = metadata
+            return {"task_id": "task-read-only", "status": "pending"}
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
+    monkeypatch.setattr(
+        api_server,
+        "_derive_auto_task_capability_plan",
+        lambda req, **_: {
+            "required_user_decisions": [],
+            "chosen_providers": ["openai"],
+        },
+    )
+
+    response = TestClient(app).post(
+        "/api/tasks/auto",
+        json={
+            "description": "只读检查 README 与版本声明，不要修改任何文件。",
+            "task_types": ["functional"],
+            "project_dir": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["metadata"]["intent_mode"] == "read_only_analysis"
 
 
 def test_missing_autopilot_keeps_generic_orchestrator_tasks_usable(monkeypatch, tmp_path):

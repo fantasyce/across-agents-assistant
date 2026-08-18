@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import time
 from types import SimpleNamespace
-from threading import Event
+from threading import Event, Thread
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ from across_agents_assistant.worker_control import (
     WorkerControlError,
     WorkerNetworkRuntimeManager,
     WorkerTrustStore,
+    merge_coordinator_presence,
     reset_worker_trust_store_for_tests,
 )
 
@@ -31,6 +32,27 @@ class Clock:
 
     def advance(self, seconds):
         self.value += seconds
+
+
+def test_live_coordinator_presence_clears_stale_host_drain_after_worker_update():
+    host = {
+        "nodes": [{"node_id": "node-updated", "state": "draining", "draining": True}],
+        "health": {"online_count": 0, "incompatible_count": 0},
+    }
+    live = {
+        "nodes": [{
+            "node_id": "node-updated",
+            "state": "online_idle",
+            "draining": False,
+            "transport": "direct",
+        }]
+    }
+
+    merged = merge_coordinator_presence(host, live)
+
+    assert merged["nodes"][0]["state"] == "online_idle"
+    assert merged["nodes"][0]["draining"] is False
+    assert merged["health"]["online_count"] == 1
 
 
 def capability(node_id="node-test", **overrides):
@@ -461,6 +483,35 @@ def test_worker_network_runtime_reports_missing_managed_orchestrator(tmp_path, m
     assert status["listener_running"] is False
 
 
+def test_worker_network_runtime_nowait_status_does_not_block_during_reconcile(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "aaa-home"))
+    store = WorkerTrustStore(tmp_path / "worker.json", tmp_path / "secrets.json")
+    store.configure_listener({"enabled": True, "bind_host": "127.0.0.1", "port": 39463})
+    manager = WorkerNetworkRuntimeManager(store, orchestrator_command=["/usr/bin/true"])
+
+    lock_held = Event()
+    release_lock = Event()
+
+    def hold_runtime_lock():
+        with manager._lock:
+            lock_held.set()
+            release_lock.wait(timeout=2)
+
+    thread = Thread(target=hold_runtime_lock)
+    thread.start()
+    assert lock_held.wait(timeout=0.5)
+    try:
+        started_at = time.perf_counter()
+        status = manager.status_nowait()
+    finally:
+        release_lock.set()
+        thread.join(timeout=1)
+
+    assert time.perf_counter() - started_at < 0.05
+    assert status["status"] == "starting"
+    assert status["reconcile_in_progress"] is True
+
+
 def test_public_snapshot_redacts_keys_paths_and_verification_code(tmp_path):
     store = WorkerTrustStore(tmp_path / "worker.json", tmp_path / "secrets.json")
     pairing = store.create_pairing()
@@ -490,6 +541,17 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
     synchronized = []
     presence_wait_budgets = []
 
+    class FakeRuntime:
+        def __init__(self):
+            self.reconcile_calls = 0
+
+        def status(self):
+            return {"status": "stopped"}
+
+        def reconcile(self):
+            self.reconcile_calls += 1
+            return {"status": "running"}
+
     class FakeOrchestrator:
         def call(self, action, payload=None):
             synchronized.append((action, payload))
@@ -498,13 +560,16 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
             if action == "snapshot":
                 return {
                     "nodes": [
-                        {
-                            "node_id": "node-test",
-                            "state": "online_idle",
-                            "transport": "direct",
-                            "last_seen_at": 1234.5,
-                            "capability_manifest": {
-                                **capability(),
+                            {
+                                "node_id": "node-test",
+                                "state": "online_idle",
+                                "transport": "direct",
+                                "transport_quality": {"rtt_ms": 3},
+                                "current_job": {"job_id": "job-live", "title": "Remote simulation", "state": "running"},
+                                "recent_result": {"job_id": "job-prev", "state": "completed", "finished_at": 1230.0},
+                                "last_seen_at": 1234.5,
+                                "capability_manifest": {
+                                    **capability(),
                                 "worker_version": "0.10.5",
                             },
                         }
@@ -513,6 +578,8 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
             return {"status": "ok"}
 
     monkeypatch.setattr(api_server, "WorkerOrchestratorClient", FakeOrchestrator)
+    runtime = FakeRuntime()
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: runtime)
 
     def coordinator_snapshot(*, wait_for_refresh_seconds=0.0):
         presence_wait_budgets.append(wait_for_refresh_seconds)
@@ -560,6 +627,9 @@ def test_worker_control_api_lifecycle_uses_isolated_store(tmp_path, monkeypatch)
     live = client.get("/api/worker-control").json()
     assert live["nodes"][0]["state"] == "online_idle"
     assert live["nodes"][0]["last_seen_at"] == 1234.5
+    assert live["nodes"][0]["current_job"]["job_id"] == "job-live"
+    assert live["nodes"][0]["recent_result"]["state"] == "completed"
+    assert live["nodes"][0]["transport_quality"]["rtt_ms"] == 3
     assert live["nodes"][0]["capability_manifest"]["worker_version"] == "0.10.5"
     assert live["health"]["online_count"] == 1
     assert presence_wait_budgets[-1] == 1.0
@@ -711,6 +781,51 @@ def test_worker_presence_cache_can_wait_briefly_for_a_fresh_snapshot():
     assert value["nodes"][0]["node_id"] == "node-fresh"
 
 
+def test_worker_presence_cache_default_client_uses_ui_safe_timeout(monkeypatch):
+    from across_agents_assistant import worker_control
+
+    observed = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            observed.append({
+                "timeout_seconds": kwargs.get("timeout_seconds"),
+                "allow_cli_fallback": kwargs.get("allow_cli_fallback"),
+            })
+
+        def call(self, action, payload=None):
+            assert action == "snapshot"
+            return {"nodes": []}
+
+    monkeypatch.setattr(worker_control, "WorkerOrchestratorClient", FakeClient)
+    cache = worker_control.WorkerCoordinatorPresenceCache(refresh_interval_seconds=60)
+
+    cache.snapshot(wait_for_refresh_seconds=0.25)
+
+    assert observed == [{
+        "timeout_seconds": worker_control.WORKER_PRESENCE_REFRESH_TIMEOUT_SECONDS,
+        "allow_cli_fallback": False,
+    }]
+
+
+def test_presence_socket_only_client_does_not_spawn_a_cold_cli_fallback(tmp_path, monkeypatch):
+    from across_agents_assistant import worker_control
+
+    invoked = []
+    monkeypatch.setattr(worker_control.subprocess, "run", lambda *args, **kwargs: invoked.append((args, kwargs)))
+    client = worker_control.WorkerOrchestratorClient(
+        command=["across-orchestrator"],
+        socket_path=tmp_path / "not-ready.sock",
+        allow_cli_fallback=False,
+    )
+
+    with pytest.raises(WorkerControlError) as exc:
+        client.call("snapshot")
+
+    assert exc.value.code == "orchestrator_unavailable"
+    assert invoked == []
+
+
 def test_worker_model_gateway_reserves_budget_and_never_returns_provider_credentials(monkeypatch):
     from across_agents_assistant import api_server
 
@@ -822,14 +937,164 @@ def test_worker_model_gateway_adapts_when_primary_returns_no_final_text(monkeypa
     )
     assert response.status_code == 200
     body = response.json()
-    assert provider_calls == ["minimax", "agnes"]
+    assert provider_calls == ["minimax", "minimax", "agnes"]
     assert body["text"] == "bounded final annotation"
     assert body["provider"] == "agnes"
-    assert body["usage"]["provider_attempts"] == 2
-    assert body["usage"]["providers_attempted"] == ["minimax", "agnes"]
-    assert calls[-1][1]["tokens"] == 10
+    assert body["usage"]["provider_attempts"] == 3
+    assert body["usage"]["providers_attempted"] == ["minimax", "minimax", "agnes"]
+    assert calls[-1][1]["tokens"] == 13
     assert all(0 < value <= api_server._WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS for value in provider_timeouts)
-    assert provider_timeouts[1] <= provider_timeouts[0]
+    assert provider_timeouts[0] < 20
+    assert sum(provider_timeouts[:2]) < 55
+    assert provider_timeouts[2] > 0
+
+
+def test_worker_model_gateway_fairly_reserves_deadline_for_later_routes():
+    from across_agents_assistant import api_server
+
+    first = api_server._worker_model_attempt_timeout(
+        remaining_seconds=55,
+        providers_remaining=2,
+        empty_retry_available=True,
+    )
+    after_empty = api_server._worker_model_attempt_timeout(
+        remaining_seconds=55 - first,
+        providers_remaining=2,
+        empty_retry_available=False,
+    )
+    fallback = api_server._worker_model_attempt_timeout(
+        remaining_seconds=55 - first - after_empty,
+        providers_remaining=1,
+        empty_retry_available=True,
+    )
+    assert first == pytest.approx(55 / 3)
+    assert after_empty == pytest.approx((55 - first) / 2)
+    assert fallback > 0
+    assert first + after_empty + fallback < 55
+
+
+def test_worker_model_gateway_retries_empty_provider_once(monkeypatch):
+    from across_agents_assistant import api_server
+
+    calls = []
+
+    class FakeOrchestrator:
+        def call(self, action, payload=None):
+            calls.append((action, payload))
+            if action == "model_grant.begin":
+                return {"call_id": "model-call-retry"}
+            if action == "model_grant.finish":
+                return {"calls": 1, "tokens": payload["tokens"], "cost_usd": 0.0, "active_calls": 0}
+            raise AssertionError(action)
+
+    provider_calls = []
+
+    async def flaky_empty_provider(**kwargs):
+        provider_calls.append(kwargs["provider_id"])
+        if len(provider_calls) == 1:
+            return SimpleNamespace(
+                text="",
+                model="MiniMax-M3",
+                provider="minimax",
+                finish_reason="length",
+                usage={"input_tokens": 1, "output_tokens": 0, "total_tokens": 1},
+                raw={},
+            )
+        return SimpleNamespace(
+            text="bounded final annotation",
+            model="MiniMax-M3",
+            provider="minimax",
+            finish_reason="stop",
+            usage={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+            raw={},
+        )
+
+    api_server._worker_model_provider_preference.clear()
+    monkeypatch.setattr(api_server, "WorkerOrchestratorClient", FakeOrchestrator)
+    monkeypatch.setattr(api_server, "_chat_with_model_capability", flaky_empty_provider)
+    monkeypatch.setattr(api_server, "_worker_model_provider_candidates", lambda _purpose: ["minimax", "agnes"])
+    response = TestClient(api_server.app).post(
+        "/api/worker-control/model-gateway/invoke",
+        json={
+            "grant_id": "grant-retry",
+            "run_id": "run-retry",
+            "job_id": "job-retry",
+            "node_id": "node-retry",
+            "purpose": "scenario_round_annotation",
+            "message": "return compact json",
+            "max_tokens": 20,
+            "token_budget": 32,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert provider_calls == ["minimax", "minimax"]
+    assert body["text"] == "bounded final annotation"
+    assert body["provider"] == "minimax"
+    assert body["usage"]["provider_attempts"] == 2
+    assert body["usage"]["providers_attempted"] == ["minimax", "minimax"]
+    assert calls[-1][1]["outcome"] == "completed"
+
+
+def test_worker_model_gateway_reports_empty_response_category(monkeypatch):
+    from across_agents_assistant import api_server
+
+    calls = []
+
+    class FakeOrchestrator:
+        def call(self, action, payload=None):
+            calls.append((action, payload))
+            if action == "model_grant.begin":
+                return {"call_id": "model-call-empty"}
+            if action == "model_grant.finish":
+                return {"active_calls": 0}
+            raise AssertionError(action)
+
+    async def empty_provider(**_kwargs):
+        return SimpleNamespace(
+            text="",
+            model="MiniMax-M3",
+            provider="minimax",
+            finish_reason="length",
+            usage={"input_tokens": 10, "output_tokens": 0, "total_tokens": 10},
+            raw={},
+        )
+
+    api_server._worker_model_provider_preference.clear()
+    monkeypatch.setattr(api_server, "WorkerOrchestratorClient", FakeOrchestrator)
+    monkeypatch.setattr(api_server, "_chat_with_model_capability", empty_provider)
+    monkeypatch.setattr(api_server, "_worker_model_provider_candidates", lambda _purpose: ["minimax"])
+    response = TestClient(api_server.app).post(
+        "/api/worker-control/model-gateway/invoke",
+        json={
+            "grant_id": "grant-empty",
+            "run_id": "run-empty",
+            "job_id": "job-empty",
+            "node_id": "node-empty",
+            "purpose": "scenario_round_annotation",
+            "message": "return compact json",
+            "max_tokens": 20,
+            "token_budget": 32,
+        },
+    )
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["detail"]["category"] == "empty_response"
+    assert body["detail"]["provider_failures"] == [
+        {
+            "provider": "minimax",
+            "category": "empty_response",
+            "error_type": "EmptyModelResponse",
+        },
+        {
+            "provider": "minimax",
+            "category": "empty_response",
+            "error_type": "EmptyModelResponse",
+        },
+    ]
+    assert calls[-1][1]["outcome"] == "provider_failure"
 
 
 def test_worker_model_gateway_shares_one_total_deadline_across_provider_fallbacks(monkeypatch):

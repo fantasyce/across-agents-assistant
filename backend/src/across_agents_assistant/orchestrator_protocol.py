@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .orchestrator_release_evidence import evaluate_app_grade_quality
 
@@ -63,7 +63,7 @@ def build_external_task_submission_payload(
         _TASK_SUBMIT_KEYS["goal"]: goal,
         _TASK_SUBMIT_KEYS["project_root"]: project_root,
         _TASK_SUBMIT_KEYS["agent"]: agent,
-        _TASK_SUBMIT_KEYS["deliverables"]: list(deliverables or ["README.md"]),
+        _TASK_SUBMIT_KEYS["deliverables"]: list(deliverables or ["across-results/task-report.md"]),
         _TASK_SUBMIT_KEYS["strict_dependency"]: bool(strict_dependency),
     }
     clean_task_types = normalize_task_types(task_types)
@@ -250,7 +250,7 @@ def _artifact_rows(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = No
         rows = []
         for item in evidence.get("artifacts") or []:
             path = str(item.get("path") or "")
-            full_path = str(Path(project_root) / path) if path else ""
+            full_path = str(item.get("storage_path") or (Path(project_root) / path if path else ""))
             file_size = _artifact_size_label(item.get("size"), full_path)
             rows.append(
                 {
@@ -263,7 +263,7 @@ def _artifact_rows(task: Dict[str, Any], evidence: Optional[Dict[str, Any]] = No
                     "content_ref": full_path,
                     "normalized_content_ref": full_path,
                     "path_hint": path,
-                    "status": "accepted" if item.get("present") else "missing",
+                    "status": "accepted" if item.get("present") and item.get("fresh") is not False else "stale" if item.get("present") else "missing",
                     "size": item.get("size"),
                     "file_size": file_size,
                     "sha256": item.get("sha256"),
@@ -392,13 +392,6 @@ def _external_quality_summary(
     artifacts: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     quality = (evidence and (evidence.get("quality") or evidence.get("app_grade") or {})) or {}
-    if isinstance(quality, dict) and quality.get("quality_report"):
-        return quality
-    if _is_app_grade(task):
-        return evaluate_app_grade_quality(
-            evidence or {"status": status, "contract": task.get("contract") or {}}
-        )
-
     artifact_statuses = {
         str(item.get("name") or item.get("path_hint") or item.get("path") or ""): str(item.get("status") or "")
         for item in artifacts
@@ -410,6 +403,16 @@ def _external_quality_summary(
         if artifact_statuses.get(path) == "missing"
         or (artifact_statuses.get(path) not in {"accepted", "expected"} and status == "completed")
     ]
+    if isinstance(quality, dict) and quality.get("quality_report") and not missing_files:
+        return _quality_with_manual_review(quality)
+    if isinstance(quality, dict) and quality.get("quality_report") and missing_files:
+        return _quality_with_artifact_failures(quality, missing_files)
+    if _is_app_grade(task):
+        evaluated = evaluate_app_grade_quality(
+            evidence or {"status": status, "contract": task.get("contract") or {}}
+        )
+        return _quality_with_artifact_failures(evaluated, missing_files) if missing_files else _quality_with_manual_review(evaluated)
+
     passed = status == "completed" and not missing_files
     return {
         "status": "passed" if passed else ("failed" if status == "failed" else status),
@@ -428,6 +431,40 @@ def _external_quality_summary(
         "required_files": required_files,
         "gate_results": {},
     }
+
+
+def _quality_with_artifact_failures(quality: Mapping[str, Any], paths: List[str]) -> Dict[str, Any]:
+    normalized = dict(quality)
+    normalized.update({
+        "status": "failed",
+        "quality_gate": "failed",
+        "delivery_quality": "failed",
+        "quality_score": 0,
+        "failures": [f"{path} is missing or stale" for path in paths],
+    })
+    report = dict(normalized.get("quality_report") or {})
+    report.update({
+        "quality_gate": "failed",
+        "can_complete": False,
+        "required_failed_count": max(1, int(report.get("required_failed_count") or 0)),
+    })
+    normalized["quality_report"] = report
+    return normalized
+
+
+def _quality_with_manual_review(quality: Mapping[str, Any]) -> Dict[str, Any]:
+    normalized = dict(quality)
+    report = normalized.get("quality_report") if isinstance(normalized.get("quality_report"), Mapping) else {}
+    if int(report.get("manual_required_count") or 0) <= 0:
+        return normalized
+    if str(normalized.get("status") or normalized.get("quality_gate") or "").lower() != "passed":
+        return normalized
+    normalized.update({
+        "status": "manual_required",
+        "quality_gate": "manual_required",
+        "delivery_quality": "manual_required",
+    })
+    return normalized
 
 
 def external_task_to_summary(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -489,6 +526,11 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
         1 for item in artifacts
         if str(item.get("status") or "").lower() == "accepted"
     )
+    artifact_statuses = {
+        str(item.get("name") or item.get("path_hint") or item.get("path") or ""): str(item.get("status") or "assigned")
+        for item in artifacts
+        if item.get("name") or item.get("path_hint") or item.get("path")
+    }
     quality_report = quality.get("quality_report") or {
         "quality_gate": quality_status,
         "can_complete": quality_status == "passed" and not quality_failures and not missing_required,
@@ -531,14 +573,14 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
             "task_id": task_id,
             "project_dir": task.get("project_root") or task.get("project_dir"),
             "deliverables": [
-                {"path": path, "status": "accepted" if status == "completed" else "assigned"}
+                {"path": path, "status": artifact_statuses.get(path, "assigned")}
                 for path in required_files
             ],
         },
         "quality_health": {
             "manifest_total": len(required_files),
             "manifest_required": len(required_files),
-            "manifest_accepted": len(required_files) if quality_status == "passed" else 0,
+            "manifest_accepted": accepted_required,
             "manifest_missing": len(missing_required),
             "quality_gate": quality_status,
             "delivery_quality": quality_status,
@@ -552,7 +594,11 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
             "quality_gate": quality_status,
             "final_status": status,
             "summary": (
-                "All required deliverables were produced and accepted."
+                "Analysis completed; the requested operation requires a human decision."
+                if quality.get("analysis_outcome") == "decision_required"
+                else "All required deliverables were produced; semantic acceptance requires human review."
+                if quality_status == "manual_required"
+                else "All required deliverables were produced and accepted."
                 if quality_status == "passed"
                 else "Required delivery checks still need attention."
             ),
@@ -562,6 +608,7 @@ def external_task_to_app_info(task: Dict[str, Any], evidence: Optional[Dict[str,
             "failed_constraints": quality_failures,
             "quality_report": quality_report,
             "status": quality_status,
+            "analysis_outcome": quality.get("analysis_outcome"),
             "source": "across_orchestrator",
             "required_files": required_files,
             "checks": quality.get("checks", {}),
@@ -598,6 +645,7 @@ def _external_acceptance_records(
     missing = [path for path in required_files if path not in produced]
     failures = [str(item) for item in quality.get("failures") or [] if str(item).strip()]
     passed = quality.get("status") == "passed" and not missing and not failures
+    manual_review = quality.get("status") == "manual_required" and not missing and not failures
     artifact_ids = [
         str(item.get("artifact_id") or item.get("id") or item.get("name") or "")
         for item in artifacts
@@ -609,18 +657,24 @@ def _external_acceptance_records(
             "acceptance_id": f"acc-external-{task_id}",
             "task_id": task_id,
             "level": "task",
-            "decision": "approve" if passed else "fix",
-            "deterministic_passed": passed,
+            "decision": "approve" if passed else ("review" if manual_review else "fix"),
+            "deterministic_passed": passed or manual_review,
             "judge_passed": passed,
             "subtask_id": None,
             "wave_number": None,
             "failed_checks": failures,
             "missing_artifacts": missing,
-            "feedback": "External Orchestrator delivery quality passed." if passed else "External Orchestrator delivery quality needs attention.",
-            "root_cause_scope": "unknown",
+            "feedback": (
+                "External Orchestrator delivery quality passed."
+                if passed
+                else "Structural checks passed; semantic acceptance requires human review."
+                if manual_review
+                else "External Orchestrator delivery quality needs attention."
+            ),
+            "root_cause_scope": None if passed or manual_review else "unknown",
             "root_cause_wave": None,
             "root_cause_artifact_ids": artifact_ids,
-            "recommended_action": "approve" if passed else "fix",
+            "recommended_action": "approve" if passed else ("review" if manual_review else "fix"),
             "preferred_agent": task.get("agent") or "app-grade",
             "owner_session_id": None,
             "created_at": _external_acceptance_created_at(task),

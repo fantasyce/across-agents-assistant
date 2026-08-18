@@ -26,6 +26,7 @@ _DEFAULT_LONG_RUN_TIMEOUT_SECONDS = 7200
 _DEFAULT_GITHUB_CI_MAX_WALL_TIMEOUT_SECONDS = 7200
 _REMOTE_GATE_TIMEOUT_BUFFER_SECONDS = 120
 _MAX_GATE_COMMAND_TIMEOUT_SECONDS = 18_000
+_TRIGGER_PREPARATION_LEASE_MS = 5 * 60 * 1000
 _REMOTE_GATE_CREDENTIAL_ENV_KEY_PARTS = ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY")
 
 
@@ -295,12 +296,30 @@ class AutopilotClient:
         return self._dict(["loop", "trigger-queue", "--json"])
 
     def run_trigger(self, trigger_id: str | None = None) -> dict[str, Any]:
-        spec = self._queued_trigger_spec(trigger_id)
-        retention_required = self._candidate_retention_required(spec)
-        self._refresh_source_mirrors_if_needed(spec)
-        args = ["loop", "run-trigger", "--json"]
+        claim_args = ["loop", "claim-trigger", "--json"]
         if trigger_id:
-            args.extend(["--trigger-id", trigger_id])
+            claim_args.extend(["--trigger-id", trigger_id])
+        claim_args.extend(["--lease-ms", str(_TRIGGER_PREPARATION_LEASE_MS)])
+        claimed = self._dict(claim_args)
+        claimed_trigger = claimed.get("trigger") if isinstance(claimed, Mapping) else None
+        if claimed.get("status") != "claimed" or not isinstance(claimed_trigger, Mapping):
+            return claimed
+        claimed_trigger_id = str(claimed_trigger.get("trigger_id") or "").strip()
+        if not claimed_trigger_id:
+            raise PluginLifecycleError("Across Autopilot claimed a trigger without an identifier")
+        spec = (
+            claimed_trigger.get("spec_snapshot")
+            or claimed_trigger.get("spec_source")
+            or claimed_trigger.get("spec_id")
+            or claimed_trigger.get("spec")
+        )
+        retention_required = self._candidate_retention_required(spec)
+        try:
+            self._refresh_source_mirrors_if_needed(spec)
+        except Exception:
+            self._release_claimed_trigger(claimed_trigger_id)
+            raise
+        args = ["loop", "run-claimed-trigger", "--trigger-id", claimed_trigger_id, "--json"]
         result: dict[str, Any] | None = None
         try:
             result = self._dict(args, timeout=_long_run_timeout_seconds(self.env))
@@ -308,6 +327,26 @@ class AutopilotClient:
         finally:
             if retention_required or self._candidate_retention_required(_spec_from_run_result(result)):
                 self._run_candidate_retention()
+
+    def _release_claimed_trigger(self, trigger_id: str) -> dict[str, Any] | None:
+        try:
+            return self._dict([
+                "loop",
+                "release-trigger",
+                "--trigger-id",
+                trigger_id,
+                "--code",
+                "source_mirror_refresh_failed",
+                "--message",
+                "Required source preparation failed; the trigger will retry automatically.",
+                "--retry-after-ms",
+                "300000",
+                "--json",
+            ])
+        except Exception:
+            # The claim lease remains the final crash-recovery boundary if the
+            # explicit release command itself is unavailable.
+            return None
 
     def status(self, run_id: str) -> dict[str, Any]:
         return self._dict(["loop", "status", "--run-id", _required(run_id, "run_id"), "--json"])

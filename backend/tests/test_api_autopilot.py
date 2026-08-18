@@ -283,6 +283,55 @@ def test_autopilot_trigger_scheduler_skips_stale_due_queue_items(tmp_path):
     assert status["last_dispatch_status"] == "idle"
 
 
+def test_autopilot_trigger_scheduler_reports_failed_dispatch_without_false_success(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    fake_client = DispatchingFakeAutopilotClient()
+    fake_client.items.append(
+        {
+            "trigger_id": "trg-preparation-failure",
+            "spec_id": "aaa-autonomous-self-iteration",
+            "status": "pending",
+        }
+    )
+
+    def fail_dispatch(trigger_id=None):
+        raise RuntimeError("source preparation failed")
+
+    fake_client.run_trigger = fail_dispatch
+    scheduler = AutopilotTriggerScheduler(registry, lambda: fake_client)
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "failed"
+    assert tick["dispatch"]["status"] == "failed"
+    assert tick["dispatch"]["items"][0]["status"] == "failed"
+    status = scheduler.status()
+    assert status["last_tick_status"] == "failed"
+    assert status["last_dispatch_status"] == "failed"
+    assert status["last_error"] == "One or more queued triggers failed to dispatch."
+
+
+def test_autopilot_trigger_scheduler_honors_fractional_iso_retry_delay(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    fake_client = DispatchingFakeAutopilotClient()
+    fake_client.items.append(
+        {
+            "trigger_id": "trg-future-retry",
+            "spec_id": "aaa-autonomous-self-iteration",
+            "status": "pending",
+            "not_before": "2999-07-20T19:04:15.373Z",
+            "enqueued_at": "2026-07-20T19:00:00.000+00:00",
+        }
+    )
+    scheduler = AutopilotTriggerScheduler(registry, lambda: fake_client)
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "idle"
+    assert tick["dispatch"]["items"] == []
+    assert fake_client.run_trigger_calls == []
+
+
 def test_daily_cron_trigger_runs_at_configured_local_time(tmp_path):
     registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
     registry.register(

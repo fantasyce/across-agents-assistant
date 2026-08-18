@@ -40,6 +40,37 @@ _DELIVERABLE_ACTION_RE = re.compile(
 )
 _DELIVERABLE_SEGMENT_STOP_RE = re.compile(r"[，,。；;]")
 _DELIVERABLE_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;]+|(?<=[.!?])\s+")
+_READ_ONLY_TASK_RE = re.compile(
+    r"(?:只读|不要修改(?:任何)?文件|不得修改(?:任何)?文件|"
+    r"禁止修改(?:任何)?文件|不改动(?:任何)?文件|"
+    r"\bread[\s-]?only\b|\bdo\s+not\s+(?:modify|edit|write|change)\s+(?:any\s+)?files?\b|"
+    r"\bwithout\s+(?:modifying|editing|writing|changing)\s+(?:any\s+)?files?\b|"
+    r"\bno\s+(?:file\s+)?(?:changes|writes)\b)",
+    re.IGNORECASE,
+)
+_REMOTE_WORKER_REFERENCE_RE = re.compile(
+    r"(?:远端|远程|另一台|其他(?:电脑|机器|服务器)).{0,20}(?:worker|工作节点|节点)|"
+    r"(?:worker|工作节点|节点).{0,20}(?:远端|远程|另一台|其他(?:电脑|机器|服务器))|"
+    r"\bremote\s+worker\b|\bworker\s+node\b",
+    re.IGNORECASE,
+)
+_REMOTE_WORKER_POSITIVE_RE = re.compile(
+    r"(?:请|使用|通过|交由|让|必须|需要|要求|委派|派发).{0,32}"
+    r"(?:(?:远端|远程|另一台|其他(?:电脑|机器|服务器)).{0,20}(?:worker|工作节点|节点)|"
+    r"(?:worker|工作节点|节点).{0,20}(?:远端|远程|另一台|其他(?:电脑|机器|服务器)))|"
+    r"(?:(?:远端|远程).{0,12}(?:worker|工作节点)|(?:worker|工作节点).{0,12}(?:远端|远程))"
+    r".{0,24}(?:执行|完成|运行|处理|分析)|"
+    r"\b(?:use|via|through|dispatch(?:ed)?\s+to|run\s+on|execute\s+on|must\s+use|require)\b"
+    r".{0,32}\b(?:remote\s+worker|worker\s+node)\b",
+    re.IGNORECASE,
+)
+_REMOTE_WORKER_NEGATIVE_RE = re.compile(
+    r"(?:不要|不得|禁止|无需|不需要|不必).{0,40}"
+    r"(?:(?:远端|远程).{0,16}(?:worker|工作节点|节点)|(?:worker|工作节点|节点).{0,16}(?:远端|远程))|"
+    r"\b(?:do\s+not|don't|must\s+not|without)\b.{0,40}\b(?:remote\s+worker|worker\s+node)\b",
+    re.IGNORECASE,
+)
+_REMOTE_WORKER_CLAUSE_SPLIT_RE = re.compile(r"[。！？；;\n]+|(?<=[.!?])\s+")
 _EXTERNAL_FILE_HINT_MAX_LINE_LENGTH = 4096
 _HOST_AGENT_RUNTIME_STATE_ROOTS = {
     "kimi": [
@@ -56,6 +87,11 @@ _HOST_AGENT_RUNTIME_STATE_FILES = {
 
 
 def deliverables_for_external_task(req: ExternalTaskPlanningRequest) -> list[str]:
+    if is_read_only_external_task(req):
+        # Mentioned project files are inspection inputs, never outputs.  The
+        # adapter result is preserved by Orchestrator as a managed report
+        # outside the inspected project tree.
+        return ["across-results/task-review.md"]
     if req.strict_dependency:
         wave_deliverables = external_wave_deliverable_hints(req.description)
         if wave_deliverables:
@@ -63,7 +99,36 @@ def deliverables_for_external_task(req: ExternalTaskPlanningRequest) -> list[str
     deliverables = external_file_hints_from_description(req.description)
     if deliverables:
         return deliverables
-    return ["README.md"]
+    # A repository README is product source, not a generic task receipt.  When
+    # the user did not name a concrete output, ask the runtime for a scoped
+    # report so an unrelated pre-existing README can never satisfy the task.
+    return ["across-results/task-report.md"]
+
+
+def is_read_only_external_task(req: ExternalTaskPlanningRequest) -> bool:
+    """Return whether the user explicitly forbids project mutations.
+
+    Generic Orchestrator tasks still use an existing project file as a
+    compatibility anchor, but the host adapter must treat the result as an
+    inline analysis and expose no writable project paths.
+    """
+    return bool(_READ_ONLY_TASK_RE.search(str(req.description or "")))
+
+
+def requests_remote_worker(req: ExternalTaskPlanningRequest) -> bool:
+    """Return whether the user explicitly requires Worker execution.
+
+    This is a routing constraint, not a workflow intent.  A remote Worker
+    request must never increase the score of an unrelated Workflow Pack.
+    """
+    for clause in _REMOTE_WORKER_CLAUSE_SPLIT_RE.split(str(req.description or "")):
+        if not _REMOTE_WORKER_REFERENCE_RE.search(clause):
+            continue
+        if _REMOTE_WORKER_NEGATIVE_RE.search(clause):
+            continue
+        if _REMOTE_WORKER_POSITIVE_RE.search(clause):
+            return True
+    return False
 
 
 def external_owner_agent(req: ExternalTaskPlanningRequest) -> str:

@@ -69,7 +69,7 @@ def test_auto_task_accepts_functional_and_artifact_types(monkeypatch):
     assert response.status_code == 200
     assert response.json()["task_id"] == "task-unit123"
     assert captured["goal"] == "Build a todo tool"
-    assert captured["deliverables"] == ["README.md"]
+    assert captured["deliverables"] == ["across-results/task-report.md"]
     assert captured["agent"] == "claude"
     assert captured["subtasks"] == []
     assert captured["strict_dependency"] is True
