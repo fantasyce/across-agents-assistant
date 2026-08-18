@@ -135,6 +135,18 @@ delegation. Run these against installed payloads, not producer checkouts.
 - Use the evidence ladder `source -> packaged payload -> installed runtime ->
   live service -> user-visible state`. A lower layer passing cannot be used to
   claim that a higher layer works.
+- Treat packaged-App user journeys UJE-001 through UJE-008 in
+  `docs/engineering-handbook.md` as release-blocking when applicable. Run the
+  core journeys immediately after targeted tests, before expensive full
+  regression, so UI/runtime defects are found early rather than at handoff.
+- Accessibility trees, screenshots, API responses, unit tests, and successful
+  builds are supporting evidence only. A user journey passes only after the
+  formal App uses real controls to submit, observe, inspect, and complete the
+  applicable decision or recovery path.
+- Any later source edit, plugin payload rebuild, or formal App reinstall
+  invalidates affected UI evidence. Rerun those journeys on the final installed
+  bytes and record task identities, visible states, repository/data
+  fingerprints, and cleanup.
 - Fix the defect class, not only the observed example. When a checksum,
   lifecycle, restart, version, permission, cleanup, or UI-state bug is found,
   add coverage for sibling plugins and other consumers that share the same
