@@ -13,13 +13,13 @@ ORCHESTRATOR_LOCAL_SOURCE=${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}
 NODE_VERSION="22.17.1"
 CONTEXT_VERSION="0.11.0"
 CONTEXT_COMMIT="24768104d613c52e081b3ca7a9d5b3dbd6886b72"
-CONTEXT_SHA256="60282662a3a773dc2c2053cd3ea144f48d624c8a6bae331dd0979d05f6aa4057"
+CONTEXT_SHA256="7420b75e28adf1da130593dc217d4bd8d2368d6ebe6cd55c7fca43a5161ad974"
 AUTOPILOT_VERSION="0.5.2"
 AUTOPILOT_COMMIT="b11b6abbd55831a65f18bb6a4fbab5d7dab9bd8e"
-AUTOPILOT_SHA256="5cc33d79b58d8e254dc8da54ab90f2f82c43207e86a941b7e45a18bc6797af94"
+AUTOPILOT_SHA256="22d8446afff0aafc797d7ccf573925d5a5f53a5f6a8a45d916ce9967ab79a5ea"
 ORCHESTRATOR_VERSION="0.10.5"
 ORCHESTRATOR_COMMIT="605a6157a1871e5fd7e35d827c0f51903430761e"
-ORCHESTRATOR_SHA256="765bbf997f6f3ee866d45e0542c61becf961a687531894ea40a296aafa0d83fb"
+ORCHESTRATOR_SHA256="95323ac89d81cee88a8523232a8b0061a37b3ba4e71802622b16c5411d287877"
 CONTEXT_SOURCE_KIND="released-pin"
 AUTOPILOT_SOURCE_KIND="released-pin"
 ORCHESTRATOR_SOURCE_KIND="released-pin"
@@ -165,10 +165,13 @@ if [[ -n "$CONTEXT_LOCAL_SOURCE" ]]; then
         --exclude 'dist'
     CONTEXT_SHA256=$(shasum -a 256 "$CONTEXT_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-context/tar.gz/$CONTEXT_COMMIT" \
-        "$CONTEXT_ARCHIVE" \
-        "$CONTEXT_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-context.git" \
+        --commit "$CONTEXT_COMMIT" \
+        --output "$CONTEXT_ARCHIVE" \
+        --archive-root across-context \
+        --expected-sha256 "$CONTEXT_SHA256" \
+        --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
     rm -f "$AUTOPILOT_ARCHIVE"
@@ -181,10 +184,13 @@ if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
         --exclude 'dist'
     AUTOPILOT_SHA256=$(shasum -a 256 "$AUTOPILOT_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-autopilot/tar.gz/$AUTOPILOT_COMMIT" \
-        "$AUTOPILOT_ARCHIVE" \
-        "$AUTOPILOT_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-autopilot.git" \
+        --commit "$AUTOPILOT_COMMIT" \
+        --output "$AUTOPILOT_ARCHIVE" \
+        --archive-root across-autopilot \
+        --expected-sha256 "$AUTOPILOT_SHA256" \
+        --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
     rm -f "$ORCHESTRATOR_ARCHIVE"
@@ -198,10 +204,13 @@ if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
         --exclude '__pycache__'
     ORCHESTRATOR_SHA256=$(shasum -a 256 "$ORCHESTRATOR_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-orchestrator/tar.gz/$ORCHESTRATOR_COMMIT" \
-        "$ORCHESTRATOR_ARCHIVE" \
-        "$ORCHESTRATOR_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-orchestrator.git" \
+        --commit "$ORCHESTRATOR_COMMIT" \
+        --output "$ORCHESTRATOR_ARCHIVE" \
+        --archive-root across-orchestrator \
+        --expected-sha256 "$ORCHESTRATOR_SHA256" \
+        --exclude .git --exclude .venv --exclude build --exclude dist --exclude __pycache__
 fi
 cp "$CONTEXT_ARCHIVE" "$OUTPUT_DIR/packages/across-context-$CONTEXT_VERSION.tar.gz"
 cp "$AUTOPILOT_ARCHIVE" "$OUTPUT_DIR/packages/across-autopilot-$AUTOPILOT_VERSION.tar.gz"
