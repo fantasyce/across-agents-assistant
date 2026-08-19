@@ -688,12 +688,12 @@ struct AutopilotWorkbenchView: View {
                             .foregroundColor(.secondary)
                             .frame(width: section.id == "agent_interop_e2e" ? 126 : 104, alignment: .leading)
                             .lineLimit(1)
-                        Text(pair.value.description)
+                        Text(displayValue(pair.value, for: pair.key))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(textColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .help(pair.value.description)
+                            .help(displayValue(pair.value, for: pair.key))
                         Spacer(minLength: 0)
                     }
                 }
@@ -729,7 +729,10 @@ struct AutopilotWorkbenchView: View {
     private func summaryPairs(for section: AutopilotWorkbenchSection) -> [(key: String, value: AutopilotWorkbenchJSONValue)] {
         if section.id == "agent_interop_e2e" {
             let priority = [
-                "status",
+                "schema_compatibility_status",
+                "compatible_plugin_count",
+                "incompatible_plugin_count",
+                "portable_tool_count",
                 "protocol_readiness_score",
                 "frontier_interop_status",
                 "remote_mcp_template_status",
@@ -912,10 +915,34 @@ struct AutopilotWorkbenchView: View {
     }
 
     private func displayKey(_ key: String) -> String {
-        key.replacingOccurrences(of: "_", with: " ")
+        let localizationKey = "workbench.summary.\(key)"
+        let localized = appPreferences.text(localizationKey)
+        return localized == localizationKey
+            ? key.replacingOccurrences(of: "_", with: " ")
+            : localized
+    }
+
+    private func displayValue(_ value: AutopilotWorkbenchJSONValue, for key: String) -> String {
+        guard key == "status" || key.hasSuffix("_status") else {
+            return value.description
+        }
+        let localized = localizedStatus(value.description)
+        return localized == "workbench.status.\(value.description)" ? value.description : localized
     }
 
     private func compactObjectSummary(_ object: [String: AutopilotWorkbenchJSONValue]) -> String {
+        if let codeValue = object["code"] {
+            let code = codeValue.description
+            let localizationKey = "workbench.finding.\(code)"
+            let localized = appPreferences.text(localizationKey)
+            let label = localized == localizationKey
+                ? code.replacingOccurrences(of: "_", with: " ")
+                : localized
+            return [object["plugin_id"]?.description, object["tool_name"]?.description, label]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+        }
         let preferred = ["id", "trigger_id", "run_id", "spec", "spec_id", "status", "type", "priority", "title", "reason", "endpoint"]
         let parts = preferred.compactMap { key -> String? in
             guard let value = object[key] else { return nil }
