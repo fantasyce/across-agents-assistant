@@ -179,6 +179,14 @@ def validate_mcp_tools(
     return _report(tool_count, canonical, requested_profiles, findings)
 
 
+def public_finding_message(code: object) -> str | None:
+    """Return only a validator-owned fixed message for a known public code."""
+
+    if type(code) is not str:
+        return None
+    return _PUBLIC_MESSAGES.get(code)
+
+
 def _validate_schema_node(
     node: object,
     *,
