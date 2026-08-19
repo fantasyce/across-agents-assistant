@@ -414,6 +414,21 @@ struct UnifiedDeliveryView: View {
                     if let url = taskViewModel.exportedEvidenceBundleURL {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
+                },
+                trajectory: taskViewModel.selectedExecutionTrajectory,
+                isLoadingTrajectory: taskViewModel.isLoadingExecutionTrajectory,
+                trajectoryErrorMessage: taskViewModel.executionTrajectoryError,
+                exportedTrajectoryURL: taskViewModel.exportedExecutionTrajectoryURL,
+                onLoadNextTrajectory: {
+                    taskViewModel.loadNextTaskExecutionTrajectoryPage(bundle.taskId)
+                },
+                onExportTrajectory: {
+                    taskViewModel.exportTaskExecutionTrajectory(bundle.taskId)
+                },
+                onOpenTrajectoryExport: {
+                    if let url = taskViewModel.exportedExecutionTrajectoryURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 }
             )
             .environmentObject(preferences)

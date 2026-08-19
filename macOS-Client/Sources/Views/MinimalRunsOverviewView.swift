@@ -108,6 +108,21 @@ struct MinimalRunsOverviewView: View {
                     if let url = viewModel.exportedEvidenceBundleURL {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
+                },
+                trajectory: viewModel.selectedExecutionTrajectory,
+                isLoadingTrajectory: viewModel.isLoadingExecutionTrajectory,
+                trajectoryErrorMessage: viewModel.executionTrajectoryError,
+                exportedTrajectoryURL: viewModel.exportedExecutionTrajectoryURL,
+                onLoadNextTrajectory: {
+                    viewModel.loadNextTaskExecutionTrajectoryPage(bundle.taskId)
+                },
+                onExportTrajectory: {
+                    viewModel.exportTaskExecutionTrajectory(bundle.taskId)
+                },
+                onOpenTrajectoryExport: {
+                    if let url = viewModel.exportedExecutionTrajectoryURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 }
             )
             .environmentObject(preferences)
