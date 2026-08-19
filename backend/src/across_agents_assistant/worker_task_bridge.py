@@ -420,6 +420,48 @@ class WorkerTaskBridge:
                 "phases": _execution_phases("degraded"),
             }
 
+    def read_only_status(self, task_id: str) -> dict[str, Any] | None:
+        """Read one linked Worker Job without changing host or Worker state."""
+
+        with self._lock:
+            link = dict(self._read()["tasks"].get(task_id) or {})
+        if not link:
+            return None
+        job = self.client.call("job.get", {"job_id": link["job_id"]})
+        if not isinstance(job, Mapping):
+            raise WorkerControlError(
+                "Worker Job response is invalid.",
+                code="worker_job_response_invalid",
+                status_code=502,
+            )
+        status = str(job.get("status") or link.get("status") or "queued")
+        receipt = _trusted_evidence_receipt(job)
+        public_link = {
+            key: value
+            for key, value in link.items()
+            if key not in {"project_dir", "goal_hash"}
+        }
+        return {
+            **public_link,
+            "status": status,
+            "node_id": job.get("node_id"),
+            "attempt": int(job.get("attempt") or 0),
+            "manifest_hash": job.get("manifest_hash"),
+            "scheduling_decision": job.get("scheduling_decision"),
+            "events": list(job.get("events") or []),
+            "evidence_receipt": receipt,
+            "verified_evidence": _valid_evidence_receipt(receipt),
+            "resource_usage": job.get("resource_usage") or {},
+            "cleanup_status": job.get("cleanup_status"),
+            "reason_category": (
+                job.get("reason_category")
+                or job.get("cancel_reason")
+                or job.get("last_lease_failure")
+            ),
+            "terminal": status in TERMINAL_WORKER_STATES,
+            "phases": _execution_phases(status, link.get("execution_phases")),
+        }
+
     def cached_status(self, task_id: str) -> dict[str, Any] | None:
         """Return the last durable Worker state without contacting its runtime.
 

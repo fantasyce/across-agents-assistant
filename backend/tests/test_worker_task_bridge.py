@@ -88,6 +88,47 @@ class FakeWorkerClient:
         raise AssertionError(action)
 
 
+def _seed_worker_link(bridge: WorkerTaskBridge, *, task_id: str = "task-read-only") -> None:
+    bridge._write({
+        "schema_version": "across-aaa-worker-task-links/1.0",
+        "tasks": {
+            task_id: {
+                "schema_version": "across-aaa-worker-task-link/1.0",
+                "task_id": task_id,
+                "job_id": "job-read-only",
+                "run_id": "run-read-only",
+                "workflow_id": "remote-analysis",
+                "workflow_title": "Remote Analysis",
+                "expected_outputs": list(EXPECTED_OUTPUTS),
+                "execution_phases": ["local-plan", "remote-run", "local-verify"],
+                "created_at": 10.0,
+                "updated_at": 11.0,
+                "status": "queued",
+                "project_dir": "/private/project",
+                "goal_hash": "f" * 64,
+            }
+        },
+    })
+
+
+def _signed_worker_receipt(**extra):
+    receipt = {
+        "schema_version": "across-worker-evidence/1.0",
+        "run_id": "run-read-only",
+        "job_id": "job-read-only",
+        "node": {"node_id": "node-read-only", "platform": "macos/arm64"},
+        "terminal_state": "completed",
+        "manifest_hash": "a" * 64,
+        "artifacts": [],
+        "cleanup_status": "complete",
+        **extra,
+    }
+    receipt["receipt_hash"] = sha256(
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return receipt
+
+
 def _install_worker_artifact(logical_name: str, payload: bytes, *, artifact_id: str | None = None) -> dict:
     artifact_id = artifact_id or f"artifact-{sha256(logical_name.encode()).hexdigest()[:24]}"
     directory = data_file("worker-artifacts") / artifact_id
@@ -270,6 +311,151 @@ def test_cached_status_never_contacts_worker_runtime(tmp_path):
     assert cached["terminal"] is False
     assert client.calls == calls_before_read
     assert bridge.cached_status("missing-task") is None
+
+
+def test_read_only_status_returns_none_for_an_unlinked_task_without_contacting_worker(tmp_path):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+
+    assert bridge.read_only_status("missing-task") is None
+    assert client.calls == []
+    assert not bridge.path.exists()
+
+
+def test_read_only_status_reads_one_running_job_without_changing_link_or_memory(tmp_path, monkeypatch):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    _seed_worker_link(bridge)
+    client.job = {
+        "job_id": "job-read-only",
+        "run_id": "run-read-only",
+        "manifest_hash": "a" * 64,
+        "status": "running",
+        "attempt": 1,
+        "node_id": "node-read-only",
+        "events": [{
+            "event_id": "worker-event-1",
+            "sequence": 1,
+            "timestamp": 12.0,
+            "type": "task.started",
+            "task_id": "task-read-only",
+        }],
+    }
+    before = (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns)
+    memory_calls = []
+    monkeypatch.setattr(
+        bridge,
+        "_record_terminal_memory",
+        lambda *args, **kwargs: memory_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read_only_status must not write")),
+    )
+
+    result = bridge.read_only_status("task-read-only")
+    after = (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns)
+
+    assert before == after
+    assert client.calls == [("job.get", {"job_id": "job-read-only"})]
+    assert memory_calls == []
+    assert result is not None
+    assert result["status"] == "running"
+    assert result["terminal"] is False
+    assert result["events"] == client.job["events"]
+    assert result["evidence_receipt"] is None
+    assert result["verified_evidence"] is False
+    assert "project_dir" not in result
+    assert "goal_hash" not in result
+
+
+def test_read_only_status_returns_valid_terminal_receipt_without_recording_memory(tmp_path, monkeypatch):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    _seed_worker_link(bridge)
+    receipt = _signed_worker_receipt()
+    client.job = {
+        "job_id": "job-read-only",
+        "run_id": "run-read-only",
+        "manifest_hash": "a" * 64,
+        "status": "completed",
+        "attempt": 2,
+        "node_id": "node-read-only",
+        "events": [],
+        "evidence_receipt": receipt,
+        "resource_usage": {"wall_seconds": 1.5},
+        "cleanup_status": "complete",
+    }
+    before = (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns)
+    memory_calls = []
+    monkeypatch.setattr(
+        bridge,
+        "_record_terminal_memory",
+        lambda *args, **kwargs: memory_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read_only_status must not write")),
+    )
+
+    result = bridge.read_only_status("task-read-only")
+
+    assert (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns) == before
+    assert memory_calls == []
+    assert result is not None
+    assert result["status"] == "completed"
+    assert result["terminal"] is True
+    assert result["evidence_receipt"] == receipt
+    assert result["verified_evidence"] is True
+    assert result["resource_usage"] == {"wall_seconds": 1.5}
+
+
+def test_read_only_status_recovers_only_a_job_bound_terminal_event_receipt(tmp_path, monkeypatch):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    _seed_worker_link(bridge)
+    receipt = _signed_worker_receipt(summary="完成")
+    event = {
+        "event_id": "worker-event-terminal",
+        "sequence": 9,
+        "timestamp": 20.0,
+        "type": "task.completed",
+        "state": "completed",
+        "task_id": "task-read-only",
+        "payload": {"evidence_receipt": receipt},
+    }
+    client.job = {
+        "job_id": "job-read-only",
+        "run_id": "run-read-only",
+        "manifest_hash": "a" * 64,
+        "status": "completed",
+        "attempt": 2,
+        "node_id": "node-read-only",
+        "events": [event],
+        "evidence_receipt": {**receipt, "cleanup_status": "mutated"},
+        "cleanup_status": "complete",
+    }
+    before = (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns)
+    monkeypatch.setattr(
+        bridge,
+        "_record_terminal_memory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not record memory")),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read_only_status must not write")),
+    )
+
+    result = bridge.read_only_status("task-read-only")
+
+    assert (bridge.path.read_bytes(), bridge.path.stat().st_mtime_ns) == before
+    assert result is not None
+    assert result["events"] == [event]
+    assert result["evidence_receipt"] == receipt
+    assert result["verified_evidence"] is True
 
 
 def test_worker_status_reads_do_not_reorder_task_history(tmp_path):
