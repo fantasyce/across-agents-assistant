@@ -25,11 +25,13 @@ import socket
 import urllib.parse
 import urllib.request
 import urllib.error
+from copy import deepcopy
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from .credentials.validation import is_usable_secret, normalize_secret
 from .beginner_study_artifacts import sanitized_beginner_study_result
+from .execution_trajectory import TrajectoryProjectionError, project_execution_trajectory
 from .local_voice_transcription import (
     LocalVoiceTranscriptionError,
     MAX_PCM_BYTES as VOICE_MAX_PCM_BYTES,
@@ -105,6 +107,23 @@ _AGENT_LOOP_STREAM_POLL_SECONDS = 0.25
 _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS = 30.0
 _PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
 _EXTERNAL_TASK_EVIDENCE_STATUSES = {"completed", "failed", "cancelled"}
+_CANONICAL_TRAJECTORY_PAGE_INT = re.compile(r"0|[1-9][0-9]*")
+
+
+class _ExecutionTrajectoryEvidenceInvalid(ValueError):
+    """Internal marker for a malformed authoritative event container."""
+
+
+def _trajectory_page_value(raw: str, *, minimum: int, maximum: int | None = None) -> int:
+    if type(raw) is not str or _CANONICAL_TRAJECTORY_PAGE_INT.fullmatch(raw) is None:
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination")
+    try:
+        value = int(raw)
+    except (ValueError, OverflowError):
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination") from None
+    if value < minimum or (maximum is not None and value > maximum):
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination")
+    return value
 
 
 def _autopilot_research_value_error_detail(exc: ValueError) -> str:
@@ -16393,6 +16412,85 @@ async def get_task_quality_benchmark(
     )
     report["app_version"] = __version__
     return report
+
+
+@app.get("/api/tasks/{task_id}/execution-trajectory")
+async def get_task_execution_trajectory(
+    task_id: str,
+    offset: str = "0",
+    limit: str = "200",
+):
+    """Return one bounded, read-only execution trajectory snapshot."""
+
+    page_offset = _trajectory_page_value(offset, minimum=0)
+    page_limit = _trajectory_page_value(limit, minimum=1, maximum=500)
+
+    try:
+        if _is_external_orchestrator_task(task_id):
+            bridge = get_worker_task_bridge()
+            remote = await asyncio.to_thread(bridge.read_only_status, task_id)
+            if remote is not None:
+                if not isinstance(remote, Mapping):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                snapshot = deepcopy(dict(remote))
+                raw_events = snapshot.get("events")
+                if not isinstance(raw_events, list):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                source = "worker_projection"
+            else:
+                plugin = get_orchestrator_plugin_manager()
+                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                if not isinstance(evidence, Mapping):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                snapshot = deepcopy(dict(evidence))
+                if "events" in snapshot:
+                    raw_events = snapshot["events"]
+                    if not isinstance(raw_events, list):
+                        raise _ExecutionTrajectoryEvidenceInvalid
+                else:
+                    fallback_events = await asyncio.to_thread(plugin.get_events, task_id)
+                    if not isinstance(fallback_events, list):
+                        raise _ExecutionTrajectoryEvidenceInvalid
+                    raw_events = deepcopy(fallback_events)
+                source = "orchestrator_evidence"
+        else:
+            task_info = _load_task_info_read_only(task_id)
+            if isinstance(task_info, BaseModel):
+                snapshot = deepcopy(_pydantic_dump(task_info))
+            elif isinstance(task_info, Mapping):
+                snapshot = deepcopy(dict(task_info))
+            else:
+                raise _ExecutionTrajectoryEvidenceInvalid
+            observability = snapshot.get("observability", {})
+            if not isinstance(observability, Mapping):
+                raise _ExecutionTrajectoryEvidenceInvalid
+            raw_events = observability.get("timeline", [])
+            if not isinstance(raw_events, list):
+                raise _ExecutionTrajectoryEvidenceInvalid
+            source = "local_task_observability"
+    except HTTPException:
+        raise
+    except _ExecutionTrajectoryEvidenceInvalid:
+        raise HTTPException(status_code=502, detail="execution trajectory evidence is invalid") from None
+    except Exception as exc:
+        logger.warning("Execution trajectory source read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="execution trajectory source is unavailable") from None
+
+    try:
+        return project_execution_trajectory(
+            task_id=task_id,
+            task_status=str(snapshot.get("status") or "unknown"),
+            source=source,
+            raw_events=raw_events,
+            raw_receipt=snapshot.get("evidence_receipt"),
+            offset=page_offset,
+            limit=page_limit,
+        )
+    except TrajectoryProjectionError:
+        raise HTTPException(status_code=500, detail="execution trajectory could not be prepared") from None
+    except Exception as exc:
+        logger.error("Execution trajectory projection failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="execution trajectory could not be prepared") from None
 
 
 @app.get("/api/tasks/{task_id}/evidence-bundle")
