@@ -24,6 +24,10 @@ class TaskOrchestrationViewModel: ObservableObject {
     @Published var isLoadingTaskEvidence = false
     @Published var taskEvidenceError: String?
     @Published var exportedEvidenceBundleURL: URL?
+    @Published var selectedExecutionTrajectory: TaskExecutionTrajectory?
+    @Published var isLoadingExecutionTrajectory = false
+    @Published var executionTrajectoryError: String?
+    @Published var exportedExecutionTrajectoryURL: URL?
     @Published var selectedArtifactPreview: ArtifactPreview?
     @Published var isLoadingArtifactPreview = false
     @Published var orchestratorPluginStatus: OrchestratorPluginStatus?
@@ -34,6 +38,19 @@ class TaskOrchestrationViewModel: ObservableObject {
     private var taskListOffset = 0
     private var projectDirectoryFilter: String?
     private var taskListRequestGeneration = 0
+    private var trajectoryRequestGeneration = 0
+    private let requestData: (URLRequest) async throws -> (Data, URLResponse)
+    private let trajectoryExportsDirectory: URL
+
+    init(
+        requestData: @escaping (URLRequest) async throws -> (Data, URLResponse) = { request in
+            try await URLSession.shared.data(for: request)
+        },
+        trajectoryExportsDirectory: URL? = nil
+    ) {
+        self.requestData = requestData
+        self.trajectoryExportsDirectory = trajectoryExportsDirectory ?? LocalAppPaths.evidenceExportsDir
+    }
 
     enum ViewMode {
         case empty
@@ -430,9 +447,146 @@ class TaskOrchestrationViewModel: ObservableObject {
     }
 
     func closeEvidenceBundle() {
+        trajectoryRequestGeneration += 1
         selectedEvidenceBundle = nil
         exportedEvidenceBundleURL = nil
         taskEvidenceError = nil
+        selectedExecutionTrajectory = nil
+        isLoadingExecutionTrajectory = false
+        executionTrajectoryError = nil
+        exportedExecutionTrajectoryURL = nil
+    }
+
+    @discardableResult
+    func loadTaskExecutionTrajectory(
+        _ taskId: String,
+        offset: Int = 0,
+        limit: Int = 200
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            await performTaskExecutionTrajectoryLoad(taskId, offset: offset, limit: limit)
+        }
+    }
+
+    @discardableResult
+    func loadNextTaskExecutionTrajectoryPage(_ taskId: String) -> Task<Void, Never> {
+        Task { @MainActor in
+            guard
+                let trajectory = selectedExecutionTrajectory,
+                trajectory.taskId == taskId,
+                trajectory.page.hasMore,
+                let nextOffset = trajectory.page.nextOffset
+            else { return }
+            await performTaskExecutionTrajectoryLoad(
+                taskId,
+                offset: nextOffset,
+                limit: trajectory.page.limit
+            )
+        }
+    }
+
+    @MainActor
+    private func performTaskExecutionTrajectoryLoad(
+        _ taskId: String,
+        offset: Int,
+        limit: Int
+    ) async {
+        trajectoryRequestGeneration += 1
+        let generation = trajectoryRequestGeneration
+        if selectedExecutionTrajectory?.taskId != taskId || offset == 0 {
+            selectedExecutionTrajectory = nil
+            exportedExecutionTrajectoryURL = nil
+        }
+        isLoadingExecutionTrajectory = true
+        executionTrajectoryError = nil
+
+        guard offset >= 0, (1...500).contains(limit), let baseURL else {
+            if generation == trajectoryRequestGeneration {
+                isLoadingExecutionTrajectory = false
+                executionTrajectoryError = "Execution trajectory is unavailable."
+            }
+            return
+        }
+
+        do {
+            let request = try Self.executionTrajectoryRequest(
+                baseURL: baseURL,
+                taskId: taskId,
+                offset: offset,
+                limit: limit
+            )
+            let (data, response) = try await requestData(request)
+            guard generation == trajectoryRequestGeneration else { return }
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let trajectory = try JSONDecoder().decode(TaskExecutionTrajectory.self, from: data)
+            guard
+                trajectory.taskId == taskId,
+                trajectory.page.offset == offset,
+                trajectory.page.limit == limit
+            else {
+                throw URLError(.cannotParseResponse)
+            }
+            guard generation == trajectoryRequestGeneration else { return }
+            selectedExecutionTrajectory = trajectory
+            isLoadingExecutionTrajectory = false
+        } catch {
+            guard generation == trajectoryRequestGeneration else { return }
+            isLoadingExecutionTrajectory = false
+            executionTrajectoryError = "Execution trajectory is unavailable."
+        }
+    }
+
+    @discardableResult
+    func exportTaskExecutionTrajectory(_ taskId: String) -> Task<Void, Never> {
+        Task { @MainActor in
+            guard let trajectory = selectedExecutionTrajectory, trajectory.taskId == taskId else {
+                executionTrajectoryError = "Execution trajectory is unavailable."
+                return
+            }
+            do {
+                try FileManager.default.createDirectory(
+                    at: trajectoryExportsDirectory,
+                    withIntermediateDirectories: true
+                )
+                let exportURL = trajectoryExportsDirectory
+                    .appendingPathComponent(TaskExecutionTrajectory.exportFileName(taskId: taskId))
+                try trajectory.prettyPublicJSON().write(to: exportURL, options: [.atomic])
+                exportedExecutionTrajectoryURL = exportURL
+                executionTrajectoryError = nil
+            } catch {
+                executionTrajectoryError = "Execution trajectory export failed."
+            }
+        }
+    }
+
+    private static func executionTrajectoryRequest(
+        baseURL: URL,
+        taskId: String,
+        offset: Int,
+        limit: Int
+    ) throws -> URLRequest {
+        var components = URLComponents(
+            url: baseURL
+                .appendingPathComponent("api/tasks")
+                .appendingPathComponent(taskId)
+                .appendingPathComponent("execution-trajectory"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        return request
     }
 
     func loadReleaseEvaluation() {
@@ -469,7 +623,8 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
     }
 
-    func loadTaskEvidenceBundle(_ taskId: String, releaseGate: Bool = false) {
+    @discardableResult
+    func loadTaskEvidenceBundle(_ taskId: String, releaseGate: Bool = false) -> Task<Void, Never> {
         Task { @MainActor in
             guard let baseURL = baseURL else {
                 taskEvidenceError = "Server URL not configured"
@@ -479,11 +634,22 @@ class TaskOrchestrationViewModel: ObservableObject {
             isLoadingTaskEvidence = true
             taskEvidenceError = nil
             exportedEvidenceBundleURL = nil
+            trajectoryRequestGeneration += 1
+            selectedExecutionTrajectory = nil
+            isLoadingExecutionTrajectory = false
+            executionTrajectoryError = nil
+            exportedExecutionTrajectoryURL = nil
 
             do {
-                let data = try await Self.fetchEvidenceBundleData(baseURL: baseURL, taskId: taskId, releaseGate: releaseGate)
+                let data = try await Self.fetchEvidenceBundleData(
+                    baseURL: baseURL,
+                    taskId: taskId,
+                    releaseGate: releaseGate,
+                    requestData: requestData
+                )
                 selectedEvidenceBundle = try JSONDecoder().decode(TaskEvidenceBundle.self, from: data)
                 isLoadingTaskEvidence = false
+                await performTaskExecutionTrajectoryLoad(taskId, offset: 0, limit: 200)
             } catch {
                 taskEvidenceError = error.localizedDescription
                 isLoadingTaskEvidence = false
@@ -502,7 +668,12 @@ class TaskOrchestrationViewModel: ObservableObject {
             taskEvidenceError = nil
 
             do {
-                let data = try await Self.fetchEvidenceBundleData(baseURL: baseURL, taskId: taskId, releaseGate: releaseGate)
+                let data = try await Self.fetchEvidenceBundleData(
+                    baseURL: baseURL,
+                    taskId: taskId,
+                    releaseGate: releaseGate,
+                    requestData: requestData
+                )
                 selectedEvidenceBundle = try JSONDecoder().decode(TaskEvidenceBundle.self, from: data)
                 let exportURL = LocalAppPaths.evidenceExportsDir
                     .appendingPathComponent(TaskEvidenceBundle.exportFileName(taskId: taskId))
@@ -517,7 +688,12 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
     }
 
-    private static func fetchEvidenceBundleData(baseURL: URL, taskId: String, releaseGate: Bool) async throws -> Data {
+    private static func fetchEvidenceBundleData(
+        baseURL: URL,
+        taskId: String,
+        releaseGate: Bool,
+        requestData: (URLRequest) async throws -> (Data, URLResponse)
+    ) async throws -> Data {
         var components = URLComponents(
             url: baseURL
             .appendingPathComponent("api/tasks")
@@ -541,7 +717,7 @@ class TaskOrchestrationViewModel: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 20
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await requestData(request)
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             throw URLError(.badServerResponse)
