@@ -18,8 +18,8 @@ AUTOPILOT_VERSION="0.5.2"
 AUTOPILOT_COMMIT="b11b6abbd55831a65f18bb6a4fbab5d7dab9bd8e"
 AUTOPILOT_SHA256="22d8446afff0aafc797d7ccf573925d5a5f53a5f6a8a45d916ce9967ab79a5ea"
 ORCHESTRATOR_VERSION="0.10.5"
-ORCHESTRATOR_COMMIT="605a6157a1871e5fd7e35d827c0f51903430761e"
-ORCHESTRATOR_SHA256="95323ac89d81cee88a8523232a8b0061a37b3ba4e71802622b16c5411d287877"
+ORCHESTRATOR_COMMIT="b9b8db9d189d414e1ef05cf3171ed9732d41aa62"
+ORCHESTRATOR_SHA256="c22332ad95a6db1856f6d7a7aa11d908b688591f15ce8d8e7d4838f89a0113fe"
 CONTEXT_SOURCE_KIND="released-pin"
 AUTOPILOT_SOURCE_KIND="released-pin"
 ORCHESTRATOR_SOURCE_KIND="released-pin"
@@ -171,6 +171,8 @@ else
         --output "$CONTEXT_ARCHIVE" \
         --archive-root across-context \
         --expected-sha256 "$CONTEXT_SHA256" \
+        --version-file package.json \
+        --expected-version "$CONTEXT_VERSION" \
         --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
@@ -190,6 +192,8 @@ else
         --output "$AUTOPILOT_ARCHIVE" \
         --archive-root across-autopilot \
         --expected-sha256 "$AUTOPILOT_SHA256" \
+        --version-file package.json \
+        --expected-version "$AUTOPILOT_VERSION" \
         --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
@@ -210,6 +214,8 @@ else
         --output "$ORCHESTRATOR_ARCHIVE" \
         --archive-root across-orchestrator \
         --expected-sha256 "$ORCHESTRATOR_SHA256" \
+        --version-file pyproject.toml \
+        --expected-version "$ORCHESTRATOR_VERSION" \
         --exclude .git --exclude .venv --exclude build --exclude dist --exclude __pycache__
 fi
 cp "$CONTEXT_ARCHIVE" "$OUTPUT_DIR/packages/across-context-$CONTEXT_VERSION.tar.gz"

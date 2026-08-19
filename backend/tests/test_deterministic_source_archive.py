@@ -107,6 +107,10 @@ def test_pinned_source_archive_is_commit_bound_reproducible_and_transactional(tm
         "across-fixture",
         "--expected-sha256",
         expected,
+        "--version-file",
+        "package.json",
+        "--expected-version",
+        "1.0.0",
         "--exclude",
         ".git",
     ]
@@ -128,9 +132,17 @@ def test_pinned_source_archive_is_commit_bound_reproducible_and_transactional(tm
     assert output.read_bytes() == before
     assert str(producer) not in failed.stderr
 
+    wrong_version = command.copy()
+    wrong_version[wrong_version.index("--expected-version") + 1] = "9.9.9"
+    failed = subprocess.run(wrong_version, capture_output=True, text=True)
+    assert failed.returncode != 0
+    assert output.read_bytes() == before
+    assert str(producer) not in failed.stderr
+
 
 def test_released_plugin_payloads_do_not_trust_codeload_archive_bytes() -> None:
     source = PAYLOAD_SCRIPT.read_text(encoding="utf-8")
 
     assert "codeload.github.com" not in source
     assert source.count("create_pinned_source_archive.py") == 3
+    assert source.count("--expected-version") == 3
