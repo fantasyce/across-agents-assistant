@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .paths import backend_socket_path, data_file, ecosystem_bin_dir, log_dir, run_dir
+from .plugin_runtime import managed_plugin_runtime_guard
 from .worker_pki import WorkerCertificateAuthority
 
 
@@ -940,6 +941,14 @@ class WorkerOrchestratorClient:
         self.allow_cli_fallback = bool(allow_cli_fallback)
 
     def call(self, action: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        with managed_plugin_runtime_guard("across-orchestrator"):
+            return self._call_unlocked(action, payload)
+
+    def _call_unlocked(
+        self,
+        action: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not _ID.fullmatch(str(action or "")):
             raise WorkerControlError("Orchestrator action is invalid.", code="orchestrator_action_invalid")
         request = json.dumps({"schema_version": "across-worker-control-command/1.0", "action": action, "payload": dict(payload or {})}, sort_keys=True)
@@ -1173,6 +1182,10 @@ class WorkerNetworkRuntimeManager:
         self._lease_path = run_dir() / "worker-model-host-lease.json"
 
     def reconcile(self) -> dict[str, Any]:
+        with managed_plugin_runtime_guard("across-orchestrator"):
+            return self._reconcile_unlocked()
+
+    def _reconcile_unlocked(self) -> dict[str, Any]:
         with self._lock:
             snapshot = self.store.snapshot()
             listener = snapshot.get("listener") or {}
@@ -1368,6 +1381,10 @@ class WorkerNetworkRuntimeManager:
         self._signature = signature
 
     def shutdown(self) -> None:
+        with managed_plugin_runtime_guard("across-orchestrator"):
+            self._shutdown_unlocked()
+
+    def _shutdown_unlocked(self) -> None:
         with self._lock:
             self._stop_locked()
             self._last_error = None

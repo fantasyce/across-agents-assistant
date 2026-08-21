@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
+import threading
 
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant import autopilot_host_cli_progress
@@ -39,6 +40,7 @@ class FakeAutopilotClient:
             "adapters": {"sources": ["manual_input"], "actions": ["report_generation"]},
             "autonomy": {"mode": "approval_required"},
         }
+
 
     def run(self, spec, *, trigger="aaa-user", model_policy_overrides=None):
         return {
@@ -163,6 +165,100 @@ class FakeAutopilotClient:
 
     def run_trigger(self, trigger_id=None):
         return {"status": "completed", "trigger": {"trigger_id": trigger_id or "trg-api-1"}}
+
+
+def test_autopilot_trigger_scheduler_start_cancels_pending_stop_for_live_thread(tmp_path):
+    first_tick_started = threading.Event()
+    release_first_tick = threading.Event()
+    second_tick_started = threading.Event()
+
+    class BlockingRegistry:
+        def __init__(self):
+            self.calls = 0
+
+        def tick(self, _client):
+            self.calls += 1
+            if self.calls == 1:
+                first_tick_started.set()
+                assert release_first_tick.wait(timeout=5.0)
+            elif self.calls == 2:
+                second_tick_started.set()
+            return {"status": "idle", "items": []}
+
+    scheduler = AutopilotTriggerScheduler(
+        BlockingRegistry(),
+        lambda: object(),
+        run_queued_triggers=False,
+    )
+    scheduler._interval_seconds = 0.01
+    thread = threading.Thread(target=scheduler._run, daemon=True)
+    scheduler._thread = thread
+    thread.start()
+    assert first_tick_started.wait(timeout=1.0)
+
+    try:
+        stopped = scheduler.stop()
+        assert stopped["running"] is True
+        assert stopped["stop_requested"] is True
+
+        resumed = scheduler.start(run_queued_triggers=False)
+        assert resumed["running"] is True
+        assert resumed["stop_requested"] is False
+        assert not scheduler._stop_event.is_set()
+
+        release_first_tick.set()
+        assert second_tick_started.wait(timeout=1.0)
+    finally:
+        release_first_tick.set()
+        scheduler._stop_event.set()
+        thread.join(timeout=1.0)
+
+
+def test_autopilot_trigger_scheduler_start_and_stop_wait_for_lifecycle_guard(tmp_path):
+    from across_agents_assistant.plugin_runtime import managed_plugin_lifecycle_guard
+
+    class IdleRegistry:
+        def tick(self, _client):
+            return {"status": "idle", "items": []}
+
+    scheduler = AutopilotTriggerScheduler(
+        IdleRegistry(),
+        lambda: object(),
+        run_queued_triggers=False,
+    )
+    start_done = threading.Event()
+
+    def start_scheduler():
+        scheduler.start()
+        start_done.set()
+
+    with managed_plugin_lifecycle_guard("across-autopilot"):
+        start_thread = threading.Thread(target=start_scheduler)
+        start_thread.start()
+        threading.Event().wait(0.1)
+        assert not start_done.is_set()
+        assert scheduler.status()["running"] is False
+
+    start_thread.join(timeout=1.0)
+    assert start_done.is_set()
+    assert scheduler.status()["running"] is True
+
+    stop_done = threading.Event()
+
+    def stop_scheduler():
+        scheduler.stop()
+        stop_done.set()
+
+    with managed_plugin_lifecycle_guard("across-autopilot"):
+        stop_thread = threading.Thread(target=stop_scheduler)
+        stop_thread.start()
+        threading.Event().wait(0.1)
+        assert not stop_done.is_set()
+        assert scheduler.status()["running"] is True
+
+    stop_thread.join(timeout=1.0)
+    assert stop_done.is_set()
+    assert scheduler.status()["running"] is False
 
 
 def test_autopilot_code_iteration_prompt_blocks_token_shaped_test_fixtures():

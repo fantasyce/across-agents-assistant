@@ -21,6 +21,7 @@ import urllib.request
 import uuid
 
 from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .plugin_runtime import managed_plugin_lifecycle_guard, managed_plugin_runtime_guard
 from .managed_plugin_payloads import (
     ManagedPluginPayloadError,
     bundled_install_source,
@@ -911,6 +912,10 @@ class OrchestratorPluginManager:
         atexit.register(self.shutdown)
 
     def implementation_status(self, *, probe: bool = True) -> Dict[str, Any]:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._implementation_status_unlocked(probe=probe)
+
+    def _implementation_status_unlocked(self, *, probe: bool = True) -> Dict[str, Any]:
         mode = self.config.normalized_mode()
         install_status = self.install_status()
         managed_runtime_blocked = self._managed_runtime_integrity_blocks_external(install_status)
@@ -1080,19 +1085,26 @@ class OrchestratorPluginManager:
         return timeout
 
     def install_plugin(self) -> Dict[str, Any]:
-        status = self.installer.install()
-        self._transport = None
-        self._endpoint = None
-        self._sidecar_retry_after = 0.0
-        return status
+        with managed_plugin_lifecycle_guard(ORCHESTRATOR_PLUGIN_ID):
+            with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+                status = self.installer.install()
+                self.reset_runtime_connection()
+                return status
+
+    def reset_runtime_connection(self) -> None:
+        """Stop the managed sidecar and discard cached transport state."""
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            self.shutdown()
+            self._transport = None
+            self._endpoint = None
+            self._sidecar_retry_after = 0.0
 
     def uninstall_plugin(self) -> Dict[str, Any]:
-        self.shutdown()
-        status = self.installer.uninstall()
-        self._transport = None
-        self._endpoint = None
-        self._sidecar_retry_after = 0.0
-        return status
+        with managed_plugin_lifecycle_guard(ORCHESTRATOR_PLUGIN_ID):
+            with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+                self.reset_runtime_connection()
+                status = self.installer.uninstall()
+                return status
 
     def should_use_external(self) -> bool:
         status = self.implementation_status(probe=True)
@@ -1667,6 +1679,10 @@ class OrchestratorPluginManager:
         return endpoint
 
     def _http_get(self, path: str) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_get_unlocked(path)
+
+    def _http_get_unlocked(self, path: str) -> Any:
         endpoint = self._resolved_endpoint()
         request = urllib.request.Request(
             endpoint + path,
@@ -1682,6 +1698,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_get_text(self, path: str, *, accept: str = "text/plain") -> str:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_get_text_unlocked(path, accept=accept)
+
+    def _http_get_text_unlocked(self, path: str, *, accept: str = "text/plain") -> str:
         endpoint = self._resolved_endpoint()
         request = urllib.request.Request(
             endpoint + path,
@@ -1697,6 +1717,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_post_unlocked(path, payload)
+
+    def _http_post_unlocked(self, path: str, payload: Dict[str, Any]) -> Any:
         endpoint = self._resolved_endpoint()
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -1714,6 +1738,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _cli_json(self, args: List[str]) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._cli_json_unlocked(args)
+
+    def _cli_json_unlocked(self, args: List[str]) -> Any:
         command = self._resolve_command()
         if not command:
             raise OrchestratorPluginUnavailable("across-orchestrator command is not installed or executable.")

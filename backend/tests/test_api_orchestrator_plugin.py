@@ -1012,7 +1012,12 @@ def test_orchestrator_plugin_status_endpoint_reports_installable_runtime(monkeyp
     assert body["install"]["install_dir"] == str(tmp_path / "plugins" / "across-orchestrator")
 
 
-def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
+def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    wrapper = across_home / "bin" / "across-orchestrator"
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
+
     class FakeManager:
         def __init__(self):
             self.install_called = False
@@ -1032,6 +1037,7 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
             return {
                 "status": "installed" if self.install_called else "not_installed",
                 "installed": self.install_called,
+                "integrity_ok": True,
                 "installable": True,
                 "command": "/tmp/across-orchestrator",
                 "install_dir": "/tmp/across-orchestrator-plugin",
@@ -1040,10 +1046,25 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
 
         def install_plugin(self):
             self.install_called = True
+            plugin_dir.mkdir(parents=True)
+            wrapper.parent.mkdir(parents=True)
+            (plugin_dir / "runtime.txt").write_text("installed\n", encoding="utf-8")
+            wrapper.write_text("wrapper\n", encoding="utf-8")
             return self.install_status()
+
+        def reset_runtime_connection(self):
+            return None
+
+    class FakeWorkerRuntime:
+        def shutdown(self):
+            return None
+
+        def reconcile(self):
+            return {"status": "running", "listener_pid": 42}
 
     fake = FakeManager()
     monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: fake)
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: FakeWorkerRuntime())
 
     response = TestClient(app).post("/api/orchestrator/plugin/install")
 

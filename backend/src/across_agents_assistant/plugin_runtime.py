@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import urllib.parse
 import uuid
 
@@ -74,6 +76,42 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
 
 class PluginLifecycleError(RuntimeError):
     """Raised when a plugin lifecycle action cannot be completed safely."""
+
+
+_PLUGIN_RUNTIME_LOCKS: dict[str, threading.RLock] = {}
+_PLUGIN_RUNTIME_LOCKS_GUARD = threading.Lock()
+_PLUGIN_LIFECYCLE_LOCKS: dict[str, threading.RLock] = {}
+_PLUGIN_LIFECYCLE_LOCKS_GUARD = threading.Lock()
+
+
+def _managed_plugin_runtime_lock(plugin_id: str) -> threading.RLock:
+    normalized = str(plugin_id or "").strip()
+    if not normalized:
+        raise ValueError("Managed plugin id is required")
+    with _PLUGIN_RUNTIME_LOCKS_GUARD:
+        return _PLUGIN_RUNTIME_LOCKS.setdefault(normalized, threading.RLock())
+
+
+@contextmanager
+def managed_plugin_runtime_guard(plugin_id: str) -> Iterator[None]:
+    """Serialize one plugin's host lifecycle and CLI consumer calls."""
+    with _managed_plugin_runtime_lock(plugin_id):
+        yield
+
+
+def _managed_plugin_lifecycle_lock(plugin_id: str) -> threading.RLock:
+    normalized = str(plugin_id or "").strip()
+    if not normalized:
+        raise ValueError("Managed plugin id is required")
+    with _PLUGIN_LIFECYCLE_LOCKS_GUARD:
+        return _PLUGIN_LIFECYCLE_LOCKS.setdefault(normalized, threading.RLock())
+
+
+@contextmanager
+def managed_plugin_lifecycle_guard(plugin_id: str) -> Iterator[None]:
+    """Serialize all quiesce, mutation, and recovery phases for one plugin."""
+    with _managed_plugin_lifecycle_lock(plugin_id):
+        yield
 
 
 _CONTEXT_RETRIEVAL_ROUTES = frozenset(
@@ -326,18 +364,20 @@ def run_context_plugin_lifecycle_action(
     env: Mapping[str, str] | None = None,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
-    normalized = _normalize_action(action)
-    if normalized == "probe":
-        return inspect_across_plugin("across-context", probe=True, env=env)
-    if normalized in {"install", "repair", "upgrade"}:
-        return _install_across_context(
-            env=env,
-            runner=runner,
-            force_reinstall=normalized in {"repair", "upgrade"},
-        )
-    if normalized == "uninstall":
-        return _uninstall_managed_plugin("across-context", "across-context", env=env)
-    raise PluginLifecycleError("Unsupported Across Context lifecycle action")
+    with managed_plugin_lifecycle_guard("across-context"):
+        with managed_plugin_runtime_guard("across-context"):
+            normalized = _normalize_action(action)
+            if normalized == "probe":
+                return inspect_across_plugin("across-context", probe=True, env=env)
+            if normalized in {"install", "repair", "upgrade"}:
+                return _install_across_context(
+                    env=env,
+                    runner=runner,
+                    force_reinstall=normalized in {"repair", "upgrade"},
+                )
+            if normalized == "uninstall":
+                return _uninstall_managed_plugin("across-context", "across-context", env=env)
+            raise PluginLifecycleError("Unsupported Across Context lifecycle action")
 
 
 def run_autopilot_plugin_lifecycle_action(
@@ -346,19 +386,21 @@ def run_autopilot_plugin_lifecycle_action(
     env: Mapping[str, str] | None = None,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
-    normalized = _normalize_action(action)
-    if normalized == "probe":
-        return inspect_across_plugin("across-autopilot", probe=True, env=env)
-    if normalized in {"install", "repair", "upgrade"}:
-        return _install_node_host_plugin(
-            "across-autopilot",
-            env=env,
-            runner=runner,
-            force_reinstall=normalized in {"repair", "upgrade"},
-        )
-    if normalized == "uninstall":
-        return _uninstall_managed_plugin("across-autopilot", "across-autopilot", env=env)
-    raise PluginLifecycleError("Unsupported Across Autopilot lifecycle action")
+    with managed_plugin_lifecycle_guard("across-autopilot"):
+        with managed_plugin_runtime_guard("across-autopilot"):
+            normalized = _normalize_action(action)
+            if normalized == "probe":
+                return inspect_across_plugin("across-autopilot", probe=True, env=env)
+            if normalized in {"install", "repair", "upgrade"}:
+                return _install_node_host_plugin(
+                    "across-autopilot",
+                    env=env,
+                    runner=runner,
+                    force_reinstall=normalized in {"repair", "upgrade"},
+                )
+            if normalized == "uninstall":
+                return _uninstall_managed_plugin("across-autopilot", "across-autopilot", env=env)
+            raise PluginLifecycleError("Unsupported Across Autopilot lifecycle action")
 
 
 def run_autopilot_cli_json(
@@ -1332,6 +1374,26 @@ def _run_context_cli_json(args: list[str], *, env: Mapping[str, str] | None = No
 
 
 def _run_cli_json(
+    command: str,
+    args: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout: int = 15,
+    allowed_returncodes: frozenset[int] | None = None,
+    cwd: str | Path | None = None,
+) -> Any:
+    with managed_plugin_runtime_guard(command):
+        return _run_cli_json_unlocked(
+            command,
+            args,
+            env=env,
+            timeout=timeout,
+            allowed_returncodes=allowed_returncodes,
+            cwd=cwd,
+        )
+
+
+def _run_cli_json_unlocked(
     command: str,
     args: list[str],
     *,

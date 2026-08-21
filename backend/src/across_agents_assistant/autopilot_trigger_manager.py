@@ -5,6 +5,8 @@ import hmac
 import json
 import threading
 import time
+
+from .plugin_runtime import managed_plugin_lifecycle_guard
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -455,6 +457,20 @@ class AutopilotTriggerScheduler:
         run_queued_triggers: bool | None = None,
         max_runs_per_tick: int | None = None,
     ) -> dict[str, Any]:
+        with managed_plugin_lifecycle_guard("across-autopilot"):
+            return self._start_unlocked(
+                interval_seconds=interval_seconds,
+                run_queued_triggers=run_queued_triggers,
+                max_runs_per_tick=max_runs_per_tick,
+            )
+
+    def _start_unlocked(
+        self,
+        *,
+        interval_seconds: float | None = None,
+        run_queued_triggers: bool | None = None,
+        max_runs_per_tick: int | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 if interval_seconds is not None:
@@ -463,6 +479,8 @@ class AutopilotTriggerScheduler:
                     self._run_queued_triggers = bool(run_queued_triggers)
                 if max_runs_per_tick is not None:
                     self._max_runs_per_tick = max(1, int(max_runs_per_tick or 1))
+                self._stop_event.clear()
+                self._stop_requested = False
                 return self.status()
             self._interval_seconds = max(5.0, float(interval_seconds or self.default_interval_seconds))
             self._run_queued_triggers = self.default_run_queued_triggers if run_queued_triggers is None else bool(run_queued_triggers)
@@ -476,6 +494,10 @@ class AutopilotTriggerScheduler:
         return self.status()
 
     def stop(self) -> dict[str, Any]:
+        with managed_plugin_lifecycle_guard("across-autopilot"):
+            return self._stop_unlocked()
+
+    def _stop_unlocked(self) -> dict[str, Any]:
         thread: threading.Thread | None
         with self._lock:
             thread = self._thread

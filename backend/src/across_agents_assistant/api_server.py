@@ -371,11 +371,15 @@ from .paths import (
     app_subdir,
     backend_socket_path,
     data_file,
+    component_cache_home,
+    ecosystem_bin_dir,
     ecosystem_home,
+    ecosystem_plugin_root,
     log_dir as app_log_dir,
     run_dir,
     tmp_dir,
 )
+from .managed_plugin_lifecycle import ManagedPluginFilesystemTransaction
 from .orchestrator_plugin import (
     OrchestratorPluginConfig,
     OrchestratorPluginHTTPError,
@@ -407,6 +411,8 @@ from .plugin_runtime import (
     remember_context_memory,
     retrieve_context_memories_merged,
     rollback_distilled_context_memory,
+    managed_plugin_lifecycle_guard,
+    managed_plugin_runtime_guard,
     run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
     search_context_memories,
@@ -9889,6 +9895,151 @@ async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
         raise _safe_http_500("Create Autopilot review decision")
 
 
+def _require_managed_plugin_action_state(
+    plugin_id: str,
+    action: str,
+    result: Mapping[str, Any],
+) -> None:
+    plugin_path = ecosystem_plugin_root() / plugin_id
+    wrapper_path = ecosystem_bin_dir() / plugin_id
+    if action in {"install", "repair", "upgrade"} and not (
+        result.get("installed") is True
+        and result.get("available") is True
+        and result.get("integrity_ok") is True
+        and result.get("probe") is True
+        and plugin_path.is_dir()
+        and not plugin_path.is_symlink()
+        and wrapper_path.is_file()
+        and not wrapper_path.is_symlink()
+    ):
+        raise PluginLifecycleError(f"{plugin_id} did not become available after {action}")
+    if action == "uninstall" and (
+        result.get("removed") is not True
+        or plugin_path.exists()
+        or plugin_path.is_symlink()
+        or wrapper_path.exists()
+        or wrapper_path.is_symlink()
+    ):
+        raise PluginLifecycleError(f"{plugin_id} remained installed after uninstall")
+
+
+def _orchestrator_managed_runtime_paths(manager: Any) -> tuple[Path, Path]:
+    installer = getattr(manager, "installer", None)
+    plugin_dir = getattr(installer, "install_dir", None)
+    wrapper_path = getattr(installer, "wrapper_path", None)
+    return (
+        Path(plugin_dir) if plugin_dir is not None else ecosystem_plugin_root() / "across-orchestrator",
+        Path(wrapper_path) if wrapper_path is not None else ecosystem_bin_dir() / "across-orchestrator",
+    )
+
+
+def _require_worker_runtime_reconnected(result: Mapping[str, Any]) -> None:
+    status = str(result.get("status") or "").strip().lower()
+    if result.get("last_error") or status not in {
+        "running",
+        "stopped",
+        "waiting_for_approved_worker",
+    }:
+        raise PluginLifecycleError("Worker runtime did not reconnect after Orchestrator lifecycle action")
+
+
+def _require_autopilot_scheduler_running(
+    result: Mapping[str, Any],
+    *,
+    operation: str,
+) -> None:
+    if result.get("running") is not True:
+        raise PluginLifecycleError(f"Across Autopilot scheduler did not {operation}")
+
+
+def _run_orchestrator_plugin_action_sync(action: str) -> Dict[str, Any]:
+    manager = get_orchestrator_plugin_manager()
+    if action in {"probe", "refresh"}:
+        return manager.implementation_status(probe=True)
+
+    worker_manager = get_worker_network_runtime()
+    plugin_dir, wrapper_path = _orchestrator_managed_runtime_paths(manager)
+    with managed_plugin_lifecycle_guard("across-orchestrator"):
+        runtime_preexisted = (
+            plugin_dir.is_dir()
+            and not plugin_dir.is_symlink()
+            and wrapper_path.is_file()
+            and not wrapper_path.is_symlink()
+        )
+        with managed_plugin_runtime_guard("across-orchestrator"):
+            try:
+                worker_manager.shutdown()
+                manager.reset_runtime_connection()
+                with ManagedPluginFilesystemTransaction(
+                    plugin_id="across-orchestrator",
+                    plugin_dir=plugin_dir,
+                    wrapper_path=wrapper_path,
+                    transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                ):
+                    if action in {"install", "repair", "upgrade"}:
+                        install = manager.install_plugin()
+                        runtime = manager.implementation_status(probe=True)
+                        runtime_install = (
+                            runtime.get("install") if isinstance(runtime.get("install"), dict) else {}
+                        )
+                        if not (
+                            runtime.get("available") is True
+                            and runtime_install.get("installed") is True
+                            and runtime_install.get("integrity_ok") is True
+                            and plugin_dir.is_dir()
+                            and not plugin_dir.is_symlink()
+                            and wrapper_path.is_file()
+                            and not wrapper_path.is_symlink()
+                        ):
+                            raise PluginLifecycleError(
+                                "Across Orchestrator did not become available after lifecycle action"
+                            )
+                        worker_runtime = worker_manager.reconcile()
+                        _require_worker_runtime_reconnected(worker_runtime)
+                        return {
+                            "runtime": runtime,
+                            "install": install,
+                            "worker_runtime": worker_runtime,
+                        }
+                    result = manager.uninstall_plugin()
+                    if (
+                        result.get("removed") is not True
+                        or plugin_dir.exists()
+                        or plugin_dir.is_symlink()
+                        or wrapper_path.exists()
+                        or wrapper_path.is_symlink()
+                    ):
+                        raise PluginLifecycleError(
+                            "Across Orchestrator remained installed after uninstall"
+                        )
+                    return result
+            except Exception as lifecycle_error:
+                recovery_failures: list[BaseException] = []
+                try:
+                    manager.reset_runtime_connection()
+                except Exception as exc:
+                    recovery_failures.append(exc)
+                if runtime_preexisted:
+                    try:
+                        restored_runtime = manager.implementation_status(probe=True)
+                        if restored_runtime.get("available") is not True:
+                            raise PluginLifecycleError(
+                                "Across Orchestrator restored runtime did not reconnect after rollback"
+                            )
+                    except Exception as exc:
+                        recovery_failures.append(exc)
+                try:
+                    recovered_worker = worker_manager.reconcile()
+                    _require_worker_runtime_reconnected(recovered_worker)
+                except Exception as exc:
+                    recovery_failures.append(exc)
+                if recovery_failures:
+                    raise PluginLifecycleError(
+                        "Across Orchestrator rollback completed but consumer recovery failed"
+                    ) from lifecycle_error
+                raise
+
+
 @app.post("/api/plugins/{plugin_id}/actions")
 async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionRequest):
     """Run an explicit user-triggered plugin lifecycle action."""
@@ -9899,34 +10050,85 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
         raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
     try:
         if plugin_id == "across-context":
-            result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
+            if action == "probe":
+                result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
+                return _sanitize_public_payload(result)
+
+            def run_context_action() -> Dict[str, Any]:
+                with managed_plugin_lifecycle_guard("across-context"):
+                    with managed_plugin_runtime_guard("across-context"):
+                        with ManagedPluginFilesystemTransaction(
+                            plugin_id="across-context",
+                            plugin_dir=ecosystem_plugin_root() / "across-context",
+                            wrapper_path=ecosystem_bin_dir() / "across-context",
+                            transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                        ):
+                            result = run_context_plugin_lifecycle_action(action)
+                            _require_managed_plugin_action_state("across-context", action, result)
+                            if action in {"install", "repair", "upgrade"}:
+                                memory_metrics = get_agent_loop_memory_metrics()
+                                if memory_metrics.get("schema_version") != "agent-loop-memory-metrics/1.0":
+                                    raise PluginLifecycleError(
+                                        "Across Context governed memory probe failed"
+                                    )
+                            return result
+
+            result = await asyncio.to_thread(run_context_action)
             return _sanitize_public_payload(result)
         if plugin_id == "across-orchestrator":
-            manager = get_orchestrator_plugin_manager()
-            if action in {"probe", "refresh"}:
-                return _sanitize_public_payload(manager.implementation_status(probe=True))
-            if action in {"install", "repair", "upgrade"}:
-                worker_manager = get_worker_network_runtime()
-                await asyncio.to_thread(worker_manager.shutdown)
-                try:
-                    install = await asyncio.to_thread(manager.install_plugin)
-                finally:
-                    # The Worker listener/control service imports the managed
-                    # Orchestrator executable at process start. Always restart
-                    # it after a lifecycle replacement, including same-version
-                    # repair, so no consumer keeps executing the old payload.
-                    worker_runtime = await asyncio.to_thread(worker_manager.reconcile)
-                runtime = manager.implementation_status(probe=True)
-                return _sanitize_public_payload({
-                    "runtime": runtime,
-                    "install": install,
-                    "worker_runtime": worker_runtime,
-                })
-            if action == "uninstall":
-                result = await asyncio.to_thread(manager.uninstall_plugin)
-                return _sanitize_public_payload(result)
+            result = await asyncio.to_thread(_run_orchestrator_plugin_action_sync, action)
+            return _sanitize_public_payload(result)
         if plugin_id == "across-autopilot":
-            result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+            if action == "probe":
+                result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+                return _sanitize_public_payload(result)
+
+            def run_autopilot_action() -> Dict[str, Any]:
+                with managed_plugin_lifecycle_guard("across-autopilot"):
+                    scheduler = get_autopilot_trigger_scheduler()
+                    scheduler_before = scheduler.status()
+                    scheduler_was_running = scheduler_before.get("running") is True
+                    restart_kwargs = {
+                        "interval_seconds": float(scheduler_before.get("interval_seconds") or 60.0),
+                        "run_queued_triggers": scheduler_before.get("run_queued_triggers") is not False,
+                        "max_runs_per_tick": max(1, int(scheduler_before.get("max_runs_per_tick") or 1)),
+                    }
+                    try:
+                        if scheduler_was_running:
+                            stopped = scheduler.stop()
+                            if stopped.get("running") is True or stopped.get("tick_in_progress") is True:
+                                raise PluginLifecycleError(
+                                    "Across Autopilot scheduler did not become idle"
+                                )
+                        with managed_plugin_runtime_guard("across-autopilot"):
+                            with ManagedPluginFilesystemTransaction(
+                                plugin_id="across-autopilot",
+                                plugin_dir=ecosystem_plugin_root() / "across-autopilot",
+                                wrapper_path=ecosystem_bin_dir() / "across-autopilot",
+                                transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                            ):
+                                result = run_autopilot_plugin_lifecycle_action(action)
+                                _require_managed_plugin_action_state("across-autopilot", action, result)
+                                if scheduler_was_running and action != "uninstall":
+                                    restarted = scheduler.start(**restart_kwargs)
+                                    _require_autopilot_scheduler_running(
+                                        restarted,
+                                        operation="restart",
+                                    )
+                                return result
+                    except Exception as lifecycle_error:
+                        if scheduler_was_running:
+                            recovered = scheduler.start(**restart_kwargs)
+                            try:
+                                _require_autopilot_scheduler_running(
+                                    recovered,
+                                    operation="recover",
+                                )
+                            except PluginLifecycleError as recovery_error:
+                                raise recovery_error from lifecycle_error
+                        raise
+
+            result = await asyncio.to_thread(run_autopilot_action)
             return _sanitize_public_payload(result)
         raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
     except HTTPException:
@@ -11262,16 +11464,12 @@ async def get_orchestrator_plugin_status():
 @app.post("/api/orchestrator/plugin/install")
 async def install_orchestrator_plugin():
     """Install Across Orchestrator into the app-managed plugin directory."""
-    manager = get_orchestrator_plugin_manager()
     try:
-        install = await asyncio.to_thread(manager.install_plugin)
-        runtime = manager.implementation_status(probe=True)
-        return _sanitize_public_payload({
-            "runtime": runtime,
-            "install": install,
-        })
+        result = await asyncio.to_thread(_run_orchestrator_plugin_action_sync, "install")
+        return _sanitize_public_payload(result)
     except Exception as exc:
         logger.exception("Across Orchestrator plugin installation failed")
+        manager = get_orchestrator_plugin_manager()
         runtime = manager.implementation_status(probe=False)
         raise HTTPException(
             status_code=500,

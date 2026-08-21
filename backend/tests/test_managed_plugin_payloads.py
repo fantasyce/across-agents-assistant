@@ -10,6 +10,9 @@ import subprocess
 import tarfile
 
 import pytest
+from fastapi.testclient import TestClient
+
+import across_agents_assistant.api_server as api_server
 
 from across_agents_assistant.managed_plugin_payloads import (
     ManagedPluginPayloadError,
@@ -258,6 +261,199 @@ def test_one_click_node_install_does_not_require_npm_or_git(
     assert any("differs from the bundled version" in issue for issue in drifted["integrity_issues"])
 
 
+@pytest.mark.parametrize(
+    ("plugin_id", "package_name", "version_a", "version_b", "lifecycle"),
+    [
+        (
+            "across-context",
+            "@across/context",
+            "0.11.0",
+            "0.11.1",
+            run_context_plugin_lifecycle_action,
+        ),
+        (
+            "across-autopilot",
+            "@across/autopilot",
+            "0.5.2",
+            "0.5.3",
+            run_autopilot_plugin_lifecycle_action,
+        ),
+    ],
+)
+def test_managed_node_lifecycle_repairs_upgrades_and_uninstalls_without_deleting_data(
+    tmp_path,
+    plugin_id,
+    package_name,
+    version_a,
+    version_b,
+    lifecycle,
+):
+    payload_a = tmp_path / "payload-a"
+    _archive_a, descriptor_a = _write_node_archive(
+        payload_a,
+        plugin_id=plugin_id,
+        package_name=package_name,
+        version=version_a,
+    )
+    _write_payload_manifest(payload_a, {plugin_id: descriptor_a})
+    env_a = _managed_env(tmp_path, payload_a)
+    across_home = Path(env_a["ACROSS_HOME"])
+    data_file = across_home / "data" / plugin_id / "keep.json"
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    data_file.write_text("preserved\n", encoding="utf-8")
+
+    def runner(args, **_kwargs):
+        source_root = Path(args[1]).parent.parent
+        install_dir = across_home / "plugins" / plugin_id
+        shutil.rmtree(install_dir, ignore_errors=True)
+        shutil.copytree(source_root, install_dir)
+        package = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
+        (install_dir / "manifest.json").write_text(
+            json.dumps({
+                "id": plugin_id,
+                "displayName": "Managed Fixture",
+                "kind": "memory-provider" if plugin_id == "across-context" else "autonomous-workflow",
+                "version": package["version"],
+            }),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    installed = lifecycle("install", env=env_a, runner=runner)
+    marker_path = across_home / "plugins" / plugin_id / ".across-managed-plugin.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert installed["integrity_ok"] is True
+    assert marker["version"] == version_a
+
+    marker["sha256"] = "0" * 64
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    repaired = lifecycle("repair", env=env_a, runner=runner)
+    repaired_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert repaired["integrity_ok"] is True
+    assert repaired_marker["sha256"] == descriptor_a["sha256"]
+
+    payload_b = tmp_path / "payload-b"
+    _archive_b, descriptor_b = _write_node_archive(
+        payload_b,
+        plugin_id=plugin_id,
+        package_name=package_name,
+        version=version_b,
+    )
+    descriptor_b["commit"] = "b" * 40
+    _write_payload_manifest(payload_b, {plugin_id: descriptor_b})
+    env_b = _managed_env(tmp_path, payload_b)
+    upgraded = lifecycle("upgrade", env=env_b, runner=runner)
+    upgraded_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert upgraded["integrity_ok"] is True
+    assert upgraded_marker["version"] == version_b
+    assert upgraded_marker["commit"] == "b" * 40
+    assert upgraded_marker["sha256"] == descriptor_b["sha256"]
+
+    removed = lifecycle("uninstall", env=env_b, runner=runner)
+    assert removed["removed"] is True
+    assert not (across_home / "plugins" / plugin_id).exists()
+    assert not (across_home / "bin" / plugin_id).exists()
+    assert data_file.read_text(encoding="utf-8") == "preserved\n"
+
+
+def test_autopilot_real_payload_lifecycle_runs_through_api_transaction(monkeypatch, tmp_path):
+    plugin_id = "across-autopilot"
+    payload_a = tmp_path / "payload-a"
+    _archive_a, descriptor_a = _write_node_archive(
+        payload_a,
+        plugin_id=plugin_id,
+        package_name="@across/autopilot",
+        version="0.5.2",
+    )
+    _write_payload_manifest(payload_a, {plugin_id: descriptor_a})
+    env_a = _managed_env(tmp_path, payload_a)
+    for key, value in env_a.items():
+        monkeypatch.setenv(key, value)
+    across_home = Path(env_a["ACROSS_HOME"])
+    data_file = across_home / "data" / plugin_id / "keep.json"
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    data_file.write_text("preserved\n", encoding="utf-8")
+
+    def runner(args, **_kwargs):
+        source_root = Path(args[1]).parent.parent
+        install_dir = across_home / "plugins" / plugin_id
+        shutil.rmtree(install_dir, ignore_errors=True)
+        shutil.copytree(source_root, install_dir)
+        package = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
+        (install_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": plugin_id,
+                    "displayName": "Managed Fixture",
+                    "kind": "autonomous-workflow",
+                    "version": package["version"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    class StoppedScheduler:
+        def status(self):
+            return {"running": False}
+
+    monkeypatch.setattr(api_server, "get_autopilot_trigger_scheduler", lambda: StoppedScheduler())
+    monkeypatch.setattr(
+        api_server,
+        "run_autopilot_plugin_lifecycle_action",
+        lambda action: run_autopilot_plugin_lifecycle_action(
+            action,
+            env=os.environ,
+            runner=runner,
+        ),
+    )
+    client = TestClient(api_server.app)
+
+    installed = client.post(
+        "/api/plugins/across-autopilot/actions",
+        json={"action": "install"},
+    )
+    assert installed.status_code == 200
+    marker_path = across_home / "plugins" / plugin_id / ".across-managed-plugin.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["version"] == "0.5.2"
+
+    marker["sha256"] = "0" * 64
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    repaired = client.post(
+        "/api/plugins/across-autopilot/actions",
+        json={"action": "repair"},
+    )
+    assert repaired.status_code == 200
+    assert json.loads(marker_path.read_text(encoding="utf-8"))["sha256"] == descriptor_a["sha256"]
+
+    payload_b = tmp_path / "payload-b"
+    _archive_b, descriptor_b = _write_node_archive(
+        payload_b,
+        plugin_id=plugin_id,
+        package_name="@across/autopilot",
+        version="0.5.3",
+    )
+    descriptor_b["commit"] = "b" * 40
+    _write_payload_manifest(payload_b, {plugin_id: descriptor_b})
+    monkeypatch.setenv("ACROSS_AGENTS_PLUGIN_PAYLOAD_ROOT", str(payload_b))
+    upgraded = client.post(
+        "/api/plugins/across-autopilot/actions",
+        json={"action": "upgrade"},
+    )
+    assert upgraded.status_code == 200
+    assert json.loads(marker_path.read_text(encoding="utf-8"))["version"] == "0.5.3"
+
+    removed = client.post(
+        "/api/plugins/across-autopilot/actions",
+        json={"action": "uninstall"},
+    )
+    assert removed.status_code == 200
+    assert not (across_home / "plugins" / plugin_id).exists()
+    assert not (across_home / "bin" / plugin_id).exists()
+    assert data_file.read_text(encoding="utf-8") == "preserved\n"
+
+
 def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(monkeypatch, tmp_path):
     payload_root = tmp_path / "payloads"
     native = _write_executable(
@@ -313,7 +509,42 @@ def test_one_click_orchestrator_install_uses_native_payload_and_preserves_data(m
         check=False,
     ).returncode == 0
 
-    removed = installer.uninstall()
+    installer.command_path.write_text("corrupted\n", encoding="utf-8")
+    installer.command_path.chmod(0o755)
+    assert installer.status()["integrity_ok"] is False
+    repaired = installer.install()
+    assert repaired["integrity_ok"] is True
+    assert repaired["source"] == "bundle://across-orchestrator/0.10.5"
+
+    upgraded_native = _write_executable(
+        payload_root / "runtimes" / "orchestrator-0.10.6" / "across-orchestrator",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  plugin-manifest) printf '{\"id\":\"across-orchestrator\",\"displayName\":\"Across Orchestrator\",\"kind\":\"task-runtime\",\"version\":\"0.10.6\"}\\n' ;;\n"
+        "  plugin-status) printf '{\"status\":\"installed\",\"installed\":true,\"available\":true}\\n' ;;\n"
+        "  serve) [ \"$2\" = \"--help\" ] && printf '%s\\n' '  --allow-client-project-roots' ;;\n"
+        "  *) printf '{}\\n' ;;\n"
+        "esac\n",
+    )
+    _write_payload_manifest(
+        payload_root,
+        {
+            "across-orchestrator": {
+                "version": "0.10.6",
+                "commit": "c" * 40,
+                "runtime": "native",
+                "executable": str(upgraded_native.relative_to(payload_root)),
+                "sha256": _sha256(upgraded_native),
+            }
+        },
+    )
+    upgraded_installer = OrchestratorPluginInstaller(plugin_home=across_home / "plugins")
+    upgraded = upgraded_installer.install()
+    assert upgraded["integrity_ok"] is True
+    assert upgraded["source"] == "bundle://across-orchestrator/0.10.6"
+    assert json.loads(upgraded_installer.state_path.read_text(encoding="utf-8"))["sha256"] == _sha256(upgraded_native)
+
+    removed = upgraded_installer.uninstall()
 
     assert removed["removed"] is True
     assert preserved.is_file()
