@@ -18,6 +18,7 @@ from across_agents_assistant.managed_plugin_payloads import (
     ManagedPluginPayloadError,
     ensure_node_runtime,
     extract_plugin_source,
+    plugin_payload,
     validate_orchestrator_runtime_compatibility,
 )
 from across_agents_assistant.orchestrator_plugin import OrchestratorPluginInstaller
@@ -107,6 +108,58 @@ def _managed_env(tmp_path: Path, payload_root: Path) -> dict[str, str]:
         "ACROSS_AGENTS_PLUGIN_PAYLOAD_ROOT": str(payload_root),
         "PATH": "/usr/bin:/bin",
     }
+
+
+def test_promotion_descriptors_cover_exactly_three_plugins_without_checkout_paths(tmp_path):
+    payload_root = tmp_path / "payloads"
+    plugins = {
+        "across-context": {
+            "version": "0.11.0",
+            "commit": "a" * 40,
+            "runtime": "node",
+            "archive": "packages/across-context-0.11.0.tar.gz",
+            "sha256": "1" * 64,
+        },
+        "across-orchestrator": {
+            "version": "0.10.7",
+            "commit": "b" * 40,
+            "runtime": "native",
+            "executable": "runtimes/orchestrator-0.10.7/across-orchestrator",
+            "sha256": "2" * 64,
+            "source_sha256": "3" * 64,
+        },
+        "across-autopilot": {
+            "version": "0.5.3",
+            "commit": "c" * 40,
+            "runtime": "node",
+            "archive": "packages/across-autopilot-0.5.3.tar.gz",
+            "sha256": "4" * 64,
+        },
+    }
+    manifest_path = _write_payload_manifest(payload_root, plugins)
+    env = _managed_env(tmp_path, payload_root)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_ids = {
+        "across-context",
+        "across-orchestrator",
+        "across-autopilot",
+    }
+    assert set(manifest["plugins"]) == expected_ids
+
+    descriptors = {
+        plugin_id: plugin_payload(plugin_id, env)
+        for plugin_id in expected_ids
+    }
+    assert all(descriptor is not None for descriptor in descriptors.values())
+    assert {plugin_id for plugin_id, descriptor in descriptors.items() if descriptor} == expected_ids
+    for descriptor in descriptors.values():
+        public_descriptor = {key: value for key, value in descriptor.items() if key != "payload_root"}
+        serialized = json.dumps(public_descriptor, sort_keys=True)
+        assert "source_root" not in public_descriptor
+        assert "checkout" not in serialized.lower()
+        assert "/Users/" not in serialized
+        assert "../" not in serialized
 
 
 def test_managed_payload_installs_verified_node_runtime_and_extracts_package(tmp_path):

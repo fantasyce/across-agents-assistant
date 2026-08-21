@@ -5,11 +5,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from copy import deepcopy
 from hashlib import sha256
+from dataclasses import fields
 import json
 import sqlite3
 import threading
 
 import across_agents_assistant.api_server as api_server
+import across_agents_assistant.promotion_package as promotion_contract
 from across_agents_assistant import autopilot_host_cli_progress
 from across_agents_assistant import local_agent_health
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
@@ -18,6 +20,7 @@ from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRe
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import PluginLifecycleError
 from across_agents_assistant.persistence.service import PersistenceService
+from across_agents_assistant.task_history.models import Task
 
 
 def _promotion_receipt(task_id: str):
@@ -57,6 +60,97 @@ def _promotion_api_document(run_id="run-promotion", task_ids=None):
             "signing_blocked": True,
         },
     }
+
+
+def test_promotion_package_public_contract_stays_generic_stable_and_secret_free():
+    assert set(api_server.PromotionPackageCreateRequest.model_fields) == set()
+    assert set(api_server.PromotionPackageDecisionRequest.model_fields) == {
+        "decision",
+        "approver_id",
+        "expected_package_sha256",
+    }
+    assert api_server._PROMOTION_PLUGIN_IDS == (
+        "across-autopilot",
+        "across-context",
+        "across-orchestrator",
+    )
+    assert promotion_contract.PROMOTION_PACKAGE_SCHEMA == "across-promotion-package/1.0"
+    assert promotion_contract.REQUIRED_PLUGIN_IDS == {
+        "across-autopilot",
+        "across-context",
+        "across-orchestrator",
+    }
+    assert promotion_contract._PASSED_CHECK_IDS == (
+        "autopilot_evidence_valid",
+        "candidate_binding_matches",
+        "candidate_review_ready",
+        "changed_paths_safe",
+        "evidence_graph_valid",
+        "evidence_graph_task_set_complete",
+        "finite_values",
+        "identifiers_valid",
+        "input_shapes_valid",
+        "plugin_compatibility_ready",
+        "plugin_lifecycle_ready",
+        "plugin_provenance_matches",
+        "plugin_set_complete",
+        "plugin_versions_match",
+        "release_ready",
+        "run_binding_matches",
+        "run_completed",
+        "task_receipt_bindings_match",
+        "task_receipts_ready",
+        "task_receipts_verified",
+        "task_set_complete",
+        "worker_receipt_binding_valid",
+        "worker_receipt_replay_absent",
+    )
+
+    blocked = api_server._promotion_blocked(
+        promotion_contract.PromotionPackageBlocked(
+            ["run_binding_matches", "release_ready", "release_ready"]
+        )
+    )
+    assert blocked.status_code == 409
+    assert blocked.detail == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["release_ready", "run_binding_matches"],
+    }
+
+    document = _promotion_api_document()
+    public_contract = json.dumps(
+        {"document": document, "error": blocked.detail},
+        sort_keys=True,
+    ).lower()
+    task_field_names = {field.name for field in fields(Task)}
+    workflow_pack_fields = {
+        "workflow_id",
+        "workflow_pack_id",
+        "pack_id",
+        "loop_spec_id",
+        "output_constant",
+    }
+    assert task_field_names.isdisjoint(workflow_pack_fields)
+    assert all(f'"{field_name}"' not in public_contract for field_name in workflow_pack_fields)
+    assert all(
+        producer_specific_id not in public_contract
+        for producer_specific_id in (
+            "repo-quality-copilot",
+            "release-readiness",
+            "world-simulation",
+        )
+    )
+    assert all(
+        sensitive_marker not in public_contract
+        for sensitive_marker in (
+            "api_key",
+            "authorization",
+            "cookie",
+            "password",
+            "private_key",
+            "raw_transcript",
+        )
+    )
 
 
 def _assert_marker_upsert(patch, marker_start, marker_end):
