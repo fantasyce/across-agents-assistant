@@ -95,6 +95,26 @@ case "$(uname -m)" in
         ;;
 esac
 
+# Fail closed before any producer-derived version is used in an output path,
+# download name, directory, or archive operation. The final manifest write
+# repeats the same single-source validation together with checksum validation.
+"$BUILD_PYTHON" "$PROJECT_ROOT/scripts/write_managed_plugin_payload_manifest.py" \
+    --validate-only \
+    --architecture "$(uname -m)" \
+    --node-version "$NODE_VERSION" \
+    --context-version "$CONTEXT_VERSION" \
+    --context-commit "$CONTEXT_COMMIT" \
+    --context-source-kind "$CONTEXT_SOURCE_KIND" \
+    --context-source-dirty "$CONTEXT_SOURCE_DIRTY" \
+    --orchestrator-version "$ORCHESTRATOR_VERSION" \
+    --orchestrator-commit "$ORCHESTRATOR_COMMIT" \
+    --orchestrator-source-kind "$ORCHESTRATOR_SOURCE_KIND" \
+    --orchestrator-source-dirty "$ORCHESTRATOR_SOURCE_DIRTY" \
+    --autopilot-version "$AUTOPILOT_VERSION" \
+    --autopilot-commit "$AUTOPILOT_COMMIT" \
+    --autopilot-source-kind "$AUTOPILOT_SOURCE_KIND" \
+    --autopilot-source-dirty "$AUTOPILOT_SOURCE_DIRTY"
+
 download_verified() {
     local url="$1"
     local destination="$2"

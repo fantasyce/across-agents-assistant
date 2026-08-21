@@ -113,65 +113,61 @@ def _managed_env(tmp_path: Path, payload_root: Path) -> dict[str, str]:
     }
 
 
+def _manifest_generator_command(output: Path, **overrides: str) -> list[str]:
+    repo_root = Path(__file__).resolve().parents[2]
+    values = {
+        "architecture": "arm64",
+        "node-version": "22.17.1",
+        "node-sha256": "0" * 64,
+        "context-version": "0.11.0",
+        "context-commit": "1" * 40,
+        "context-source-kind": "local-candidate",
+        "context-source-dirty": "false",
+        "context-sha256": "2" * 64,
+        "orchestrator-version": "0.10.7",
+        "orchestrator-commit": "3" * 40,
+        "orchestrator-source-kind": "local-candidate",
+        "orchestrator-source-dirty": "false",
+        "orchestrator-sha256": "4" * 64,
+        "orchestrator-source-sha256": "5" * 64,
+        "autopilot-version": "0.5.3",
+        "autopilot-commit": "6" * 40,
+        "autopilot-source-kind": "local-candidate",
+        "autopilot-source-dirty": "false",
+        "autopilot-sha256": "7" * 64,
+    }
+    values.update(overrides)
+    command = [
+        sys.executable,
+        str(repo_root / "scripts" / "write_managed_plugin_payload_manifest.py"),
+        "--output",
+        str(output),
+    ]
+    for name, value in values.items():
+        command.extend((f"--{name}", value))
+    return command
+
+
 def test_generated_payload_manifest_projects_exactly_three_public_plugin_descriptors(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
-    generator = repo_root / "scripts" / "write_managed_plugin_payload_manifest.py"
     preparation_script = repo_root / "scripts" / "prepare_managed_plugin_payloads.sh"
     payload_root = tmp_path / "plugin-payloads"
     manifest_path = payload_root / "manifest.json"
-    subprocess.run(
-        [
-            sys.executable,
-            str(generator),
-            "--output",
-            str(manifest_path),
-            "--architecture",
-            "test-architecture",
-            "--node-version",
-            "22.17.1",
-            "--node-sha256",
-            "0" * 64,
-            "--context-version",
-            "0.11.0",
-            "--context-commit",
-            "1" * 40,
-            "--context-source-kind",
-            "test-candidate",
-            "--context-source-dirty",
-            "false",
-            "--context-sha256",
-            "2" * 64,
-            "--orchestrator-version",
-            "0.10.7",
-            "--orchestrator-commit",
-            "3" * 40,
-            "--orchestrator-source-kind",
-            "test-candidate",
-            "--orchestrator-source-dirty",
-            "false",
-            "--orchestrator-sha256",
-            "4" * 64,
-            "--orchestrator-source-sha256",
-            "5" * 64,
-            "--autopilot-version",
-            "0.5.3",
-            "--autopilot-commit",
-            "6" * 40,
-            "--autopilot-source-kind",
-            "test-candidate",
-            "--autopilot-source-dirty",
-            "false",
-            "--autopilot-sha256",
-            "7" * 64,
-        ],
-        check=True,
-    )
+    subprocess.run(_manifest_generator_command(manifest_path), check=True)
+    repeated_path = tmp_path / "repeated" / "manifest.json"
+    subprocess.run(_manifest_generator_command(repeated_path), check=True)
+    assert manifest_path.read_bytes() == repeated_path.read_bytes()
     assert "write_managed_plugin_payload_manifest.py" in preparation_script.read_text(
         encoding="utf-8"
     )
     env = _managed_env(tmp_path, payload_root)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert set(manifest) == {"architecture", "platform", "plugins", "runtimes", "schema_version"}
+    assert manifest["schema_version"] == "across-managed-plugin-payloads/1.0"
+    assert manifest["platform"] == "macos"
+    assert manifest["architecture"] == "arm64"
+    assert set(manifest["runtimes"]["node"]) == {"executable", "path", "sha256", "version"}
     expected_ids = {
         "across-context",
         "across-orchestrator",
@@ -258,6 +254,79 @@ def test_generated_payload_manifest_projects_exactly_three_public_plugin_descrip
         )
         assert invalid_identities == []
         assert failed == {"plugin_set_complete"}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"context-version": "../../context"},
+        {"context-version": "/Users/private/checkout"},
+        {"context-version": "0.11.0 "},
+        {"context-version": " 0.11.0"},
+        {"context-version": "01.11.0"},
+        {"architecture": "ppc64"},
+        {"context-source-kind": "checkout"},
+        {"context-source-kind": "private"},
+    ],
+)
+def test_manifest_generator_rejects_unsafe_identity_before_writing(tmp_path, overrides):
+    output = tmp_path / "must-not-exist" / "manifest.json"
+
+    completed = subprocess.run(
+        _manifest_generator_command(output, **overrides),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "invalid managed payload manifest value" in completed.stderr
+    assert not output.parent.exists()
+
+
+def test_payload_preparation_validates_derived_version_before_output_mutation(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    source_root = tmp_path / "context-source"
+    (source_root / "src").mkdir(parents=True)
+    (source_root / "package.json").write_text(
+        json.dumps({"name": "@across/context", "version": "../../context"}),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(source_root)], check=True)
+    subprocess.run(["git", "-C", str(source_root), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_root),
+            "-c",
+            "user.name=Task Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    output_root = tmp_path / "must-not-exist"
+    completed = subprocess.run(
+        [str(repo_root / "scripts" / "prepare_managed_plugin_payloads.sh"), str(output_root)],
+        env={
+            **os.environ,
+            "ACROSS_BUILD_PYTHON": sys.executable,
+            "ACROSS_BUILD_CONTEXT_SOURCE_ROOT": str(source_root),
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "invalid managed payload manifest value: context_version" in completed.stderr
+    assert not output_root.exists()
 
 
 def test_managed_payload_installs_verified_node_runtime_and_extracts_package(tmp_path):
