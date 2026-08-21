@@ -1549,13 +1549,16 @@ def plugin_provenance_digest(
 ) -> str:
     """Return the stable host/plugin payload provenance digest."""
 
+    safe_row = row if isinstance(row, Mapping) else {}
+    safe_descriptor = descriptor if isinstance(descriptor, Mapping) else {}
+    payload_sha256 = str(safe_descriptor.get("sha256") or "")
     subject = {
-        "plugin_id": str(row.get("plugin_id") or ""),
-        "version": str(row.get("version") or ""),
-        "payload_version": str(descriptor.get("version") or ""),
-        "commit": str(descriptor.get("commit") or ""),
-        "source_sha256": str(descriptor.get("source_sha256") or ""),
-        "sha256": str(descriptor.get("sha256") or ""),
+        "plugin_id": str(safe_row.get("plugin_id") or ""),
+        "version": str(safe_row.get("version") or ""),
+        "payload_version": str(safe_descriptor.get("version") or ""),
+        "commit": str(safe_descriptor.get("commit") or ""),
+        "source_sha256": str(safe_descriptor.get("source_sha256") or payload_sha256),
+        "sha256": payload_sha256,
     }
     encoded = json.dumps(subject, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -1565,8 +1568,17 @@ def _has_payload_provenance(payload: Mapping[str, Any]) -> bool:
     version = str(payload.get("version") or "")
     commit = str(payload.get("commit") or "")
     sha256 = str(payload.get("sha256") or "")
+    source_sha256 = str(payload.get("source_sha256") or sha256)
     hexadecimal = set("0123456789abcdef")
-    return bool(version) and len(commit) == 40 and set(commit.lower()) <= hexadecimal and len(sha256) == 64 and set(sha256.lower()) <= hexadecimal
+    return (
+        bool(version)
+        and len(commit) == 40
+        and set(commit.lower()) <= hexadecimal
+        and len(source_sha256) == 64
+        and set(source_sha256.lower()) <= hexadecimal
+        and len(sha256) == 64
+        and set(sha256.lower()) <= hexadecimal
+    )
 
 
 def _probe_generic_host_install_contracts(roots: Mapping[str, Path], env: Mapping[str, str], run_root: Path) -> dict[str, Any]:

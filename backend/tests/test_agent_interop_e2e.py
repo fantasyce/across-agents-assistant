@@ -137,6 +137,28 @@ def test_public_plugin_provenance_digest_preserves_compatibility_canonicalizatio
     assert plugin_provenance_digest(row, descriptor) == expected
 
 
+def test_plugin_provenance_uses_payload_sha_as_node_plugin_source_identity():
+    row = {"plugin_id": "across-context", "version": "1.2.3"}
+    descriptor = {
+        "version": "1.2.3",
+        "commit": "a" * 40,
+        "sha256": "c" * 64,
+    }
+    expected_subject = {
+        "plugin_id": "across-context",
+        "version": "1.2.3",
+        "payload_version": "1.2.3",
+        "commit": "a" * 40,
+        "source_sha256": "c" * 64,
+        "sha256": "c" * 64,
+    }
+    expected = hashlib.sha256(
+        json.dumps(expected_subject, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert plugin_provenance_digest(row, descriptor) == expected
+
+
 def test_installed_plugin_compatibility_probes_real_processes_and_exposes_only_bounded_evidence(tmp_path):
     required_tools = {
         "across-context": "remember_context",

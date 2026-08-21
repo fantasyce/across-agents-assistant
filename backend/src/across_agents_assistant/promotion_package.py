@@ -17,6 +17,7 @@ from .execution_trajectory import verify_evidence_receipt
 PROMOTION_PACKAGE_SCHEMA = "across-promotion-package/1.0"
 EVIDENCE_GRAPH_SCHEMA = "across-evidence-graph/1.0"
 COMPATIBILITY_SCHEMA = "across-first-party-mcp-compatibility/1.0"
+WORKER_TASK_RECEIPT_BINDING_SCHEMA = "across-worker-task-receipt-binding/1.0"
 REQUIRED_PLUGIN_IDS = frozenset(
     {
         "across-context",
@@ -26,6 +27,8 @@ REQUIRED_PLUGIN_IDS = frozenset(
 )
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_SAFE_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
+_SAFE_RELATIVE_PATH = re.compile(r"[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]+)*")
 _HEX_40 = re.compile(r"[0-9a-f]{40}")
 _HEX_64 = re.compile(r"[0-9a-f]{64}")
 _WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[/\\]")
@@ -41,8 +44,10 @@ _PASSED_CHECK_IDS = (
     "candidate_review_ready",
     "changed_paths_safe",
     "evidence_graph_valid",
+    "evidence_graph_task_set_complete",
     "finite_values",
     "identifiers_valid",
+    "input_shapes_valid",
     "plugin_compatibility_ready",
     "plugin_lifecycle_ready",
     "plugin_provenance_matches",
@@ -55,6 +60,8 @@ _PASSED_CHECK_IDS = (
     "task_receipts_ready",
     "task_receipts_verified",
     "task_set_complete",
+    "worker_receipt_binding_valid",
+    "worker_receipt_replay_absent",
 )
 
 
@@ -80,6 +87,59 @@ def package_sha256(document: Mapping[str, Any]) -> str:
     except (TypeError, ValueError, UnicodeError) as exc:
         raise ValueError("promotion package document is invalid") from exc
     return sha256(encoded).hexdigest()
+
+
+def build_worker_task_receipt_binding(
+    *,
+    task_link: Mapping[str, Any],
+    raw_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind an authoritative AAA Worker task link to one hash-valid receipt."""
+
+    if not isinstance(task_link, Mapping) or not isinstance(raw_receipt, Mapping):
+        raise PromotionPackageBlocked(("worker_receipt_binding_valid",))
+    receipt_state = verify_evidence_receipt(
+        source="worker_projection",
+        raw_receipt=raw_receipt,
+    )
+    node = _mapping(raw_receipt.get("node"))
+    task_id = _string(task_link.get("task_id"))
+    job_id = _string(task_link.get("job_id"))
+    run_id = _string(task_link.get("run_id"))
+    node_id = _string(task_link.get("node_id"))
+    manifest_hash = _string(task_link.get("manifest_hash"))
+    terminal_state = _string(task_link.get("status"))
+    receipt_hash = _string(raw_receipt.get("receipt_hash"))
+    if not (
+        task_link.get("schema_version") == "across-aaa-worker-task-link/1.0"
+        and receipt_state.get("integrity_state") == "hash_valid"
+        and receipt_state.get("verdict") == "ready"
+        and _identifier(task_id)
+        and _identifier(job_id)
+        and _identifier(run_id)
+        and _identifier(node_id)
+        and _digest_value(manifest_hash)
+        and _digest_value(receipt_hash)
+        and job_id == raw_receipt.get("job_id")
+        and run_id == raw_receipt.get("run_id")
+        and node_id == node.get("node_id")
+        and manifest_hash == raw_receipt.get("manifest_hash")
+        and terminal_state == raw_receipt.get("terminal_state") == "completed"
+    ):
+        raise PromotionPackageBlocked(("worker_receipt_binding_valid",))
+    binding = {
+        "schema_version": WORKER_TASK_RECEIPT_BINDING_SCHEMA,
+        "link_schema_version": "across-aaa-worker-task-link/1.0",
+        "task_id": task_id,
+        "job_id": job_id,
+        "run_id": run_id,
+        "node_id": node_id,
+        "manifest_hash": manifest_hash,
+        "terminal_state": terminal_state,
+        "receipt_hash": receipt_hash,
+    }
+    binding["binding_sha256"] = _digest(binding)
+    return binding
 
 
 def build_promotion_package(
@@ -109,6 +169,17 @@ def build_promotion_package(
     )
     if not _finite_tree(inputs):
         raise PromotionPackageBlocked(("finite_values",))
+    if not (
+        isinstance(run_status, Mapping)
+        and isinstance(autopilot_evidence, Mapping)
+        and isinstance(task_evidence, (list, tuple))
+        and isinstance(evidence_graph, Mapping)
+        and isinstance(plugin_rows, (list, tuple))
+        and isinstance(plugin_descriptors, Mapping)
+        and isinstance(compatibility_report, Mapping)
+        and isinstance(release_evidence, Mapping)
+    ):
+        raise PromotionPackageBlocked(("input_shapes_valid",))
 
     failed: set[str] = set()
     if not _identifier(run_id):
@@ -151,6 +222,7 @@ def build_promotion_package(
         evidence_graph,
         run_id=run_id,
         spec_id=spec_id,
+        expected_task_ids=expected_task_ids,
         failed=failed,
     )
 
@@ -272,22 +344,45 @@ def _task_receipts(
         failed.add("task_set_complete")
 
     public: list[dict[str, Any]] = []
+    worker_receipt_tasks: dict[str, str] = {}
+    worker_job_tasks: dict[tuple[str, str], str] = {}
     for task_id, item in sorted(items, key=lambda pair: pair[0]):
         source = _string(item.get("source"))
         if source not in {"orchestrator_evidence", "worker_projection"}:
             failed.add("task_receipts_verified")
             continue
-        bound_task_id = _string(item.get("bound_task_id"))
         raw_receipt = item.get("raw_receipt")
         verified = verify_evidence_receipt(source=source, raw_receipt=raw_receipt)
         if verified.get("integrity_state") != "hash_valid" or not _digest_value(verified.get("digest")):
             failed.add("task_receipts_verified")
             continue
-        raw_task_id = _string(raw_receipt.get("task_id")) if isinstance(raw_receipt, Mapping) else ""
-        if bound_task_id != task_id or (
-            source == "orchestrator_evidence" and raw_task_id != task_id
-        ):
-            failed.add("task_receipt_bindings_match")
+        if source == "orchestrator_evidence":
+            raw_task_id = _string(raw_receipt.get("task_id")) if isinstance(raw_receipt, Mapping) else ""
+            if raw_task_id != task_id:
+                failed.add("task_receipt_bindings_match")
+        else:
+            if not _valid_worker_binding(
+                task_id=task_id,
+                raw_receipt=raw_receipt,
+                raw_binding=item.get("worker_binding"),
+            ):
+                failed.add("worker_receipt_binding_valid")
+            receipt_digest = _string(verified.get("digest"))
+            raw_worker_receipt = _mapping(raw_receipt)
+            job_key = (
+                _string(raw_worker_receipt.get("run_id")),
+                _string(raw_worker_receipt.get("job_id")),
+            )
+            if (
+                receipt_digest in worker_receipt_tasks
+                and worker_receipt_tasks[receipt_digest] != task_id
+            ) or (
+                job_key in worker_job_tasks
+                and worker_job_tasks[job_key] != task_id
+            ):
+                failed.add("worker_receipt_replay_absent")
+            worker_receipt_tasks[receipt_digest] = task_id
+            worker_job_tasks[job_key] = task_id
         if verified.get("verdict") != "ready":
             failed.add("task_receipts_ready")
         public.append(
@@ -304,11 +399,60 @@ def _task_receipts(
     return public
 
 
+def _valid_worker_binding(
+    *,
+    task_id: str,
+    raw_receipt: Any,
+    raw_binding: Any,
+) -> bool:
+    if not isinstance(raw_receipt, Mapping) or not isinstance(raw_binding, Mapping):
+        return False
+    required_fields = {
+        "schema_version",
+        "link_schema_version",
+        "task_id",
+        "job_id",
+        "run_id",
+        "node_id",
+        "manifest_hash",
+        "terminal_state",
+        "receipt_hash",
+        "binding_sha256",
+    }
+    if set(raw_binding) != required_fields:
+        return False
+    binding = dict(raw_binding)
+    expected = binding.pop("binding_sha256", None)
+    if not _digest_value(expected) or _digest(binding) != expected:
+        return False
+    node = _mapping(raw_receipt.get("node"))
+    receipt_hash = _string(raw_receipt.get("receipt_hash"))
+    if not (
+        binding.get("schema_version") == WORKER_TASK_RECEIPT_BINDING_SCHEMA
+        and binding.get("link_schema_version") == "across-aaa-worker-task-link/1.0"
+        and binding.get("task_id") == task_id
+        and _identifier(_string(binding.get("job_id")))
+        and _identifier(_string(binding.get("run_id")))
+        and _identifier(_string(binding.get("node_id")))
+        and binding.get("job_id") == raw_receipt.get("job_id")
+        and binding.get("run_id") == raw_receipt.get("run_id")
+        and binding.get("node_id") == node.get("node_id")
+        and binding.get("manifest_hash") == raw_receipt.get("manifest_hash")
+        and binding.get("terminal_state") == raw_receipt.get("terminal_state") == "completed"
+        and binding.get("receipt_hash") == receipt_hash
+        and _digest_value(binding.get("manifest_hash"))
+        and _digest_value(receipt_hash)
+    ):
+        return False
+    return True
+
+
 def _graph_component(
     graph: Mapping[str, Any],
     *,
     run_id: str,
     spec_id: str,
+    expected_task_ids: Sequence[str],
     failed: set[str],
 ) -> dict[str, Any]:
     valid = isinstance(graph, Mapping) and graph.get("schema_version") == EVIDENCE_GRAPH_SCHEMA
@@ -341,12 +485,46 @@ def _graph_component(
                 valid = False
     if not valid:
         failed.add("evidence_graph_valid")
+
+    expected_task_set = set(expected_task_ids)
+    task_nodes: dict[str, str] = {}
+    if isinstance(nodes, list):
+        for node in nodes:
+            row = _mapping(node)
+            if row.get("type") != "task":
+                continue
+            task_id = _string(row.get("task_id"))
+            node_id = _string(row.get("id"))
+            if not _identifier(task_id) or node_id != f"task:{task_id}" or task_id in task_nodes:
+                task_nodes["__invalid__"] = node_id
+                continue
+            task_nodes[task_id] = node_id
+    run_node_id = f"run:{run_id}"
+    run_node_present = any(
+        _mapping(node).get("id") == run_node_id and _mapping(node).get("type") == "run"
+        for node in nodes or []
+    )
+    task_edges = [
+        (_string(_mapping(edge).get("from")), _string(_mapping(edge).get("to")))
+        for edge in edges or []
+        if _mapping(edge).get("relation") == "contains"
+        and _string(_mapping(edge).get("from")) == run_node_id
+    ]
+    expected_task_edges = {(run_node_id, f"task:{task_id}") for task_id in expected_task_set}
+    if (
+        not run_node_present
+        or set(task_nodes) != expected_task_set
+        or len(task_edges) != len(expected_task_edges)
+        or set(task_edges) != expected_task_edges
+    ):
+        failed.add("evidence_graph_task_set_complete")
     return {
         "schema_version": EVIDENCE_GRAPH_SCHEMA,
         "run_id": run_id,
         "spec_id": spec_id,
         "node_count": len(nodes) if isinstance(nodes, list) else 0,
         "edge_count": len(edges) if isinstance(edges, list) else 0,
+        "task_node_count": len(expected_task_ids),
     }
 
 
@@ -388,11 +566,16 @@ def _plugin_components(
     public_plugins: list[dict[str, Any]] = []
     for plugin_id in sorted(REQUIRED_PLUGIN_IDS):
         row = rows_by_id[plugin_id]
-        descriptor = plugin_descriptors[plugin_id]
+        raw_descriptor = plugin_descriptors[plugin_id]
+        if not isinstance(raw_descriptor, Mapping):
+            failed.add("plugin_provenance_matches")
+            continue
+        descriptor = raw_descriptor
         compatibility = _mapping(compatibility_plugins[plugin_id])
         version = _string(row.get("version"))
         descriptor_version = _string(descriptor.get("version"))
         producer_commit = _string(descriptor.get("commit")).lower()
+        source_sha = _string(descriptor.get("source_sha256") or descriptor.get("sha256")).lower()
         payload_sha = _string(descriptor.get("sha256")).lower()
         provenance = plugin_provenance_digest(row, descriptor)
         if not _identifier(plugin_id) or not version:
@@ -407,13 +590,15 @@ def _plugin_components(
         if compatibility.get("status") != "compatible":
             failed.add("plugin_compatibility_ready")
         if not (
-            version
+            _SAFE_VERSION.fullmatch(version) is not None
+            and _SAFE_VERSION.fullmatch(descriptor_version) is not None
             and descriptor_version == version
             and compatibility.get("version") == version
         ):
             failed.add("plugin_versions_match")
         if (
             _HEX_40.fullmatch(producer_commit) is None
+            or _HEX_64.fullmatch(source_sha) is None
             or _HEX_64.fullmatch(payload_sha) is None
             or compatibility.get("provenance_digest") != provenance
         ):
@@ -422,6 +607,7 @@ def _plugin_components(
             "plugin_id": plugin_id,
             "version": version,
             "producer_commit": producer_commit,
+            "source_sha256": source_sha,
             "payload_sha256": payload_sha,
             "provenance_digest": provenance,
         }
@@ -453,19 +639,65 @@ def _release_component(
 ) -> dict[str, Any]:
     evaluation = _mapping(release.get("release_evaluation"))
     gates = _mapping(release.get("pre_release_gate_summary"))
-    if release.get("status") != "ready" or evaluation.get("release_readiness") != "ready":
+    evaluated_task_count = _nonnegative_int(evaluation.get("evaluated_task_count"))
+    terminal_task_count = _nonnegative_int(evaluation.get("terminal_task_count"))
+    passed_task_count = _nonnegative_int(evaluation.get("passed_task_count"))
+    blocked_task_count = _nonnegative_int(evaluation.get("blocked_task_count"))
+    manual_task_count = _nonnegative_int(evaluation.get("manual_task_count"))
+    skipped_task_count = _nonnegative_int(evaluation.get("skipped_task_count"))
+    release_evidence_count = _nonnegative_int(evaluation.get("release_evidence_count"))
+    passed_evidence_count = _nonnegative_int(evaluation.get("passed_evidence_count"))
+    gate_total = _nonnegative_int(gates.get("total"))
+    gate_passed = _nonnegative_int(gates.get("passed"))
+    zero_gate_fields = (
+        "configured",
+        "manual_required",
+        "missing",
+        "failed",
+        "required_missing",
+        "required_manual",
+        "required_failed",
+        "required_unverified",
+    )
+    ready = (
+        release.get("schema_version") == "1.0"
+        and release.get("status") == "ready"
+        and evaluation.get("release_readiness") == "ready"
+        and evaluated_task_count is not None
+        and evaluated_task_count > 0
+        and terminal_task_count == evaluated_task_count
+        and passed_task_count == evaluated_task_count
+        and blocked_task_count == 0
+        and manual_task_count == 0
+        and skipped_task_count == 0
+        and release_evidence_count is not None
+        and release_evidence_count >= evaluated_task_count
+        and passed_evidence_count == release_evidence_count
+        and gate_total is not None
+        and gate_total > 0
+        and gate_passed == gate_total
+        and all(_nonnegative_int(gates.get(field)) == 0 for field in zero_gate_fields)
+    )
+    if not ready:
         failed.add("release_ready")
     return {
-        "schema_version": _string(release.get("schema_version")),
-        "status": _string(release.get("status")),
-        "release_readiness": _string(evaluation.get("release_readiness")),
-        "evaluated_task_count": _nonnegative_int(evaluation.get("evaluated_task_count")),
-        "release_evidence_count": _nonnegative_int(evaluation.get("release_evidence_count")),
-        "passed_evidence_count": _nonnegative_int(evaluation.get("passed_evidence_count")),
+        "schema_version": "1.0",
+        "status": "ready",
+        "release_readiness": "ready",
+        "evaluated_task_count": evaluated_task_count,
+        "terminal_task_count": terminal_task_count,
+        "passed_task_count": passed_task_count,
+        "blocked_task_count": blocked_task_count,
+        "manual_task_count": manual_task_count,
+        "skipped_task_count": skipped_task_count,
+        "release_evidence_count": release_evidence_count,
+        "passed_evidence_count": passed_evidence_count,
+        "gate_total": gate_total,
+        "passed_gate_count": gate_passed,
         "required_missing": _nonnegative_int(gates.get("required_missing")),
         "required_manual": _nonnegative_int(gates.get("required_manual")),
+        "required_failed": _nonnegative_int(gates.get("required_failed")),
         "required_unverified": _nonnegative_int(gates.get("required_unverified")),
-        "passed_gate_count": _nonnegative_int(gates.get("passed")),
     }
 
 
@@ -480,22 +712,21 @@ def _public_review(review: Mapping[str, Any], *, changed_files: Sequence[str]) -
         if _identifier(identifier) and status in {"passed", "failed", "not_evaluable"}:
             checklist.append({"id": identifier, "status": status})
     return {
-        "schema_version": _string(review.get("schema_version")),
-        "status": _string(review.get("status")),
+        "schema_version": "across-autopilot-promotion-review/1.0",
+        "status": "ready_for_human_review",
         "promotion_ready": review.get("promotion_ready") is True,
         "candidate_id": _string(review.get("candidate_id")),
         "changed_files": list(changed_files),
         "checklist": sorted(checklist, key=lambda item: item["id"]),
         "reviewer_scores": {
-            "product_value_score": _finite_number(scores.get("product_value_score")),
-            "maintainability_score": _finite_number(scores.get("maintainability_score")),
-            "risk_score": _finite_number(scores.get("risk_score")),
-            "merge_recommendation": _string(scores.get("merge_recommendation")),
+            "product_value_score": _bounded_score(scores.get("product_value_score")),
+            "maintainability_score": _bounded_score(scores.get("maintainability_score")),
+            "risk_score": _bounded_score(scores.get("risk_score")),
         },
         "promotion_attestation": {
-            "schema_version": _string(attestation.get("schema_version")),
-            "digest_status": _string(attestation.get("digest_status")),
-            "algorithm": _string(attestation.get("algorithm")),
+            "schema_version": "across-autopilot-promotion-attestation/1.0",
+            "digest_status": "passed",
+            "algorithm": "sha256",
             "digest": _public_digest(attestation.get("digest")),
             "human_approval_required": attestation.get("human_approval_required") is True,
             "merge_release_signing_blocked": attestation.get("merge_release_signing_blocked") is True,
@@ -515,6 +746,7 @@ def _changed_files(value: Any) -> list[str] | None:
         if (
             not path
             or len(path) > 512
+            or _SAFE_RELATIVE_PATH.fullmatch(path) is None
             or path.startswith(("/", "~"))
             or _WINDOWS_ABSOLUTE.match(item) is not None
             or "\x00" in path
@@ -601,6 +833,13 @@ def _finite_number(value: Any) -> float | int | None:
     if type(value) is float and math.isfinite(value):
         return value
     return None
+
+
+def _bounded_score(value: Any) -> float | int | None:
+    number = _finite_number(value)
+    if number is None or not 0 <= number <= 100:
+        return None
+    return number
 
 
 def _empty_compatibility_component() -> dict[str, Any]:
