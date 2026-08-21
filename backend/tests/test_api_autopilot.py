@@ -5443,6 +5443,11 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
     )
     monkeypatch.setattr(api_server, "_build_release_verification_report", lambda **kwargs: {"status": "ready"})
     monkeypatch.setattr(api_server, "build_promotion_package", compose)
+    monkeypatch.setattr(
+        service.promotion_packages,
+        "get",
+        lambda package_id: (_ for _ in ()).throw(AssertionError("creation must not re-read after insert")),
+    )
 
     client = TestClient(app)
     response = client.post("/api/autopilot/runs/run-promotion/promotion-packages")
@@ -5466,6 +5471,30 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
         json={"task_evidence": [{"task_id": "task-alpha"}]},
     )
     assert rejected.status_code == 422
+
+
+def test_promotion_creation_treats_existing_malformed_source_as_blocked_not_missing(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-malformed.db"))
+
+    class Client:
+        def status(self, run_id):
+            return ["malformed", run_id]
+
+        def evidence(self, run_id):
+            return {"run_id": run_id}
+
+    monkeypatch.setattr(api_server, "persistence", service)
+    monkeypatch.setattr(api_server, "get_autopilot_client", lambda: Client())
+
+    response = TestClient(app).post("/api/autopilot/runs/run-malformed/promotion-packages")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["input_shapes_valid"],
+    }
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 0
 
 
 def test_promotion_package_creation_has_fixed_failure_boundaries_and_never_persists_blocked(monkeypatch, tmp_path):
@@ -5565,3 +5594,40 @@ def test_promotion_decision_rejects_malformed_wrong_hash_tampered_and_unavailabl
     unavailable = SimpleNamespace(promotion_packages=UnavailablePackages(), approval_receipts=service.approval_receipts)
     monkeypatch.setattr(api_server, "persistence", unavailable)
     assert client.get(f"/api/autopilot/promotion-packages/{package['package_id']}").status_code == 503
+
+
+def test_promotion_decision_atomically_rejects_pre_append_tamper_and_same_actor_rejection(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-atomic-api.db"))
+    package = service.promotion_packages.put(_promotion_api_document())
+    monkeypatch.setattr(api_server, "persistence", service)
+    client = TestClient(app)
+    endpoint = f"/api/autopilot/promotion-packages/{package['package_id']}/decisions"
+    base = {
+        "expected_package_sha256": package["package_sha256"],
+        "approver_id": "human-reviewer",
+        "decision": "approved",
+    }
+    original = service.approval_receipts.record_promotion_decision
+
+    def tamper_then_append(**kwargs):
+        with sqlite3.connect(service.db_path) as conn:
+            conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 1 WHERE id = 1")
+        return original(**kwargs)
+
+    monkeypatch.setattr(service.approval_receipts, "record_promotion_decision", tamper_then_append)
+    tampered = client.post(endpoint, json=base)
+
+    assert tampered.status_code == 409
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 0 WHERE id = 1")
+
+    monkeypatch.setattr(service.approval_receipts, "record_promotion_decision", original)
+    same_actor = client.post(endpoint, json={
+        **base,
+        "decision": "rejected",
+        "approver_id": "autopilot-run:run-promotion",
+    })
+    assert same_actor.status_code == 409
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0

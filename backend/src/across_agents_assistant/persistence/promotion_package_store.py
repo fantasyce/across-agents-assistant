@@ -57,42 +57,18 @@ class PromotionPackageStore:
 
     def get(self, package_id: str) -> dict[str, Any]:
         with self._connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM promotion_packages WHERE package_id = ?",
-                (str(package_id),),
-            ).fetchone()
-            if row is None:
-                raise KeyError(package_id)
-            return self._public(row, integrity_status=self._verify_row(row))
+            return load_verified_promotion_package_record(
+                conn,
+                package_id,
+                allow_tampered=True,
+            )
 
     def _verify_row(self, row: sqlite3.Row) -> str:
-        try:
-            document = json.loads(row["payload_json"])
-            semantics = _semantics(document)
-            digest = package_sha256(document)
-            verified = (
-                row["payload_json"] == _canonical(document)
-                and row["package_id"] == f"promotion-{digest}"
-                and row["package_sha256"] == digest
-                and all(row[column] == value for column, value in semantics.items())
-            )
-        except (PromotionPackageStoreError, TypeError, ValueError, json.JSONDecodeError):
-            verified = False
-        return "verified" if verified else "tampered"
+        return _verify_promotion_package_row(row)
 
     @staticmethod
     def _public(row: sqlite3.Row, *, integrity_status: str) -> dict[str, Any]:
-        try:
-            document = json.loads(row["payload_json"])
-        except (TypeError, json.JSONDecodeError):
-            document = None
-        return {
-            "package_id": row["package_id"],
-            "package_sha256": row["package_sha256"],
-            "document": document,
-            "created_at": row["created_at"],
-            "integrity_status": integrity_status,
-        }
+        return _public_promotion_package_row(row, integrity_status=integrity_status)
 
     @contextmanager
     def _connection(self, *, write: bool = False):
@@ -141,6 +117,60 @@ _STORED_COLUMNS = (
     "created_at",
 )
 _CONTENT_COLUMNS = _STORED_COLUMNS[:-1]
+
+
+def load_verified_promotion_package_record(
+    conn: sqlite3.Connection,
+    package_id: str,
+    *,
+    allow_tampered: bool = False,
+) -> dict[str, Any]:
+    """Load and verify a package using the caller's active SQLite transaction."""
+
+    row = conn.execute(
+        "SELECT * FROM promotion_packages WHERE package_id = ?",
+        (str(package_id),),
+    ).fetchone()
+    if row is None:
+        raise KeyError(package_id)
+    integrity_status = _verify_promotion_package_row(row)
+    if integrity_status != "verified" and not allow_tampered:
+        raise PromotionPackageStoreError("promotion package integrity verification failed")
+    return _public_promotion_package_row(row, integrity_status=integrity_status)
+
+
+def _verify_promotion_package_row(row: sqlite3.Row) -> str:
+    try:
+        document = json.loads(row["payload_json"])
+        semantics = _semantics(document)
+        digest = package_sha256(document)
+        verified = (
+            row["payload_json"] == _canonical(document)
+            and row["package_id"] == f"promotion-{digest}"
+            and row["package_sha256"] == digest
+            and all(row[column] == value for column, value in semantics.items())
+        )
+    except (PromotionPackageStoreError, TypeError, ValueError, json.JSONDecodeError):
+        verified = False
+    return "verified" if verified else "tampered"
+
+
+def _public_promotion_package_row(
+    row: sqlite3.Row,
+    *,
+    integrity_status: str,
+) -> dict[str, Any]:
+    try:
+        document = json.loads(row["payload_json"])
+    except (TypeError, json.JSONDecodeError):
+        document = None
+    return {
+        "package_id": row["package_id"],
+        "package_sha256": row["package_sha256"],
+        "document": document,
+        "created_at": row["created_at"],
+        "integrity_status": integrity_status,
+    }
 
 
 def _semantics(document: Any) -> dict[str, str]:

@@ -49,13 +49,102 @@ class ApprovalReceiptStore:
         request_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        with self._connection(write=True) as conn:
+            return self._record_in_connection(
+                conn,
+                subject=subject,
+                scope=scope,
+                decision=decision,
+                proposer_id=proposer_id,
+                approver_id=approver_id,
+                risk_level=risk_level,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+            )
+
+    def record_promotion_decision(
+        self,
+        *,
+        package_id: str,
+        expected_package_sha256: str,
+        decision: str,
+        approver_id: str,
+        risk_level: str = "release_promotion",
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Verify package and full chain, then append under one write lock."""
+
+        from ..persistence.promotion_package_store import (
+            PromotionPackageStoreError,
+            load_verified_promotion_package_record,
+        )
+
+        with self._connection(write=True) as conn:
+            try:
+                package = load_verified_promotion_package_record(conn, package_id)
+            except PromotionPackageStoreError as exc:
+                raise ApprovalReceiptError("promotion package integrity verification failed") from exc
+            expected_digest = _sha256_digest(
+                expected_package_sha256,
+                "expected_package_sha256",
+            )
+            if package["package_sha256"] != expected_digest:
+                raise ApprovalReceiptError("expected promotion package hash does not match")
+            if self._chain_failures(conn):
+                raise ApprovalReceiptError("approval receipt history is tampered")
+            document = package.get("document")
+            identities = document.get("identities") if isinstance(document, Mapping) else None
+            run_id = identities.get("run_id") if isinstance(identities, Mapping) else None
+            if type(run_id) is not str or not run_id:
+                raise ApprovalReceiptError("promotion package run binding is invalid")
+            receipt = self._record_in_connection(
+                conn,
+                subject=ApprovalReceiptSubject(
+                    subject_type="promotion_package",
+                    subject_id=package_id,
+                    payload={},
+                    subject_sha256=package["package_sha256"],
+                ),
+                scope="release_promotion",
+                decision=decision,
+                proposer_id=f"autopilot-run:{run_id}",
+                approver_id=approver_id,
+                risk_level=risk_level,
+                idempotency_key=idempotency_key,
+            )
+            chain = self._verify_chain_in_connection(conn)
+            if chain["integrity_status"] != "verified":
+                raise ApprovalReceiptError("approval receipt history is tampered")
+            return {
+                "package": package,
+                "approval": receipt,
+                "chain": chain,
+            }
+
+    def _record_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        subject: ApprovalReceiptSubject,
+        scope: str,
+        decision: str,
+        proposer_id: str,
+        approver_id: str,
+        risk_level: str = "unknown",
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         clean_scope = _identifier(scope, "scope")
         clean_decision = _decision(decision)
         proposer = _actor(proposer_id, "proposer_id")
         approver = _actor(approver_id, "approver_id")
-        if clean_scope in SENSITIVE_SCOPES and clean_decision == "approved" and proposer == approver:
-            raise ApprovalReceiptError("promotion, release, and external-side-effect approval require separate proposer and approver identities")
         subject_type = _identifier(subject.subject_type, "subject_type")
+        if (
+            clean_scope in SENSITIVE_SCOPES
+            and proposer == approver
+            and (clean_decision == "approved" or subject_type == "promotion_package")
+        ):
+            raise ApprovalReceiptError("promotion, release, and external-side-effect approval require separate proposer and approver identities")
         subject_id_hash = _sha256_text(_bounded_text(subject.subject_id, 500))
         subject_sha256 = (
             _sha256_digest(subject.subject_sha256, "subject_sha256")
@@ -76,85 +165,84 @@ class ApprovalReceiptStore:
         if not idempotency_token:
             dedupe_material["append_nonce"] = uuid.uuid4().hex
         dedupe_key = _sha256_json(dedupe_material)
-        with self._connection(write=True) as conn:
-            if idempotency_token:
-                existing = conn.execute(
-                    "SELECT * FROM approval_receipts WHERE dedupe_key = ?",
-                    (dedupe_key,),
-                ).fetchone()
-                if existing:
-                    status = self._verify_row(conn, existing)
-                    if status != "verified":
-                        raise ApprovalReceiptError("approval receipt history is tampered")
-                    return self._public(existing, integrity_status=status)
-                candidates = conn.execute(
-                    """SELECT * FROM approval_receipts
-                       WHERE scope = ? AND subject_type = ?
-                         AND subject_id_sha256 = ? AND subject_sha256 = ?
-                         AND decision = ? AND proposer_id = ? AND approver_id = ?""",
-                    (
-                        clean_scope,
-                        subject_type,
-                        subject_id_hash,
-                        subject_sha256,
-                        clean_decision,
-                        proposer,
-                        approver,
-                    ),
-                ).fetchall()
-                if any(self._verify_row(conn, candidate) != "verified" for candidate in candidates):
-                    raise ApprovalReceiptError("approval receipt history is tampered")
-
-            previous = conn.execute(
-                "SELECT receipt_id, receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
+        if idempotency_token:
+            existing = conn.execute(
+                "SELECT * FROM approval_receipts WHERE dedupe_key = ?",
+                (dedupe_key,),
             ).fetchone()
-            sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM approval_receipts").fetchone()[0])
-            created_at = time.time()
-            receipt_id = f"approval-{uuid.uuid4().hex}"
-            payload = {
-                "schema_version": APPROVAL_RECEIPT_SCHEMA,
-                "receipt_id": receipt_id,
-                "sequence": sequence,
-                "dedupe_key": dedupe_key,
-                "request_id_sha256": _sha256_text(_bounded_text(request_id or "", 500)) if request_id else None,
-                "subject_type": subject_type,
-                "subject_id_sha256": subject_id_hash,
-                "subject_sha256": subject_sha256,
-                "scope": clean_scope,
-                "decision": clean_decision,
-                "proposer_id": proposer,
-                "approver_id": approver,
-                "risk_level": _bounded_text(risk_level, 40) or "unknown",
-                "previous_receipt_id": previous["receipt_id"] if previous else None,
-                "previous_hash": previous["receipt_hash"] if previous else "0" * 64,
-                "created_at": created_at,
-                "privacy": {
-                    "subject_payload_stored": False,
-                    "credentials_included": False,
-                    "absolute_paths_included": False,
-                    "raw_transcripts_included": False,
-                },
-            }
-            receipt_hash = _sha256_json(payload)
-            conn.execute(
-                """INSERT INTO approval_receipts
-                   (receipt_id, sequence, dedupe_key, subject_type, subject_id_sha256,
-                    subject_sha256, scope, decision, proposer_id, approver_id, risk_level,
-                    previous_receipt_id, previous_hash, receipt_hash, payload_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            if existing:
+                status = self._verify_row(conn, existing)
+                if status != "verified":
+                    raise ApprovalReceiptError("approval receipt history is tampered")
+                return self._public(existing, integrity_status=status)
+            candidates = conn.execute(
+                """SELECT * FROM approval_receipts
+                   WHERE scope = ? AND subject_type = ?
+                     AND subject_id_sha256 = ? AND subject_sha256 = ?
+                     AND decision = ? AND proposer_id = ? AND approver_id = ?""",
                 (
-                    receipt_id, sequence, dedupe_key, subject_type, subject_id_hash,
-                    subject_sha256, clean_scope, clean_decision, proposer, approver,
-                    payload["risk_level"], payload["previous_receipt_id"], payload["previous_hash"],
-                    receipt_hash, _canonical(payload), created_at,
+                    clean_scope,
+                    subject_type,
+                    subject_id_hash,
+                    subject_sha256,
+                    clean_decision,
+                    proposer,
+                    approver,
                 ),
-            )
-            conn.execute(
-                "UPDATE approval_receipt_chain_state SET receipt_count = ?, chain_tip = ? WHERE id = 1",
-                (sequence, receipt_hash),
-            )
-            row = conn.execute("SELECT * FROM approval_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
-            return self._public(row, integrity_status="verified")
+            ).fetchall()
+            if any(self._verify_row(conn, candidate) != "verified" for candidate in candidates):
+                raise ApprovalReceiptError("approval receipt history is tampered")
+
+        previous = conn.execute(
+            "SELECT receipt_id, receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM approval_receipts").fetchone()[0])
+        created_at = time.time()
+        receipt_id = f"approval-{uuid.uuid4().hex}"
+        payload = {
+            "schema_version": APPROVAL_RECEIPT_SCHEMA,
+            "receipt_id": receipt_id,
+            "sequence": sequence,
+            "dedupe_key": dedupe_key,
+            "request_id_sha256": _sha256_text(_bounded_text(request_id or "", 500)) if request_id else None,
+            "subject_type": subject_type,
+            "subject_id_sha256": subject_id_hash,
+            "subject_sha256": subject_sha256,
+            "scope": clean_scope,
+            "decision": clean_decision,
+            "proposer_id": proposer,
+            "approver_id": approver,
+            "risk_level": _bounded_text(risk_level, 40) or "unknown",
+            "previous_receipt_id": previous["receipt_id"] if previous else None,
+            "previous_hash": previous["receipt_hash"] if previous else "0" * 64,
+            "created_at": created_at,
+            "privacy": {
+                "subject_payload_stored": False,
+                "credentials_included": False,
+                "absolute_paths_included": False,
+                "raw_transcripts_included": False,
+            },
+        }
+        receipt_hash = _sha256_json(payload)
+        conn.execute(
+            """INSERT INTO approval_receipts
+               (receipt_id, sequence, dedupe_key, subject_type, subject_id_sha256,
+                subject_sha256, scope, decision, proposer_id, approver_id, risk_level,
+                previous_receipt_id, previous_hash, receipt_hash, payload_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                receipt_id, sequence, dedupe_key, subject_type, subject_id_hash,
+                subject_sha256, clean_scope, clean_decision, proposer, approver,
+                payload["risk_level"], payload["previous_receipt_id"], payload["previous_hash"],
+                receipt_hash, _canonical(payload), created_at,
+            ),
+        )
+        conn.execute(
+            "UPDATE approval_receipt_chain_state SET receipt_count = ?, chain_tip = ? WHERE id = 1",
+            (sequence, receipt_hash),
+        )
+        row = conn.execute("SELECT * FROM approval_receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
+        return self._public(row, integrity_status="verified")
 
     def get(self, receipt_id: str) -> dict[str, Any]:
         with self._connection() as conn:
@@ -215,21 +303,24 @@ class ApprovalReceiptStore:
 
     def verify_chain(self) -> dict[str, Any]:
         with self._connection() as conn:
-            rows = conn.execute("SELECT * FROM approval_receipts ORDER BY sequence ASC").fetchall()
-            failures = self._chain_failures(conn, rows=rows)
-            anchor = conn.execute(
-                "SELECT receipt_count, chain_tip FROM approval_receipt_chain_state WHERE id = 1"
-            ).fetchone()
-            observed_tip = rows[-1]["receipt_hash"] if rows else "0" * 64
-            return {
-                "schema_version": APPROVAL_CHAIN_SCHEMA,
-                "receipt_count": len(rows),
-                "integrity_status": "verified" if not failures else "tampered",
-                "failures": failures,
-                "chain_tip": anchor["chain_tip"] if anchor else observed_tip,
-                "observed_chain_tip": observed_tip,
-                "receipt_anchors": [_receipt_anchor(row) for row in rows],
-            }
+            return self._verify_chain_in_connection(conn)
+
+    def _verify_chain_in_connection(self, conn: sqlite3.Connection) -> dict[str, Any]:
+        rows = conn.execute("SELECT * FROM approval_receipts ORDER BY sequence ASC").fetchall()
+        failures = self._chain_failures(conn, rows=rows)
+        anchor = conn.execute(
+            "SELECT receipt_count, chain_tip FROM approval_receipt_chain_state WHERE id = 1"
+        ).fetchone()
+        observed_tip = rows[-1]["receipt_hash"] if rows else "0" * 64
+        return {
+            "schema_version": APPROVAL_CHAIN_SCHEMA,
+            "receipt_count": len(rows),
+            "integrity_status": "verified" if not failures else "tampered",
+            "failures": failures,
+            "chain_tip": anchor["chain_tip"] if anchor else observed_tip,
+            "observed_chain_tip": observed_tip,
+            "receipt_anchors": [_receipt_anchor(row) for row in rows],
+        }
 
     def _verify_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         try:

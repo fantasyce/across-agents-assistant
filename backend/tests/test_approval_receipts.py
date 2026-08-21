@@ -483,6 +483,82 @@ def test_receipt_rejects_tampering_and_separates_sensitive_proposer_and_approver
     assert store.verify_chain()["integrity_status"] == "tampered"
 
 
+def test_atomic_promotion_decision_verifies_package_and_chain_before_append(tmp_path):
+    db_path = str(tmp_path / "atomic-promotion.db")
+    packages = PromotionPackageStore(db_path)
+    approvals = ApprovalReceiptStore(db_path)
+    package = packages.put(promotion_document())
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 1 WHERE id = 1")
+    with pytest.raises(ApprovalReceiptError, match="history is tampered"):
+        approvals.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="approved",
+            approver_id="human-reviewer",
+            idempotency_key="atomic-chain-tamper",
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 0 WHERE id = 1")
+        conn.execute(
+            "UPDATE promotion_packages SET candidate_id = ? WHERE package_id = ?",
+            ("candidate-tampered", package["package_id"]),
+        )
+    with pytest.raises(ApprovalReceiptError):
+        approvals.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="approved",
+            approver_id="human-reviewer",
+            idempotency_key="atomic-package-tamper",
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("decision", ["approved", "rejected"])
+def test_atomic_promotion_decision_requires_separate_actor_for_every_decision(tmp_path, decision):
+    db_path = str(tmp_path / f"separate-{decision}.db")
+    packages = PromotionPackageStore(db_path)
+    approvals = ApprovalReceiptStore(db_path)
+    package = packages.put(promotion_document())
+
+    with pytest.raises(ApprovalReceiptError, match="separate proposer"):
+        approvals.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision=decision,
+            approver_id="autopilot-run:run-batch-5",
+            idempotency_key=f"same-actor-{decision}",
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0
+
+
+def test_atomic_promotion_decision_preserves_concurrent_idempotence(tmp_path):
+    db_path = str(tmp_path / "atomic-idempotence.db")
+    packages = PromotionPackageStore(db_path)
+    approvals = ApprovalReceiptStore(db_path)
+    package = packages.put(promotion_document())
+
+    def decide(_index):
+        return approvals.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="approved",
+            approver_id="human-reviewer",
+            idempotency_key="atomic-concurrent",
+        )["approval"]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        receipts = list(executor.map(decide, range(16)))
+
+    assert len({receipt["receipt_id"] for receipt in receipts}) == 1
+    assert approvals.verify_chain()["receipt_count"] == 1
+
+
 @pytest.mark.parametrize(("column", "value"), [("decision", "rejected"), ("scope", "tool_execution")])
 def test_receipt_detects_semantic_column_tampering(tmp_path, column, value):
     db_path = str(tmp_path / f"tampered-{column}.db")
