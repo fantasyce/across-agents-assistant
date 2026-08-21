@@ -58,9 +58,9 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.10.9",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.10.10",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.10.9",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.10.10",
     ),
     KnownAcrossPlugin(
         plugin_id="across-autopilot",
