@@ -297,7 +297,6 @@ from .promotion_package import (
     PromotionPackageBlocked,
     build_promotion_package,
     build_worker_task_receipt_binding,
-    package_sha256,
 )
 from .managed_plugin_payloads import plugin_payload
 
@@ -10819,18 +10818,8 @@ async def _assemble_promotion_package(run_id: str) -> Dict[str, Any]:
             compatibility_report=compatibility_report,
             release_evidence=release_evidence,
         )
-        digest = package_sha256(document)
-        package_id = f"promotion-{digest}"
-        approval = await asyncio.to_thread(
-            persistence.approval_receipts.latest_for_subject,
-            scope="release_promotion",
-            subject_type="promotion_package",
-            subject_id=package_id,
-            subject_sha256=digest,
-        )
-        chain = await asyncio.to_thread(persistence.approval_receipts.verify_chain)
         record = await asyncio.to_thread(persistence.promotion_packages.put, document)
-        return _promotion_projection_from_verified_record(record, approval, chain)
+        return _promotion_creation_projection(record)
     except PromotionPackageBlocked as exc:
         raise _promotion_blocked(exc) from None
     except KeyError:
@@ -10862,6 +10851,12 @@ def _promotion_projection_from_verified_record(
         "authorization": authorization,
         "final_promotion_authorized": authorization["authorized"],
     }
+
+
+def _promotion_creation_projection(package: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a conservative creation result without consulting decision state."""
+
+    return _promotion_projection_from_verified_record(package, None, {})
 
 
 def _promotion_package_projection(package_id: str) -> Dict[str, Any]:

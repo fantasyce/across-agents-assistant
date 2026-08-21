@@ -559,6 +559,40 @@ def test_atomic_promotion_decision_preserves_concurrent_idempotence(tmp_path):
     assert approvals.verify_chain()["receipt_count"] == 1
 
 
+def test_atomic_promotion_retry_returns_latest_subject_decision_without_append(tmp_path):
+    db_path = str(tmp_path / "atomic-latest-subject.db")
+    packages = PromotionPackageStore(db_path)
+    approvals = ApprovalReceiptStore(db_path)
+    package = packages.put(promotion_document())
+    shared = {
+        "package_id": package["package_id"],
+        "expected_package_sha256": package["package_sha256"],
+        "approver_id": "human-reviewer",
+    }
+
+    approved = approvals.record_promotion_decision(
+        **shared,
+        decision="approved",
+        idempotency_key="approve-once",
+    )
+    rejected = approvals.record_promotion_decision(
+        **shared,
+        decision="rejected",
+        idempotency_key="reject-once",
+    )
+    retried_approve = approvals.record_promotion_decision(
+        **shared,
+        decision="approved",
+        idempotency_key="approve-once",
+    )
+
+    assert approved["approval"]["decision"] == "approved"
+    assert rejected["approval"]["decision"] == "rejected"
+    assert retried_approve["approval"]["receipt_id"] == rejected["approval"]["receipt_id"]
+    assert retried_approve["approval"]["decision"] == "rejected"
+    assert approvals.verify_chain()["receipt_count"] == 2
+
+
 @pytest.mark.parametrize(("column", "value"), [("decision", "rejected"), ("scope", "tool_execution")])
 def test_receipt_detects_semantic_column_tampering(tmp_path, column, value):
     db_path = str(tmp_path / f"tampered-{column}.db")

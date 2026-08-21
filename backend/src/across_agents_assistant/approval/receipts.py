@@ -97,7 +97,7 @@ class ApprovalReceiptStore:
             run_id = identities.get("run_id") if isinstance(identities, Mapping) else None
             if type(run_id) is not str or not run_id:
                 raise ApprovalReceiptError("promotion package run binding is invalid")
-            receipt = self._record_in_connection(
+            self._record_in_connection(
                 conn,
                 subject=ApprovalReceiptSubject(
                     subject_type="promotion_package",
@@ -115,9 +115,18 @@ class ApprovalReceiptStore:
             chain = self._verify_chain_in_connection(conn)
             if chain["integrity_status"] != "verified":
                 raise ApprovalReceiptError("approval receipt history is tampered")
+            latest = self._latest_for_subject_in_connection(
+                conn,
+                scope="release_promotion",
+                subject_type="promotion_package",
+                subject_id=package_id,
+                subject_sha256=package["package_sha256"],
+            )
+            if latest is None:
+                raise ApprovalReceiptError("promotion decision is missing after append")
             return {
                 "package": package,
-                "approval": receipt,
+                "approval": latest,
                 "chain": chain,
             }
 
@@ -259,21 +268,38 @@ class ApprovalReceiptStore:
         subject_id: str,
         subject_sha256: str,
     ) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            return self._latest_for_subject_in_connection(
+                conn,
+                scope=scope,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                subject_sha256=subject_sha256,
+            )
+
+    def _latest_for_subject_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        scope: str,
+        subject_type: str,
+        subject_id: str,
+        subject_sha256: str,
+    ) -> dict[str, Any] | None:
         clean_scope = _identifier(scope, "scope")
         clean_subject_type = _identifier(subject_type, "subject_type")
         subject_id_hash = _sha256_text(_bounded_text(subject_id, 500))
         clean_subject_sha256 = _sha256_digest(subject_sha256, "subject_sha256")
-        with self._connection() as conn:
-            row = conn.execute(
-                """SELECT * FROM approval_receipts
-                   WHERE scope = ? AND subject_type = ?
-                     AND subject_id_sha256 = ? AND subject_sha256 = ?
-                   ORDER BY sequence DESC LIMIT 1""",
-                (clean_scope, clean_subject_type, subject_id_hash, clean_subject_sha256),
-            ).fetchone()
-            if row is None:
-                return None
-            return self._public(row, integrity_status=self._verify_row(conn, row))
+        row = conn.execute(
+            """SELECT * FROM approval_receipts
+               WHERE scope = ? AND subject_type = ?
+                 AND subject_id_sha256 = ? AND subject_sha256 = ?
+               ORDER BY sequence DESC LIMIT 1""",
+            (clean_scope, clean_subject_type, subject_id_hash, clean_subject_sha256),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._public(row, integrity_status=self._verify_row(conn, row))
 
     def list(self, *, limit: int = 100, offset: int = 0, scope: str | None = None) -> dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))

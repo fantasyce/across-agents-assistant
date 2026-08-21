@@ -5443,6 +5443,7 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
     )
     monkeypatch.setattr(api_server, "_build_release_verification_report", lambda **kwargs: {"status": "ready"})
     monkeypatch.setattr(api_server, "build_promotion_package", compose)
+    original_get = service.promotion_packages.get
     monkeypatch.setattr(
         service.promotion_packages,
         "get",
@@ -5465,6 +5466,39 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
     assert captured["release_evidence"] == {"status": "ready"}
     with sqlite3.connect(service.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 1
+
+    package = response.json()["package"]
+    service.approval_receipts.record_promotion_decision(
+        package_id=package["package_id"],
+        expected_package_sha256=package["package_sha256"],
+        decision="approved",
+        approver_id="human-reviewer",
+        idempotency_key="creation-race-approve",
+    )
+    original_put = service.promotion_packages.put
+
+    def reject_during_put(document):
+        service.approval_receipts.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="rejected",
+            approver_id="human-reviewer",
+            idempotency_key="creation-race-reject",
+        )
+        return original_put(document)
+
+    monkeypatch.setattr(service.promotion_packages, "put", reject_during_put)
+    raced = client.post("/api/autopilot/runs/run-promotion/promotion-packages")
+
+    assert raced.status_code == 200
+    assert raced.json()["approval"] is None
+    assert raced.json()["final_promotion_authorized"] is False
+    monkeypatch.setattr(service.promotion_packages, "put", original_put)
+    monkeypatch.setattr(service.promotion_packages, "get", original_get)
+    latest = client.get(f"/api/autopilot/promotion-packages/{package['package_id']}")
+    assert latest.status_code == 200
+    assert latest.json()["approval"]["decision"] == "rejected"
+    assert latest.json()["final_promotion_authorized"] is False
 
     rejected = client.post(
         "/api/autopilot/runs/run-promotion/promotion-packages",
@@ -5553,6 +5587,15 @@ def test_promotion_package_get_and_decisions_are_verified_idempotent_and_non_exe
     assert rejected.status_code == rejected_again.status_code == 200
     assert rejected.json()["approval"]["receipt_id"] == rejected_again.json()["approval"]["receipt_id"]
     assert rejected.json()["final_promotion_authorized"] is False
+    retried_approval = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=payload
+    )
+    assert retried_approval.status_code == 200
+    assert retried_approval.json()["approval"]["receipt_id"] == rejected.json()["approval"]["receipt_id"]
+    assert retried_approval.json()["approval"]["decision"] == "rejected"
+    assert retried_approval.json()["final_promotion_authorized"] is False
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 2
 
 
 def test_promotion_decision_rejects_malformed_wrong_hash_tampered_and_unavailable(monkeypatch, tmp_path):
