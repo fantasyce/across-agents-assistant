@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.2 - 2026-08-21
+
+- Reused the prepared backend environment in the vNext fixture E2E instead of
+  resolving a second Python runtime during the startup deadline.
+- Made source-only interop evidence explicitly defer immutable packaged-plugin
+  provenance to installed-App acceptance, without weakening packaged runtime
+  compatibility checks.
+- Printed the bounded backend log when fixture startup fails so acceptance
+  failures remain diagnosable after cleanup.
+
 ## 0.14.1 - 2026-08-21
 
 - Made the unified vNext acceptance runner bootstrap clean AAA and

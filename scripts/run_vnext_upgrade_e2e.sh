@@ -171,6 +171,15 @@ PY
 )"
 
 echo "== Starting AAA backend =="
+BACKEND_COMMAND=(
+  "$UV_BIN" run
+  --with-requirements "$ROOT_DIR/backend/requirements_no_pyobjc.txt"
+  --python 3.11
+  python
+)
+if [[ -x "$ROOT_DIR/backend/.venv/bin/python" ]]; then
+  BACKEND_COMMAND=("$ROOT_DIR/backend/.venv/bin/python")
+fi
 env \
   "PATH=$E2E_PATH" \
   "PYTHONPATH=$ROOT_DIR/backend/src" \
@@ -178,12 +187,11 @@ env \
   "ACROSS_VNEXT_E2E_FIXTURE_AGENT=$FIXTURE_AGENT_ENABLED" \
   "ACROSS_CONTEXT_COMMAND=$ACROSS_HOME/bin/across-context" \
   "ACROSS_ORCHESTRATOR_COMMAND=$ORCHESTRATOR_COMMAND_JSON" \
-  "$UV_BIN" run --with-requirements "$ROOT_DIR/backend/requirements_no_pyobjc.txt" --python 3.12 \
-  python -m uvicorn across_agents_assistant.api_server:app --host 127.0.0.1 --port "$PORT" \
+  "${BACKEND_COMMAND[@]}" -m uvicorn across_agents_assistant.api_server:app --host 127.0.0.1 --port "$PORT" \
   > "$TMP_ROOT/aaa-backend.log" 2>&1 &
 SERVER_PID="$!"
 
-python3 - "$BASE_URL" <<'PY'
+if ! python3 - "$BASE_URL" <<'PY'
 import sys, time, urllib.request
 base = sys.argv[1]
 deadline = time.time() + 60
@@ -198,6 +206,11 @@ while time.time() < deadline:
         time.sleep(0.5)
 raise SystemExit(f"AAA backend did not become ready: {last}")
 PY
+then
+  echo "== AAA backend log ==" >&2
+  tail -n 120 "$TMP_ROOT/aaa-backend.log" >&2 || true
+  exit 1
+fi
 
 echo "== Running real parallel workspace, gate, promotion, and memory lifecycle =="
 ACROSS_HOME="$ACROSS_HOME" \
