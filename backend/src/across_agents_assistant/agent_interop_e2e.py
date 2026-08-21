@@ -1499,7 +1499,7 @@ def _probe_installed_plugin_compatibility(
         plugins[plugin_id] = {
             "status": status,
             "version": version,
-            "provenance_digest": _plugin_provenance_digest(plugin_id, version, payload),
+            "provenance_digest": plugin_provenance_digest(raw_row, payload),
             "tool_count": int(schema_result.get("tool_count") or 0),
             "tool_set_digest": str(schema_result.get("tool_set_digest") or hashlib.sha256(b"[]").hexdigest()),
             "profiles": dict(schema_result.get("profiles") or {}),
@@ -1543,14 +1543,19 @@ def _is_managed_command(command: Path, roots: tuple[Path, ...]) -> bool:
     return False
 
 
-def _plugin_provenance_digest(plugin_id: str, version: str, payload: Mapping[str, Any]) -> str:
+def plugin_provenance_digest(
+    row: Mapping[str, Any],
+    descriptor: Mapping[str, Any],
+) -> str:
+    """Return the stable host/plugin payload provenance digest."""
+
     subject = {
-        "plugin_id": plugin_id,
-        "version": version,
-        "payload_version": str(payload.get("version") or ""),
-        "commit": str(payload.get("commit") or ""),
-        "source_sha256": str(payload.get("source_sha256") or ""),
-        "sha256": str(payload.get("sha256") or ""),
+        "plugin_id": str(row.get("plugin_id") or ""),
+        "version": str(row.get("version") or ""),
+        "payload_version": str(descriptor.get("version") or ""),
+        "commit": str(descriptor.get("commit") or ""),
+        "source_sha256": str(descriptor.get("source_sha256") or ""),
+        "sha256": str(descriptor.get("sha256") or ""),
     }
     encoded = json.dumps(subject, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

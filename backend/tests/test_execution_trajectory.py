@@ -10,6 +10,7 @@ import pytest
 from across_agents_assistant.execution_trajectory import (
     TrajectoryProjectionError,
     project_execution_trajectory,
+    verify_evidence_receipt,
 )
 
 
@@ -85,6 +86,77 @@ def _project(
         limit=limit,
         generated_at=generated_at,
     )
+
+
+def test_public_receipt_verifier_checks_raw_private_fields_before_projection():
+    receipt = _orchestrator_receipt(
+        task_id="task-trajectory",
+        private_sentinel="private-receipt-sentinel",
+    )
+
+    result = verify_evidence_receipt(
+        source="orchestrator_evidence",
+        raw_receipt=receipt,
+    )
+
+    assert result == {
+        "schema_version": "across-evidence-receipt/1.0",
+        "integrity_state": "hash_valid",
+        "digest_algorithm": "sha256",
+        "digest_field": "evidence_sha256",
+        "digest": receipt["evidence_sha256"],
+        "verdict": "ready",
+        "reason": "hash_matches_raw_receipt",
+    }
+    assert "private-receipt-sentinel" not in json.dumps(result, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    ("source", "receipt", "expected_state", "expected_reason", "expected_verdict"),
+    [
+        (
+            "orchestrator_evidence",
+            {**_orchestrator_receipt(task_id="task-trajectory"), "task_id": "task-mutated"},
+            "invalid",
+            "hash_mismatch",
+            "warning",
+        ),
+        (
+            "orchestrator_evidence",
+            {"schema_version": "private-future-schema/99", "private": "do-not-leak"},
+            "unsupported",
+            "unsupported_receipt_schema",
+            "warning",
+        ),
+        (
+            "orchestrator_evidence",
+            None,
+            "missing",
+            "receipt_missing",
+            "warning",
+        ),
+        (
+            "worker_projection",
+            _worker_receipt(terminal_state="failed"),
+            "hash_valid",
+            "hash_matches_raw_receipt",
+            "warning",
+        ),
+    ],
+)
+def test_public_receipt_verifier_returns_fixed_closed_states(
+    source: str,
+    receipt: object,
+    expected_state: str,
+    expected_reason: str,
+    expected_verdict: str,
+):
+    result = verify_evidence_receipt(source=source, raw_receipt=receipt)
+
+    assert result["integrity_state"] == expected_state
+    assert result["reason"] == expected_reason
+    assert result["verdict"] == expected_verdict
+    assert "do-not-leak" not in json.dumps(result, sort_keys=True)
 
 
 def test_orchestrator_receipt_is_verified_before_private_fields_are_redacted():

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sys
@@ -9,6 +10,7 @@ from across_agents_assistant.agent_interop_e2e import (
     AgentInteropE2ERunCoordinator,
     _probe_installed_plugin_compatibility,
     build_agent_interop_workbench_section,
+    plugin_provenance_digest,
     public_agent_interop_e2e_result,
 )
 
@@ -105,6 +107,34 @@ for line in __import__("sys").stdin:
         "sha256": "d" * 64,
     }
     return row, payload
+
+
+def test_public_plugin_provenance_digest_preserves_compatibility_canonicalization():
+    row = {
+        "plugin_id": "across-context",
+        "version": "1.2.3",
+        "private_path": "/private/plugin",
+    }
+    descriptor = {
+        "version": "1.2.3",
+        "commit": "a" * 40,
+        "source_sha256": "b" * 64,
+        "sha256": "c" * 64,
+        "private_archive": "/private/payload.tar.gz",
+    }
+    expected_subject = {
+        "plugin_id": "across-context",
+        "version": "1.2.3",
+        "payload_version": "1.2.3",
+        "commit": "a" * 40,
+        "source_sha256": "b" * 64,
+        "sha256": "c" * 64,
+    }
+    expected = hashlib.sha256(
+        json.dumps(expected_subject, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert plugin_provenance_digest(row, descriptor) == expected
 
 
 def test_installed_plugin_compatibility_probes_real_processes_and_exposes_only_bounded_evidence(tmp_path):

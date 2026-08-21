@@ -144,7 +144,7 @@ def project_execution_trajectory(
     else:
         public_generated_at = float(generated_at)
 
-    receipt = _classify_receipt(source=source, raw_receipt=raw_receipt)
+    receipt = verify_evidence_receipt(source=source, raw_receipt=raw_receipt)
     normalized: list[dict[str, Any]] = []
     omitted_count = 0
     for index, raw_event in enumerate(raw_events):
@@ -236,7 +236,9 @@ def project_execution_trajectory(
     }
 
 
-def _classify_receipt(*, source: str, raw_receipt: Any) -> dict[str, Any]:
+def verify_evidence_receipt(*, source: str, raw_receipt: Any) -> dict[str, Any]:
+    """Verify one raw receipt and return its bounded public integrity state."""
+
     if raw_receipt is None:
         return _receipt_state("missing", "receipt_missing")
     if not isinstance(raw_receipt, Mapping):
