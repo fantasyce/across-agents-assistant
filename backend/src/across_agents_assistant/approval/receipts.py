@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 from contextlib import contextmanager
 import hashlib
 import json
@@ -9,6 +9,8 @@ import re
 import sqlite3
 import time
 import uuid
+
+from ..promotion_package import package_sha256
 
 
 APPROVAL_RECEIPT_SCHEMA = "across-approval-receipt/1.0"
@@ -135,6 +137,30 @@ class ApprovalReceiptStore:
                 raise KeyError(receipt_id)
             return self._public(row, integrity_status=self._verify_row(conn, row))
 
+    def latest_for_subject(
+        self,
+        *,
+        scope: str,
+        subject_type: str,
+        subject_id: str,
+        subject_sha256: str,
+    ) -> dict[str, Any] | None:
+        clean_scope = _identifier(scope, "scope")
+        clean_subject_type = _identifier(subject_type, "subject_type")
+        subject_id_hash = _sha256_text(_bounded_text(subject_id, 500))
+        clean_subject_sha256 = _sha256_digest(subject_sha256, "subject_sha256")
+        with self._connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM approval_receipts
+                   WHERE scope = ? AND subject_type = ?
+                     AND subject_id_sha256 = ? AND subject_sha256 = ?
+                   ORDER BY sequence DESC LIMIT 1""",
+                (clean_scope, clean_subject_type, subject_id_hash, clean_subject_sha256),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._public(row, integrity_status=self._verify_row(conn, row))
+
     def list(self, *, limit: int = 100, offset: int = 0, scope: str | None = None) -> dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))
         safe_offset = max(0, int(offset))
@@ -245,8 +271,29 @@ class ApprovalReceiptStore:
         return failures
 
     def _public(self, row: sqlite3.Row, *, integrity_status: str) -> dict[str, Any]:
-        payload = json.loads(row["payload_json"])
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        public_columns = {
+            "receipt_id": row["receipt_id"],
+            "sequence": row["sequence"],
+            "subject_type": row["subject_type"],
+            "subject_id_sha256": row["subject_id_sha256"],
+            "subject_sha256": row["subject_sha256"],
+            "scope": row["scope"],
+            "decision": row["decision"],
+            "proposer_id": row["proposer_id"],
+            "approver_id": row["approver_id"],
+            "risk_level": row["risk_level"],
+            "previous_receipt_id": row["previous_receipt_id"],
+            "previous_hash": row["previous_hash"],
+            "created_at": row["created_at"],
+        }
         return {
+            **public_columns,
             **payload,
             "receipt_hash": row["receipt_hash"],
             "integrity_status": integrity_status,
@@ -294,6 +341,12 @@ class ApprovalReceiptStore:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_approval_receipts_scope ON approval_receipts(scope, sequence DESC)")
             conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_approval_receipts_subject_lookup
+                   ON approval_receipts(
+                       scope, subject_type, subject_id_sha256, subject_sha256, sequence DESC
+                   )"""
+            )
+            conn.execute(
                 """CREATE TABLE IF NOT EXISTS approval_receipt_chain_state (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     receipt_count INTEGER NOT NULL,
@@ -311,6 +364,92 @@ class ApprovalReceiptStore:
                    VALUES (1, ?, ?)""",
                 (int(current["receipt_count"]), tip["receipt_hash"] if tip else "0" * 64),
             )
+
+
+def evaluate_promotion_authorization(
+    package_record: Mapping[str, Any],
+    decision: Mapping[str, Any] | None,
+    chain: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Evaluate authorization without mutating the sealed package or receipt chain."""
+
+    package = package_record if isinstance(package_record, Mapping) else {}
+    receipt = decision if isinstance(decision, Mapping) else {}
+    chain_state = chain if isinstance(chain, Mapping) else {}
+    package_id = package.get("package_id") if type(package.get("package_id")) is str else None
+    package_digest = (
+        package.get("package_sha256")
+        if type(package.get("package_sha256")) is str
+        else None
+    )
+    decision_present = bool(receipt)
+    subject_binding_matches = bool(
+        package_id
+        and package_digest
+        and receipt.get("scope") == "release_promotion"
+        and receipt.get("subject_type") == "promotion_package"
+        and receipt.get("subject_id_sha256") == _sha256_text(package_id)
+        and receipt.get("subject_sha256") == package_digest
+    )
+    chain_complete = bool(
+        chain_state.get("integrity_status") == "verified"
+        and chain_state.get("failures") == []
+        and type(chain_state.get("receipt_count")) is int
+        and chain_state.get("receipt_count") >= 0
+        and chain_state.get("chain_tip") == chain_state.get("observed_chain_tip")
+    )
+    checks = {
+        "package_integrity_verified": _promotion_package_record_verified(package),
+        "decision_present": decision_present,
+        "decision_integrity_verified": _public_receipt_verified(receipt),
+        "decision_approved": receipt.get("decision") == "approved",
+        "subject_binding_matches": subject_binding_matches,
+        "separate_actors": bool(
+            decision_present
+            and receipt.get("proposer_id")
+            and receipt.get("approver_id")
+            and receipt.get("proposer_id") != receipt.get("approver_id")
+        ),
+        "chain_integrity_verified": chain_complete,
+    }
+    authorized = all(checks.values())
+    return {
+        "schema_version": "across-promotion-authorization/1.0",
+        "package_id": package_id,
+        "package_sha256": package_digest,
+        "decision_receipt_id": receipt.get("receipt_id") if decision_present else None,
+        "status": "authorized" if authorized else "not_authorized",
+        "authorized": authorized,
+        "checks": checks,
+    }
+
+
+def _promotion_package_record_verified(package: Mapping[str, Any]) -> bool:
+    document = package.get("document")
+    digest = package.get("package_sha256")
+    package_id = package.get("package_id")
+    if (
+        package.get("integrity_status") != "verified"
+        or not isinstance(document, Mapping)
+        or type(digest) is not str
+        or type(package_id) is not str
+    ):
+        return False
+    try:
+        return package_sha256(document) == digest and package_id == f"promotion-{digest}"
+    except ValueError:
+        return False
+
+
+def _public_receipt_verified(receipt: Mapping[str, Any]) -> bool:
+    if receipt.get("integrity_status") != "verified":
+        return False
+    payload = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"receipt_hash", "integrity_status"}
+    }
+    return _sha256_json(payload) == receipt.get("receipt_hash")
 
 
 def _secret_free_subject(value: Any) -> Any:
