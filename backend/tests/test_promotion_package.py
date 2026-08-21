@@ -317,6 +317,30 @@ def test_builds_deterministic_bounded_package_for_complete_multi_task_evidence()
     assert "private-" not in encoded
     assert "/private/" not in encoded
     assert "raw_receipt" not in encoded
+    forbidden_host_fields = {
+        "workflow_id",
+        "workflow_pack_id",
+        "pack_id",
+        "loop_spec_id",
+        "output_constant",
+    }
+
+    def public_keys(value):
+        if isinstance(value, dict):
+            return set(value).union(*(public_keys(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(public_keys(item) for item in value), set())
+        return set()
+
+    assert public_keys(package).isdisjoint(forbidden_host_fields)
+    assert all(
+        producer_specific_id not in encoded
+        for producer_specific_id in (
+            "repo-quality-copilot",
+            "release-readiness",
+            "world-simulation",
+        )
+    )
 
 
 def test_blocked_check_ids_are_sorted_unique_and_public():

@@ -294,6 +294,7 @@ from .approval.receipts import (
     evaluate_promotion_authorization,
 )
 from .promotion_package import (
+    PROMOTION_PACKAGE_CHECK_IDS,
     PromotionPackageBlocked,
     build_promotion_package,
     build_worker_task_receipt_binding,
@@ -10672,11 +10673,14 @@ _PROMOTION_PLUGIN_IDS = (
 
 
 def _promotion_blocked(exc: PromotionPackageBlocked) -> HTTPException:
+    public_check_ids = sorted(set(exc.check_ids).intersection(PROMOTION_PACKAGE_CHECK_IDS))
+    if not public_check_ids:
+        public_check_ids = ["input_shapes_valid"]
     return HTTPException(
         status_code=409,
         detail={
             "error": "promotion_package_blocked",
-            "failed_checks": list(exc.check_ids),
+            "failed_checks": public_check_ids,
         },
     )
 

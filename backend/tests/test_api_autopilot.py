@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from copy import deepcopy
 from hashlib import sha256
-from dataclasses import fields
+from dataclasses import fields, is_dataclass
 import json
 import sqlite3
 import threading
@@ -20,7 +20,8 @@ from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRe
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import PluginLifecycleError
 from across_agents_assistant.persistence.service import PersistenceService
-from across_agents_assistant.task_history.models import Task
+from across_agents_assistant.task_api_models import AutoTaskRequest, AutoTaskResponse, TaskInfo
+from across_agents_assistant.task_history.models import Task, TaskContract
 
 
 def _promotion_receipt(task_id: str):
@@ -80,7 +81,7 @@ def test_promotion_package_public_contract_stays_generic_stable_and_secret_free(
         "across-context",
         "across-orchestrator",
     }
-    assert promotion_contract._PASSED_CHECK_IDS == (
+    assert promotion_contract.PROMOTION_PACKAGE_CHECK_IDS == (
         "autopilot_evidence_valid",
         "candidate_binding_matches",
         "candidate_review_ready",
@@ -106,23 +107,27 @@ def test_promotion_package_public_contract_stays_generic_stable_and_secret_free(
         "worker_receipt_replay_absent",
     )
 
-    blocked = api_server._promotion_blocked(
-        promotion_contract.PromotionPackageBlocked(
-            ["run_binding_matches", "release_ready", "release_ready"]
-        )
-    )
+    blocked = api_server._promotion_blocked(promotion_contract.PromotionPackageBlocked([
+        "run_binding_matches",
+        "release_ready",
+        "release_ready",
+        "private-value=do-not-echo",
+        "authorization: bearer credential-shaped-value",
+    ]))
     assert blocked.status_code == 409
     assert blocked.detail == {
         "error": "promotion_package_blocked",
         "failed_checks": ["release_ready", "run_binding_matches"],
     }
+    fallback = api_server._promotion_blocked(promotion_contract.PromotionPackageBlocked([
+        "authorization: bearer credential-shaped-value",
+        "private-value=do-not-echo",
+    ]))
+    assert fallback.detail == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["input_shapes_valid"],
+    }
 
-    document = _promotion_api_document()
-    public_contract = json.dumps(
-        {"document": document, "error": blocked.detail},
-        sort_keys=True,
-    ).lower()
-    task_field_names = {field.name for field in fields(Task)}
     workflow_pack_fields = {
         "workflow_id",
         "workflow_pack_id",
@@ -130,8 +135,30 @@ def test_promotion_package_public_contract_stays_generic_stable_and_secret_free(
         "loop_spec_id",
         "output_constant",
     }
-    assert task_field_names.isdisjoint(workflow_pack_fields)
-    assert all(f'"{field_name}"' not in public_contract for field_name in workflow_pack_fields)
+    host_boundary_models = (
+        Task,
+        TaskContract,
+        AutoTaskRequest,
+        AutoTaskResponse,
+        TaskInfo,
+        api_server.WorkerWorkflowJobRequest,
+        api_server.PromotionPackageCreateRequest,
+        api_server.PromotionPackageDecisionRequest,
+    )
+    for model in host_boundary_models:
+        if is_dataclass(model):
+            field_names = {field.name for field in fields(model)}
+            schema_text = json.dumps(sorted(field_names)).lower()
+        else:
+            field_names = set(model.model_fields)
+            schema_text = json.dumps(model.model_json_schema(), sort_keys=True).lower()
+        assert field_names.isdisjoint(workflow_pack_fields), model.__name__
+        assert all(f'"{field_name}"' not in schema_text for field_name in workflow_pack_fields)
+
+    public_contract = json.dumps(
+        {"filtered": blocked.detail, "fallback": fallback.detail},
+        sort_keys=True,
+    ).lower()
     assert all(
         producer_specific_id not in public_contract
         for producer_specific_id in (
@@ -149,6 +176,8 @@ def test_promotion_package_public_contract_stays_generic_stable_and_secret_free(
             "password",
             "private_key",
             "raw_transcript",
+            "credential-shaped-value",
+            "do-not-echo",
         )
     )
 

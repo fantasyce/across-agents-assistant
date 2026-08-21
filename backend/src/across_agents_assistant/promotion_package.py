@@ -38,7 +38,7 @@ _MAX_GRAPH_NODES = 10_000
 _MAX_GRAPH_EDGES = 20_000
 _MAX_TREE_DEPTH = 64
 
-_PASSED_CHECK_IDS = (
+PROMOTION_PACKAGE_CHECK_IDS = (
     "autopilot_evidence_valid",
     "candidate_binding_matches",
     "candidate_review_ready",
@@ -63,6 +63,7 @@ _PASSED_CHECK_IDS = (
     "worker_receipt_binding_valid",
     "worker_receipt_replay_absent",
 )
+_PASSED_CHECK_IDS = PROMOTION_PACKAGE_CHECK_IDS
 
 
 class PromotionPackageBlocked(ValueError):

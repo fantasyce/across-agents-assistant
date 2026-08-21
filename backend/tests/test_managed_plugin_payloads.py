@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import across_agents_assistant.api_server as api_server
 
+from across_agents_assistant.agent_interop_e2e import plugin_provenance_digest
 from across_agents_assistant.managed_plugin_payloads import (
     ManagedPluginPayloadError,
     ensure_node_runtime,
@@ -22,6 +23,7 @@ from across_agents_assistant.managed_plugin_payloads import (
     validate_orchestrator_runtime_compatibility,
 )
 from across_agents_assistant.orchestrator_plugin import OrchestratorPluginInstaller
+from across_agents_assistant.promotion_package import _plugin_components
 from across_agents_assistant.plugin_runtime import (
     inspect_across_plugin,
     run_autopilot_plugin_lifecycle_action,
@@ -110,33 +112,10 @@ def _managed_env(tmp_path: Path, payload_root: Path) -> dict[str, str]:
     }
 
 
-def test_promotion_descriptors_cover_exactly_three_plugins_without_checkout_paths(tmp_path):
-    payload_root = tmp_path / "payloads"
-    plugins = {
-        "across-context": {
-            "version": "0.11.0",
-            "commit": "a" * 40,
-            "runtime": "node",
-            "archive": "packages/across-context-0.11.0.tar.gz",
-            "sha256": "1" * 64,
-        },
-        "across-orchestrator": {
-            "version": "0.10.7",
-            "commit": "b" * 40,
-            "runtime": "native",
-            "executable": "runtimes/orchestrator-0.10.7/across-orchestrator",
-            "sha256": "2" * 64,
-            "source_sha256": "3" * 64,
-        },
-        "across-autopilot": {
-            "version": "0.5.3",
-            "commit": "c" * 40,
-            "runtime": "node",
-            "archive": "packages/across-autopilot-0.5.3.tar.gz",
-            "sha256": "4" * 64,
-        },
-    }
-    manifest_path = _write_payload_manifest(payload_root, plugins)
+def test_candidate_payload_manifest_projects_exactly_three_public_plugin_descriptors(tmp_path):
+    payload_root = Path(__file__).resolve().parents[2] / "build" / "plugin-payloads"
+    manifest_path = payload_root / "manifest.json"
+    assert manifest_path.is_file(), "candidate plugin payload manifest must be prepared before acceptance"
     env = _managed_env(tmp_path, payload_root)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -146,20 +125,86 @@ def test_promotion_descriptors_cover_exactly_three_plugins_without_checkout_path
         "across-autopilot",
     }
     assert set(manifest["plugins"]) == expected_ids
+    manifest_projection = json.dumps(manifest["plugins"], sort_keys=True)
+    assert "/Users/" not in manifest_projection
+    assert "checkout" not in manifest_projection.lower()
+    assert "source_root" not in manifest_projection
+    assert all(
+        not str(value).startswith("/")
+        for descriptor in manifest["plugins"].values()
+        for value in descriptor.values()
+    )
 
     descriptors = {
         plugin_id: plugin_payload(plugin_id, env)
         for plugin_id in expected_ids
     }
     assert all(descriptor is not None for descriptor in descriptors.values())
-    assert {plugin_id for plugin_id, descriptor in descriptors.items() if descriptor} == expected_ids
-    for descriptor in descriptors.values():
-        public_descriptor = {key: value for key, value in descriptor.items() if key != "payload_root"}
-        serialized = json.dumps(public_descriptor, sort_keys=True)
-        assert "source_root" not in public_descriptor
-        assert "checkout" not in serialized.lower()
-        assert "/Users/" not in serialized
-        assert "../" not in serialized
+    rows = [
+        {
+            "plugin_id": plugin_id,
+            "version": descriptor["version"],
+            "status": "installed",
+            "installed": True,
+            "available": True,
+            "integrity_ok": True,
+        }
+        for plugin_id, descriptor in descriptors.items()
+    ]
+    compatibility_plugins = {
+        row["plugin_id"]: {
+            "status": "compatible",
+            "version": row["version"],
+            "provenance_digest": plugin_provenance_digest(
+                row,
+                descriptors[row["plugin_id"]],
+            ),
+            "tool_count": 1,
+            "tool_set_digest": "a" * 64,
+        }
+        for row in rows
+    }
+    compatibility_report = {
+        "schema_version": "across-first-party-mcp-compatibility/1.0",
+        "status": "compatible",
+        "compatible_plugin_count": 3,
+        "incompatible_plugin_count": 0,
+        "portable_tool_count": 3,
+        "plugins": compatibility_plugins,
+    }
+    failed: set[str] = set()
+    identities, compatibility = _plugin_components(
+        rows,
+        plugin_descriptors=descriptors,
+        compatibility_report=compatibility_report,
+        failed=failed,
+    )
+
+    assert failed == set()
+    assert {item["plugin_id"] for item in identities} == expected_ids
+    assert {item["plugin_id"] for item in compatibility["plugins"]} == expected_ids
+    public_projection = json.dumps(
+        {"identities": identities, "compatibility": compatibility},
+        sort_keys=True,
+    )
+    assert str(payload_root) not in public_projection
+    assert "payload_root" not in public_projection
+    assert "source_kind" not in public_projection
+    assert "checkout" not in public_projection.lower()
+
+    missing = dict(descriptors)
+    missing.pop("across-context")
+    extra = {**descriptors, "producer-private-plugin": descriptors["across-context"]}
+    for invalid_descriptors in (missing, extra):
+        failed = set()
+        invalid_identities, _ = _plugin_components(
+            rows,
+            plugin_descriptors=invalid_descriptors,
+            compatibility_report=compatibility_report,
+            failed=failed,
+        )
+        assert invalid_identities == []
+        assert failed == {"plugin_set_complete"}
 
 
 def test_managed_payload_installs_verified_node_runtime_and_extracts_package(tmp_path):
