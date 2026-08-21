@@ -6,6 +6,7 @@ import threading
 import time
 from pathlib import Path
 
+import across_agents_assistant.agent_interop_e2e as interop
 from across_agents_assistant.agent_interop_e2e import (
     AgentInteropE2ERunCoordinator,
     _probe_installed_plugin_compatibility,
@@ -13,6 +14,27 @@ from across_agents_assistant.agent_interop_e2e import (
     plugin_provenance_digest,
     public_agent_interop_e2e_result,
 )
+
+
+def test_source_only_interop_defers_installed_compatibility_to_packaged_acceptance(monkeypatch):
+    monkeypatch.setattr(interop, "plugin_payload", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        interop,
+        "discover_across_plugins",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("source-only probe must not inspect installed plugins")),
+    )
+
+    result = interop._probe_current_installed_plugin_compatibility({})
+
+    assert result == {
+        "schema_version": "across-first-party-mcp-compatibility/1.0",
+        "status": "not_run",
+        "reason": "packaged_payload_provenance_unavailable",
+        "compatible_plugin_count": 0,
+        "incompatible_plugin_count": 0,
+        "portable_tool_count": 0,
+        "plugins": {},
+    }
 
 
 def test_agent_interop_run_coordinator_returns_immediately_and_deduplicates_active_run():

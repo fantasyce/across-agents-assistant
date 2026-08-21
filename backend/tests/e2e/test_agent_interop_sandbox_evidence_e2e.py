@@ -127,6 +127,8 @@ def test_agent_interop_sandbox_evidence_e2e(tmp_path, monkeypatch):
     assert payload["mcp"]["across-orchestrator"]["required_tool_present"] is True
     assert payload["mcp"]["across-autopilot"]["required_tool_present"] is True
     check_statuses = {item["id"]: item["status"] for item in payload["checks"]}
+    assert check_statuses["installed_plugin_schema_compatibility"] == "not_run"
+    assert payload["summary"]["schema_compatibility_status"] == "not_run"
     for required in [
         "workflow_pack_export",
         "host_targets_complete",
