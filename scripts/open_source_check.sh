@@ -22,6 +22,7 @@ SENSITIVE_PATTERN='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|(^|[^A-Za-z0-9])[A-Z0-9
 if command -v rg >/dev/null 2>&1; then
   sensitive_hits="$(
     rg -n --hidden \
+      --glob '!.git' \
       --glob '!.git/**' \
       --glob '!backend/.venv/**' \
       --glob '!docs/**' \

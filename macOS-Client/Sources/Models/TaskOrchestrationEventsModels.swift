@@ -140,6 +140,9 @@ struct TaskOrchestrationTaskStatusUpdate: Codable {
     let waves: [TaskOrchestrationWaveDetail]
     let ownerSessionId: String?
     let lastOwnerDecision: TaskOrchestrationOwnerDecisionSummary?
+    let qualityHealth: TaskOrchestrationQualityHealth?
+    let deliveryReport: TaskOrchestrationDeliveryReport?
+    let remoteExecution: TaskOrchestrationRemoteExecution?
 
     enum CodingKeys: String, CodingKey {
         case taskId = "task_id"
@@ -151,6 +154,22 @@ struct TaskOrchestrationTaskStatusUpdate: Codable {
         case waves
         case ownerSessionId = "owner_session_id"
         case lastOwnerDecision = "last_owner_decision"
+        case qualityHealth = "quality_health"
+        case deliveryReport = "delivery_report"
+        case remoteExecution = "remote_execution"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(taskId, forKey: .taskId)
+        try container.encode(status, forKey: .status)
+        try container.encode(progress, forKey: .progress)
+        try container.encode(completedCount, forKey: .completedCount)
+        try container.encode(totalCount, forKey: .totalCount)
+        try container.encode(subtasks, forKey: .subtasks)
+        try container.encode(waves, forKey: .waves)
+        try container.encodeIfPresent(ownerSessionId, forKey: .ownerSessionId)
+        try container.encodeIfPresent(lastOwnerDecision, forKey: .lastOwnerDecision)
     }
 }
 

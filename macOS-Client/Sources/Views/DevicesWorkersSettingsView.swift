@@ -162,10 +162,10 @@ struct DevicesWorkersSettingsView: View {
         ) {
             MinimalSettingsRow(
                 title: node.displayName,
-                detail: [stateText(node.state), platformText(node), transportText(node)].filter { !$0.isEmpty }.joined(separator: " · ")
+                detail: [stateText(node.presentationState), platformText(node), transportText(node)].filter { !$0.isEmpty }.joined(separator: " · ")
             ) {
                 Circle()
-                    .fill(stateColor(node.state))
+                    .fill(stateColor(node.presentationState))
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
             } trailing: {
@@ -337,7 +337,11 @@ struct DevicesWorkersSettingsView: View {
 
     private var nodeSummary: String {
         guard let health = viewModel.snapshot?.health else { return preferences.text("workers.nodes.subtitle") }
-        return "\(health.onlineCount) \(preferences.text("workers.online")) · \(health.nodeCount) \(preferences.text("workers.total"))"
+        let reconnectingCount = viewModel.snapshot?.nodes.filter { $0.presentationState == "reconnecting" }.count ?? 0
+        let reconnecting = reconnectingCount > 0
+            ? " · \(reconnectingCount) \(preferences.text("workers.reconnecting"))"
+            : ""
+        return "\(health.onlineCount) \(preferences.text("workers.online"))\(reconnecting) · \(health.nodeCount) \(preferences.text("workers.total"))"
     }
 
     private var hasConnectionPath: Bool {
@@ -433,7 +437,7 @@ struct DevicesWorkersSettingsView: View {
     private func stateColor(_ value: String) -> Color {
         switch value {
         case "online_idle", "online_busy": return .green
-        case "draining", "degraded": return .orange
+        case "draining", "degraded", "reconnecting": return .orange
         case "revoked", "incompatible": return .red
         default: return .secondary
         }

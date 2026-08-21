@@ -594,7 +594,7 @@ func testAgentLoopEventURLsCarryResumeCursor() throws {
 }
 
 func testOneClickPluginActionVerification() throws {
-    func decodePlugin(installed: Bool, available: Bool) throws -> AcrossPluginStatus {
+    func decodePlugin(installed: Bool, available: Bool, integrityOkay: Bool = true, probe: Bool = true) throws -> AcrossPluginStatus {
         let data = Data("""
         {
           "plugin_id": "across-context",
@@ -604,7 +604,8 @@ func testOneClickPluginActionVerification() throws {
           "status": "\(installed ? "installed" : "not_installed")",
           "installed": \(installed),
           "available": \(available),
-          "probe": true,
+          "integrity_ok": \(integrityOkay),
+          "probe": \(probe),
           "manifest_exists": \(installed),
           "manifest_path": "/tmp/manifest.json",
           "command": "/tmp/across-context",
@@ -626,10 +627,14 @@ func testOneClickPluginActionVerification() throws {
 
     let ready = try decodePlugin(installed: true, available: true)
     let missing = try decodePlugin(installed: false, available: false)
+    let needsRepair = try decodePlugin(installed: true, available: true, integrityOkay: false)
+    let unprobed = try decodePlugin(installed: true, available: true, probe: false)
 
     assert(PluginLifecycleViewModel.normalizedPluginAction("refresh") == "probe", "Refresh should normalize to the probe action")
     assert(PluginLifecycleViewModel.actionReachedExpectedState("install", plugin: ready), "Install should succeed only when the plugin is ready")
     assert(!PluginLifecycleViewModel.actionReachedExpectedState("install", plugin: missing), "Install must not report success while the plugin is missing")
+    assert(!PluginLifecycleViewModel.actionReachedExpectedState("repair", plugin: needsRepair), "Repair must not report success before integrity verification passes")
+    assert(!PluginLifecycleViewModel.actionReachedExpectedState("upgrade", plugin: unprobed), "Upgrade must not report success before the live probe passes")
     assert(PluginLifecycleViewModel.actionReachedExpectedState("uninstall", plugin: missing), "Uninstall should succeed when the runtime is absent")
 
     let beforeInstall = AcrossProductCapabilityRegistry.snapshot(

@@ -603,6 +603,71 @@ def test_completed_external_task_acceptance_is_persistent_and_idempotent(monkeyp
     assert summary["review_status"] == "accepted"
 
 
+def test_partial_external_task_can_be_rejected_but_not_accepted(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    persistence = TaskPersistenceService(Database(str(tmp_path / "reviews.db")))
+    persistence.db.init_schema()
+    monkeypatch.setattr(api_server._task_state, "_persistence", persistence)
+    monkeypatch.setattr(api_server, "_task_persistence_initialized", True)
+    monkeypatch.setattr(api_server, "_is_external_orchestrator_task", lambda task_id: task_id == "task-partial")
+
+    class FakePlugin:
+        def get_task(self, task_id):
+            return {"task_id": task_id, "description": "Partial remote result", "status": "completed"}
+
+        def get_evidence_bundle(self, task_id):
+            return {}
+
+    async def projected_task(task_payload, *, evidence=None):
+        return {
+            "task_id": task_payload["task_id"],
+            "description": task_payload["description"],
+            "status": "completed_with_failures",
+            "external_task": True,
+            "task_types": ["artifact"],
+            "delivery_mode": "composite",
+            "owner_agent": "worker",
+            "allowed_subtask_agents": [],
+            "subtasks": [],
+            "waves": [],
+            "artifacts": [{"id": "report", "name": "report.md", "status": "verified"}],
+            "artifact_versions": {"report.md": 1},
+            "acceptance_records": [],
+            "progress": 1,
+            "completed_count": 0,
+            "total_count": 0,
+            "created_at": 1.0,
+            "updated_at": 2.0,
+            "quality_health": {"quality_gate": "partial", "delivery_quality": "partial"},
+            "delivery_report": {
+                "quality_gate": "partial",
+                "final_status": "completed_with_failures",
+                "quality_score": 60,
+                "failed_constraints": ["worker_model_degraded"],
+                "quality_report": {"can_complete": False, "final_quality_score": 60},
+            },
+            "remote_execution": {"job_id": "job-partial", "run_id": "run-partial", "status": "completed", "attempt": 1, "terminal": True, "phases": []},
+        }
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakePlugin())
+    monkeypatch.setattr(api_server, "_external_task_info_with_worker", projected_task)
+    client = TestClient(app)
+
+    accepted = client.post("/api/tasks/task-partial/accept")
+    rejected = client.post("/api/tasks/task-partial/reject")
+    rejected_again = client.post("/api/tasks/task-partial/reject")
+    accepted_after_reject = client.post("/api/tasks/task-partial/accept")
+    detail = client.get("/api/tasks/task-partial").json()
+
+    assert accepted.status_code == 409
+    assert rejected.status_code == 200
+    assert rejected.json()["review_status"] == "rejected"
+    assert rejected.json()["accepted_at"] is None
+    assert rejected_again.json()["review_status"] == "rejected"
+    assert accepted_after_reject.status_code == 409
+    assert detail["review_status"] == "rejected"
+
+
 def test_external_orchestrator_tasks_allow_host_cancel_but_reject_pause_and_resume(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
@@ -895,7 +960,7 @@ def test_auto_task_submission_uses_external_orchestrator_plugin(monkeypatch, tmp
     assert ("POST", "/tasks") in server.requests
     assert server.last_submit["goal"] == "Build the public README task handoff"
     assert server.last_submit["agent"] == "openclaw"
-    assert server.last_submit["deliverables"] == ["README.md"]
+    assert server.last_submit["deliverables"] == ["across-results/task-report.md"]
 
 
 def test_release_e2e_builtin_mode_still_requires_orchestrator_plugin(monkeypatch, tmp_path):
@@ -947,7 +1012,12 @@ def test_orchestrator_plugin_status_endpoint_reports_installable_runtime(monkeyp
     assert body["install"]["install_dir"] == str(tmp_path / "plugins" / "across-orchestrator")
 
 
-def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
+def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    wrapper = across_home / "bin" / "across-orchestrator"
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
+
     class FakeManager:
         def __init__(self):
             self.install_called = False
@@ -967,6 +1037,7 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
             return {
                 "status": "installed" if self.install_called else "not_installed",
                 "installed": self.install_called,
+                "integrity_ok": True,
                 "installable": True,
                 "command": "/tmp/across-orchestrator",
                 "install_dir": "/tmp/across-orchestrator-plugin",
@@ -975,10 +1046,25 @@ def test_orchestrator_plugin_install_endpoint_triggers_installer(monkeypatch):
 
         def install_plugin(self):
             self.install_called = True
+            plugin_dir.mkdir(parents=True)
+            wrapper.parent.mkdir(parents=True)
+            (plugin_dir / "runtime.txt").write_text("installed\n", encoding="utf-8")
+            wrapper.write_text("wrapper\n", encoding="utf-8")
             return self.install_status()
+
+        def reset_runtime_connection(self):
+            return None
+
+    class FakeWorkerRuntime:
+        def shutdown(self):
+            return None
+
+        def reconcile(self):
+            return {"status": "running", "listener_pid": 42}
 
     fake = FakeManager()
     monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: fake)
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: FakeWorkerRuntime())
 
     response = TestClient(app).post("/api/orchestrator/plugin/install")
 

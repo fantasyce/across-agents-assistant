@@ -13,6 +13,13 @@ trap cleanup EXIT
 echo "== FrontendDesignAudit =="
 python3 scripts/audit_frontend_design.py
 
+echo "== ExecutionTrajectoryBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/ExecutionTrajectoryBehavior.swift \
+  macOS-Client/Sources/Models/ExecutionTrajectoryModels.swift \
+  -o "$TMP_DIR/ExecutionTrajectoryBehavior"
+"$TMP_DIR/ExecutionTrajectoryBehavior"
+
 echo "== AppPreferencesBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/AppPreferencesBehavior.swift \

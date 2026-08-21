@@ -26,19 +26,40 @@ struct AcrossTaskResultOverview: View {
         AcrossVisualResultOverview(
             contract: AcrossVisualResultFactory.make(task: task),
             preferences: preferences,
-            primaryActionTitle: decision.canAccept && allowsAcceptance
-                ? preferences.text("tasks.review.accept")
-                : nil,
-            isPrimaryActionDisabled: viewModel.isAcceptingTask,
-            isPrimaryActionLoading: viewModel.isAcceptingTask,
-            onPrimaryAction: decision.canAccept && allowsAcceptance ? {
-                viewModel.acceptTaskResult(task.taskId) {}
-            } : nil,
+            primaryActionTitle: primaryActionTitle(decision),
+            primaryActionSystemImage: primaryActionSystemImage(decision),
+            isPrimaryActionDisabled: viewModel.isAcceptingTask || viewModel.isRejectingTask,
+            isPrimaryActionLoading: viewModel.isAcceptingTask || viewModel.isRejectingTask,
+            onPrimaryAction: primaryAction(decision),
             secondaryActionTitle: decision.canInspectEvidence
                 ? preferences.text("tasks.evidence.view")
                 : nil,
             onSecondaryAction: decision.canInspectEvidence ? onOpenEvidence : nil
         )
+    }
+
+    private func primaryActionTitle(_ decision: AcrossTaskResultDecision) -> String? {
+        if decision.canAccept && allowsAcceptance {
+            return preferences.text("tasks.review.accept")
+        }
+        if decision.canReject && allowsAcceptance {
+            return preferences.text("tasks.review.reject")
+        }
+        return nil
+    }
+
+    private func primaryActionSystemImage(_ decision: AcrossTaskResultDecision) -> String {
+        decision.canReject ? "xmark" : "checkmark"
+    }
+
+    private func primaryAction(_ decision: AcrossTaskResultDecision) -> (() -> Void)? {
+        if decision.canAccept && allowsAcceptance {
+            return { viewModel.acceptTaskResult(task.taskId) {} }
+        }
+        if decision.canReject && allowsAcceptance {
+            return { viewModel.rejectTaskResult(task.taskId) {} }
+        }
+        return nil
     }
 }
 

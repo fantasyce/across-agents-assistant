@@ -110,6 +110,7 @@ run_gate \
 run_gate orchestrator_check "$ORCHESTRATOR_ROOT" "bash scripts/check.sh"
 run_gate context_check "$CONTEXT_ROOT" "bash scripts/check.sh"
 run_gate autopilot_check "$AUTOPILOT_ROOT" "bash scripts/check.sh && npm audit --audit-level=high"
+run_gate plugin_boundary_contracts "$ROOT_DIR" "bash scripts/run_plugin_boundary_checks.sh"
 run_gate growth_asset_regeneration "$ROOT_DIR" "uv run --with pillow python scripts/prepare_growth_asset_atlases.py"
 run_gate aaa_local_gates "$ROOT_DIR" "bash scripts/run_pre_release_local_gates.sh"
 run_gate fresh_profile_plugin_no_key_e2e "$ROOT_DIR" "bash scripts/run_fresh_profile_plugin_no_key_e2e.sh"
@@ -126,6 +127,7 @@ if [[ "$INCLUDE_PACKAGED_APP" == "1" ]]; then
     "$ROOT_DIR" \
     "ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT='$ORCHESTRATOR_ROOT' ACROSS_BUILD_CONTEXT_SOURCE_ROOT='$CONTEXT_ROOT' ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT='$AUTOPILOT_ROOT' bash scripts/build_and_run.sh"
   run_gate packaged_app_runtime "$ROOT_DIR" "bash scripts/verify_packaged_vnext_runtime.sh"
+  run_gate packaged_app_cross_plugin_e2e "$ROOT_DIR" "bash scripts/run_packaged_app_cross_plugin_e2e.sh"
 fi
 
 SUMMARY_GENERATION_EXIT=0

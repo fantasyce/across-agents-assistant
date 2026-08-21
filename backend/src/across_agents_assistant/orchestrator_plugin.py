@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import atexit
+import functools
 import hashlib
 import json
 import logging
@@ -21,6 +22,7 @@ import urllib.request
 import uuid
 
 from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .plugin_runtime import managed_plugin_lifecycle_guard, managed_plugin_runtime_guard
 from .managed_plugin_payloads import (
     ManagedPluginPayloadError,
     bundled_install_source,
@@ -53,13 +55,30 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.5"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.8"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
-_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 60.0
+# The self-contained runtime is a PyInstaller executable.  A first launch can
+# take longer on macOS while Gatekeeper and the page cache inspect it, and it
+# previously crossed the 60-second boundary when Worker helpers started at the
+# same time.  The host now serializes the sidecar warm-up before Worker
+# reconciliation; this larger hard ceiling prevents a healthy cold start from
+# being reported as a permanent plugin failure.
+_BUNDLED_ORCHESTRATOR_COLD_START_TIMEOUT_SECONDS = 120.0
 ORCHESTRATOR_INSTALL_FAILED_PUBLIC_MESSAGE = (
     "Across Orchestrator plugin installation failed. See local backend logs for details."
 )
 ORCHESTRATOR_RUNTIME_UNAVAILABLE_PUBLIC_MESSAGE = "External Across Orchestrator runtime is unavailable."
+
+
+def _orchestrator_runtime_operation(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Keep discovery, transport selection, and dispatch in one runtime epoch."""
+
+    @functools.wraps(method)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return method(*args, **kwargs)
+
+    return guarded
 
 
 class OrchestratorPluginError(RuntimeError):
@@ -905,6 +924,10 @@ class OrchestratorPluginManager:
         atexit.register(self.shutdown)
 
     def implementation_status(self, *, probe: bool = True) -> Dict[str, Any]:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._implementation_status_unlocked(probe=probe)
+
+    def _implementation_status_unlocked(self, *, probe: bool = True) -> Dict[str, Any]:
         mode = self.config.normalized_mode()
         install_status = self.install_status()
         managed_runtime_blocked = self._managed_runtime_integrity_blocks_external(install_status)
@@ -1074,19 +1097,26 @@ class OrchestratorPluginManager:
         return timeout
 
     def install_plugin(self) -> Dict[str, Any]:
-        status = self.installer.install()
-        self._transport = None
-        self._endpoint = None
-        self._sidecar_retry_after = 0.0
-        return status
+        with managed_plugin_lifecycle_guard(ORCHESTRATOR_PLUGIN_ID):
+            with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+                status = self.installer.install()
+                self.reset_runtime_connection()
+                return status
+
+    def reset_runtime_connection(self) -> None:
+        """Stop the managed sidecar and discard cached transport state."""
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            self.shutdown()
+            self._transport = None
+            self._endpoint = None
+            self._sidecar_retry_after = 0.0
 
     def uninstall_plugin(self) -> Dict[str, Any]:
-        self.shutdown()
-        status = self.installer.uninstall()
-        self._transport = None
-        self._endpoint = None
-        self._sidecar_retry_after = 0.0
-        return status
+        with managed_plugin_lifecycle_guard(ORCHESTRATOR_PLUGIN_ID):
+            with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+                self.reset_runtime_connection()
+                status = self.installer.uninstall()
+                return status
 
     def should_use_external(self) -> bool:
         status = self.implementation_status(probe=True)
@@ -1095,6 +1125,7 @@ class OrchestratorPluginManager:
     def is_external_task(self, task_id: str) -> bool:
         return self.index.contains(task_id)
 
+    @_orchestrator_runtime_operation
     def submit_task(
         self,
         *,
@@ -1109,7 +1140,7 @@ class OrchestratorPluginManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
-        deliverables = deliverables or ["README.md"]
+        deliverables = deliverables or ["across-results/task-report.md"]
         agent = agent or "demo"
         payload = _protocol_build_external_task_submission_payload(
             goal=goal,
@@ -1126,7 +1157,7 @@ class OrchestratorPluginManager:
             task = self._http_post("/tasks", payload)
         else:
             args = ["submit", goal, "--project", project_dir, "--agent", agent]
-            for deliverable in deliverables or ["README.md"]:
+            for deliverable in deliverables or ["across-results/task-report.md"]:
                 args.extend(["--deliverable", deliverable])
             for task_type in payload.get("taskTypes", []):
                 args.extend(["--task-type", task_type])
@@ -1159,6 +1190,7 @@ class OrchestratorPluginManager:
             self.start_task_async(str(task.get("task_id") or ""))
         return task
 
+    @_orchestrator_runtime_operation
     def submit_release_e2e_task(
         self,
         *,
@@ -1188,6 +1220,7 @@ class OrchestratorPluginManager:
             self.start_task_async(str(task.get("task_id") or ""))
         return task
 
+    @_orchestrator_runtime_operation
     def cancel_task(self, task_id: str, *, reason: str = "cancelled_by_user") -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
@@ -1211,6 +1244,7 @@ class OrchestratorPluginManager:
 
         threading.Thread(target=_run, name=f"across-orchestrator-run-{task_id}", daemon=True).start()
 
+    @_orchestrator_runtime_operation
     def run_task(self, task_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
@@ -1220,6 +1254,7 @@ class OrchestratorPluginManager:
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         return task
 
+    @_orchestrator_runtime_operation
     def get_task(self, task_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
@@ -1229,6 +1264,7 @@ class OrchestratorPluginManager:
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         return task
 
+    @_orchestrator_runtime_operation
     def get_events(self, task_id: str) -> List[Dict[str, Any]]:
         self._ensure_external()
         if self._transport == "http":
@@ -1237,22 +1273,26 @@ class OrchestratorPluginManager:
             events = self._cli_json(["events", task_id, "--json"])
         return events if isinstance(events, list) else []
 
+    @_orchestrator_runtime_operation
     def get_evidence_bundle(self, task_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_get(f"/tasks/{task_id}/evidence-bundle")
         return self._cli_json(["evidence", task_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def build_execution_policy_contract(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._transport == "http":
             return self._http_post("/contracts/execution-policy", payload)
         return self._cli_json(["execution-policy", "--payload-json", json.dumps(payload), "--json"])
 
+    @_orchestrator_runtime_operation
     def compare_run_snapshots(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._transport == "http":
             return self._http_post("/runs/compare", payload)
         return self._cli_json(["run-compare", "--payload-json", json.dumps(payload), "--json"])
 
+    @_orchestrator_runtime_operation
     def build_replay_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._transport == "http":
             return self._http_post("/runs/replay-plan", payload)
@@ -1262,6 +1302,7 @@ class OrchestratorPluginManager:
         evidence = self.get_evidence_bundle(task_id)
         return build_external_quality_benchmark(evidence, benchmark_id=f"external-{task_id}-quality")
 
+    @_orchestrator_runtime_operation
     def start_agent_loop(
         self,
         *,
@@ -1309,18 +1350,21 @@ class OrchestratorPluginManager:
         args.append("--json")
         return self._cli_json(args)
 
+    @_orchestrator_runtime_operation
     def run_agent_loop(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_post(f"/loops/{loop_id}/run", {})
         return self._cli_json(["loop-run", loop_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def approve_agent_loop_action(self, loop_id: str, action_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_post(f"/loops/{loop_id}/actions/{action_id}/approve", {})
         return self._cli_json(["loop-approve", loop_id, action_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def reject_agent_loop_action(self, loop_id: str, action_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
@@ -1332,6 +1376,7 @@ class OrchestratorPluginManager:
         args.append("--json")
         return self._cli_json(args)
 
+    @_orchestrator_runtime_operation
     def cancel_agent_loop(self, loop_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
@@ -1343,36 +1388,42 @@ class OrchestratorPluginManager:
         args.append("--json")
         return self._cli_json(args)
 
+    @_orchestrator_runtime_operation
     def retry_agent_loop_step(self, loop_id: str, step_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_post(f"/loops/{loop_id}/steps/{step_id}/retry", {})
         return self._cli_json(["loop-retry", loop_id, step_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def get_agent_loop(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_get(f"/loops/{loop_id}")
         return self._cli_json(["loop-status", loop_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def get_agent_loop_health(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_get(f"/loops/{loop_id}/health")
         return self._cli_json(["loop-health", loop_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def get_agent_loop_evidence_summary(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_get(f"/loops/{loop_id}/evidence-summary")
         return self._cli_json(["loop-evidence-summary", loop_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def get_agent_loop_telemetry(self, loop_id: str) -> Dict[str, Any]:
         self._ensure_external()
         if self._transport == "http":
             return self._http_get(f"/loops/{loop_id}/telemetry")
         return self._cli_json(["loop-telemetry", loop_id, "--json"])
 
+    @_orchestrator_runtime_operation
     def get_agent_loop_events(self, loop_id: str, after_sequence: Optional[int] = None) -> List[Dict[str, Any]]:
         self._ensure_external()
         path = f"/loops/{loop_id}/events"
@@ -1387,6 +1438,7 @@ class OrchestratorPluginManager:
             events = self._cli_json(args)
         return events if isinstance(events, list) else []
 
+    @_orchestrator_runtime_operation
     def get_agent_loop_events_stream(
         self,
         loop_id: str,
@@ -1661,6 +1713,10 @@ class OrchestratorPluginManager:
         return endpoint
 
     def _http_get(self, path: str) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_get_unlocked(path)
+
+    def _http_get_unlocked(self, path: str) -> Any:
         endpoint = self._resolved_endpoint()
         request = urllib.request.Request(
             endpoint + path,
@@ -1676,6 +1732,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_get_text(self, path: str, *, accept: str = "text/plain") -> str:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_get_text_unlocked(path, accept=accept)
+
+    def _http_get_text_unlocked(self, path: str, *, accept: str = "text/plain") -> str:
         endpoint = self._resolved_endpoint()
         request = urllib.request.Request(
             endpoint + path,
@@ -1691,6 +1751,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _http_post(self, path: str, payload: Dict[str, Any]) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._http_post_unlocked(path, payload)
+
+    def _http_post_unlocked(self, path: str, payload: Dict[str, Any]) -> Any:
         endpoint = self._resolved_endpoint()
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -1708,6 +1772,10 @@ class OrchestratorPluginManager:
             raise OrchestratorPluginHTTPError(exc.code, detail) from exc
 
     def _cli_json(self, args: List[str]) -> Any:
+        with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+            return self._cli_json_unlocked(args)
+
+    def _cli_json_unlocked(self, args: List[str]) -> Any:
         command = self._resolve_command()
         if not command:
             raise OrchestratorPluginUnavailable("across-orchestrator command is not installed or executable.")

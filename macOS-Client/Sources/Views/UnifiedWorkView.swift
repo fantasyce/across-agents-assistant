@@ -8,6 +8,7 @@ struct UnifiedWorkEmptyState: View {
     let isBeginnerMissionAvailable: Bool
     @ObservedObject var beginnerMission: BeginnerMissionViewModel
     let beginnerGoal: String
+    let submissionErrorMessage: String?
     @ObservedObject var preferences: AppPreferences
     let onChooseProject: () -> Void
     let onRunBeginnerMission: (String) -> Void
@@ -76,6 +77,13 @@ struct UnifiedWorkEmptyState: View {
                 }
             } else {
                 beginnerMissionCard
+            }
+
+            if let submissionErrorMessage, !submissionErrorMessage.isEmpty {
+                MinimalNoticeBar(
+                    message: localizedSubmissionError(submissionErrorMessage),
+                    status: "attention"
+                )
             }
 
             if !recentTasks.isEmpty {
@@ -216,6 +224,17 @@ struct UnifiedWorkEmptyState: View {
 
     private var normalizedBeginnerGoal: String? {
         BeginnerMissionViewModel.normalizedGoal(beginnerGoal)
+    }
+
+    private func localizedSubmissionError(_ value: String) -> String {
+        switch value {
+        case "compatible_worker_workflow_required":
+            return preferences.text("work.submit.remoteWorkflowRequired")
+        case "External Across Orchestrator runtime is unavailable.":
+            return preferences.text("work.submit.orchestratorUnavailable")
+        default:
+            return value
+        }
     }
 }
 
@@ -393,6 +412,21 @@ struct UnifiedDeliveryView: View {
                 },
                 onOpenExport: {
                     if let url = taskViewModel.exportedEvidenceBundleURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                },
+                trajectory: taskViewModel.selectedExecutionTrajectory,
+                isLoadingTrajectory: taskViewModel.isLoadingExecutionTrajectory,
+                trajectoryErrorMessage: taskViewModel.executionTrajectoryError,
+                exportedTrajectoryURL: taskViewModel.exportedExecutionTrajectoryURL,
+                onLoadNextTrajectory: {
+                    taskViewModel.loadNextTaskExecutionTrajectoryPage(bundle.taskId)
+                },
+                onExportTrajectory: {
+                    taskViewModel.exportTaskExecutionTrajectory(bundle.taskId)
+                },
+                onOpenTrajectoryExport: {
+                    if let url = taskViewModel.exportedExecutionTrajectoryURL {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                 }

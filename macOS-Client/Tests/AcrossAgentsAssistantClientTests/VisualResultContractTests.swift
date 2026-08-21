@@ -151,6 +151,41 @@ struct VisualResultContractTests {
         #expect(result.attentionStack.first(where: { $0.id == "review" })?.priority == .inspectSoon)
     }
 
+    @Test func partialWorkerDeliveryCannotBeAcceptedAndCanBeRejected() throws {
+        let task = try decodeTask("""
+        {
+          "task_id": "task-worker-partial",
+          "description": "Review degraded worker result",
+          "status": "completed_with_failures",
+          "subtasks": [],
+          "waves": [],
+          "artifacts": [{
+            "id": "report",
+            "file_name": "report.md",
+            "file_path": "report.md",
+            "file_size": "1 KB",
+            "status": "verified"
+          }],
+          "review_status": "pending",
+          "quality_health": {"delivery_quality": "partial", "quality_gate": "partial"},
+          "delivery_report": {
+            "quality_gate": "partial",
+            "final_status": "completed_with_failures",
+            "failed_constraints": ["worker_model_degraded"],
+            "quality_report": {"can_complete": false, "final_quality_score": 60}
+          }
+        }
+        """)
+
+        let result = AcrossVisualResultFactory.make(task: task)
+        let decision = AcrossTaskResultDecision(task: task)
+
+        #expect(result.verdict == .needsReview)
+        #expect(!decision.canAccept)
+        #expect(decision.canReject)
+        #expect(decision.canInspectEvidence)
+    }
+
     @Test func acceptedResultNeverReturnsToAwaitingConfirmationWhenAuxiliaryProofIsPartial() throws {
         let task = try decodeTask("""
         {

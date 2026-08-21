@@ -476,7 +476,16 @@ struct AutopilotWorkbenchView: View {
         LazyVGrid(columns: summaryColumns, spacing: 10) {
             summaryTile(appPreferences.text("workbench.status"), value: localizedWorkbenchStatus(snapshot), systemName: statusIcon(snapshot.status), color: statusColor(snapshot.status))
             summaryTile(appPreferences.text("workbench.runs"), value: "\(snapshot.summary.completedRunCount)/\(snapshot.summary.runCount)", systemName: "checklist", color: statusColor(snapshot.summary.failedRunCount > 0 ? "attention" : "passed"))
-            summaryTile(appPreferences.text("workbench.triggers"), value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)", systemName: "timer", color: statusColor(snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"))
+            summaryTile(
+                appPreferences.text("workbench.triggers"),
+                value: "\(snapshot.summary.activeTriggerCount)/\(snapshot.summary.registeredTriggerCount)",
+                systemName: snapshot.summary.claimedTriggerCount > 0 || snapshot.summary.schedulerTickInProgress ? "arrow.triangle.2.circlepath" : "timer",
+                color: statusColor(
+                    snapshot.summary.claimedTriggerCount > 0 || snapshot.summary.schedulerTickInProgress
+                        ? "active"
+                        : snapshot.summary.pendingTriggerCount > 0 ? "attention" : "passed"
+                )
+            )
             summaryTile(appPreferences.text("workbench.capabilities"), value: "\(snapshot.summary.capabilityReadyCount)", systemName: "sparkles.rectangle.stack", color: statusColor(snapshot.summary.registryHealthStatus))
             summaryTile(appPreferences.text("workbench.memory"), value: "\(snapshot.summary.pendingMemoryCount)", systemName: "brain", color: statusColor(snapshot.summary.pendingMemoryCount > 0 ? "attention" : "passed"))
             summaryTile(
@@ -679,12 +688,12 @@ struct AutopilotWorkbenchView: View {
                             .foregroundColor(.secondary)
                             .frame(width: section.id == "agent_interop_e2e" ? 126 : 104, alignment: .leading)
                             .lineLimit(1)
-                        Text(pair.value.description)
+                        Text(displayValue(pair.value, for: pair.key))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(textColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .help(pair.value.description)
+                            .help(displayValue(pair.value, for: pair.key))
                         Spacer(minLength: 0)
                     }
                 }
@@ -720,7 +729,10 @@ struct AutopilotWorkbenchView: View {
     private func summaryPairs(for section: AutopilotWorkbenchSection) -> [(key: String, value: AutopilotWorkbenchJSONValue)] {
         if section.id == "agent_interop_e2e" {
             let priority = [
-                "status",
+                "schema_compatibility_status",
+                "compatible_plugin_count",
+                "incompatible_plugin_count",
+                "portable_tool_count",
                 "protocol_readiness_score",
                 "frontier_interop_status",
                 "remote_mcp_template_status",
@@ -808,8 +820,10 @@ struct AutopilotWorkbenchView: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "passed", "ready", "active":
+        case "passed", "ready":
             return Color(hex: "30d158")
+        case "active":
+            return Color(hex: "64d2ff")
         case "attention", "unknown", "unavailable":
             return Color(hex: "ff9f0a")
         case "paused", "not_run", "not_configured":
@@ -823,8 +837,10 @@ struct AutopilotWorkbenchView: View {
 
     private func statusIcon(_ status: String) -> String {
         switch status {
-        case "passed", "ready", "active":
+        case "passed", "ready":
             return "checkmark.circle.fill"
+        case "active":
+            return "arrow.triangle.2.circlepath.circle.fill"
         case "failed":
             return "xmark.octagon.fill"
         case "attention":
@@ -899,10 +915,34 @@ struct AutopilotWorkbenchView: View {
     }
 
     private func displayKey(_ key: String) -> String {
-        key.replacingOccurrences(of: "_", with: " ")
+        let localizationKey = "workbench.summary.\(key)"
+        let localized = appPreferences.text(localizationKey)
+        return localized == localizationKey
+            ? key.replacingOccurrences(of: "_", with: " ")
+            : localized
+    }
+
+    private func displayValue(_ value: AutopilotWorkbenchJSONValue, for key: String) -> String {
+        guard key == "status" || key.hasSuffix("_status") else {
+            return value.description
+        }
+        let localized = localizedStatus(value.description)
+        return localized == "workbench.status.\(value.description)" ? value.description : localized
     }
 
     private func compactObjectSummary(_ object: [String: AutopilotWorkbenchJSONValue]) -> String {
+        if let codeValue = object["code"] {
+            let code = codeValue.description
+            let localizationKey = "workbench.finding.\(code)"
+            let localized = appPreferences.text(localizationKey)
+            let label = localized == localizationKey
+                ? code.replacingOccurrences(of: "_", with: " ")
+                : localized
+            return [object["plugin_id"]?.description, object["tool_name"]?.description, label]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+        }
         let preferred = ["id", "trigger_id", "run_id", "spec", "spec_id", "status", "type", "priority", "title", "reason", "endpoint"]
         let parts = preferred.compactMap { key -> String? in
             guard let value = object[key] else { return nil }

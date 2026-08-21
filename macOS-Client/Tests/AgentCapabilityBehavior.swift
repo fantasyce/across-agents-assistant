@@ -471,6 +471,7 @@ func testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter() throws {
       "project_dir": "/tmp/across-e2e",
       "owner_agent": "claude",
       "allowed_subtask_agents": ["hermes", "openclaw", "deepseek"],
+      "result_report": "# Audit Report\\n\\nEverything is consistent.",
       "delivery_contract": {"contract_id": "contract-release"},
       "requirement_manifest": {"requirements": [{"id": "req-web"}]},
       "quality_health": {"quality_gate": "passed", "delivery_quality": "passed"},
@@ -511,6 +512,7 @@ func testTaskEvidenceBundleAndBenchmarkDecodeForReleaseCenter() throws {
     assert(bundle.audit.readOnly, "Evidence audit should expose read-only state")
     assert(bundle.audit.secretsRedacted, "Evidence audit should expose redaction state")
     assert(bundle.benchmark.status == "passed", "Nested benchmark should decode")
+    assert(bundle.resultReport == "# Audit Report\n\nEverything is consistent.", "Evidence bundle should decode the inline result report")
     assert(bundle.benchmark.scenarios.first?.checks["browser_e2e_passed"] == true, "Benchmark checks should decode")
     assert(bundle.releaseReadinessSummary == "passed · score 88 · 1 repair", "Evidence summary should be compact and stable")
     assert(TaskEvidenceBundle.exportFileName(taskId: "task-d68f8fa8") == "task-d68f8fa8-evidence-bundle.json", "Evidence export filename should be deterministic")

@@ -309,11 +309,11 @@ def test_autopilot_workbench_does_not_report_claimed_history_as_waiting_queue():
         generated_at="2026-07-13T00:00:00Z",
     )
 
-    assert snapshot["status"] == "passed"
+    assert snapshot["status"] == "active"
     assert snapshot["summary"]["pending_trigger_count"] == 0
     assert snapshot["summary"]["claimed_trigger_count"] == 1
     assert snapshot["summary"]["terminal_trigger_queue_count"] == 1
-    assert snapshot["sections"]["triggers"]["status"] == "passed"
+    assert snapshot["sections"]["triggers"]["status"] == "active"
     assert not any(action["id"] == "run_queued_trigger" for action in snapshot["actions"])
 
 
@@ -403,7 +403,7 @@ def test_autopilot_workbench_snapshot_degrades_to_failed_with_actions():
     assert snapshot["summary"]["pending_trigger_count"] == 1
     assert snapshot["summary"]["promotion_ready_count"] == 1
     assert snapshot["sections"]["memory"]["status"] == "attention"
-    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "not_run"
     assert snapshot["actions"][0]["id"] == "repair_autopilot_plugin"
     assert not any(action["id"] == "run_agent_interop_e2e" for action in snapshot["actions"])
     assert any(action["id"] == "review_pending_memory" for action in snapshot["actions"])
@@ -443,7 +443,7 @@ def test_optional_automation_and_interop_absence_do_not_create_release_attention
     assert snapshot["status"] == "passed"
     assert snapshot["sections"]["self_iteration"]["status"] == "passed"
     assert snapshot["sections"]["self_iteration"]["items"][0]["status"] == "not_configured"
-    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "passed"
+    assert snapshot["sections"]["agent_interop_e2e"]["status"] == "not_run"
     assert not any(action["id"] in {"ensure_self_iteration_plan", "run_agent_interop_e2e"} for action in snapshot["actions"])
 
 

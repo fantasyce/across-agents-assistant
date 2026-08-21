@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
@@ -25,11 +25,13 @@ import socket
 import urllib.parse
 import urllib.request
 import urllib.error
+from copy import deepcopy
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from .credentials.validation import is_usable_secret, normalize_secret
 from .beginner_study_artifacts import sanitized_beginner_study_result
+from .execution_trajectory import TrajectoryProjectionError, project_execution_trajectory
 from .local_voice_transcription import (
     LocalVoiceTranscriptionError,
     MAX_PCM_BYTES as VOICE_MAX_PCM_BYTES,
@@ -105,6 +107,23 @@ _AGENT_LOOP_STREAM_POLL_SECONDS = 0.25
 _AGENT_LOOP_STREAM_IDLE_TIMEOUT_SECONDS = 30.0
 _PUBLIC_TEXT_DETAIL_KEYS = {"detail", "message", "connection_note"}
 _EXTERNAL_TASK_EVIDENCE_STATUSES = {"completed", "failed", "cancelled"}
+_CANONICAL_TRAJECTORY_PAGE_INT = re.compile(r"0|[1-9][0-9]*")
+
+
+class _ExecutionTrajectoryEvidenceInvalid(ValueError):
+    """Internal marker for a malformed authoritative event container."""
+
+
+def _trajectory_page_value(raw: str, *, minimum: int, maximum: int | None = None) -> int:
+    if type(raw) is not str or _CANONICAL_TRAJECTORY_PAGE_INT.fullmatch(raw) is None:
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination")
+    try:
+        value = int(raw)
+    except (ValueError, OverflowError):
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination") from None
+    if value < minimum or (maximum is not None and value > maximum):
+        raise HTTPException(status_code=422, detail="invalid execution trajectory pagination")
+    return value
 
 
 def _autopilot_research_value_error_detail(exc: ValueError) -> str:
@@ -269,6 +288,18 @@ from .tools import builtin_tools
 from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
+from .persistence.promotion_package_store import PromotionPackageStoreError
+from .approval.receipts import (
+    ApprovalReceiptError,
+    evaluate_promotion_authorization,
+)
+from .promotion_package import (
+    PROMOTION_PACKAGE_CHECK_IDS,
+    PromotionPackageBlocked,
+    build_promotion_package,
+    build_worker_task_receipt_binding,
+)
+from .managed_plugin_payloads import plugin_payload
 
 # Harness layer imports
 from .harness import (
@@ -298,6 +329,8 @@ from .external_task_planning import (
     autopilot_workflow_adapter_command,
     deliverables_for_external_task,
     external_owner_agent,
+    is_read_only_external_task,
+    requests_remote_worker,
     planned_subtasks_for_external_task,
 )
 
@@ -350,11 +383,15 @@ from .paths import (
     app_subdir,
     backend_socket_path,
     data_file,
+    component_cache_home,
+    ecosystem_bin_dir,
     ecosystem_home,
+    ecosystem_plugin_root,
     log_dir as app_log_dir,
     run_dir,
     tmp_dir,
 )
+from .managed_plugin_lifecycle import ManagedPluginFilesystemTransaction
 from .orchestrator_plugin import (
     OrchestratorPluginConfig,
     OrchestratorPluginHTTPError,
@@ -386,6 +423,8 @@ from .plugin_runtime import (
     remember_context_memory,
     retrieve_context_memories_merged,
     rollback_distilled_context_memory,
+    managed_plugin_lifecycle_guard,
+    managed_plugin_runtime_guard,
     run_autopilot_plugin_lifecycle_action,
     run_context_plugin_lifecycle_action,
     search_context_memories,
@@ -403,7 +442,7 @@ from .loop_engineering_self_iteration import (
     build_self_iteration_plan,
     ensure_self_iteration_plan,
 )
-from .source_mirror_refresh import source_mirror_status
+from .source_mirror_refresh import cancel_active_source_mirror_refreshes, source_mirror_status
 from .unified_capability_registry import (
     build_unified_capability_registry,
     evaluate_unified_capability_registry_health,
@@ -515,6 +554,19 @@ async def _restore_optional_runtime_services_on_startup() -> None:
         )
     except Exception:
         logger.warning("Failed to restore self-iteration scheduler on startup.", exc_info=True)
+    try:
+        orchestrator_started_at = time.perf_counter()
+        orchestrator_status = await asyncio.to_thread(
+            get_orchestrator_plugin_manager().implementation_status,
+            probe=True,
+        )
+        logger.info(
+            "Startup optional service ready: orchestrator duration_ms=%d available=%s",
+            round((time.perf_counter() - orchestrator_started_at) * 1_000),
+            bool(orchestrator_status.get("available")),
+        )
+    except Exception:
+        logger.warning("Failed to warm the Orchestrator runtime on startup.", exc_info=True)
     try:
         worker_started_at = time.perf_counter()
         await asyncio.to_thread(get_worker_network_runtime().reconcile)
@@ -916,6 +968,8 @@ async def _api_lifespan(app: FastAPI):
         workspace_manager = globals().get("_agent_workspace_manager")
         if workspace_manager is not None:
             await asyncio.to_thread(workspace_manager.shutdown, wait=False, cancel_active=True)
+        await asyncio.to_thread(cancel_active_source_mirror_refreshes)
+        await mcp_manager.shutdown()
         await asyncio.to_thread(get_worker_network_runtime().shutdown)
         await asyncio.to_thread(_stop_autopilot_trigger_scheduler_for_shutdown)
 
@@ -927,11 +981,38 @@ async def _external_task_info_with_worker(task_payload: Mapping[str, Any], *, ev
     info = external_task_to_app_info(dict(task_payload), evidence=dict(evidence) if evidence else None)
     task_id = str(info.get("task_id") or "")
     if task_id:
-        bridge = get_worker_task_bridge()
-        remote = await asyncio.to_thread(bridge.optional_status, task_id)
+        remote = await asyncio.to_thread(_worker_task_status_for_ui, task_id)
         if remote:
-            info = bridge.project_task_info(info, remote)
+            info = get_worker_task_bridge().project_task_info(info, remote)
     return info
+
+
+def _worker_task_status_for_ui(task_id: str) -> Dict[str, Any] | None:
+    """Return Worker status for a UI read without blocking on startup repair.
+
+    Task details are evidence views. They must stay readable from the last
+    verified Worker receipt while the Worker control runtime is reconciling or
+    temporarily unavailable. Live Worker Job refresh is used only after the
+    local runtime reports that the control service is actually running.
+    """
+
+    bridge = get_worker_task_bridge()
+    cached = bridge.cached_status(task_id)
+    try:
+        runtime = get_worker_network_runtime()
+        status_reader = getattr(runtime, "status_nowait", None)
+        if status_reader is None:
+            status_reader = runtime.status
+        runtime_status = status_reader()
+    except Exception:
+        runtime_status = {"status": "unavailable"}
+    runtime_state = str(runtime_status.get("status") or "")
+    if cached and (
+        runtime_status.get("reconcile_in_progress")
+        or runtime_state not in {"running", "waiting_for_approved_worker"}
+    ):
+        return cached
+    return bridge.optional_status(task_id)
 
 
 class WorkerPairingCreateRequest(BaseModel):
@@ -1019,7 +1100,8 @@ class WorkerWorkflowJobRequest(BaseModel):
 
 
 def _worker_control_http_error(exc: WorkerControlError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
+    category = "policy" if "budget" in str(exc.code or "") or "model_grant" in str(exc.code or "") else "operation"
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "category": category, "message": str(exc)})
 
 
 def _worker_control_snapshot_with_presence() -> Dict[str, Any]:
@@ -1050,6 +1132,24 @@ _worker_health_cache: Dict[str, Any] = {
     "status": "initializing",
     "reason": "worker_runtime_starting",
 }
+_worker_runtime_reconcile_lock = threading.Lock()
+
+
+def _kick_worker_runtime_reconcile() -> None:
+    """Start Worker networking in the background without blocking UI reads."""
+
+    if not _worker_runtime_reconcile_lock.acquire(blocking=False):
+        return
+
+    def refresh() -> None:
+        try:
+            get_worker_network_runtime().reconcile()
+        except Exception:
+            logger.debug("Worker runtime background reconcile failed.", exc_info=True)
+        finally:
+            _worker_runtime_reconcile_lock.release()
+
+    threading.Thread(target=refresh, name="across-worker-runtime-reconcile", daemon=True).start()
 
 
 async def _worker_health_for_core_probe() -> Dict[str, Any]:
@@ -1090,7 +1190,15 @@ async def _known_task_count_for_core_probe() -> int:
 async def get_worker_control():
     try:
         snapshot = _worker_control_snapshot_with_presence()
-        snapshot["listener"]["runtime"] = await asyncio.to_thread(get_worker_network_runtime().reconcile)
+        runtime = get_worker_network_runtime()
+        status_reader = getattr(runtime, "status_nowait", None)
+        if status_reader is None:
+            status_reader = runtime.status
+        snapshot["listener"]["runtime"] = await asyncio.to_thread(status_reader)
+        listener = snapshot.get("listener") if isinstance(snapshot.get("listener"), Mapping) else {}
+        relay = snapshot.get("relay") if isinstance(snapshot.get("relay"), Mapping) else {}
+        if listener.get("enabled") or relay.get("enabled"):
+            _kick_worker_runtime_reconcile()
         return snapshot
     except WorkerControlError as exc:
         raise _worker_control_http_error(exc) from exc
@@ -1373,7 +1481,7 @@ def _stream_worker_artifact(handle):
 
 
 _worker_model_provider_preference: dict[str, str] = {}
-_WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 60.0
+_WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 45.0
 _WORKER_MODEL_FINALIZATION_RESERVE_SECONDS = 5.0
 
 
@@ -1391,6 +1499,25 @@ def _worker_model_provider_candidates(purpose: str) -> list[str]:
     preferred = _worker_model_provider_preference.get(str(purpose or "").strip())
     ordered = [preferred, current, *configured]
     return list(dict.fromkeys(provider_id for provider_id in ordered if provider_id))
+
+
+def _worker_model_attempt_timeout(
+    *,
+    remaining_seconds: float,
+    providers_remaining: int,
+    empty_retry_available: bool,
+) -> float:
+    """Share one task deadline without letting an early route starve fallback."""
+    remaining = max(0.001, float(remaining_seconds))
+    slots = max(1, int(providers_remaining) + (1 if empty_retry_available else 0))
+    return max(
+        0.001,
+        min(
+            _WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS,
+            remaining,
+            remaining / slots,
+        ),
+    )
 
 
 def _worker_model_extra_body(provider_id: Optional[str] = None) -> dict[str, Any]:
@@ -1443,6 +1570,56 @@ def _worker_model_usage_summary(attempts: list[Any]) -> tuple[dict[str, Any], in
     return {**usage, "cost_usd": cost_usd, "cost_source": cost_source}, tokens, cost_usd, cost_source
 
 
+def _worker_model_failure_category(exc: BaseException) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, Mapping):
+        category = str(detail.get("category") or "").strip().lower()
+        if category:
+            return category
+    message = str(getattr(exc, "message", None) or exc or "").lower()
+    if isinstance(exc, asyncio.TimeoutError) or "timeout" in message or "timed out" in message:
+        return "timeout"
+    if "empty" in message or "no final" in message or "no text" in message:
+        return "empty_response"
+    if "sensitive" in message or "content policy" in message or "violation" in message:
+        return "content_policy"
+    if "budget" in message or "grant" in message or "policy" in message:
+        return "policy"
+    return "provider"
+
+
+def _worker_model_empty_response_category(candidate: Any) -> str:
+    finish_reason = str(getattr(candidate, "finish_reason", "") or "").strip().lower()
+    raw = getattr(candidate, "raw", {}) if isinstance(getattr(candidate, "raw", {}), Mapping) else {}
+    if raw.get("input_sensitive") is True or raw.get("output_sensitive") is True:
+        return "content_policy"
+    if finish_reason == "length":
+        return "empty_response"
+    return "empty_response"
+
+
+def _worker_model_gateway_failure_category(provider_failures: list[Mapping[str, Any]], *, provider_response_received: bool) -> str:
+    categories = [str(item.get("category") or "").strip().lower() for item in provider_failures]
+    for category in ("content_policy", "empty_response", "timeout", "policy"):
+        if category in categories:
+            return category
+    if provider_response_received:
+        return "policy"
+    return "provider"
+
+
+def _worker_model_gateway_failure_message(category: str) -> str:
+    if category == "content_policy":
+        return "Host model returned no usable text because a content policy blocked the response."
+    if category == "empty_response":
+        return "Host model returned no final text."
+    if category == "timeout":
+        return "Host model provider request timed out."
+    if category == "policy":
+        return "Host model usage exceeded the task grant or policy."
+    return "Host model provider request failed."
+
+
 async def invoke_worker_model_gateway_core(request: WorkerModelInvokeRequest):
     loop = asyncio.get_running_loop()
     provider_deadline = loop.time() + max(
@@ -1472,37 +1649,76 @@ async def invoke_worker_model_gateway_core(request: WorkerModelInvokeRequest):
     provider_response_received = False
     grant_finish_attempted = False
     attempts = []
+    provider_failures: list[dict[str, str]] = []
     try:
         response = None
-        for provider_id in _worker_model_provider_candidates(request.purpose):
-            remaining_seconds = provider_deadline - loop.time()
-            if remaining_seconds <= 0:
-                break
-            attempt_timeout = min(_WORKER_MODEL_PROVIDER_ATTEMPT_TIMEOUT_SECONDS, remaining_seconds)
-            try:
-                candidate = await asyncio.wait_for(
-                    _chat_with_model_capability(
-                        message=request.message,
-                        system_prompt=request.system_prompt,
-                        provider_id=provider_id,
-                        scope="worker.model.invoke",
-                        max_tokens=request.max_tokens,
-                        temperature=request.temperature,
-                        timeout=attempt_timeout,
-                        extra_body=_worker_model_extra_body(provider_id),
-                    ),
-                    timeout=attempt_timeout,
+        provider_candidates = _worker_model_provider_candidates(request.purpose)
+        for provider_index, provider_id in enumerate(provider_candidates):
+            empty_retry_used = False
+            while True:
+                remaining_seconds = provider_deadline - loop.time()
+                if remaining_seconds <= 0:
+                    break
+                attempt_timeout = _worker_model_attempt_timeout(
+                    remaining_seconds=remaining_seconds,
+                    providers_remaining=len(provider_candidates) - provider_index,
+                    empty_retry_available=not empty_retry_used,
                 )
-            except Exception:
-                logger.warning("Worker model provider %s failed; trying the next configured route.", provider_id)
-                continue
-            attempts.append(candidate)
-            provider_response_received = True
-            response = candidate
-            if str(candidate.text or "").strip():
-                _worker_model_provider_preference[request.purpose] = provider_id
+                try:
+                    candidate = await asyncio.wait_for(
+                        _chat_with_model_capability(
+                            message=request.message,
+                            system_prompt=request.system_prompt,
+                            provider_id=provider_id,
+                            scope="worker.model.invoke",
+                            max_tokens=request.max_tokens,
+                            temperature=request.temperature,
+                            timeout=attempt_timeout,
+                            extra_body=_worker_model_extra_body(provider_id),
+                        ),
+                        timeout=attempt_timeout,
+                    )
+                except Exception as exc:
+                    category = _worker_model_failure_category(exc)
+                    provider_failures.append({
+                        "provider": provider_id,
+                        "category": category,
+                        "error_type": type(exc).__name__,
+                    })
+                    logger.warning(
+                        "Worker model provider %s failed with category=%s error=%s; trying the next configured route.",
+                        provider_id,
+                        category,
+                        type(exc).__name__,
+                    )
+                    break
+                attempts.append(candidate)
+                provider_response_received = True
+                if str(candidate.text or "").strip():
+                    response = candidate
+                    _worker_model_provider_preference[request.purpose] = provider_id
+                    break
+                category = _worker_model_empty_response_category(candidate)
+                provider_failures.append({
+                    "provider": provider_id,
+                    "category": category,
+                    "error_type": "EmptyModelResponse",
+                })
+                if category == "empty_response" and not empty_retry_used and provider_deadline - loop.time() > 1:
+                    empty_retry_used = True
+                    logger.info(
+                        "Worker model provider %s returned no final text; retrying once before fallback.",
+                        provider_id,
+                    )
+                    continue
+                logger.info(
+                    "Worker model provider %s returned no final text with category=%s; trying the next configured route.",
+                    provider_id,
+                    category,
+                )
                 break
-            logger.info("Worker model provider %s returned no final text; trying the next configured route.", provider_id)
+            if response is not None:
+                break
         if response is None or not str(response.text or "").strip():
             raise RuntimeError("No configured host model provider returned final text within the task deadline")
         usage, tokens, cost_usd, _ = _worker_model_usage_summary(attempts)
@@ -1564,14 +1780,23 @@ async def invoke_worker_model_gateway_core(request: WorkerModelInvokeRequest):
                 )
             except Exception:
                 logger.warning("Failed to finalize Worker Model Grant after provider failure.", exc_info=True)
-        failure_category = "policy" if provider_response_received else "provider"
-        logger.warning("Worker model gateway %s failure: %s", failure_category, type(exc).__name__)
+        failure_category = _worker_model_gateway_failure_category(
+            provider_failures,
+            provider_response_received=provider_response_received,
+        )
+        logger.warning(
+            "Worker model gateway %s failure: %s provider_failures=%s",
+            failure_category,
+            type(exc).__name__,
+            provider_failures,
+        )
         raise HTTPException(
             status_code=502,
             detail={
-                "code": "worker_model_budget_failed" if provider_response_received else "worker_model_provider_failed",
+                "code": "worker_model_budget_failed" if failure_category == "policy" else "worker_model_provider_failed",
                 "category": failure_category,
-                "message": "Host model usage exceeded the task grant." if provider_response_received else "Host model provider request failed.",
+                "message": _worker_model_gateway_failure_message(failure_category),
+                "provider_failures": provider_failures,
             },
         ) from exc
 
@@ -1783,6 +2008,26 @@ class ReplayApprovalDecision(BaseModel):
     decision: str = Field(default="approved", pattern=r"^(approved|rejected)$")
     request_id: Optional[str] = Field(default=None, max_length=500)
     idempotency_key: Optional[str] = Field(default=None, max_length=500)
+
+
+class PromotionPackageCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromotionPackageDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern=r"^(approved|rejected)$")
+    approver_id: str = Field(min_length=1, max_length=200)
+    expected_package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("approver_id")
+    @classmethod
+    def _non_empty_approver(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("approver_id must not be blank")
+        return clean
 
 
 def _approval_scope_for_tool(tool_name: str) -> str:
@@ -9682,6 +9927,151 @@ async def create_autopilot_review_decision(req: AutopilotReviewDecisionRequest):
         raise _safe_http_500("Create Autopilot review decision")
 
 
+def _require_managed_plugin_action_state(
+    plugin_id: str,
+    action: str,
+    result: Mapping[str, Any],
+) -> None:
+    plugin_path = ecosystem_plugin_root() / plugin_id
+    wrapper_path = ecosystem_bin_dir() / plugin_id
+    if action in {"install", "repair", "upgrade"} and not (
+        result.get("installed") is True
+        and result.get("available") is True
+        and result.get("integrity_ok") is True
+        and result.get("probe") is True
+        and plugin_path.is_dir()
+        and not plugin_path.is_symlink()
+        and wrapper_path.is_file()
+        and not wrapper_path.is_symlink()
+    ):
+        raise PluginLifecycleError(f"{plugin_id} did not become available after {action}")
+    if action == "uninstall" and (
+        result.get("removed") is not True
+        or plugin_path.exists()
+        or plugin_path.is_symlink()
+        or wrapper_path.exists()
+        or wrapper_path.is_symlink()
+    ):
+        raise PluginLifecycleError(f"{plugin_id} remained installed after uninstall")
+
+
+def _orchestrator_managed_runtime_paths(manager: Any) -> tuple[Path, Path]:
+    installer = getattr(manager, "installer", None)
+    plugin_dir = getattr(installer, "install_dir", None)
+    wrapper_path = getattr(installer, "wrapper_path", None)
+    return (
+        Path(plugin_dir) if plugin_dir is not None else ecosystem_plugin_root() / "across-orchestrator",
+        Path(wrapper_path) if wrapper_path is not None else ecosystem_bin_dir() / "across-orchestrator",
+    )
+
+
+def _require_worker_runtime_reconnected(result: Mapping[str, Any]) -> None:
+    status = str(result.get("status") or "").strip().lower()
+    if result.get("last_error") or status not in {
+        "running",
+        "stopped",
+        "waiting_for_approved_worker",
+    }:
+        raise PluginLifecycleError("Worker runtime did not reconnect after Orchestrator lifecycle action")
+
+
+def _require_autopilot_scheduler_running(
+    result: Mapping[str, Any],
+    *,
+    operation: str,
+) -> None:
+    if result.get("running") is not True:
+        raise PluginLifecycleError(f"Across Autopilot scheduler did not {operation}")
+
+
+def _run_orchestrator_plugin_action_sync(action: str) -> Dict[str, Any]:
+    manager = get_orchestrator_plugin_manager()
+    if action in {"probe", "refresh"}:
+        return manager.implementation_status(probe=True)
+
+    worker_manager = get_worker_network_runtime()
+    plugin_dir, wrapper_path = _orchestrator_managed_runtime_paths(manager)
+    with managed_plugin_lifecycle_guard("across-orchestrator"):
+        runtime_preexisted = (
+            plugin_dir.is_dir()
+            and not plugin_dir.is_symlink()
+            and wrapper_path.is_file()
+            and not wrapper_path.is_symlink()
+        )
+        with managed_plugin_runtime_guard("across-orchestrator"):
+            try:
+                worker_manager.shutdown()
+                manager.reset_runtime_connection()
+                with ManagedPluginFilesystemTransaction(
+                    plugin_id="across-orchestrator",
+                    plugin_dir=plugin_dir,
+                    wrapper_path=wrapper_path,
+                    transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                ):
+                    if action in {"install", "repair", "upgrade"}:
+                        install = manager.install_plugin()
+                        runtime = manager.implementation_status(probe=True)
+                        runtime_install = (
+                            runtime.get("install") if isinstance(runtime.get("install"), dict) else {}
+                        )
+                        if not (
+                            runtime.get("available") is True
+                            and runtime_install.get("installed") is True
+                            and runtime_install.get("integrity_ok") is True
+                            and plugin_dir.is_dir()
+                            and not plugin_dir.is_symlink()
+                            and wrapper_path.is_file()
+                            and not wrapper_path.is_symlink()
+                        ):
+                            raise PluginLifecycleError(
+                                "Across Orchestrator did not become available after lifecycle action"
+                            )
+                        worker_runtime = worker_manager.reconcile()
+                        _require_worker_runtime_reconnected(worker_runtime)
+                        return {
+                            "runtime": runtime,
+                            "install": install,
+                            "worker_runtime": worker_runtime,
+                        }
+                    result = manager.uninstall_plugin()
+                    if (
+                        result.get("removed") is not True
+                        or plugin_dir.exists()
+                        or plugin_dir.is_symlink()
+                        or wrapper_path.exists()
+                        or wrapper_path.is_symlink()
+                    ):
+                        raise PluginLifecycleError(
+                            "Across Orchestrator remained installed after uninstall"
+                        )
+                    return result
+            except Exception as lifecycle_error:
+                recovery_failures: list[BaseException] = []
+                try:
+                    manager.reset_runtime_connection()
+                except Exception as exc:
+                    recovery_failures.append(exc)
+                if runtime_preexisted:
+                    try:
+                        restored_runtime = manager.implementation_status(probe=True)
+                        if restored_runtime.get("available") is not True:
+                            raise PluginLifecycleError(
+                                "Across Orchestrator restored runtime did not reconnect after rollback"
+                            )
+                    except Exception as exc:
+                        recovery_failures.append(exc)
+                try:
+                    recovered_worker = worker_manager.reconcile()
+                    _require_worker_runtime_reconnected(recovered_worker)
+                except Exception as exc:
+                    recovery_failures.append(exc)
+                if recovery_failures:
+                    raise PluginLifecycleError(
+                        "Across Orchestrator rollback completed but consumer recovery failed"
+                    ) from lifecycle_error
+                raise
+
+
 @app.post("/api/plugins/{plugin_id}/actions")
 async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionRequest):
     """Run an explicit user-triggered plugin lifecycle action."""
@@ -9692,34 +10082,85 @@ async def run_across_plugin_action(plugin_id: str, req: PluginLifecycleActionReq
         raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
     try:
         if plugin_id == "across-context":
-            result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
+            if action == "probe":
+                result = await asyncio.to_thread(run_context_plugin_lifecycle_action, action)
+                return _sanitize_public_payload(result)
+
+            def run_context_action() -> Dict[str, Any]:
+                with managed_plugin_lifecycle_guard("across-context"):
+                    with managed_plugin_runtime_guard("across-context"):
+                        with ManagedPluginFilesystemTransaction(
+                            plugin_id="across-context",
+                            plugin_dir=ecosystem_plugin_root() / "across-context",
+                            wrapper_path=ecosystem_bin_dir() / "across-context",
+                            transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                        ):
+                            result = run_context_plugin_lifecycle_action(action)
+                            _require_managed_plugin_action_state("across-context", action, result)
+                            if action in {"install", "repair", "upgrade"}:
+                                memory_metrics = get_agent_loop_memory_metrics()
+                                if memory_metrics.get("schema_version") != "agent-loop-memory-metrics/1.0":
+                                    raise PluginLifecycleError(
+                                        "Across Context governed memory probe failed"
+                                    )
+                            return result
+
+            result = await asyncio.to_thread(run_context_action)
             return _sanitize_public_payload(result)
         if plugin_id == "across-orchestrator":
-            manager = get_orchestrator_plugin_manager()
-            if action in {"probe", "refresh"}:
-                return _sanitize_public_payload(manager.implementation_status(probe=True))
-            if action in {"install", "repair", "upgrade"}:
-                worker_manager = get_worker_network_runtime()
-                await asyncio.to_thread(worker_manager.shutdown)
-                try:
-                    install = await asyncio.to_thread(manager.install_plugin)
-                finally:
-                    # The Worker listener/control service imports the managed
-                    # Orchestrator executable at process start. Always restart
-                    # it after a lifecycle replacement, including same-version
-                    # repair, so no consumer keeps executing the old payload.
-                    worker_runtime = await asyncio.to_thread(worker_manager.reconcile)
-                runtime = manager.implementation_status(probe=True)
-                return _sanitize_public_payload({
-                    "runtime": runtime,
-                    "install": install,
-                    "worker_runtime": worker_runtime,
-                })
-            if action == "uninstall":
-                result = await asyncio.to_thread(manager.uninstall_plugin)
-                return _sanitize_public_payload(result)
+            result = await asyncio.to_thread(_run_orchestrator_plugin_action_sync, action)
+            return _sanitize_public_payload(result)
         if plugin_id == "across-autopilot":
-            result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+            if action == "probe":
+                result = await asyncio.to_thread(run_autopilot_plugin_lifecycle_action, action)
+                return _sanitize_public_payload(result)
+
+            def run_autopilot_action() -> Dict[str, Any]:
+                with managed_plugin_lifecycle_guard("across-autopilot"):
+                    scheduler = get_autopilot_trigger_scheduler()
+                    scheduler_before = scheduler.status()
+                    scheduler_was_running = scheduler_before.get("running") is True
+                    restart_kwargs = {
+                        "interval_seconds": float(scheduler_before.get("interval_seconds") or 60.0),
+                        "run_queued_triggers": scheduler_before.get("run_queued_triggers") is not False,
+                        "max_runs_per_tick": max(1, int(scheduler_before.get("max_runs_per_tick") or 1)),
+                    }
+                    try:
+                        if scheduler_was_running:
+                            stopped = scheduler.stop()
+                            if stopped.get("running") is True or stopped.get("tick_in_progress") is True:
+                                raise PluginLifecycleError(
+                                    "Across Autopilot scheduler did not become idle"
+                                )
+                        with managed_plugin_runtime_guard("across-autopilot"):
+                            with ManagedPluginFilesystemTransaction(
+                                plugin_id="across-autopilot",
+                                plugin_dir=ecosystem_plugin_root() / "across-autopilot",
+                                wrapper_path=ecosystem_bin_dir() / "across-autopilot",
+                                transaction_root=component_cache_home() / "plugin-lifecycle-transactions",
+                            ):
+                                result = run_autopilot_plugin_lifecycle_action(action)
+                                _require_managed_plugin_action_state("across-autopilot", action, result)
+                                if scheduler_was_running and action != "uninstall":
+                                    restarted = scheduler.start(**restart_kwargs)
+                                    _require_autopilot_scheduler_running(
+                                        restarted,
+                                        operation="restart",
+                                    )
+                                return result
+                    except Exception as lifecycle_error:
+                        if scheduler_was_running:
+                            recovered = scheduler.start(**restart_kwargs)
+                            try:
+                                _require_autopilot_scheduler_running(
+                                    recovered,
+                                    operation="recover",
+                                )
+                            except PluginLifecycleError as recovery_error:
+                                raise recovery_error from lifecycle_error
+                        raise
+
+            result = await asyncio.to_thread(run_autopilot_action)
             return _sanitize_public_payload(result)
         raise HTTPException(status_code=400, detail="Unsupported plugin lifecycle action")
     except HTTPException:
@@ -10220,6 +10661,300 @@ async def get_autopilot_promotion_review(run_id: str):
         raise _autopilot_http_error("Get Across Autopilot promotion review", exc)
     except Exception as exc:
         raise _safe_http_500("Get Across Autopilot promotion review")
+
+
+_PROMOTION_SOURCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_PROMOTION_PACKAGE_ID = re.compile(r"promotion-[a-f0-9]{64}")
+_PROMOTION_PLUGIN_IDS = (
+    "across-autopilot",
+    "across-context",
+    "across-orchestrator",
+)
+
+
+def _promotion_blocked(exc: PromotionPackageBlocked) -> HTTPException:
+    public_check_ids = sorted(set(exc.check_ids).intersection(PROMOTION_PACKAGE_CHECK_IDS))
+    if not public_check_ids:
+        public_check_ids = ["input_shapes_valid"]
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "promotion_package_blocked",
+            "failed_checks": public_check_ids,
+        },
+    )
+
+
+def _promotion_release_evidence(task_ids: List[str]) -> Dict[str, Any]:
+    """Build release evidence scoped to the exact sealed promotion task set."""
+
+    scoped_task_ids = sorted(set(task_ids))
+    task_payloads = {}
+    for task_id in scoped_task_ids:
+        loaded = _load_task_info_read_only(task_id)
+        task_payloads[task_id] = dict(loaded) if isinstance(loaded, Mapping) else _pydantic_dump(loaded)
+    scoped_task_state = SimpleNamespace(
+        _persistence=None,
+        get_all_tasks=lambda: [task_payloads[task_id] for task_id in scoped_task_ids],
+    )
+    report = _build_release_verification_report(
+        write_report=False,
+        task_state=scoped_task_state,
+        external_task_rows=None,
+        task_row_mapper=lambda row: dict(row) if isinstance(row, Mapping) else {},
+        startup_diagnostics=_build_startup_diagnostics(),
+        load_task_payload=lambda task_id: task_payloads[task_id],
+        serialize_task_payload=lambda payload: dict(payload),
+        redact_sensitive=_redact_sensitive_evidence,
+        app_version=None,
+        expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
+        required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
+    )
+    report["task_scope"] = {
+        "schema_version": "across-release-task-scope/1.0",
+        "task_ids": scoped_task_ids,
+    }
+    evaluation = report.get("release_evaluation")
+    if not isinstance(evaluation, dict):
+        evaluation = {}
+        report["release_evaluation"] = evaluation
+    evaluation["task_ids"] = scoped_task_ids
+    return report
+
+
+def _promotion_task_evidence(task_id: str) -> Dict[str, Any]:
+    """Load one authoritative raw receipt through existing read-only paths."""
+
+    remote = get_worker_task_bridge().read_only_status(task_id)
+    if remote is not None:
+        if not isinstance(remote, Mapping):
+            raise PromotionPackageBlocked(("task_receipts_verified",))
+        raw_receipt = remote.get("evidence_receipt")
+        task_link = {
+            "schema_version": remote.get("schema_version"),
+            "task_id": task_id,
+            "job_id": remote.get("job_id"),
+            "run_id": remote.get("run_id"),
+            "node_id": remote.get("node_id"),
+            "manifest_hash": remote.get("manifest_hash"),
+            "status": remote.get("status"),
+        }
+        return {
+            "task_id": task_id,
+            "source": "worker_projection",
+            "raw_receipt": raw_receipt,
+            "worker_binding": build_worker_task_receipt_binding(
+                task_link=task_link,
+                raw_receipt=raw_receipt,
+            ),
+        }
+
+    bundle = get_orchestrator_plugin_manager().get_evidence_bundle(task_id)
+    if not isinstance(bundle, Mapping):
+        raise PromotionPackageBlocked(("task_receipts_verified",))
+    raw_receipt = (
+        bundle
+        if bundle.get("schema_version") == "across-evidence-receipt/1.0"
+        else bundle.get("evidence_receipt")
+    )
+    return {
+        "task_id": task_id,
+        "source": "orchestrator_evidence",
+        "raw_receipt": raw_receipt,
+    }
+
+
+async def _assemble_promotion_package(run_id: str) -> Dict[str, Any]:
+    """Load, verify, compose, and persist one promotion package server-side."""
+
+    if _PROMOTION_SOURCE_ID.fullmatch(str(run_id or "")) is None:
+        raise HTTPException(status_code=422, detail="promotion run identifier is invalid")
+    try:
+        client = get_autopilot_client()
+        run_status = await asyncio.to_thread(client.status, run_id)
+        autopilot_evidence = await asyncio.to_thread(client.evidence, run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Autopilot run evidence was not found") from None
+    except OrchestratorPluginHTTPError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Autopilot run evidence was not found") from None
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except Exception:
+        logger.warning("Promotion package Autopilot evidence load failed.", exc_info=True)
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+
+    if not isinstance(run_status, Mapping) or not isinstance(autopilot_evidence, Mapping):
+        raise _promotion_blocked(PromotionPackageBlocked(("input_shapes_valid",)))
+    raw_tasks = (
+        autopilot_evidence.get("orchestrator", {}).get("tasks")
+        if isinstance(autopilot_evidence.get("orchestrator"), Mapping)
+        else None
+    )
+    if not isinstance(raw_tasks, list):
+        raise _promotion_blocked(PromotionPackageBlocked(("task_set_complete",)))
+    task_ids = sorted({
+        item.get("task_id")
+        for item in raw_tasks
+        if isinstance(item, Mapping) and type(item.get("task_id")) is str
+    })
+    if (
+        not task_ids
+        or len(task_ids) > 256
+        or any(_PROMOTION_SOURCE_ID.fullmatch(task_id) is None for task_id in task_ids)
+        or any(
+            not isinstance(item, Mapping) or type(item.get("task_id")) is not str
+            for item in raw_tasks
+        )
+    ):
+        raise _promotion_blocked(PromotionPackageBlocked(("identifiers_valid", "task_set_complete")))
+
+    try:
+        task_evidence = [
+            await asyncio.to_thread(_promotion_task_evidence, task_id)
+            for task_id in task_ids
+        ]
+        plugin_rows = await asyncio.to_thread(
+            discover_across_plugins,
+            plugin_ids=list(_PROMOTION_PLUGIN_IDS),
+            probe=False,
+        )
+        plugin_descriptors = {
+            plugin_id: await asyncio.to_thread(plugin_payload, plugin_id) or {}
+            for plugin_id in _PROMOTION_PLUGIN_IDS
+        }
+        interop = await asyncio.to_thread(load_agent_interop_e2e_latest)
+        compatibility_report = (
+            interop.get("mcp_schema_compatibility")
+            if isinstance(interop, Mapping)
+            else None
+        )
+        release_evidence = await asyncio.to_thread(_promotion_release_evidence, task_ids)
+        document = build_promotion_package(
+            run_id=run_id,
+            run_status=run_status,
+            autopilot_evidence=autopilot_evidence,
+            task_evidence=task_evidence,
+            evidence_graph=autopilot_evidence.get("evidence_graph"),
+            plugin_rows=plugin_rows,
+            plugin_descriptors=plugin_descriptors,
+            compatibility_report=compatibility_report,
+            release_evidence=release_evidence,
+        )
+        record = await asyncio.to_thread(persistence.promotion_packages.put, document)
+        return _promotion_creation_projection(record)
+    except PromotionPackageBlocked as exc:
+        raise _promotion_blocked(exc) from None
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Promotion source evidence was not found") from None
+    except OrchestratorPluginHTTPError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Promotion source evidence was not found") from None
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except (PluginLifecycleError, PromotionPackageStoreError, OSError):
+        raise HTTPException(status_code=503, detail="promotion runtime or persistence is unavailable") from None
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Promotion package assembly failed.", exc_info=True)
+        raise HTTPException(status_code=503, detail="promotion runtime or persistence is unavailable") from None
+
+
+def _promotion_projection_from_verified_record(
+    package: Mapping[str, Any],
+    approval: Mapping[str, Any] | None,
+    chain: Mapping[str, Any],
+) -> Dict[str, Any]:
+    if package.get("integrity_status") != "verified":
+        raise HTTPException(status_code=409, detail="promotion package integrity verification failed")
+    authorization = evaluate_promotion_authorization(package, approval, chain)
+    return {
+        "package": package,
+        "approval": approval,
+        "authorization": authorization,
+        "final_promotion_authorized": authorization["authorized"],
+    }
+
+
+def _promotion_creation_projection(package: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a conservative creation result without consulting decision state."""
+
+    return _promotion_projection_from_verified_record(package, None, {})
+
+
+def _promotion_package_projection(package_id: str) -> Dict[str, Any]:
+    if _PROMOTION_PACKAGE_ID.fullmatch(str(package_id or "")) is None:
+        raise HTTPException(status_code=422, detail="promotion package identifier is invalid")
+    try:
+        package = persistence.promotion_packages.get(package_id)
+        approval = persistence.approval_receipts.latest_for_subject(
+            scope="release_promotion",
+            subject_type="promotion_package",
+            subject_id=package_id,
+            subject_sha256=package["package_sha256"],
+        )
+        chain = persistence.approval_receipts.verify_chain()
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Promotion package was not found") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="promotion persistence is unavailable") from None
+    return _promotion_projection_from_verified_record(package, approval, chain)
+
+
+@app.post("/api/autopilot/runs/{run_id}/promotion-packages")
+async def create_autopilot_promotion_package(
+    run_id: str,
+    req: Optional[PromotionPackageCreateRequest] = Body(default=None),
+):
+    del req
+    return await _assemble_promotion_package(run_id)
+
+
+@app.get("/api/autopilot/promotion-packages/{package_id}")
+async def get_autopilot_promotion_package(package_id: str):
+    return _promotion_package_projection(package_id)
+
+
+@app.post("/api/autopilot/promotion-packages/{package_id}/decisions")
+async def decide_autopilot_promotion_package(
+    package_id: str,
+    req: PromotionPackageDecisionRequest,
+):
+    if _PROMOTION_PACKAGE_ID.fullmatch(str(package_id or "")) is None:
+        raise HTTPException(status_code=422, detail="promotion package identifier is invalid")
+    try:
+        result = await asyncio.to_thread(
+            persistence.approval_receipts.record_promotion_decision,
+            package_id=package_id,
+            expected_package_sha256=req.expected_package_sha256,
+            decision=req.decision,
+            approver_id=req.approver_id,
+            risk_level="release_promotion",
+            idempotency_key=(
+                f"promotion-decision:{package_id}:{req.expected_package_sha256}:"
+                f"{req.decision}:{req.approver_id}"
+            ),
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Promotion package was not found") from None
+    except (ApprovalReceiptError, PromotionPackageStoreError):
+        raise HTTPException(status_code=409, detail="promotion decision could not be verified") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="promotion persistence is unavailable") from None
+    projection = _promotion_projection_from_verified_record(
+        result["package"],
+        result["approval"],
+        result["chain"],
+    )
+    authorization_checks = projection["authorization"].get("checks", {})
+    if (
+        authorization_checks.get("decision_integrity_verified") is not True
+        or authorization_checks.get("chain_integrity_verified") is not True
+        or authorization_checks.get("decision_bound_to_chain") is not True
+    ):
+        raise HTTPException(status_code=409, detail="promotion decision integrity verification failed")
+    return projection
 
 
 @app.get("/api/autopilot/runs/{run_id}/events")
@@ -11055,16 +11790,12 @@ async def get_orchestrator_plugin_status():
 @app.post("/api/orchestrator/plugin/install")
 async def install_orchestrator_plugin():
     """Install Across Orchestrator into the app-managed plugin directory."""
-    manager = get_orchestrator_plugin_manager()
     try:
-        install = await asyncio.to_thread(manager.install_plugin)
-        runtime = manager.implementation_status(probe=True)
-        return _sanitize_public_payload({
-            "runtime": runtime,
-            "install": install,
-        })
+        result = await asyncio.to_thread(_run_orchestrator_plugin_action_sync, "install")
+        return _sanitize_public_payload(result)
     except Exception as exc:
         logger.exception("Across Orchestrator plugin installation failed")
+        manager = get_orchestrator_plugin_manager()
         runtime = manager.implementation_status(probe=False)
         raise HTTPException(
             status_code=500,
@@ -15183,11 +15914,31 @@ async def accept_task_result(task_id: str):
                 status_code=409,
                 detail="Only successfully completed work can be accepted",
             )
+        blocking_quality = {
+            "failed",
+            "failure",
+            "partial",
+            "blocked",
+            "error",
+            "inconsistent",
+        }
+        quality_values = [
+            str((info.quality_health or {}).get("delivery_quality") or "").lower(),
+            str((info.quality_health or {}).get("quality_gate") or "").lower(),
+            str((info.delivery_report or {}).get("quality_gate") or "").lower(),
+        ]
+        if any(value in blocking_quality for value in quality_values if value):
+            raise HTTPException(
+                status_code=409,
+                detail="Only quality-passed work can be accepted",
+            )
 
         task_persistence = getattr(_task_state, "_persistence", None)
         if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
+        if current["review_status"] == "rejected":
+            raise HTTPException(status_code=409, detail="Rejected work cannot be accepted")
         if current["review_status"] == "accepted":
             review = current
         else:
@@ -15226,6 +15977,71 @@ async def accept_task_result(task_id: str):
         raise
     except Exception:
         raise _safe_http_500("Accept task result")
+
+
+@app.post("/api/tasks/{task_id}/reject")
+async def reject_task_result(task_id: str):
+    """Persist a user rejection while preserving the task evidence."""
+    try:
+        current = _task_user_review(task_id)
+        info = await get_task(task_id)
+        if info.status not in {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.COMPLETED_WITH_FAILURES.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+        }:
+            raise HTTPException(
+                status_code=409,
+                detail="Only terminal work can be rejected",
+            )
+
+        task_persistence = getattr(_task_state, "_persistence", None)
+        if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
+            raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
+
+        if current["review_status"] == "accepted":
+            raise HTTPException(status_code=409, detail="Accepted work cannot be rejected")
+        if current["review_status"] == "rejected":
+            review = current
+        else:
+            review = task_persistence.save_task_user_review(
+                task_id,
+                "rejected",
+                accepted_at=None,
+            )
+        approval_receipt = _record_approval_receipt(
+            subject_type="task_result",
+            subject_id=task_id,
+            subject_payload={
+                "task_id": task_id,
+                "status": info.status,
+                "quality_gate": (info.quality_health or {}).get("quality_gate"),
+                "delivery_quality": (info.quality_health or {}).get("delivery_quality"),
+                "artifact_ids": [
+                    str(artifact.get("id") or artifact.get("artifact_id"))
+                    for artifact in info.artifacts
+                    if artifact.get("id") or artifact.get("artifact_id")
+                ],
+            },
+            scope="task_result_review",
+            decision="rejected",
+            proposer_id=info.owner_agent or "task-owner",
+            approver_id="local-human",
+            risk_level="medium",
+            request_id=f"task-result-review:{task_id}:reject",
+            idempotency_key=f"task-result-review:{task_id}:reject",
+        )
+        return {
+            "task_id": task_id,
+            "review_status": review["review_status"],
+            "accepted_at": review.get("accepted_at"),
+            "approval_receipt": approval_receipt,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise _safe_http_500("Reject task result")
 
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
@@ -15433,6 +16249,19 @@ def _derive_auto_task_capability_plan(
     )
     resolution = dict(workflow_resolution or _empty_workflow_resolution(req.description))
     _apply_workflow_resolution_to_capability_plan(plan, resolution)
+    if (
+        requests_remote_worker(_external_task_planning_request(req))
+        and not isinstance(resolution.get("selected_workflow"), Mapping)
+    ):
+        decisions = list(plan.get("required_user_decisions") or ())
+        if not any(str(item.get("id") or "") == "compatible_worker_workflow_required" for item in decisions):
+            decisions.append({
+                "id": "compatible_worker_workflow_required",
+                "kind": "missing_capability",
+                "required": True,
+                "title": "No compatible remote Worker workflow is available for this goal.",
+            })
+        plan["required_user_decisions"] = decisions
     return plan
 
 
@@ -15723,12 +16552,18 @@ async def _submit_auto_orchestrated_task(
                 "agent_adapters": agent_adapters,
             }
             if "metadata" in inspect.signature(plugin.submit_task).parameters:
+                read_only_analysis = is_read_only_external_task(
+                    _external_task_planning_request(req)
+                )
                 submit_kwargs["metadata"] = {
                     "capability_plan": capability_plan,
                     "project_signals": dict(req.project_signals or {}),
                     "workflow_resolution": workflow_resolution,
                     "execution_contract": execution_contract,
                     "execution_plan": workflow_execution_plan,
+                    "intent_mode": "read_only_analysis" if read_only_analysis else "delivery",
+                    "require_fresh_artifacts": not read_only_analysis,
+                    "semantic_review_required": not bool(execution_contract.get("workflow_id")),
                 }
             task = await asyncio.to_thread(
                 plugin.submit_task,
@@ -16103,6 +16938,85 @@ async def get_task_quality_benchmark(
     return report
 
 
+@app.get("/api/tasks/{task_id}/execution-trajectory")
+async def get_task_execution_trajectory(
+    task_id: str,
+    offset: str = "0",
+    limit: str = "200",
+):
+    """Return one bounded, read-only execution trajectory snapshot."""
+
+    page_offset = _trajectory_page_value(offset, minimum=0)
+    page_limit = _trajectory_page_value(limit, minimum=1, maximum=500)
+
+    try:
+        if _is_external_orchestrator_task(task_id):
+            bridge = get_worker_task_bridge()
+            remote = await asyncio.to_thread(bridge.read_only_status, task_id)
+            if remote is not None:
+                if not isinstance(remote, Mapping):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                snapshot = deepcopy(dict(remote))
+                raw_events = snapshot.get("events")
+                if not isinstance(raw_events, list):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                source = "worker_projection"
+            else:
+                plugin = get_orchestrator_plugin_manager()
+                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                if not isinstance(evidence, Mapping):
+                    raise _ExecutionTrajectoryEvidenceInvalid
+                snapshot = deepcopy(dict(evidence))
+                if "events" in snapshot:
+                    raw_events = snapshot["events"]
+                    if not isinstance(raw_events, list):
+                        raise _ExecutionTrajectoryEvidenceInvalid
+                else:
+                    fallback_events = await asyncio.to_thread(plugin.get_events, task_id)
+                    if not isinstance(fallback_events, list):
+                        raise _ExecutionTrajectoryEvidenceInvalid
+                    raw_events = deepcopy(fallback_events)
+                source = "orchestrator_evidence"
+        else:
+            task_info = _load_task_info_read_only(task_id)
+            if isinstance(task_info, BaseModel):
+                snapshot = deepcopy(_pydantic_dump(task_info))
+            elif isinstance(task_info, Mapping):
+                snapshot = deepcopy(dict(task_info))
+            else:
+                raise _ExecutionTrajectoryEvidenceInvalid
+            observability = snapshot.get("observability", {})
+            if not isinstance(observability, Mapping):
+                raise _ExecutionTrajectoryEvidenceInvalid
+            raw_events = observability.get("timeline", [])
+            if not isinstance(raw_events, list):
+                raise _ExecutionTrajectoryEvidenceInvalid
+            source = "local_task_observability"
+    except HTTPException:
+        raise
+    except _ExecutionTrajectoryEvidenceInvalid:
+        raise HTTPException(status_code=502, detail="execution trajectory evidence is invalid") from None
+    except Exception as exc:
+        logger.warning("Execution trajectory source read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="execution trajectory source is unavailable") from None
+
+    try:
+        return project_execution_trajectory(
+            task_id=task_id,
+            task_status=str(snapshot.get("status") or "unknown"),
+            source=source,
+            raw_events=raw_events,
+            raw_receipt=snapshot.get("evidence_receipt"),
+            offset=page_offset,
+            limit=page_limit,
+        )
+    except TrajectoryProjectionError:
+        raise HTTPException(status_code=500, detail="execution trajectory could not be prepared") from None
+    except Exception as exc:
+        logger.error("Execution trajectory projection failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="execution trajectory could not be prepared") from None
+
+
 @app.get("/api/tasks/{task_id}/evidence-bundle")
 async def get_task_evidence_bundle(
     task_id: str,
@@ -16231,7 +17145,8 @@ async def task_stream(task_id: str):
             try:
                 plugin = get_orchestrator_plugin_manager()
                 task_payload = await asyncio.to_thread(plugin.get_task, task_id)
-                task_info = external_task_to_app_info(task_payload)
+                evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
+                task_info = await _external_task_info_with_worker(task_payload, evidence=evidence)
                 status_changed_data = {
                     "type": "task_status_changed",
                     "task_id": task_id,
@@ -16243,6 +17158,9 @@ async def task_stream(task_id: str):
                     "last_owner_decision": task_info.get("last_owner_decision"),
                     "subtasks": task_info.get("subtasks", []),
                     "waves": task_info.get("waves", []),
+                    "quality_health": task_info.get("quality_health") or {},
+                    "delivery_report": task_info.get("delivery_report") or {},
+                    "remote_execution": task_info.get("remote_execution"),
                 }
                 yield f"data: {json.dumps(status_changed_data)}\n\n"
                 if task_info["status"] == TaskStatus.COMPLETED.value:

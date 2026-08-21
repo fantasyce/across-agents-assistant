@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.14.0 - 2026-08-21
+
+### Added
+
+- Added immutable, content-addressed promotion packages that bind raw-verified
+  run, task, Worker, plugin, compatibility, lifecycle, and release evidence.
+- Added separate append-only human approval receipts whose complete chain and
+  latest subject decision must verify before final promotion is authorized.
+- Added portable MCP compatibility and execution-trajectory projections for
+  evidence-first review across host and Worker activity.
+
+### Changed
+
+- Made first-party plugin repair, upgrade, rollback, and uninstall atomic
+  across payload, provenance, dependent runtimes, reconnect, and recovery.
+- Updated managed producer pins to Context `v0.11.0`, Orchestrator `v0.10.8`,
+  and Autopilot `v0.5.3` after their producer-first releases completed.
+- Extracted deterministic, fail-closed managed payload manifest generation so
+  clean-checkout tests and formal packaging share the same validated contract.
+
+### Fixed
+
+- Bound release readiness to the exact sealed task set, preserved missing
+  approval-chain anchors as tamper evidence across restart, and rejected
+  malformed or contradictory compatibility details.
+- Closed plugin lifecycle race windows, stale consumer reuse, receipt replay,
+  approval idempotency, and caller-evidence acceptance paths found during the
+  expanded Batch 4 and Batch 5 acceptance review.
+
 ## 0.13.4 - 2026-07-20
 
 ### Fixed

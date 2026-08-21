@@ -3,9 +3,15 @@ from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from copy import deepcopy
+from hashlib import sha256
+from dataclasses import fields, is_dataclass
 import json
+import sqlite3
+import threading
 
 import across_agents_assistant.api_server as api_server
+import across_agents_assistant.promotion_package as promotion_contract
 from across_agents_assistant import autopilot_host_cli_progress
 from across_agents_assistant import local_agent_health
 from across_agents_assistant.autopilot_client import AutopilotClient, _long_run_timeout_seconds
@@ -13,6 +19,168 @@ from across_agents_assistant.autopilot_promotion_review import build_promotion_r
 from across_agents_assistant.autopilot_trigger_manager import AutopilotTriggerRegistry, AutopilotTriggerScheduler
 from across_agents_assistant.api_server import app
 from across_agents_assistant.plugin_runtime import PluginLifecycleError
+from across_agents_assistant.persistence.service import PersistenceService
+from across_agents_assistant.task_api_models import AutoTaskRequest, AutoTaskResponse, TaskInfo
+from across_agents_assistant.task_history.models import Task, TaskContract
+
+
+def _promotion_receipt(task_id: str):
+    receipt = {
+        "schema_version": "across-evidence-receipt/1.0",
+        "task_id": task_id,
+        "verdict": "ready",
+    }
+    receipt["evidence_sha256"] = sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return receipt
+
+
+def _promotion_api_document(run_id="run-promotion", task_ids=None):
+    return {
+        "schema_version": "across-promotion-package/1.0",
+        "status": "ready_for_human_approval",
+        "identities": {
+            "run_id": run_id,
+            "spec_id": "spec-promotion",
+            "candidate_id": "candidate-promotion",
+            "task_ids": task_ids or ["task-alpha", "task-zeta"],
+            "plugins": [
+                {"plugin_id": "across-autopilot"},
+                {"plugin_id": "across-context"},
+                {"plugin_id": "across-orchestrator"},
+            ],
+        },
+        "checks": ["release_ready"],
+        "policy": {
+            "human_approval_required": True,
+            "approval_scope": "release_promotion",
+            "merge_blocked": True,
+            "tag_blocked": True,
+            "release_blocked": True,
+            "signing_blocked": True,
+        },
+    }
+
+
+def test_promotion_package_public_contract_stays_generic_stable_and_secret_free():
+    assert set(api_server.PromotionPackageCreateRequest.model_fields) == set()
+    assert set(api_server.PromotionPackageDecisionRequest.model_fields) == {
+        "decision",
+        "approver_id",
+        "expected_package_sha256",
+    }
+    assert api_server._PROMOTION_PLUGIN_IDS == (
+        "across-autopilot",
+        "across-context",
+        "across-orchestrator",
+    )
+    assert promotion_contract.PROMOTION_PACKAGE_SCHEMA == "across-promotion-package/1.0"
+    assert promotion_contract.REQUIRED_PLUGIN_IDS == {
+        "across-autopilot",
+        "across-context",
+        "across-orchestrator",
+    }
+    assert promotion_contract.PROMOTION_PACKAGE_CHECK_IDS == (
+        "autopilot_evidence_valid",
+        "candidate_binding_matches",
+        "candidate_review_ready",
+        "changed_paths_safe",
+        "evidence_graph_valid",
+        "evidence_graph_task_set_complete",
+        "finite_values",
+        "identifiers_valid",
+        "input_shapes_valid",
+        "plugin_compatibility_ready",
+        "plugin_lifecycle_ready",
+        "plugin_provenance_matches",
+        "plugin_set_complete",
+        "plugin_versions_match",
+        "release_ready",
+        "release_task_set_matches",
+        "run_binding_matches",
+        "run_completed",
+        "task_receipt_bindings_match",
+        "task_receipts_ready",
+        "task_receipts_verified",
+        "task_set_complete",
+        "worker_receipt_binding_valid",
+        "worker_receipt_replay_absent",
+    )
+
+    blocked = api_server._promotion_blocked(promotion_contract.PromotionPackageBlocked([
+        "run_binding_matches",
+        "release_ready",
+        "release_ready",
+        "private-value=do-not-echo",
+        "authorization: bearer credential-shaped-value",
+    ]))
+    assert blocked.status_code == 409
+    assert blocked.detail == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["release_ready", "run_binding_matches"],
+    }
+    fallback = api_server._promotion_blocked(promotion_contract.PromotionPackageBlocked([
+        "authorization: bearer credential-shaped-value",
+        "private-value=do-not-echo",
+    ]))
+    assert fallback.detail == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["input_shapes_valid"],
+    }
+
+    workflow_pack_fields = {
+        "workflow_id",
+        "workflow_pack_id",
+        "pack_id",
+        "loop_spec_id",
+        "output_constant",
+    }
+    host_boundary_models = (
+        Task,
+        TaskContract,
+        AutoTaskRequest,
+        AutoTaskResponse,
+        TaskInfo,
+        api_server.WorkerWorkflowJobRequest,
+        api_server.PromotionPackageCreateRequest,
+        api_server.PromotionPackageDecisionRequest,
+    )
+    for model in host_boundary_models:
+        if is_dataclass(model):
+            field_names = {field.name for field in fields(model)}
+            schema_text = json.dumps(sorted(field_names)).lower()
+        else:
+            field_names = set(model.model_fields)
+            schema_text = json.dumps(model.model_json_schema(), sort_keys=True).lower()
+        assert field_names.isdisjoint(workflow_pack_fields), model.__name__
+        assert all(f'"{field_name}"' not in schema_text for field_name in workflow_pack_fields)
+
+    public_contract = json.dumps(
+        {"filtered": blocked.detail, "fallback": fallback.detail},
+        sort_keys=True,
+    ).lower()
+    assert all(
+        producer_specific_id not in public_contract
+        for producer_specific_id in (
+            "repo-quality-copilot",
+            "release-readiness",
+            "world-simulation",
+        )
+    )
+    assert all(
+        sensitive_marker not in public_contract
+        for sensitive_marker in (
+            "api_key",
+            "authorization",
+            "cookie",
+            "password",
+            "private_key",
+            "raw_transcript",
+            "credential-shaped-value",
+            "do-not-echo",
+        )
+    )
 
 
 def _assert_marker_upsert(patch, marker_start, marker_end):
@@ -39,6 +207,7 @@ class FakeAutopilotClient:
             "adapters": {"sources": ["manual_input"], "actions": ["report_generation"]},
             "autonomy": {"mode": "approval_required"},
         }
+
 
     def run(self, spec, *, trigger="aaa-user", model_policy_overrides=None):
         return {
@@ -165,6 +334,100 @@ class FakeAutopilotClient:
         return {"status": "completed", "trigger": {"trigger_id": trigger_id or "trg-api-1"}}
 
 
+def test_autopilot_trigger_scheduler_start_cancels_pending_stop_for_live_thread(tmp_path):
+    first_tick_started = threading.Event()
+    release_first_tick = threading.Event()
+    second_tick_started = threading.Event()
+
+    class BlockingRegistry:
+        def __init__(self):
+            self.calls = 0
+
+        def tick(self, _client):
+            self.calls += 1
+            if self.calls == 1:
+                first_tick_started.set()
+                assert release_first_tick.wait(timeout=5.0)
+            elif self.calls == 2:
+                second_tick_started.set()
+            return {"status": "idle", "items": []}
+
+    scheduler = AutopilotTriggerScheduler(
+        BlockingRegistry(),
+        lambda: object(),
+        run_queued_triggers=False,
+    )
+    scheduler._interval_seconds = 0.01
+    thread = threading.Thread(target=scheduler._run, daemon=True)
+    scheduler._thread = thread
+    thread.start()
+    assert first_tick_started.wait(timeout=1.0)
+
+    try:
+        stopped = scheduler.stop()
+        assert stopped["running"] is True
+        assert stopped["stop_requested"] is True
+
+        resumed = scheduler.start(run_queued_triggers=False)
+        assert resumed["running"] is True
+        assert resumed["stop_requested"] is False
+        assert not scheduler._stop_event.is_set()
+
+        release_first_tick.set()
+        assert second_tick_started.wait(timeout=1.0)
+    finally:
+        release_first_tick.set()
+        scheduler._stop_event.set()
+        thread.join(timeout=1.0)
+
+
+def test_autopilot_trigger_scheduler_start_and_stop_wait_for_lifecycle_guard(tmp_path):
+    from across_agents_assistant.plugin_runtime import managed_plugin_lifecycle_guard
+
+    class IdleRegistry:
+        def tick(self, _client):
+            return {"status": "idle", "items": []}
+
+    scheduler = AutopilotTriggerScheduler(
+        IdleRegistry(),
+        lambda: object(),
+        run_queued_triggers=False,
+    )
+    start_done = threading.Event()
+
+    def start_scheduler():
+        scheduler.start()
+        start_done.set()
+
+    with managed_plugin_lifecycle_guard("across-autopilot"):
+        start_thread = threading.Thread(target=start_scheduler)
+        start_thread.start()
+        threading.Event().wait(0.1)
+        assert not start_done.is_set()
+        assert scheduler.status()["running"] is False
+
+    start_thread.join(timeout=1.0)
+    assert start_done.is_set()
+    assert scheduler.status()["running"] is True
+
+    stop_done = threading.Event()
+
+    def stop_scheduler():
+        scheduler.stop()
+        stop_done.set()
+
+    with managed_plugin_lifecycle_guard("across-autopilot"):
+        stop_thread = threading.Thread(target=stop_scheduler)
+        stop_thread.start()
+        threading.Event().wait(0.1)
+        assert not stop_done.is_set()
+        assert scheduler.status()["running"] is True
+
+    stop_thread.join(timeout=1.0)
+    assert stop_done.is_set()
+    assert scheduler.status()["running"] is False
+
+
 def test_autopilot_code_iteration_prompt_blocks_token_shaped_test_fixtures():
     prompt = api_server._autopilot_code_iteration_system_prompt(direct_patches=True)
 
@@ -281,6 +544,55 @@ def test_autopilot_trigger_scheduler_skips_stale_due_queue_items(tmp_path):
     status = scheduler.status()
     assert status["last_dispatch_count"] == 0
     assert status["last_dispatch_status"] == "idle"
+
+
+def test_autopilot_trigger_scheduler_reports_failed_dispatch_without_false_success(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    fake_client = DispatchingFakeAutopilotClient()
+    fake_client.items.append(
+        {
+            "trigger_id": "trg-preparation-failure",
+            "spec_id": "aaa-autonomous-self-iteration",
+            "status": "pending",
+        }
+    )
+
+    def fail_dispatch(trigger_id=None):
+        raise RuntimeError("source preparation failed")
+
+    fake_client.run_trigger = fail_dispatch
+    scheduler = AutopilotTriggerScheduler(registry, lambda: fake_client)
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "failed"
+    assert tick["dispatch"]["status"] == "failed"
+    assert tick["dispatch"]["items"][0]["status"] == "failed"
+    status = scheduler.status()
+    assert status["last_tick_status"] == "failed"
+    assert status["last_dispatch_status"] == "failed"
+    assert status["last_error"] == "One or more queued triggers failed to dispatch."
+
+
+def test_autopilot_trigger_scheduler_honors_fractional_iso_retry_delay(tmp_path):
+    registry = AutopilotTriggerRegistry(tmp_path / "trigger-registry.json")
+    fake_client = DispatchingFakeAutopilotClient()
+    fake_client.items.append(
+        {
+            "trigger_id": "trg-future-retry",
+            "spec_id": "aaa-autonomous-self-iteration",
+            "status": "pending",
+            "not_before": "2999-07-20T19:04:15.373Z",
+            "enqueued_at": "2026-07-20T19:00:00.000+00:00",
+        }
+    )
+    scheduler = AutopilotTriggerScheduler(registry, lambda: fake_client)
+
+    tick = scheduler.tick_once()
+
+    assert tick["status"] == "idle"
+    assert tick["dispatch"]["items"] == []
+    assert fake_client.run_trigger_calls == []
 
 
 def test_daily_cron_trigger_runs_at_configured_local_time(tmp_path):
@@ -5193,3 +5505,305 @@ def test_autopilot_model_decision_endpoint_rejects_unallowed_patch_path(monkeypa
 
     assert response.status_code == 422
     assert "Unsafe relative path" in response.json()["detail"]
+
+
+def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-api.db"))
+    evidence = {
+        "schema_version": "across-loop-evidence/1.0",
+        "run_id": "run-promotion",
+        "spec_id": "spec-promotion",
+        "status": "completed",
+        "orchestrator": {
+            "tasks": [
+                {"task_id": "task-zeta", "caller-private": "ignored"},
+                {"task_id": "task-alpha"},
+                {"task_id": "task-zeta"},
+            ]
+        },
+        "evidence_graph": {"schema_version": "across-evidence-graph/1.0"},
+    }
+
+    class Client:
+        def status(self, run_id):
+            assert run_id == "run-promotion"
+            return {"run_id": run_id, "status": "completed"}
+
+        def evidence(self, run_id):
+            assert run_id == "run-promotion"
+            return deepcopy(evidence)
+
+    loaded_tasks = []
+
+    class Orchestrator:
+        def get_evidence_bundle(self, task_id):
+            loaded_tasks.append(task_id)
+            return {"evidence_receipt": _promotion_receipt(task_id)}
+
+    class Bridge:
+        def read_only_status(self, task_id):
+            return None
+
+    plugin_rows = [
+        {"plugin_id": plugin_id, "installed": True, "available": True, "integrity_ok": True}
+        for plugin_id in ("across-autopilot", "across-context", "across-orchestrator")
+    ]
+    captured = {}
+    release_calls = []
+
+    def compose(**kwargs):
+        captured.update(kwargs)
+        return _promotion_api_document(task_ids=[item["task_id"] for item in kwargs["task_evidence"]])
+
+    monkeypatch.setattr(api_server, "persistence", service)
+    monkeypatch.setattr(api_server, "get_autopilot_client", lambda: Client())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: Orchestrator())
+    monkeypatch.setattr(api_server, "get_worker_task_bridge", lambda: Bridge())
+    monkeypatch.setattr(api_server, "discover_across_plugins", lambda **kwargs: deepcopy(plugin_rows))
+    monkeypatch.setattr(api_server, "plugin_payload", lambda plugin_id: {"plugin_id": plugin_id})
+    monkeypatch.setattr(
+        api_server,
+        "load_agent_interop_e2e_latest",
+        lambda: {"mcp_schema_compatibility": {"status": "compatible"}},
+    )
+    monkeypatch.setattr(
+        api_server,
+        "_promotion_release_evidence",
+        lambda task_ids: release_calls.append(list(task_ids)) or {"status": "ready"},
+    )
+    monkeypatch.setattr(api_server, "build_promotion_package", compose)
+    original_get = service.promotion_packages.get
+    monkeypatch.setattr(
+        service.promotion_packages,
+        "get",
+        lambda package_id: (_ for _ in ()).throw(AssertionError("creation must not re-read after insert")),
+    )
+
+    client = TestClient(app)
+    response = client.post("/api/autopilot/runs/run-promotion/promotion-packages")
+    repeated = client.post("/api/autopilot/runs/run-promotion/promotion-packages", json={})
+
+    assert response.status_code == repeated.status_code == 200
+    assert response.json()["package"] == repeated.json()["package"]
+    assert response.json()["final_promotion_authorized"] is False
+    assert response.json()["authorization"]["authorized"] is False
+    assert loaded_tasks == ["task-alpha", "task-zeta", "task-alpha", "task-zeta"]
+    assert [item["task_id"] for item in captured["task_evidence"]] == ["task-alpha", "task-zeta"]
+    assert {row["plugin_id"] for row in captured["plugin_rows"]} == {
+        "across-autopilot", "across-context", "across-orchestrator"
+    }
+    assert captured["release_evidence"] == {"status": "ready"}
+    assert release_calls == [
+        ["task-alpha", "task-zeta"],
+        ["task-alpha", "task-zeta"],
+    ]
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 1
+
+    package = response.json()["package"]
+    service.approval_receipts.record_promotion_decision(
+        package_id=package["package_id"],
+        expected_package_sha256=package["package_sha256"],
+        decision="approved",
+        approver_id="human-reviewer",
+        idempotency_key="creation-race-approve",
+    )
+    original_put = service.promotion_packages.put
+
+    def reject_during_put(document):
+        service.approval_receipts.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="rejected",
+            approver_id="human-reviewer",
+            idempotency_key="creation-race-reject",
+        )
+        return original_put(document)
+
+    monkeypatch.setattr(service.promotion_packages, "put", reject_during_put)
+    raced = client.post("/api/autopilot/runs/run-promotion/promotion-packages")
+
+    assert raced.status_code == 200
+    assert raced.json()["approval"] is None
+    assert raced.json()["final_promotion_authorized"] is False
+    monkeypatch.setattr(service.promotion_packages, "put", original_put)
+    monkeypatch.setattr(service.promotion_packages, "get", original_get)
+    latest = client.get(f"/api/autopilot/promotion-packages/{package['package_id']}")
+    assert latest.status_code == 200
+    assert latest.json()["approval"]["decision"] == "rejected"
+    assert latest.json()["final_promotion_authorized"] is False
+
+    rejected = client.post(
+        "/api/autopilot/runs/run-promotion/promotion-packages",
+        json={"task_evidence": [{"task_id": "task-alpha"}]},
+    )
+    assert rejected.status_code == 422
+
+
+def test_promotion_creation_treats_existing_malformed_source_as_blocked_not_missing(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-malformed.db"))
+
+    class Client:
+        def status(self, run_id):
+            return ["malformed", run_id]
+
+        def evidence(self, run_id):
+            return {"run_id": run_id}
+
+    monkeypatch.setattr(api_server, "persistence", service)
+    monkeypatch.setattr(api_server, "get_autopilot_client", lambda: Client())
+
+    response = TestClient(app).post("/api/autopilot/runs/run-malformed/promotion-packages")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "error": "promotion_package_blocked",
+        "failed_checks": ["input_shapes_valid"],
+    }
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 0
+
+
+def test_promotion_package_creation_has_fixed_failure_boundaries_and_never_persists_blocked(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-errors.db"))
+    monkeypatch.setattr(api_server, "persistence", service)
+    client = TestClient(app)
+
+    async def fail(status_code):
+        raise api_server.HTTPException(status_code=status_code, detail="fixed boundary")
+
+    for status_code in (404, 409, 503):
+        monkeypatch.setattr(api_server, "_assemble_promotion_package", lambda run_id, code=status_code: fail(code))
+        response = client.post(f"/api/autopilot/runs/run-{status_code}/promotion-packages")
+        assert response.status_code == status_code
+
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 0
+
+
+def test_promotion_package_get_and_decisions_are_verified_idempotent_and_non_executing(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-decisions.db"))
+    package = service.promotion_packages.put(_promotion_api_document())
+    monkeypatch.setattr(api_server, "persistence", service)
+    for forbidden in ("merge", "tag", "release", "sign"):
+        monkeypatch.setattr(api_server, forbidden, lambda: (_ for _ in ()).throw(AssertionError(forbidden)), raising=False)
+    client = TestClient(app)
+
+    initial = client.get(f"/api/autopilot/promotion-packages/{package['package_id']}")
+    assert initial.status_code == 200
+    assert initial.json()["approval"] is None
+    assert initial.json()["final_promotion_authorized"] is False
+
+    payload = {
+        "decision": "approved",
+        "approver_id": "human-reviewer",
+        "expected_package_sha256": package["package_sha256"],
+    }
+    approved = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=payload
+    )
+    repeated = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=payload
+    )
+    assert approved.status_code == repeated.status_code == 200
+    assert approved.json()["approval"]["receipt_id"] == repeated.json()["approval"]["receipt_id"]
+    assert approved.json()["approval"]["proposer_id"] == "autopilot-run:run-promotion"
+    assert approved.json()["final_promotion_authorized"] is True
+
+    rejected_payload = {**payload, "decision": "rejected", "approver_id": "second-reviewer"}
+    rejected = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=rejected_payload
+    )
+    rejected_again = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=rejected_payload
+    )
+    assert rejected.status_code == rejected_again.status_code == 200
+    assert rejected.json()["approval"]["receipt_id"] == rejected_again.json()["approval"]["receipt_id"]
+    assert rejected.json()["final_promotion_authorized"] is False
+    retried_approval = client.post(
+        f"/api/autopilot/promotion-packages/{package['package_id']}/decisions", json=payload
+    )
+    assert retried_approval.status_code == 200
+    assert retried_approval.json()["approval"]["receipt_id"] == rejected.json()["approval"]["receipt_id"]
+    assert retried_approval.json()["approval"]["decision"] == "rejected"
+    assert retried_approval.json()["final_promotion_authorized"] is False
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 2
+
+
+def test_promotion_decision_rejects_malformed_wrong_hash_tampered_and_unavailable(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-decision-errors.db"))
+    package = service.promotion_packages.put(_promotion_api_document())
+    monkeypatch.setattr(api_server, "persistence", service)
+    client = TestClient(app)
+    endpoint = f"/api/autopilot/promotion-packages/{package['package_id']}/decisions"
+
+    assert client.post(endpoint, json={}).status_code == 422
+    assert client.post(endpoint, json={
+        "decision": "approved", "approver_id": " ", "expected_package_sha256": "bad"
+    }).status_code == 422
+    assert client.post(endpoint, json={
+        "decision": "approved", "approver_id": "human", "expected_package_sha256": "f" * 64
+    }).status_code == 409
+
+    with sqlite3.connect(service.db_path) as conn:
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 1 WHERE id = 1")
+    assert client.post(endpoint, json={
+        "decision": "approved", "approver_id": "human", "expected_package_sha256": package["package_sha256"]
+    }).status_code == 409
+    with sqlite3.connect(service.db_path) as conn:
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 0 WHERE id = 1")
+
+    with sqlite3.connect(service.db_path) as conn:
+        conn.execute(
+            "UPDATE promotion_packages SET run_id = ? WHERE package_id = ?",
+            ("run-tampered", package["package_id"]),
+        )
+    assert client.post(endpoint, json={
+        "decision": "approved", "approver_id": "human", "expected_package_sha256": package["package_sha256"]
+    }).status_code == 409
+
+    class UnavailablePackages:
+        def get(self, package_id):
+            raise OSError("database unavailable")
+
+    unavailable = SimpleNamespace(promotion_packages=UnavailablePackages(), approval_receipts=service.approval_receipts)
+    monkeypatch.setattr(api_server, "persistence", unavailable)
+    assert client.get(f"/api/autopilot/promotion-packages/{package['package_id']}").status_code == 503
+
+
+def test_promotion_decision_atomically_rejects_pre_append_tamper_and_same_actor_rejection(monkeypatch, tmp_path):
+    service = PersistenceService(str(tmp_path / "promotion-atomic-api.db"))
+    package = service.promotion_packages.put(_promotion_api_document())
+    monkeypatch.setattr(api_server, "persistence", service)
+    client = TestClient(app)
+    endpoint = f"/api/autopilot/promotion-packages/{package['package_id']}/decisions"
+    base = {
+        "expected_package_sha256": package["package_sha256"],
+        "approver_id": "human-reviewer",
+        "decision": "approved",
+    }
+    original = service.approval_receipts.record_promotion_decision
+
+    def tamper_then_append(**kwargs):
+        with sqlite3.connect(service.db_path) as conn:
+            conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 1 WHERE id = 1")
+        return original(**kwargs)
+
+    monkeypatch.setattr(service.approval_receipts, "record_promotion_decision", tamper_then_append)
+    tampered = client.post(endpoint, json=base)
+
+    assert tampered.status_code == 409
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0
+        conn.execute("UPDATE approval_receipt_chain_state SET receipt_count = 0 WHERE id = 1")
+
+    monkeypatch.setattr(service.approval_receipts, "record_promotion_decision", original)
+    same_actor = client.post(endpoint, json={
+        **base,
+        "decision": "rejected",
+        "approver_id": "autopilot-run:run-promotion",
+    })
+    assert same_actor.status_code == 409
+    with sqlite3.connect(service.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 0

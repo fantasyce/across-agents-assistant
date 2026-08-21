@@ -47,6 +47,12 @@ download/update distribution model. AAA's managed plugin install, update,
 repair, and uninstall lifecycle is a separate local capability and remains
 supported without Apple notarization.
 
+The source-built App carries verified offline payloads for Context,
+Orchestrator, and Autopilot so installation does not depend on a network or a
+developer toolchain. Carrying a payload does not auto-install or auto-enable
+the plugin. The zero-plugin profile and every producer's standalone CLI remain
+release contracts.
+
 ## Branch Model
 
 Use these branch types:
@@ -226,7 +232,10 @@ PYTHONPATH=backend/src <python> -m pytest backend/tests --ignore=backend/tests/e
 bash scripts/verify_swift_package_lock.sh
 swift build --package-path macOS-Client --skip-update
 swift test --package-path macOS-Client --skip-update
+bash scripts/run_plugin_boundary_checks.sh
 bash scripts/build_and_run.sh
+bash scripts/verify_packaged_vnext_runtime.sh
+bash scripts/run_packaged_app_cross_plugin_e2e.sh
 ACROSS_AGENTS_ORCHESTRATOR_COMMAND=/path/to/across-orchestrator \
 ACROSS_AGENTS_LIVE_E2E_EVIDENCE_PATH="$(mktemp /tmp/across-live-e2e-release.XXXXXX)" \
   PYTHON=<python> bash scripts/run_live_e2e.sh all
@@ -238,6 +247,41 @@ environment is not the intended release baseline.
 For AAA, `scripts/build_and_run.sh` is the canonical local packaged-app
 verification path. It refreshes `/Applications/Across Agents Assistant.app` and
 must not leave a duplicate long-lived app copy in `~/Applications`.
+
+For a coordinated four-repository candidate, the canonical aggregate command
+is:
+
+```bash
+bash scripts/run_vnext_single_release_acceptance.sh --automated-only --include-packaged-app
+```
+
+The boundary gate proves that every producer works without AAA and that
+optional versus required sibling dependencies are distinguished before
+execution. The packaged cross-plugin gate starts the backend bytes from the
+formal App under an isolated profile, installs the three bundled payloads, and
+runs a real Autopilot → Orchestrator → Context workflow. This gate is mandatory
+for changes to packaging, plugin lifecycle, subprocess environments, host
+socket routing, capability preflight, or cross-plugin contracts.
+
+### Mandatory Packaged-App User Journeys
+
+Automated gates above do not prove that the product is usable. Before opening a
+release PR, run the applicable UJE-001 through UJE-008 journeys defined in
+`docs/engineering-handbook.md` through the real controls of
+`/Applications/Across Agents Assistant.app`.
+
+The release is blocked unless at least UJE-001, UJE-002 and UJE-008 pass on the
+final installed bytes. Changes involving Autopilot, Orchestrator, Context,
+plugins or Workers also require their corresponding journeys. Evidence must
+include the real task identity, visible intermediate and terminal states,
+result content, decision/recovery action, no-mutation fingerprint where
+applicable, and cleanup result. An API-only run, a screenshot-only review, or a
+journey completed before the last code or payload change is insufficient.
+
+Run a short packaged-App journey smoke immediately after targeted tests and the
+first formal build. Do not spend time on the full release matrix while a core
+journey is failing. After all changes and automated gates finish, rebuild the
+formal App and rerun every affected journey once more before creating the PR.
 
 ## Release PR
 
@@ -359,7 +403,7 @@ pgrep -fl "Across Agents Assistant|across-agents-backend"
 
 Then query all three managed plugins from the installed App. Each must report
 the released version with `installed=true`, `available=true`,
-`integrity_ok=true`, and a successful plugin-specific health probe. Verify the
+`integrity_ok=true`, and `probe=true`. Verify the
 Worker control runtime and one approved remote reconnect when that environment
 is available; absence of a remote machine must not make local tasks unusable.
 

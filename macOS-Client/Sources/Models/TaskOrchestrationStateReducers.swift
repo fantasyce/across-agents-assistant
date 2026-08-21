@@ -97,7 +97,7 @@ enum TaskOrchestrationStateReducers {
     static func businessProgress(in subtasks: [TaskOrchestrationSubtaskDetail]) -> TaskOrchestrationProgressCounts {
         let businessSubtasks = subtasks.filter { isOriginalBusinessSubtaskId($0.subtaskId) }
         return TaskOrchestrationProgressCounts(
-            completed: businessSubtasks.filter { $0.status == "completed" }.count,
+            completed: businessSubtasks.filter { isExecutionFinished($0.status) }.count,
             total: businessSubtasks.count
         )
     }
@@ -105,7 +105,7 @@ enum TaskOrchestrationStateReducers {
     static func businessProgress(in subtasks: [TaskOrchestrationPollSubtaskStatus]) -> TaskOrchestrationProgressCounts {
         let businessSubtasks = subtasks.filter { isOriginalBusinessSubtaskId($0.subtask_id) }
         return TaskOrchestrationProgressCounts(
-            completed: businessSubtasks.filter { $0.status == "completed" }.count,
+            completed: businessSubtasks.filter { isExecutionFinished($0.status) }.count,
             total: businessSubtasks.count
         )
     }
@@ -203,5 +203,9 @@ enum TaskOrchestrationStateReducers {
             return false
         }
         return true
+    }
+
+    private static func isExecutionFinished(_ status: String) -> Bool {
+        ["completed", "completed_with_failures"].contains(status)
     }
 }

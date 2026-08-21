@@ -668,11 +668,19 @@ struct TaskEvidenceBundleSheet: View {
     let exportedURL: URL?
     let onExport: () -> Void
     let onOpenExport: () -> Void
+    let trajectory: TaskExecutionTrajectory?
+    let isLoadingTrajectory: Bool
+    let trajectoryErrorMessage: String?
+    let exportedTrajectoryURL: URL?
+    let onLoadNextTrajectory: () -> Void
+    let onExportTrajectory: () -> Void
+    let onOpenTrajectoryExport: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appPreferences: AppPreferences
     @State private var showsDecisionBasis = false
+    @State private var showsExecutionTrajectory = false
     @State private var showsVerificationScope = false
     @State private var showsResultDetails = false
 
@@ -744,6 +752,14 @@ struct TaskEvidenceBundleSheet: View {
                     }
 
                     MinimalDisclosureSection(
+                        title: appPreferences.text("tasks.evidence.trajectory"),
+                        detail: executionTrajectorySummary,
+                        isExpanded: $showsExecutionTrajectory
+                    ) {
+                        executionTrajectorySection
+                    }
+
+                    MinimalDisclosureSection(
                         title: appPreferences.text("tasks.evidence.scope"),
                         detail: String(
                             format: appPreferences.text("tasks.evidence.scope.summary"),
@@ -777,7 +793,9 @@ struct TaskEvidenceBundleSheet: View {
     private var evidenceVerdict: some View {
         let passed = ["passed", "completed"].contains(bundle.benchmark.status)
             && ["completed", "passed"].contains(bundle.taskStatus)
-        let repairCount = bundle.benchmark.summary.maxRemediationAttempts
+        // maxRemediationAttempts is the configured ceiling, not evidence that
+        // repair actually ran.  Only scenario receipts can prove attempts.
+        let repairCount = bundle.benchmark.scenarios.map(\.remediationAttempts).max() ?? 0
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
@@ -822,14 +840,282 @@ struct TaskEvidenceBundleSheet: View {
                 )
                 compactEvidenceState(
                     appPreferences.text("tasks.observability.remediation"),
-                    value: repairCount == 0
-                        ? appPreferences.text("tasks.evidence.noRepair")
-                        : "\(repairCount)",
-                    status: repairCount == 0 ? "passed" : "partial"
+                    value: repairCount > 0
+                        ? "\(repairCount)"
+                        : appPreferences.text(passed ? "tasks.evidence.noRepair" : "tasks.evidence.repairPending"),
+                    status: passed && repairCount == 0 ? "passed" : "partial"
                 )
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var executionTrajectorySummary: String {
+        if isLoadingTrajectory, trajectory == nil {
+            return appPreferences.text("tasks.evidence.trajectory.loading")
+        }
+        if trajectoryErrorMessage != nil, trajectory == nil {
+            return appPreferences.text("tasks.evidence.trajectory.error")
+        }
+        guard let trajectory else {
+            return appPreferences.text("tasks.evidence.trajectory.empty")
+        }
+        return String(
+            format: appPreferences.text("tasks.evidence.trajectory.summary"),
+            trajectory.page.returned,
+            trajectorySourceText(trajectory.source)
+        )
+    }
+
+    @ViewBuilder
+    private var executionTrajectorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isLoadingTrajectory {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(appPreferences.text("tasks.evidence.trajectory.loading"))
+                    Text(appPreferences.text("tasks.evidence.trajectory.loading"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if trajectoryErrorMessage != nil {
+                Label(
+                    appPreferences.text("tasks.evidence.trajectory.error"),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+                .accessibilityLabel(appPreferences.text("tasks.evidence.trajectory.error"))
+            }
+
+            if let trajectory {
+                HStack(spacing: 16) {
+                    Label(
+                        appPreferences.text("tasks.evidence.trajectory.readOnly"),
+                        systemImage: "lock.fill"
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                    Label(
+                        trajectoryReceiptText(trajectory.receipt.integrityState),
+                        systemImage: trajectoryReceiptIcon(trajectory.receipt.integrityState)
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(trajectoryReceiptColor(trajectory.receipt.integrityState))
+
+                    Text(trajectorySourceText(trajectory.source))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+
+                if trajectory.items.isEmpty {
+                    Text(appPreferences.text("tasks.evidence.trajectory.empty"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(trajectory.items) { item in
+                            executionTrajectoryItem(item)
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    if trajectory.page.returned > 0 {
+                        Text(
+                            String(
+                                format: appPreferences.text("tasks.evidence.trajectory.page"),
+                                trajectory.page.offset + 1,
+                                trajectory.page.offset + trajectory.page.returned,
+                                trajectory.page.total
+                            )
+                        )
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if trajectory.page.hasMore, trajectory.page.nextOffset != nil {
+                        Button(action: onLoadNextTrajectory) {
+                            Label(
+                                appPreferences.text("tasks.evidence.trajectory.loadNext"),
+                                systemImage: "chevron.right"
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isLoadingTrajectory)
+                    }
+
+                    Button(action: onExportTrajectory) {
+                        Label(
+                            appPreferences.text("tasks.evidence.trajectory.export"),
+                            systemImage: "square.and.arrow.down"
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isLoadingTrajectory)
+
+                    if exportedTrajectoryURL != nil {
+                        Button(action: onOpenTrajectoryExport) {
+                            Label(
+                                appPreferences.text("tasks.evidence.trajectory.openExport"),
+                                systemImage: "folder"
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                if let exportedTrajectoryURL {
+                    Text(
+                        String(
+                            format: appPreferences.text("tasks.evidence.trajectory.exported"),
+                            exportedTrajectoryURL.path
+                        )
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                }
+            } else if !isLoadingTrajectory, trajectoryErrorMessage == nil {
+                Text(appPreferences.text("tasks.evidence.trajectory.empty"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func executionTrajectoryItem(_ item: TaskExecutionTrajectoryItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: trajectoryItemIcon(item.status))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(trajectoryItemColor(item.status))
+                .frame(width: 16)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(item.title)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(trajectoryPhaseText(item.phase))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(trajectoryStatusText(item.status))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(trajectoryItemColor(item.status))
+                }
+
+                HStack(spacing: 8) {
+                    Text("\(item.scopeKind): \(item.scopeId)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let timestamp = item.timestamp {
+                        Text(
+                            Date(timeIntervalSince1970: timestamp)
+                                .formatted(date: .abbreviated, time: .standard)
+                        )
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func trajectorySourceText(_ source: ExecutionTrajectorySource) -> String {
+        let key: String
+        switch source {
+        case .orchestratorEvidence: key = "tasks.evidence.trajectory.source.orchestrator_evidence"
+        case .workerProjection: key = "tasks.evidence.trajectory.source.worker_projection"
+        case .localTaskObservability: key = "tasks.evidence.trajectory.source.local_task_observability"
+        case .unknown: key = "tasks.evidence.trajectory.source.unknown"
+        }
+        return appPreferences.text(key)
+    }
+
+    private func trajectoryReceiptText(_ integrity: ExecutionTrajectoryReceiptIntegrity) -> String {
+        let key: String
+        switch integrity {
+        case .hashValid: key = "tasks.evidence.trajectory.receipt.hash_valid"
+        case .invalid: key = "tasks.evidence.trajectory.receipt.invalid"
+        case .unsupported: key = "tasks.evidence.trajectory.receipt.unsupported"
+        case .missing: key = "tasks.evidence.trajectory.receipt.missing"
+        case .unknown: key = "tasks.evidence.trajectory.receipt.unknown"
+        }
+        return appPreferences.text(key)
+    }
+
+    private func trajectoryPhaseText(_ phase: ExecutionTrajectoryPhase) -> String {
+        let key: String
+        switch phase {
+        case .created: key = "tasks.evidence.trajectory.phase.created"
+        case .started: key = "tasks.evidence.trajectory.phase.started"
+        case .checkpoint: key = "tasks.evidence.trajectory.phase.checkpoint"
+        case .completed: key = "tasks.evidence.trajectory.phase.completed"
+        case .failed: key = "tasks.evidence.trajectory.phase.failed"
+        case .blocked: key = "tasks.evidence.trajectory.phase.blocked"
+        case .cancelled: key = "tasks.evidence.trajectory.phase.cancelled"
+        case .other: key = "tasks.evidence.trajectory.phase.other"
+        case .unknown: key = "tasks.evidence.trajectory.phase.unknown"
+        }
+        return appPreferences.text(key)
+    }
+
+    private func trajectoryStatusText(_ status: ExecutionTrajectoryItemStatus) -> String {
+        let key: String
+        switch status {
+        case .recorded: key = "tasks.evidence.trajectory.status.recorded"
+        case .running: key = "tasks.evidence.trajectory.status.running"
+        case .succeeded: key = "tasks.evidence.trajectory.status.succeeded"
+        case .failed: key = "tasks.evidence.trajectory.status.failed"
+        case .cancelled: key = "tasks.evidence.trajectory.status.cancelled"
+        case .blocked: key = "tasks.evidence.trajectory.status.blocked"
+        case .unknown: key = "tasks.evidence.trajectory.status.unknown"
+        }
+        return appPreferences.text(key)
+    }
+
+    private func trajectoryReceiptIcon(_ integrity: ExecutionTrajectoryReceiptIntegrity) -> String {
+        integrity == .hashValid ? "checkmark.seal.fill" : "exclamationmark.shield.fill"
+    }
+
+    private func trajectoryReceiptColor(_ integrity: ExecutionTrajectoryReceiptIntegrity) -> Color {
+        integrity == .hashValid ? .green : .orange
+    }
+
+    private func trajectoryItemIcon(_ status: ExecutionTrajectoryItemStatus) -> String {
+        switch status {
+        case .succeeded: return "checkmark.circle.fill"
+        case .failed, .blocked: return "xmark.octagon.fill"
+        case .cancelled: return "minus.circle.fill"
+        case .running: return "circle.dotted"
+        case .recorded, .unknown: return "circle.fill"
+        }
+    }
+
+    private func trajectoryItemColor(_ status: ExecutionTrajectoryItemStatus) -> Color {
+        switch status {
+        case .succeeded: return .green
+        case .failed, .blocked: return .red
+        case .running: return AcrossTheme.accent
+        case .cancelled, .recorded, .unknown: return .secondary
+        }
     }
 
     private var evidenceAuditSection: some View {
@@ -897,6 +1183,19 @@ struct TaskEvidenceBundleSheet: View {
                         Text("\(scenario.qualityScore)")
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
+                    }
+
+                    if let report = bundle.resultReport?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !report.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(appPreferences.text("tasks.evidence.resultReport"))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text(report)
+                                .font(.system(size: 11))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                     }
 
                     evidenceList(title: appPreferences.text("tasks.evidence.producedFiles"), values: scenario.producedFiles)

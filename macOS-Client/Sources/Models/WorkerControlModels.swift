@@ -23,6 +23,8 @@ struct WorkerReleaseStatus: Codable, Equatable {
 }
 
 struct WorkerNode: Codable, Identifiable, Equatable {
+    static let reconnectGraceSeconds: TimeInterval = 45
+
     let nodeID: String
     let displayName: String
     let state: String
@@ -38,6 +40,25 @@ struct WorkerNode: Codable, Identifiable, Equatable {
     let verificationCode: String?
 
     var id: String { nodeID }
+
+    var presentationState: String {
+        Self.presentationState(
+            reportedState: state,
+            lastSeenAt: lastSeenAt,
+            now: Date().timeIntervalSince1970
+        )
+    }
+
+    static func presentationState(
+        reportedState: String,
+        lastSeenAt: Double?,
+        now: TimeInterval,
+        reconnectGraceSeconds: TimeInterval = 45
+    ) -> String {
+        guard reportedState == "offline", let lastSeenAt else { return reportedState }
+        let elapsed = max(0, now - lastSeenAt)
+        return elapsed <= reconnectGraceSeconds ? "reconnecting" : reportedState
+    }
 
     enum CodingKeys: String, CodingKey {
         case nodeID = "node_id"

@@ -771,7 +771,7 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
     assert captured == {
         "goal": "Build a polished dashboard",
         "project_dir": str(tmp_path / "project"),
-        "deliverables": ["README.md"],
+        "deliverables": ["across-results/task-report.md"],
         "agent": "hermes",
         "subtasks": [],
         "strict_dependency": True,

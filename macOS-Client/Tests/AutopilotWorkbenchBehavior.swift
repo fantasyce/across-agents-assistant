@@ -1,5 +1,15 @@
 import Foundation
 
+private let repositoryRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+private func source(_ relativePath: String) -> String {
+    let url = repositoryRoot.appendingPathComponent(relativePath)
+    guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+        fatalError("Unable to read \(relativePath)")
+    }
+    return contents
+}
+
 func assert(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
         fatalError(message)
@@ -78,11 +88,24 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
             "context_skills_bridge_status": "passed",
             "computer_use_sandbox_status": "passed",
             "local_agent_protocol_status": "passed",
+            "schema_compatibility_status": "incompatible",
+            "compatible_plugin_count": 2,
+            "incompatible_plugin_count": 1,
+            "portable_tool_count": 47,
             "otel_span_count": 21,
             "otlp_resource_span_count": 1,
             "eval_case_count": 5
           },
-          "items": [{"id": "three_plugin_mcp_load", "status": "passed"}],
+          "items": [{
+            "id": "mcp_schema_finding_1",
+            "status": "failed",
+            "plugin_id": "across-orchestrator",
+            "tool_name": "register_external_agent_plugin",
+            "profile": "claude_desktop_portable",
+            "code": "portable_keyword_unsupported",
+            "severity": "error",
+            "message": "This JSON Schema keyword is not in the Claude Desktop portable profile."
+          }],
           "endpoint": "/api/autopilot/agent-interop-e2e"
         }
       },
@@ -121,10 +144,49 @@ func testAutopilotWorkbenchSnapshotDecodesAttentionContract() throws {
     assert(snapshot.sections["agent_interop_e2e"]?.summary["projection_status"]?.description == "passed", "Agent interop projection status should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["agui_projection_status"]?.description == "passed", "Agent interop AG-UI status should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["async_task_status"]?.description == "passed", "Agent interop async task status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["schema_compatibility_status"]?.description == "incompatible", "MCP schema compatibility status should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["compatible_plugin_count"]?.description == "2", "Compatible plugin count should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["incompatible_plugin_count"]?.description == "1", "Incompatible plugin count should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.summary["portable_tool_count"]?.description == "47", "Portable tool count should decode")
+    assert(snapshot.sections["agent_interop_e2e"]?.items.first?.objectValue?["code"]?.description == "portable_keyword_unsupported", "Fixed compatibility finding should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["otel_span_count"]?.description == "21", "Agent interop OTel span count should decode")
     assert(snapshot.sections["agent_interop_e2e"]?.summary["otlp_resource_span_count"]?.description == "1", "Agent interop OTLP resource span count should decode")
     assert(snapshot.actions.first?.id == "open_promotion_review", "Actions should decode")
     assert(snapshot.endpoints["refresh"] == "/api/autopilot/workbench/refresh", "Endpoint map should decode")
+}
+
+func testCompatibilityEvidenceReusesOneActionAndHasLocalizedPresentation() {
+    let view = source("macOS-Client/Sources/Views/AutopilotWorkbenchView.swift")
+    let viewModel = source("macOS-Client/Sources/ViewModels/AutopilotWorkbenchViewModel.swift")
+    let preferences = source("macOS-Client/Sources/Models/AppPreferences.swift")
+
+    assert(
+        view.components(separatedBy: "case \"run_agent_interop_e2e\"").count - 1 == 1,
+        "Workbench must keep exactly one Agent compatibility action"
+    )
+    assert(
+        Set(viewModel.components(separatedBy: "\n").filter { $0.contains("/api/autopilot/agent-interop-e2e") })
+            .allSatisfy { $0.contains("request(path:") },
+        "Compatibility must reuse the existing interop endpoint"
+    )
+    for key in [
+        "schema_compatibility_status",
+        "compatible_plugin_count",
+        "incompatible_plugin_count",
+        "portable_tool_count",
+    ] {
+        assert(view.contains("\"\(key)\""), "Compatibility summary key \(key) must be prioritized")
+        assert(
+            preferences.components(separatedBy: "\"workbench.summary.\(key)\"").count - 1 == 2,
+            "Compatibility summary key \(key) must have English and Chinese labels"
+        )
+    }
+    assert(
+        preferences.components(separatedBy: "\"workbench.finding.portable_keyword_unsupported\"").count - 1 == 2,
+        "Portable-keyword finding must have English and Chinese labels"
+    )
+    assert(view.contains("workbench.summary.\\(key)"), "Workbench must localize dynamic summary keys")
+    assert(view.contains("workbench.finding.\\(code)"), "Workbench must localize compatibility findings")
 }
 
 func testAutopilotWorkbenchSnapshotDecodesHealthyContract() throws {
@@ -237,6 +299,7 @@ struct AutopilotWorkbenchBehavior {
         try testAutopilotWorkbenchSnapshotDecodesHealthyContract()
         try testAutopilotWorkbenchTreatsUnusedOptionalCapabilitiesAsNeutral()
         testAutopilotEvidenceTargetKeepsRunAndRouteBoundTogether()
+        testCompatibilityEvidenceReusesOneActionAndHasLocalizedPresentation()
         print("AutopilotWorkbenchBehavior passed")
     }
 }

@@ -222,7 +222,8 @@ def test_git_clone_retries_with_http1_fallback_and_cleans_failed_target(tmp_path
     calls = []
     saw_leftover = []
 
-    def fake_run_git(args, cwd, *, timeout, include_cwd=True):
+    def fake_run_git(args, cwd, *, timeout, include_cwd=True, cancellable=False):
+        assert cancellable is True
         calls.append(list(args))
         saw_leftover.append((target / "partial").exists())
         target.mkdir(parents=True, exist_ok=True)
@@ -239,6 +240,64 @@ def test_git_clone_retries_with_http1_fallback_and_cleans_failed_target(tmp_path
     assert len(calls) == 3
     assert calls[2][:3] == ["-c", "http.version=HTTP/1.1", "clone"]
     assert saw_leftover == [False, False, False]
+
+
+def test_git_clone_stops_before_retry_when_host_cancels(tmp_path, monkeypatch):
+    target = tmp_path / "clone"
+    source_mirror_refresh_module.cancel_active_source_mirror_refreshes(grace_seconds=0)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("cancelled refresh must not start another Git process")
+
+    monkeypatch.setattr(source_mirror_refresh_module, "_run_git", fail_if_called)
+    with pytest.raises(SourceMirrorRefreshError) as exc:
+        source_mirror_refresh_module._git_clone(
+            "https://example.invalid/repo.git", "v1.0.0", target, "repo", {}
+        )
+
+    assert exc.value.payload["reason"] == "source_mirror_refresh_cancelled"
+    source_mirror_refresh_module._source_mirror_cancel_event.clear()
+
+
+def test_release_source_bootstrap_clones_missing_repositories_concurrently(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def fake_clone(url, ref, target, repo_id, env):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        target.mkdir(parents=True)
+        with lock:
+            active -= 1
+
+    monkeypatch.setattr(source_mirror_refresh_module, "_git_clone", fake_clone)
+    env = {
+        url_env: f"https://example.invalid/{repo_id}.git"
+        for repo_id, (url_env, _) in RELEASE_SOURCE_ENV.items()
+    }
+    env.update({ref_env: "v1.0.0" for _, ref_env in RELEASE_SOURCE_ENV.values()})
+
+    sources, metadata = source_mirror_refresh_module._clone_release_sources(
+        list(REQUIRED_SOURCE_REPOS), env, tmp_path
+    )
+
+    assert max_active > 1
+    assert list(sources) == list(REQUIRED_SOURCE_REPOS)
+    assert all(metadata[repo_id]["source_ref"] == "v1.0.0" for repo_id in REQUIRED_SOURCE_REPOS)
+
+
+def test_release_source_clone_timeout_is_short_and_bounded():
+    assert source_mirror_refresh_module._git_clone_timeout_seconds({}) == 30
+    assert source_mirror_refresh_module._git_clone_timeout_seconds(
+        {"ACROSS_AAA_SOURCE_MIRROR_CLONE_TIMEOUT_SECONDS": "1"}
+    ) == 10
 
 
 def test_refresh_source_mirrors_blocks_dirty_a_source(tmp_path):
@@ -344,15 +403,14 @@ def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, mo
 
     def fake_cli(args, *, env=None, timeout=60):
         calls.append(args)
-        if args[:2] == ["loop", "trigger-queue"]:
+        if args[:2] == ["loop", "claim-trigger"]:
             return {
-                "items": [
-                    {
-                        "trigger_id": "trg-self",
-                        "spec_id": "aaa-autonomous-self-iteration",
-                        "status": "pending",
-                    }
-                ]
+                "status": "claimed",
+                "trigger": {
+                    "trigger_id": "trg-self",
+                    "spec_id": "aaa-autonomous-self-iteration",
+                    "status": "claimed",
+                },
             }
         return {"status": "completed", "trigger": {"trigger_id": "trg-self"}}
 
@@ -366,8 +424,8 @@ def test_autopilot_client_refreshes_before_queued_candidate_trigger(tmp_path, mo
     result = AutopilotClient(env=env).run_trigger("trg-self")
 
     assert result["status"] == "completed"
-    assert calls[0][:2] == ["loop", "trigger-queue"]
-    assert calls[1][:2] == ["loop", "run-trigger"]
+    assert calls[0][:2] == ["loop", "claim-trigger"]
+    assert calls[1][:2] == ["loop", "run-claimed-trigger"]
     assert (Path(env["ACROSS_HOME"]) / "data" / "across-autopilot" / "source-mirrors" / "manifest.json").exists()
     assert len(retention_calls) == 1
     assert retention_calls[0]["policy"].prune_trigger_queue is True

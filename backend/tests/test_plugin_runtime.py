@@ -572,19 +572,37 @@ def test_plugins_action_api_rejects_unsupported_action(monkeypatch, tmp_path):
     assert response.status_code == 400
 
 
-def test_plugins_action_api_runs_one_click_context_install(monkeypatch):
+def test_plugins_action_api_runs_one_click_context_install(monkeypatch, tmp_path):
     calls: list[str] = []
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-context"
+    wrapper = across_home / "bin" / "across-context"
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
 
     def install(action: str):
         calls.append(action)
+        plugin_dir.mkdir(parents=True)
+        wrapper.parent.mkdir(parents=True)
+        (plugin_dir / "runtime.txt").write_text("installed\n", encoding="utf-8")
+        wrapper.write_text("wrapper\n", encoding="utf-8")
         return {
             "plugin_id": "across-context",
             "status": "installed",
             "installed": True,
             "available": True,
+            "integrity_ok": True,
+            "probe": True,
         }
 
     monkeypatch.setattr(api_server, "run_context_plugin_lifecycle_action", install)
+    monkeypatch.setattr(
+        api_server,
+        "get_agent_loop_memory_metrics",
+        lambda: {
+            "schema_version": "agent-loop-memory-metrics/1.0",
+            "totals": {"candidate_count": 0, "pending_count": 0},
+        },
+    )
 
     response = TestClient(app).post(
         "/api/plugins/across-context/actions",
@@ -596,18 +614,33 @@ def test_plugins_action_api_runs_one_click_context_install(monkeypatch):
     assert calls == ["install"]
 
 
-def test_plugins_action_api_reconciles_worker_runtime_after_orchestrator_repair(monkeypatch):
+def test_plugins_action_api_reconciles_worker_runtime_after_orchestrator_repair(monkeypatch, tmp_path):
     calls: list[str] = []
+    across_home = tmp_path / "across"
+    plugin_dir = across_home / "plugins" / "across-orchestrator"
+    wrapper = across_home / "bin" / "across-orchestrator"
+    monkeypatch.setenv("ACROSS_HOME", str(across_home))
 
     class FakeManager:
+        def reset_runtime_connection(self):
+            calls.append("manager-reset")
+
         def install_plugin(self):
             calls.append("install")
-            return {"status": "installed", "installed": True}
+            plugin_dir.mkdir(parents=True)
+            wrapper.parent.mkdir(parents=True)
+            (plugin_dir / "runtime.txt").write_text("installed\n", encoding="utf-8")
+            wrapper.write_text("wrapper\n", encoding="utf-8")
+            return {"status": "installed", "installed": True, "integrity_ok": True}
 
         def implementation_status(self, probe: bool = True):
             assert probe is True
             calls.append("status")
-            return {"implementation": "external", "available": True}
+            return {
+                "implementation": "external",
+                "available": True,
+                "install": {"installed": True, "integrity_ok": True},
+            }
 
     class FakeWorkerRuntime:
         def shutdown(self):
@@ -627,7 +660,7 @@ def test_plugins_action_api_reconciles_worker_runtime_after_orchestrator_repair(
 
     assert response.status_code == 200
     assert response.json()["worker_runtime"]["listener_pid"] == 42
-    assert calls == ["worker-shutdown", "install", "worker-reconcile", "status"]
+    assert calls == ["worker-shutdown", "manager-reset", "install", "status", "worker-reconcile"]
 
 
 def test_memory_governance_api_creates_and_updates_pending_memory(monkeypatch, tmp_path):

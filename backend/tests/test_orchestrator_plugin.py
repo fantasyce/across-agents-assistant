@@ -65,6 +65,138 @@ def test_generic_external_task_uses_orchestrator_gates_instead_of_release_e2e_pr
     assert bundle["owner_agent"] == "across-autopilot"
 
 
+def test_read_only_external_task_exposes_agent_report_without_heartbeat_noise(tmp_path):
+    evidence = {
+        "task_id": "task-read-only",
+        "goal": "Inspect without modifying files",
+        "status": "completed",
+        "project_root": str(tmp_path),
+        "contract": {"requiredArtifacts": ["README.md"]},
+        "metadata": {
+            "task_types": ["functional"],
+            "delivery_mode": "composite",
+            "host_metadata": {"intent_mode": "read_only_analysis"},
+        },
+        "subtasks": [{"agent": "kimi", "status": "completed"}],
+        "artifacts": [{"path": "README.md", "present": True}],
+        "quality": {
+            "status": "passed",
+            "gates": {"required_artifacts_present": True},
+        },
+        "sandbox_executions": [
+            {
+                "receipt": {
+                    "output": {
+                        "stdout": "\n".join(
+                            [
+                                '{"type":"heartbeat","status":"running"}',
+                                json.dumps(
+                                    {
+                                        "output": "Planning notes.\n\n# Audit Report\n\nEverything is consistent."
+                                    }
+                                ),
+                            ]
+                        )
+                    }
+                }
+            }
+        ],
+    }
+
+    bundle = external_evidence_to_app_bundle(
+        evidence,
+        benchmark_id="read-only-report",
+    )
+
+    assert bundle["result_report"] == "# Audit Report\n\nEverything is consistent."
+
+
+def test_generic_external_task_requires_semantic_review_without_calling_it_a_repair(tmp_path):
+    task = _external_task("task-semantic-review", str(tmp_path), "completed")
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["quality"] = {
+        "status": "passed",
+        "quality_gate": "passed",
+        "quality_score": 70,
+        "quality_report": {
+            "quality_gate": "passed",
+            "can_complete": True,
+            "required_failed_count": 0,
+            "manual_required_count": 1,
+        },
+    }
+
+    app_task = external_task_to_app_info(task, evidence)
+
+    assert app_task["delivery_report"]["quality_gate"] == "manual_required"
+    assert app_task["delivery_report"]["summary"].endswith("requires human review.")
+    assert app_task["acceptance_records"][0]["decision"] == "review"
+    assert app_task["acceptance_records"][0]["recommended_action"] == "review"
+    assert app_task["acceptance_records"][0]["failed_checks"] == []
+
+
+def test_read_only_external_task_reads_nested_orchestrator_execution_shape(tmp_path):
+    evidence = {
+        "task_id": "task-read-only-nested",
+        "goal": "Inspect without modifying files",
+        "status": "completed",
+        "project_root": str(tmp_path),
+        "contract": {"requiredArtifacts": []},
+        "metadata": {
+            "host_metadata": {"intent_mode": "read_only_analysis"},
+            "sandbox_executions": [
+                {
+                    "receipt": {
+                        "output": {
+                            "stdout": (
+                                '{"type":"heartbeat","status":"running"}\n'
+                                '{"agent":"kimi","output":"preamble\\n# Nested Audit\\n\\nPassed."}\n'
+                            )
+                        }
+                    }
+                }
+            ],
+        },
+        "quality": {"status": "passed", "gates": {}},
+        "artifacts": [],
+    }
+
+    bundle = external_evidence_to_app_bundle(
+        evidence,
+        benchmark_id="read-only-nested",
+    )
+
+    assert bundle["result_report"] == "# Nested Audit\n\nPassed."
+
+
+def test_read_only_external_task_reads_direct_evidence_receipt_shape(tmp_path):
+    evidence = {
+        "task_id": "task-read-only-direct",
+        "goal": "Inspect without modifying files",
+        "status": "completed",
+        "project_root": str(tmp_path),
+        "contract": {"requiredArtifacts": []},
+        "metadata": {"host_metadata": {"intent_mode": "read_only_analysis"}},
+        "sandbox_executions": [
+            {
+                "status": "completed",
+                "output": {
+                    "stdout": '{"agent":"kimi","output":"# Direct Audit\\n\\nPassed."}\n'
+                },
+            }
+        ],
+        "quality": {"status": "passed", "gates": {}},
+        "artifacts": [],
+    }
+
+    bundle = external_evidence_to_app_bundle(
+        evidence,
+        benchmark_id="read-only-direct",
+    )
+
+    assert bundle["result_report"] == "# Direct Audit\n\nPassed."
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -241,7 +373,7 @@ def test_bundled_orchestrator_sidecar_allows_cold_start(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(manager, "install_status", lambda: {"runtime": "bundled_native"})
 
-    assert manager._sidecar_startup_timeout(str(manager.installer.command_path)) == 60.0
+    assert manager._sidecar_startup_timeout(str(manager.installer.command_path)) == 120.0
     assert manager._sidecar_startup_timeout(str(tmp_path / "external-orchestrator")) == 5.0
 
 
@@ -271,7 +403,7 @@ def test_external_managed_wrapper_keeps_native_cold_start_budget(tmp_path):
 
     assert manager.install_status()["installed"] is False
     assert manager._managed_runtime_requires_sidecar(manager.install_status(), str(wrapper)) is True
-    assert manager._sidecar_startup_timeout(str(wrapper)) == 60.0
+    assert manager._sidecar_startup_timeout(str(wrapper)) == 120.0
 
 
 def test_bundled_orchestrator_fallback_manifest_keeps_version_and_cold_start_timeout(tmp_path):
@@ -291,7 +423,7 @@ def test_bundled_orchestrator_fallback_manifest_keeps_version_and_cold_start_tim
     installer._write_manifest(logs)
 
     manifest = json.loads(installer.manifest_path.read_text(encoding="utf-8"))
-    assert observed["timeout"] == 60.0
+    assert observed["timeout"] == 120.0
     assert manifest["version"] == "0.9.0"
     assert logs == ["Plugin manifest probe failed; writing host manifest."]
 
@@ -1274,6 +1406,42 @@ def test_external_app_task_artifacts_include_client_file_metadata(tmp_path):
     assert artifact["normalized_content_ref"] == artifact["file_path"]
     assert artifact["file_size"] == "6 B"
     assert artifact["size"] == 6
+
+
+def test_external_managed_artifact_uses_orchestrator_storage_path(tmp_path):
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    managed = tmp_path / "orchestrator-artifacts" / "task-review.md"
+    managed.parent.mkdir()
+    managed.write_text("review\n", encoding="utf-8")
+    task = _external_task("task-external-managed-artifact", str(project_dir), "completed")
+    task["contract"]["requiredArtifacts"] = ["across-results/task-review.md"]
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["artifacts"] = [{
+        "path": "across-results/task-review.md",
+        "storage_path": str(managed),
+        "present": True,
+        "fresh": True,
+        "size": 7,
+        "sha256": "d" * 64,
+    }]
+
+    artifact = external_task_to_app_info(task, evidence)["artifacts"][0]
+
+    assert artifact["status"] == "accepted"
+    assert artifact["file_path"] == str(managed)
+    assert artifact["content_ref"] == str(managed)
+
+
+def test_external_stale_artifact_is_not_accepted(tmp_path):
+    task = _external_task("task-external-stale-artifact", str(tmp_path), "completed")
+    evidence = _external_evidence(task["task_id"], task["project_root"])
+    evidence["artifacts"][0].update({"present": True, "fresh": False})
+
+    app_task = external_task_to_app_info(task, evidence)
+
+    assert app_task["artifacts"][0]["status"] == "stale"
+    assert app_task["delivery_report"]["quality_gate"] != "passed"
 
 
 def test_external_acceptance_record_is_stable_without_task_timestamps(tmp_path):

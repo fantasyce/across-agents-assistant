@@ -242,6 +242,16 @@ class MCPClientManager:
             del self.server_tools[server_id]
         logger.info(f"Disconnected from MCP server {server_id}.")
 
+    async def shutdown(self) -> None:
+        """Close every live stdio transport before the host process exits."""
+        server_ids = set(self.sessions) | set(self._exit_stacks) | set(self.server_tools)
+        for server_id in list(server_ids):
+            try:
+                await self.disconnect_server(server_id)
+            except Exception:
+                logger.warning("Failed to disconnect MCP server %s during shutdown.", server_id, exc_info=True)
+        self._connecting.clear()
+
     def get_server_implementation(self, server_id: str) -> Optional[str]:
         return self._server_implementations.get(server_id)
 

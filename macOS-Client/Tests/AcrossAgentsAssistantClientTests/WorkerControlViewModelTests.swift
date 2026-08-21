@@ -51,10 +51,17 @@ struct WorkerControlViewModelTests {
         for key in [
             "workers.title", "workers.pending.title", "workers.nodes.title", "workers.add.title",
             "workers.connection.title", "workers.approve", "workers.revoke", "workers.state.online_idle",
+            "workers.state.reconnecting", "workers.reconnecting",
             "workers.direct.runtime.running", "workers.direct.runtime.degraded", "workers.direct.error.start",
         ] {
             #expect(AppPreferences.localizedString(key, localeIdentifier: "en") != key)
             #expect(AppPreferences.localizedString(key, localeIdentifier: "zh-Hans") != key)
         }
+    }
+
+    @Test func recentlySeenOfflineWorkerIsPresentedAsReconnecting() {
+        #expect(WorkerNode.presentationState(reportedState: "offline", lastSeenAt: 980, now: 1_000) == "reconnecting")
+        #expect(WorkerNode.presentationState(reportedState: "offline", lastSeenAt: 900, now: 1_000) == "offline")
+        #expect(WorkerNode.presentationState(reportedState: "revoked", lastSeenAt: 999, now: 1_000) == "revoked")
     }
 }

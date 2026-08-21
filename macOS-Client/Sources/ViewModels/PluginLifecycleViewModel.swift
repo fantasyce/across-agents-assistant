@@ -201,7 +201,7 @@ final class PluginLifecycleViewModel: ObservableObject {
     ) -> Bool {
         switch normalizedPluginAction(action) {
         case "install", "repair", "upgrade":
-            return plugin.installed && plugin.available
+            return plugin.installed && plugin.available && plugin.integrityOkay && plugin.probe
         case "uninstall":
             return !plugin.installed
         default:

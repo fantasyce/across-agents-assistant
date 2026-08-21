@@ -11,6 +11,74 @@ struct AppleMinimalUIContractTests {
         #expect(AppPreferences.localizedString("status.not_configured", localeIdentifier: "zh-Hans") == "未配置")
     }
 
+    @Test
+    func evidenceSheetContainsOneReadOnlyExecutionTrajectoryDisclosure() throws {
+        let evidence = try Self.source("macOS-Client/Sources/Views/TaskReleaseEvidenceViews.swift")
+        let runs = try Self.source("macOS-Client/Sources/Views/MinimalRunsOverviewView.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let sheetBody = try #require(
+            Self.slice(evidence, from: "struct TaskEvidenceBundleSheet", to: "private var evidenceVerdict")
+        )
+        let trajectorySection = try #require(
+            Self.slice(evidence, from: "private var executionTrajectorySection", to: "private var evidenceAuditSection")
+        )
+
+        let decision = try #require(sheetBody.range(of: "tasks.evidence.decisionBasis")?.lowerBound)
+        let trajectory = try #require(sheetBody.range(of: "tasks.evidence.trajectory")?.lowerBound)
+        let scope = try #require(sheetBody.range(of: "tasks.evidence.scope")?.lowerBound)
+        #expect(decision < trajectory)
+        #expect(trajectory < scope)
+        #expect(sheetBody.components(separatedBy: "title: appPreferences.text(\"tasks.evidence.trajectory\")").count - 1 == 1)
+        #expect(sheetBody.contains("isExpanded: $showsExecutionTrajectory"))
+        #expect(sheetBody.contains("trajectory: TaskExecutionTrajectory?"))
+        #expect(sheetBody.contains("isLoadingTrajectory: Bool"))
+        #expect(sheetBody.contains("trajectoryErrorMessage: String?"))
+        #expect(sheetBody.contains("exportedTrajectoryURL: URL?"))
+        #expect(trajectorySection.contains("ProgressView()"))
+        #expect(trajectorySection.contains(".accessibilityLabel"))
+        #expect(trajectorySection.contains("onLoadNextTrajectory"))
+        #expect(trajectorySection.contains("onExportTrajectory"))
+        #expect(trajectorySection.contains("onOpenTrajectoryExport"))
+        #expect(trajectorySection.contains("tasks.evidence.trajectory.receipt.hash_valid"))
+        #expect(!trajectorySection.contains("Verified publisher"))
+        #expect(!trajectorySection.contains("onReplay"))
+        #expect(!trajectorySection.contains("onCompare"))
+        #expect(!trajectorySection.contains("onRepair"))
+        #expect(!trajectorySection.contains("onResume"))
+
+        for construction in [runs, work] {
+            #expect(construction.contains("trajectory: viewModel.selectedExecutionTrajectory") || construction.contains("trajectory: taskViewModel.selectedExecutionTrajectory"))
+            #expect(construction.contains("isLoadingTrajectory:"))
+            #expect(construction.contains("trajectoryErrorMessage:"))
+            #expect(construction.contains("onLoadNextTrajectory:"))
+            #expect(construction.contains("onExportTrajectory:"))
+        }
+
+        #expect(AppPreferences.localizedString("tasks.evidence.trajectory", localeIdentifier: "en") == "Execution Trajectory")
+        #expect(AppPreferences.localizedString("tasks.evidence.trajectory", localeIdentifier: "zh-Hans") == "执行轨迹")
+        #expect(AppPreferences.localizedString("tasks.evidence.trajectory.receipt.hash_valid", localeIdentifier: "en") == "Hash valid")
+        #expect(AppPreferences.localizedString("tasks.evidence.trajectory.receipt.hash_valid", localeIdentifier: "zh-Hans") == "哈希有效")
+    }
+
+    @Test
+    func protectedTaskSubmissionKeepsTheDraftAndExplainsCapabilityBlocks() throws {
+        #expect(AppPreferences.localizedString(
+            "work.submit.remoteWorkflowRequired",
+            localeIdentifier: "zh-Hans"
+        ).contains("远端 Worker"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.orchestratorUnavailable",
+            localeIdentifier: "zh-Hans"
+        ).contains("输入已经保留"))
+
+        let actions = try Self.source("macOS-Client/Sources/Views/MainPanelActions.swift")
+        let emptyState = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        #expect(actions.contains("guard submitted else { return }"))
+        #expect(emptyState.contains("submissionErrorMessage"))
+        #expect(emptyState.contains("compatible_worker_workflow_required"))
+        #expect(emptyState.contains("External Across Orchestrator runtime is unavailable."))
+    }
+
     @Test @MainActor
     func mainNavigationKeepsOneWorkDestinationAndRoutesAttentionToOwners() throws {
         let visibleTitles = OperationsWorkbenchSurface.primary.map {

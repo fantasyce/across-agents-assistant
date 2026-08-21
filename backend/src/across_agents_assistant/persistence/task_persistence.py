@@ -710,7 +710,7 @@ class TaskPersistenceService:
     ) -> Dict[str, Any]:
         """Persist the user's final review independently of task ownership."""
         normalized_status = str(review_status or "").strip().lower()
-        if normalized_status not in {"pending", "accepted"}:
+        if normalized_status not in {"pending", "accepted", "rejected"}:
             raise ValueError(f"Unsupported task review status: {review_status}")
         now = datetime.now().timestamp()
         confirmed_at = accepted_at if normalized_status == "accepted" else None

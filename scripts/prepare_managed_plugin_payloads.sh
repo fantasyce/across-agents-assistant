@@ -13,13 +13,13 @@ ORCHESTRATOR_LOCAL_SOURCE=${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}
 NODE_VERSION="22.17.1"
 CONTEXT_VERSION="0.11.0"
 CONTEXT_COMMIT="24768104d613c52e081b3ca7a9d5b3dbd6886b72"
-CONTEXT_SHA256="60282662a3a773dc2c2053cd3ea144f48d624c8a6bae331dd0979d05f6aa4057"
-AUTOPILOT_VERSION="0.5.2"
-AUTOPILOT_COMMIT="b11b6abbd55831a65f18bb6a4fbab5d7dab9bd8e"
-AUTOPILOT_SHA256="5cc33d79b58d8e254dc8da54ab90f2f82c43207e86a941b7e45a18bc6797af94"
-ORCHESTRATOR_VERSION="0.10.5"
-ORCHESTRATOR_COMMIT="605a6157a1871e5fd7e35d827c0f51903430761e"
-ORCHESTRATOR_SHA256="765bbf997f6f3ee866d45e0542c61becf961a687531894ea40a296aafa0d83fb"
+CONTEXT_SHA256="7420b75e28adf1da130593dc217d4bd8d2368d6ebe6cd55c7fca43a5161ad974"
+AUTOPILOT_VERSION="0.5.3"
+AUTOPILOT_COMMIT="c70b5cafbc58681f0f792eecf22688f9f6d4b9f3"
+AUTOPILOT_SHA256="8d7d93a99cb3b5d4cb9ba7a734c109472ed897a0345c57f853be34fcfaf48ab5"
+ORCHESTRATOR_VERSION="0.10.8"
+ORCHESTRATOR_COMMIT="5393bf152cd99e80fc4379f1ab6eea3c75623688"
+ORCHESTRATOR_SHA256="8a480589d932d6291b78928dca240dc065fe1251a1add161379f392424782fbf"
 CONTEXT_SOURCE_KIND="released-pin"
 AUTOPILOT_SOURCE_KIND="released-pin"
 ORCHESTRATOR_SOURCE_KIND="released-pin"
@@ -95,6 +95,26 @@ case "$(uname -m)" in
         ;;
 esac
 
+# Fail closed before any producer-derived version is used in an output path,
+# download name, directory, or archive operation. The final manifest write
+# repeats the same single-source validation together with checksum validation.
+"$BUILD_PYTHON" "$PROJECT_ROOT/scripts/write_managed_plugin_payload_manifest.py" \
+    --validate-only \
+    --architecture "$(uname -m)" \
+    --node-version "$NODE_VERSION" \
+    --context-version "$CONTEXT_VERSION" \
+    --context-commit "$CONTEXT_COMMIT" \
+    --context-source-kind "$CONTEXT_SOURCE_KIND" \
+    --context-source-dirty "$CONTEXT_SOURCE_DIRTY" \
+    --orchestrator-version "$ORCHESTRATOR_VERSION" \
+    --orchestrator-commit "$ORCHESTRATOR_COMMIT" \
+    --orchestrator-source-kind "$ORCHESTRATOR_SOURCE_KIND" \
+    --orchestrator-source-dirty "$ORCHESTRATOR_SOURCE_DIRTY" \
+    --autopilot-version "$AUTOPILOT_VERSION" \
+    --autopilot-commit "$AUTOPILOT_COMMIT" \
+    --autopilot-source-kind "$AUTOPILOT_SOURCE_KIND" \
+    --autopilot-source-dirty "$AUTOPILOT_SOURCE_DIRTY"
+
 download_verified() {
     local url="$1"
     local destination="$2"
@@ -165,10 +185,15 @@ if [[ -n "$CONTEXT_LOCAL_SOURCE" ]]; then
         --exclude 'dist'
     CONTEXT_SHA256=$(shasum -a 256 "$CONTEXT_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-context/tar.gz/$CONTEXT_COMMIT" \
-        "$CONTEXT_ARCHIVE" \
-        "$CONTEXT_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-context.git" \
+        --commit "$CONTEXT_COMMIT" \
+        --output "$CONTEXT_ARCHIVE" \
+        --archive-root across-context \
+        --expected-sha256 "$CONTEXT_SHA256" \
+        --version-file package.json \
+        --expected-version "$CONTEXT_VERSION" \
+        --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
     rm -f "$AUTOPILOT_ARCHIVE"
@@ -181,10 +206,15 @@ if [[ -n "$AUTOPILOT_LOCAL_SOURCE" ]]; then
         --exclude 'dist'
     AUTOPILOT_SHA256=$(shasum -a 256 "$AUTOPILOT_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-autopilot/tar.gz/$AUTOPILOT_COMMIT" \
-        "$AUTOPILOT_ARCHIVE" \
-        "$AUTOPILOT_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-autopilot.git" \
+        --commit "$AUTOPILOT_COMMIT" \
+        --output "$AUTOPILOT_ARCHIVE" \
+        --archive-root across-autopilot \
+        --expected-sha256 "$AUTOPILOT_SHA256" \
+        --version-file package.json \
+        --expected-version "$AUTOPILOT_VERSION" \
+        --exclude .git --exclude node_modules --exclude build --exclude dist
 fi
 if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
     rm -f "$ORCHESTRATOR_ARCHIVE"
@@ -198,10 +228,15 @@ if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
         --exclude '__pycache__'
     ORCHESTRATOR_SHA256=$(shasum -a 256 "$ORCHESTRATOR_ARCHIVE" | awk '{print $1}')
 else
-    download_verified \
-        "https://codeload.github.com/fantasyce/across-orchestrator/tar.gz/$ORCHESTRATOR_COMMIT" \
-        "$ORCHESTRATOR_ARCHIVE" \
-        "$ORCHESTRATOR_SHA256"
+    "$BUILD_PYTHON" "$PROJECT_ROOT/scripts/create_pinned_source_archive.py" \
+        --repository "https://github.com/fantasyce/across-orchestrator.git" \
+        --commit "$ORCHESTRATOR_COMMIT" \
+        --output "$ORCHESTRATOR_ARCHIVE" \
+        --archive-root across-orchestrator \
+        --expected-sha256 "$ORCHESTRATOR_SHA256" \
+        --version-file pyproject.toml \
+        --expected-version "$ORCHESTRATOR_VERSION" \
+        --exclude .git --exclude .venv --exclude build --exclude dist --exclude __pycache__
 fi
 cp "$CONTEXT_ARCHIVE" "$OUTPUT_DIR/packages/across-context-$CONTEXT_VERSION.tar.gz"
 cp "$AUTOPILOT_ARCHIVE" "$OUTPUT_DIR/packages/across-autopilot-$AUTOPILOT_VERSION.tar.gz"
@@ -276,57 +311,26 @@ if ! "$ORCHESTRATOR_RUNTIME_DIR/across-orchestrator" worker-listener --help 2>&1
     exit 1
 fi
 
-cat > "$OUTPUT_DIR/manifest.json" <<JSON
-{
-  "schema_version": "across-managed-plugin-payloads/1.0",
-  "platform": "macos",
-  "architecture": "$(uname -m)",
-  "runtimes": {
-    "node": {
-      "version": "$NODE_VERSION",
-      "path": "runtimes/node-$NODE_VERSION",
-      "executable": "bin/node",
-      "sha256": "$NODE_BINARY_SHA256"
-    }
-  },
-  "plugins": {
-    "across-context": {
-      "version": "$CONTEXT_VERSION",
-      "commit": "$CONTEXT_COMMIT",
-      "source_kind": "$CONTEXT_SOURCE_KIND",
-      "source_dirty": $CONTEXT_SOURCE_DIRTY,
-      "runtime": "node",
-      "archive": "packages/across-context-$CONTEXT_VERSION.tar.gz",
-      "sha256": "$CONTEXT_SHA256",
-      "metadata": "package.json",
-      "package_name": "@across/context",
-      "entrypoint": "src/cli.js"
-    },
-    "across-orchestrator": {
-      "version": "$ORCHESTRATOR_VERSION",
-      "commit": "$ORCHESTRATOR_COMMIT",
-      "source_kind": "$ORCHESTRATOR_SOURCE_KIND",
-      "source_dirty": $ORCHESTRATOR_SOURCE_DIRTY,
-      "runtime": "native",
-      "executable": "runtimes/orchestrator-$ORCHESTRATOR_VERSION/across-orchestrator",
-      "sha256": "$ORCHESTRATOR_BINARY_SHA256",
-      "source_archive": "packages/across-orchestrator-$ORCHESTRATOR_VERSION.tar.gz",
-      "source_sha256": "$ORCHESTRATOR_SHA256"
-    },
-    "across-autopilot": {
-      "version": "$AUTOPILOT_VERSION",
-      "commit": "$AUTOPILOT_COMMIT",
-      "source_kind": "$AUTOPILOT_SOURCE_KIND",
-      "source_dirty": $AUTOPILOT_SOURCE_DIRTY,
-      "runtime": "node",
-      "archive": "packages/across-autopilot-$AUTOPILOT_VERSION.tar.gz",
-      "sha256": "$AUTOPILOT_SHA256",
-      "metadata": "package.json",
-      "package_name": "@across/autopilot",
-      "entrypoint": "src/cli.js"
-    }
-  }
-}
-JSON
+"$BUILD_PYTHON" "$PROJECT_ROOT/scripts/write_managed_plugin_payload_manifest.py" \
+    --output "$OUTPUT_DIR/manifest.json" \
+    --architecture "$(uname -m)" \
+    --node-version "$NODE_VERSION" \
+    --node-sha256 "$NODE_BINARY_SHA256" \
+    --context-version "$CONTEXT_VERSION" \
+    --context-commit "$CONTEXT_COMMIT" \
+    --context-source-kind "$CONTEXT_SOURCE_KIND" \
+    --context-source-dirty "$CONTEXT_SOURCE_DIRTY" \
+    --context-sha256 "$CONTEXT_SHA256" \
+    --orchestrator-version "$ORCHESTRATOR_VERSION" \
+    --orchestrator-commit "$ORCHESTRATOR_COMMIT" \
+    --orchestrator-source-kind "$ORCHESTRATOR_SOURCE_KIND" \
+    --orchestrator-source-dirty "$ORCHESTRATOR_SOURCE_DIRTY" \
+    --orchestrator-sha256 "$ORCHESTRATOR_BINARY_SHA256" \
+    --orchestrator-source-sha256 "$ORCHESTRATOR_SHA256" \
+    --autopilot-version "$AUTOPILOT_VERSION" \
+    --autopilot-commit "$AUTOPILOT_COMMIT" \
+    --autopilot-source-kind "$AUTOPILOT_SOURCE_KIND" \
+    --autopilot-source-dirty "$AUTOPILOT_SOURCE_DIRTY" \
+    --autopilot-sha256 "$AUTOPILOT_SHA256"
 
 echo "Managed plugin payloads are ready at $OUTPUT_DIR"

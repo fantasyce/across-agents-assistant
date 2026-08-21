@@ -26,6 +26,10 @@ async def test_lifespan_does_not_wait_for_optional_worker_runtime(monkeypatch):
         def snapshot(self):
             return {"nodes": []}
 
+    class FakeOrchestrator:
+        def implementation_status(self, probe=True):
+            return {"available": True}
+
     runtime = FakeRuntime()
     monkeypatch.setattr(api_server, "_restrict_api_socket_permissions", lambda: None)
     monkeypatch.setattr(api_server, "_init_task_persistence", lambda: None)
@@ -33,12 +37,37 @@ async def test_lifespan_does_not_wait_for_optional_worker_runtime(monkeypatch):
     monkeypatch.setattr(api_server, "_stop_autopilot_trigger_scheduler_for_shutdown", lambda: None)
     monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: runtime)
     monkeypatch.setattr(api_server, "get_worker_presence_cache", lambda: FakePresence())
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeOrchestrator())
 
     started_at = time.perf_counter()
     async with api_server._api_lifespan(api_server.app):
         assert time.perf_counter() - started_at < 0.1
         await asyncio.sleep(0)
         worker_release.set()
+
+
+@pytest.mark.asyncio
+async def test_optional_startup_warms_orchestrator_before_worker_runtime(monkeypatch):
+    calls = []
+
+    class FakeOrchestrator:
+        def implementation_status(self, probe=True):
+            assert probe is True
+            calls.append("orchestrator")
+            return {"available": True}
+
+    class FakeWorkerRuntime:
+        def reconcile(self):
+            calls.append("worker")
+            return {"status": "running"}
+
+    monkeypatch.setattr(api_server, "_restore_self_iteration_scheduler_on_startup", lambda: calls.append("scheduler"))
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeOrchestrator())
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: FakeWorkerRuntime())
+
+    await api_server._restore_optional_runtime_services_on_startup()
+
+    assert calls == ["scheduler", "orchestrator", "worker"]
 
 
 @pytest.mark.asyncio
@@ -58,6 +87,90 @@ async def test_core_health_uses_cached_worker_state_during_reconciliation(monkey
 
     assert time.perf_counter() - started_at < 0.15
     assert health["worker_control"] == cached
+
+
+@pytest.mark.asyncio
+async def test_worker_control_get_does_not_wait_for_runtime_reconcile(monkeypatch):
+    reconcile_started = threading.Event()
+    reconcile_release = threading.Event()
+    reconcile_finished = threading.Event()
+
+    class SlowRuntime:
+        def status(self):
+            return {"status": "starting"}
+
+        def reconcile(self):
+            reconcile_started.set()
+            reconcile_release.wait(timeout=2)
+            reconcile_finished.set()
+            return {"status": "running"}
+
+    monkeypatch.setattr(
+        api_server,
+        "_worker_control_snapshot_with_presence",
+        lambda: {
+            "schema_version": "across-aaa-worker-control/1.0",
+            "listener": {"enabled": True},
+            "relay": {"enabled": False},
+            "nodes": [],
+            "health": {"status": "ok", "node_count": 0},
+        },
+    )
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: SlowRuntime())
+
+    started_at = time.perf_counter()
+    snapshot = await api_server.get_worker_control()
+
+    assert time.perf_counter() - started_at < 0.15
+    assert snapshot["listener"]["runtime"]["status"] == "starting"
+    assert reconcile_started.wait(timeout=0.5)
+    reconcile_release.set()
+    assert reconcile_finished.wait(timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_external_task_detail_uses_cached_worker_status_while_runtime_starts(monkeypatch):
+    live_called = False
+
+    class FakeBridge:
+        def cached_status(self, task_id):
+            assert task_id == "task-worker-cached"
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "terminal": True,
+                "expected_outputs": ["report.md"],
+                "evidence_receipt": {"artifacts": []},
+            }
+
+        def optional_status(self, task_id):
+            nonlocal live_called
+            live_called = True
+            return None
+
+        def project_task_info(self, info, remote):
+            projected = dict(info)
+            projected["remote_status"] = remote["status"]
+            return projected
+
+    class StartingRuntime:
+        def status_nowait(self):
+            return {"status": "starting", "reconcile_in_progress": True}
+
+    monkeypatch.setattr(api_server, "get_worker_task_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(api_server, "get_worker_network_runtime", lambda: StartingRuntime())
+    monkeypatch.setattr(
+        api_server,
+        "external_task_to_app_info",
+        lambda payload, evidence=None: {"task_id": payload["task_id"], "status": "pending"},
+    )
+
+    started_at = time.perf_counter()
+    result = await api_server._external_task_info_with_worker({"task_id": "task-worker-cached"})
+
+    assert time.perf_counter() - started_at < 0.15
+    assert result["remote_status"] == "completed"
+    assert not live_called
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -11,7 +12,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .managed_plugin_payloads import plugin_payload
+from .mcp_schema_compatibility import public_finding_message, validate_mcp_tools
 from .paths import data_file, tmp_dir
+from .plugin_runtime import discover_across_plugins
 
 
 AGENT_INTEROP_E2E_SCHEMA = "across-aaa-agent-interop-e2e/1.0"
@@ -23,6 +27,15 @@ REQUIRED_MCP_SERVERS = {
     "across-autopilot": "export_workflow_pack",
 }
 REQUIRED_PROJECTIONS = {"mcp_tasks", "a2a", "ag_ui", "remote_mcp_oauth", "otel"}
+FIRST_PARTY_MCP_COMPATIBILITY_SCHEMA = "across-first-party-mcp-compatibility/1.0"
+_PLUGIN_COMPATIBILITY_MESSAGES = {
+    "plugin_unavailable": "The managed plugin is not installed, healthy, and integrity-valid.",
+    "managed_command_invalid": "The installed plugin command is outside its managed runtime boundary.",
+    "mcp_probe_failed": "The installed MCP server could not provide a bounded tool list.",
+    "required_tool_missing": "The installed MCP server is missing its required first-party tool.",
+    "payload_provenance_missing": "The managed payload does not provide complete immutable provenance.",
+    "payload_version_mismatch": "The installed plugin version does not match its managed payload provenance.",
+}
 
 
 def run_agent_interop_e2e(
@@ -365,6 +378,13 @@ def run_agent_interop_e2e(
         f"mcp_servers={sorted((mcp_results or {}).keys()) if isinstance(mcp_results, dict) else []}",
         errors,
     )
+    installed_compatibility = _run_check(
+        checks,
+        "installed_plugin_schema_compatibility",
+        "Installed Context, Orchestrator, and Autopilot MCP schemas pass bounded portable compatibility profiles",
+        lambda: _probe_current_installed_plugin_compatibility(source_env),
+        errors,
+    )
 
     frontier_results = {
         "remote_mcp": remote_mcp,
@@ -379,7 +399,14 @@ def run_agent_interop_e2e(
         "computer_use_sandbox": computer_use_sandbox,
         "local_agent_protocols": local_agent_protocols,
     }
-    summary = _summary(checks, workflow_exports, graph_for_memory, mcp_results, frontier_results)
+    summary = _summary(
+        checks,
+        workflow_exports,
+        graph_for_memory,
+        mcp_results,
+        frontier_results,
+        installed_compatibility,
+    )
     payload = {
         "schema_version": AGENT_INTEROP_E2E_SCHEMA,
         "status": "passed" if not errors and all(item.get("status") == "passed" for item in checks) else "failed",
@@ -405,6 +432,7 @@ def run_agent_interop_e2e(
         "local_agent_protocols": local_agent_protocols,
         "host_install_contracts": host_install_contracts,
         "mcp": _mcp_summary(mcp_results),
+        "mcp_schema_compatibility": installed_compatibility,
         "errors": errors,
     }
     if persist:
@@ -545,10 +573,17 @@ def public_agent_interop_e2e_result(payload: Mapping[str, Any] | None = None) ->
             "context_skills_bridge_status": _public_status(summary.get("context_skills_bridge_status"), default="unknown"),
             "computer_use_sandbox_status": _public_status(summary.get("computer_use_sandbox_status"), default="unknown"),
             "local_agent_protocol_status": _public_status(summary.get("local_agent_protocol_status"), default="unknown"),
+            "schema_compatibility_status": _public_compatibility_status(summary.get("schema_compatibility_status")),
+            "compatible_plugin_count": _safe_int(summary.get("compatible_plugin_count")),
+            "incompatible_plugin_count": _safe_int(summary.get("incompatible_plugin_count")),
+            "portable_tool_count": _safe_int(summary.get("portable_tool_count")),
             "otel_span_count": _safe_int(summary.get("otel_span_count")),
             "eval_case_count": _safe_int(summary.get("eval_case_count")),
             "otlp_resource_span_count": _safe_int(summary.get("otlp_resource_span_count")),
         },
+        "mcp_schema_compatibility": _public_mcp_schema_compatibility(
+            latest.get("mcp_schema_compatibility")
+        ),
         "checks": _public_check_outcomes(latest.get("checks")),
         "errors": _public_error_placeholders(latest.get("errors")),
     }
@@ -559,6 +594,8 @@ def build_agent_interop_workbench_section(payload: Mapping[str, Any] | None = No
     summary = dict(latest.get("summary") or {})
     status = str(latest.get("status") or "not_run")
     section_status = "passed" if status == "not_run" else status
+    compatibility = _public_mcp_schema_compatibility(latest.get("mcp_schema_compatibility"))
+    compatibility_items = _compatibility_workbench_items(compatibility)
     return {
         "id": "agent_interop_e2e",
         "title": "Agent Interop E2E Lab",
@@ -582,11 +619,15 @@ def build_agent_interop_workbench_section(payload: Mapping[str, Any] | None = No
             "context_skills_bridge_status": summary.get("context_skills_bridge_status"),
             "computer_use_sandbox_status": summary.get("computer_use_sandbox_status"),
             "local_agent_protocol_status": summary.get("local_agent_protocol_status"),
+            "schema_compatibility_status": _public_compatibility_status(summary.get("schema_compatibility_status")),
+            "compatible_plugin_count": _safe_int(summary.get("compatible_plugin_count")),
+            "incompatible_plugin_count": _safe_int(summary.get("incompatible_plugin_count")),
+            "portable_tool_count": _safe_int(summary.get("portable_tool_count")),
             "otel_span_count": summary.get("otel_span_count"),
             "eval_case_count": summary.get("eval_case_count"),
             "otlp_resource_span_count": summary.get("otlp_resource_span_count"),
         },
-        "items": _bounded_check_items(latest.get("checks")),
+        "items": (compatibility_items + _bounded_check_items(latest.get("checks")))[:12],
         "endpoint": "/api/autopilot/agent-interop-e2e",
     }
 
@@ -615,6 +656,10 @@ def augment_release_evaluation_with_agent_interop(
         "failed_count": interop_failed,
         "host_target_count": _safe_int(interop_summary.get("host_target_count")),
         "mcp_server_count": _safe_int(interop_summary.get("mcp_server_count")),
+        "schema_compatibility_status": _public_compatibility_status(interop_summary.get("schema_compatibility_status")),
+        "compatible_plugin_count": _safe_int(interop_summary.get("compatible_plugin_count")),
+        "incompatible_plugin_count": _safe_int(interop_summary.get("incompatible_plugin_count")),
+        "portable_tool_count": _safe_int(interop_summary.get("portable_tool_count")),
         "protocol_readiness_score": protocol_score,
         "endpoint": "/api/autopilot/agent-interop-e2e",
     }
@@ -702,6 +747,123 @@ def _public_status(value: Any, *, default: str = "unknown") -> str:
     if default == "not_run":
         return "not_run"
     return "unknown"
+
+
+def _public_compatibility_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized == "compatible":
+        return "compatible"
+    if normalized == "incompatible":
+        return "incompatible"
+    if normalized in {"running", "in_progress", "pending"}:
+        return "running"
+    if normalized in {"not_run", "missing", "skipped"}:
+        return "not_run"
+    return "unknown"
+
+
+def _public_mcp_schema_compatibility(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    raw_plugins = source.get("plugins") if isinstance(source.get("plugins"), Mapping) else {}
+    plugins: dict[str, dict[str, Any]] = {}
+    for plugin_id in sorted(REQUIRED_MCP_SERVERS):
+        raw_plugin = raw_plugins.get(plugin_id)
+        if not isinstance(raw_plugin, Mapping):
+            continue
+        profiles: dict[str, dict[str, Any]] = {}
+        raw_profiles = raw_plugin.get("profiles") if isinstance(raw_plugin.get("profiles"), Mapping) else {}
+        for profile in ("mcp_core", "claude_desktop_portable"):
+            raw_profile = raw_profiles.get(profile)
+            if not isinstance(raw_profile, Mapping):
+                continue
+            profiles[profile] = {
+                "status": _public_compatibility_status(raw_profile.get("status")),
+                "finding_count": _safe_int(raw_profile.get("finding_count")),
+            }
+        findings = _public_compatibility_findings(raw_plugin.get("findings"))
+        plugins[plugin_id] = {
+            "status": _public_compatibility_status(raw_plugin.get("status")),
+            "version": _safe_public_version(raw_plugin.get("version")),
+            "provenance_digest": _safe_public_digest(raw_plugin.get("provenance_digest")),
+            "tool_count": _safe_int(raw_plugin.get("tool_count")),
+            "tool_set_digest": _safe_public_digest(raw_plugin.get("tool_set_digest")),
+            "profiles": profiles,
+            "findings": findings,
+        }
+    return {
+        "schema_version": FIRST_PARTY_MCP_COMPATIBILITY_SCHEMA,
+        "status": _public_compatibility_status(source.get("status")),
+        "compatible_plugin_count": _safe_int(source.get("compatible_plugin_count")),
+        "incompatible_plugin_count": _safe_int(source.get("incompatible_plugin_count")),
+        "portable_tool_count": _safe_int(source.get("portable_tool_count")),
+        "plugins": plugins,
+    }
+
+
+def _public_compatibility_findings(value: Any) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    for raw_finding in value if isinstance(value, list) else []:
+        if not isinstance(raw_finding, Mapping):
+            continue
+        code = raw_finding.get("code")
+        if type(code) is not str:
+            continue
+        message = _PLUGIN_COMPATIBILITY_MESSAGES.get(code) or public_finding_message(code)
+        if message is None:
+            continue
+        finding = {
+            "code": code,
+            "severity": "error",
+            "message": message,
+        }
+        if public_finding_message(code) is not None:
+            finding["tool_name"] = _safe_public_tool_name(raw_finding.get("tool_name"))
+            profile = str(raw_finding.get("profile") or "")
+            finding["profile"] = profile if profile in {"mcp_core", "claude_desktop_portable"} else "mcp_core"
+        findings.append(finding)
+        if len(findings) >= 32:
+            break
+    return findings
+
+
+def _safe_public_digest(value: Any) -> str:
+    digest = str(value or "").lower()
+    if len(digest) == 64 and set(digest) <= set("0123456789abcdef"):
+        return digest
+    return ""
+
+
+def _safe_public_version(value: Any) -> str:
+    version = str(value or "")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.+_-")
+    return version if 0 < len(version) <= 64 and set(version) <= allowed else ""
+
+
+def _safe_public_tool_name(value: Any) -> str:
+    name = str(value or "")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-<>")
+    return name if 0 < len(name) <= 128 and set(name) <= allowed else "unknown_tool"
+
+
+def _compatibility_workbench_items(compatibility: Mapping[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    plugins = compatibility.get("plugins") if isinstance(compatibility.get("plugins"), Mapping) else {}
+    for plugin_id in sorted(plugins):
+        plugin = plugins.get(plugin_id)
+        if not isinstance(plugin, Mapping):
+            continue
+        for finding in plugin.get("findings") if isinstance(plugin.get("findings"), list) else []:
+            if not isinstance(finding, Mapping):
+                continue
+            items.append({
+                "id": f"mcp_schema_finding_{len(items) + 1}",
+                "status": "failed",
+                "plugin_id": plugin_id,
+                **dict(finding),
+            })
+            if len(items) >= 8:
+                return items
+    return items
 
 
 def _public_check_outcomes(value: Any) -> list[dict[str, Any]]:
@@ -1248,6 +1410,177 @@ def _probe_three_plugin_mcp(roots: Mapping[str, Path], env: Mapping[str, str]) -
     return results
 
 
+def _probe_current_installed_plugin_compatibility(env: Mapping[str, str]) -> dict[str, Any]:
+    plugin_ids = sorted(REQUIRED_MCP_SERVERS)
+    rows = discover_across_plugins(plugin_ids=plugin_ids, probe=True, env=env)
+    payloads: dict[str, Mapping[str, Any]] = {}
+    for plugin_id in plugin_ids:
+        try:
+            descriptor = plugin_payload(plugin_id, env)
+        except Exception:
+            descriptor = None
+        payloads[plugin_id] = descriptor if isinstance(descriptor, Mapping) else {}
+    return _probe_installed_plugin_compatibility(rows, payload_descriptors=payloads, env=env)
+
+
+def _probe_installed_plugin_compatibility(
+    plugin_rows: object,
+    *,
+    payload_descriptors: Mapping[str, Mapping[str, Any]],
+    env: Mapping[str, str],
+    probe_timeout: float = 10.0,
+) -> dict[str, Any]:
+    rows = plugin_rows if isinstance(plugin_rows, list) else []
+    rows_by_id = {
+        str(row.get("plugin_id") or ""): row
+        for row in rows
+        if isinstance(row, Mapping) and str(row.get("plugin_id") or "") in REQUIRED_MCP_SERVERS
+    }
+    plugins: dict[str, dict[str, Any]] = {}
+    compatible_count = 0
+    portable_tool_count = 0
+    for plugin_id in sorted(REQUIRED_MCP_SERVERS):
+        raw_row = rows_by_id.get(plugin_id, {})
+        version = str(raw_row.get("version") or "")
+        descriptor = payload_descriptors.get(plugin_id)
+        payload = dict(descriptor) if isinstance(descriptor, Mapping) else {}
+        findings: list[dict[str, str]] = []
+        if not (
+            raw_row.get("installed") is True
+            and raw_row.get("available") is True
+            and raw_row.get("integrity_ok") is True
+        ):
+            findings.append(_plugin_compatibility_finding("plugin_unavailable"))
+        payload_version = str(payload.get("version") or "")
+        if raw_row and not _has_payload_provenance(payload):
+            findings.append(_plugin_compatibility_finding("payload_provenance_missing"))
+        if payload_version and payload_version != version:
+            findings.append(_plugin_compatibility_finding("payload_version_mismatch"))
+
+        command = str(raw_row.get("command") or "")
+        paths = raw_row.get("paths") if isinstance(raw_row.get("paths"), Mapping) else {}
+        plugin_root = Path(str(paths.get("plugin") or ""))
+        bin_root = Path(str(paths.get("bin") or ""))
+        command_path = Path(command) if command else Path("/")
+        if raw_row and not _is_managed_command(command_path, (plugin_root, bin_root)):
+            findings.append(_plugin_compatibility_finding("managed_command_invalid"))
+
+        schema_result: dict[str, Any] = {
+            "status": "incompatible",
+            "tool_count": 0,
+            "tool_set_digest": hashlib.sha256(b"[]").hexdigest(),
+            "profiles": {},
+            "findings": [],
+        }
+        if not findings:
+            try:
+                probe = _mcp_initialize_and_list_tools(
+                    [str(command_path), "mcp"],
+                    cwd=plugin_root,
+                    env=env,
+                    timeout=probe_timeout,
+                )
+                raw_tools = probe.get("_raw_tools")
+                if probe.get("status") != "passed" or not isinstance(raw_tools, list):
+                    raise RuntimeError("MCP tool probe failed")
+                schema_result = validate_mcp_tools(raw_tools)
+                findings.extend(list(schema_result.get("findings") or []))
+                if REQUIRED_MCP_SERVERS[plugin_id] not in {
+                    str(item.get("name")) for item in raw_tools if isinstance(item, Mapping)
+                }:
+                    findings.append(_plugin_compatibility_finding("required_tool_missing"))
+            except Exception:
+                findings.append(_plugin_compatibility_finding("mcp_probe_failed"))
+
+        status = "compatible" if not findings and schema_result.get("status") == "compatible" else "incompatible"
+        if status == "compatible":
+            compatible_count += 1
+            portable_tool_count += int(schema_result.get("tool_count") or 0)
+        plugins[plugin_id] = {
+            "status": status,
+            "version": version,
+            "provenance_digest": plugin_provenance_digest(raw_row, payload),
+            "tool_count": int(schema_result.get("tool_count") or 0),
+            "tool_set_digest": str(schema_result.get("tool_set_digest") or hashlib.sha256(b"[]").hexdigest()),
+            "profiles": dict(schema_result.get("profiles") or {}),
+            "findings": findings,
+        }
+
+    incompatible_count = len(plugins) - compatible_count
+    return {
+        "schema_version": FIRST_PARTY_MCP_COMPATIBILITY_SCHEMA,
+        "status": "compatible" if plugins and incompatible_count == 0 else "incompatible",
+        "compatible_plugin_count": compatible_count,
+        "incompatible_plugin_count": incompatible_count,
+        "portable_tool_count": portable_tool_count,
+        "plugins": plugins,
+    }
+
+
+def _plugin_compatibility_finding(code: str) -> dict[str, str]:
+    return {
+        "code": code,
+        "severity": "error",
+        "message": _PLUGIN_COMPATIBILITY_MESSAGES[code],
+    }
+
+
+def _is_managed_command(command: Path, roots: tuple[Path, ...]) -> bool:
+    if not command.is_absolute():
+        return False
+    try:
+        resolved_command = command.resolve(strict=False)
+    except OSError:
+        return False
+    for root in roots:
+        if not root.is_absolute():
+            continue
+        try:
+            resolved_command.relative_to(root.resolve(strict=False))
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def plugin_provenance_digest(
+    row: Mapping[str, Any],
+    descriptor: Mapping[str, Any],
+) -> str:
+    """Return the stable host/plugin payload provenance digest."""
+
+    safe_row = row if isinstance(row, Mapping) else {}
+    safe_descriptor = descriptor if isinstance(descriptor, Mapping) else {}
+    payload_sha256 = str(safe_descriptor.get("sha256") or "")
+    subject = {
+        "plugin_id": str(safe_row.get("plugin_id") or ""),
+        "version": str(safe_row.get("version") or ""),
+        "payload_version": str(safe_descriptor.get("version") or ""),
+        "commit": str(safe_descriptor.get("commit") or ""),
+        "source_sha256": str(safe_descriptor.get("source_sha256") or payload_sha256),
+        "sha256": payload_sha256,
+    }
+    encoded = json.dumps(subject, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _has_payload_provenance(payload: Mapping[str, Any]) -> bool:
+    version = str(payload.get("version") or "")
+    commit = str(payload.get("commit") or "")
+    sha256 = str(payload.get("sha256") or "")
+    source_sha256 = str(payload.get("source_sha256") or sha256)
+    hexadecimal = set("0123456789abcdef")
+    return (
+        bool(version)
+        and len(commit) == 40
+        and set(commit.lower()) <= hexadecimal
+        and len(source_sha256) == 64
+        and set(source_sha256.lower()) <= hexadecimal
+        and len(sha256) == 64
+        and set(sha256.lower()) <= hexadecimal
+    )
+
+
 def _probe_generic_host_install_contracts(roots: Mapping[str, Path], env: Mapping[str, str], run_root: Path) -> dict[str, Any]:
     claude_desktop_config = run_root / "claude_desktop_config.json"
     claude_desktop_config.write_text(json.dumps({"deploymentMode": "e2e"}, sort_keys=True), encoding="utf-8")
@@ -1348,6 +1681,7 @@ def _mcp_initialize_and_list_tools(command: list[str], *, cwd: Path, env: Mappin
             "tool_count": len(tool_names),
             "tool_names": tool_names[:40],
             "server_info": initialize_result.get("serverInfo") if isinstance(initialize_result, dict) else None,
+            "_raw_tools": tools,
         }
     finally:
         try:
@@ -1355,6 +1689,10 @@ def _mcp_initialize_and_list_tools(command: list[str], *, cwd: Path, env: Mappin
             process.wait(timeout=2)
         except Exception:
             process.kill()
+            try:
+                process.wait(timeout=2)
+            except Exception:
+                pass
 
 
 def _write_mcp_message(process: subprocess.Popen[str], message: Mapping[str, Any]) -> None:
@@ -1451,7 +1789,7 @@ def _run_check(
         checks.append(
             {
                 "id": check_id,
-                "status": "passed" if status in {"passed", "completed", "ready", "valid", "accepted_pending"} else "failed",
+                "status": "passed" if status in {"passed", "completed", "ready", "valid", "accepted_pending", "compatible"} else "failed",
                 "description": description,
                 "duration_ms": int((time.time() - started) * 1000),
                 "summary": _payload_summary(payload),
@@ -1533,6 +1871,7 @@ def _summary(
     graph: Mapping[str, Any],
     mcp_results: Mapping[str, Mapping[str, Any]] | None,
     frontier_results: Mapping[str, Mapping[str, Any]] | None = None,
+    installed_compatibility: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     passed = sum(1 for item in checks if item.get("status") == "passed")
     failed = sum(1 for item in checks if item.get("status") == "failed")
@@ -1558,6 +1897,12 @@ def _summary(
         "context_skills_bridge_status": _nested(frontier_results or {}, "context_skill_export", "status"),
         "computer_use_sandbox_status": _nested(frontier_results or {}, "computer_use_sandbox", "status"),
         "local_agent_protocol_status": _nested(frontier_results or {}, "local_agent_protocols", "status"),
+        "schema_compatibility_status": _public_compatibility_status(
+            (installed_compatibility or {}).get("status")
+        ),
+        "compatible_plugin_count": _safe_int((installed_compatibility or {}).get("compatible_plugin_count")),
+        "incompatible_plugin_count": _safe_int((installed_compatibility or {}).get("incompatible_plugin_count")),
+        "portable_tool_count": _safe_int((installed_compatibility or {}).get("portable_tool_count")),
         "otel_span_count": _nested(frontier_results or {}, "otel_export", "summary", "span_count"),
         "eval_case_count": _nested(frontier_results or {}, "otel_export", "summary", "eval_case_count"),
         "otlp_resource_span_count": _nested(frontier_results or {}, "otel_export", "summary", "otlp_resource_span_count"),

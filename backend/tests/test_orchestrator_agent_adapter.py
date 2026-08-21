@@ -7,6 +7,55 @@ import pytest
 from across_agents_assistant import orchestrator_agent_adapter as adapter
 
 
+def test_read_only_task_message_forbids_project_mutation():
+    task = {
+        "goal": "Inspect the repository without modifying files",
+        "metadata": {"host_metadata": {"intent_mode": "read_only_analysis"}},
+    }
+    subtask = {"goal": "Inspect README.md", "path": "README.md"}
+
+    message = adapter.build_orchestrator_agent_message(task, subtask)
+
+    assert "Inspection anchor (read-only): README.md" in message
+    assert "Do not create, edit, rename, or delete any project file" in message
+    assert "Create or edit the required output file" not in message
+
+
+def test_read_only_task_exposes_no_writable_project_files(monkeypatch, capsys):
+    captured = {}
+
+    class FakeBridge:
+        def invoke(self, _agent_id, message, **kwargs):
+            captured["message"] = message
+            captured.update(kwargs)
+            return SimpleNamespace(
+                is_success=True,
+                output="read-only report",
+                error=None,
+                metadata={},
+            )
+
+    monkeypatch.setattr(adapter, "build_agent_bridge", lambda: FakeBridge())
+    monkeypatch.setenv(
+        "ACROSS_TASK_JSON",
+        json.dumps({
+            "project_root": "/tmp/project",
+            "task_id": "task-1",
+            "metadata": {"host_metadata": {"intent_mode": "read_only_analysis"}},
+        }),
+    )
+    monkeypatch.setenv(
+        "ACROSS_SUBTASK_JSON",
+        '{"subtask_id":"subtask-1","path":"README.md"}',
+    )
+
+    assert adapter.main(["--agent", "claude"]) == 0
+    assert captured["context"]["allowed_writable_files"] == []
+    assert captured["context"]["read_only"] is True
+    assert "Do not create, edit, rename, or delete any project file" in captured["message"]
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize(
     "output",
     [

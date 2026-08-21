@@ -133,6 +133,7 @@ def build_autopilot_workbench_snapshot(
     self_iteration_status = str(self_iteration_plan.get("status") or _nested(ops_dashboard, "self_iteration_plan", "status") or "unknown")
     platform_self_repair = _dict(self_iteration_plan.get("platform_self_repair"))
     scheduler_running = bool(trigger_scheduler.get("running") or _nested(ops_dashboard, "trigger_scheduler", "running"))
+    scheduler_tick_in_progress = bool(trigger_scheduler.get("tick_in_progress"))
     autopilot_plugin = _plugin_by_id(plugins_list, "across-autopilot")
     autopilot_available = autopilot_plugin.get("available") is True if autopilot_plugin else bool(registry)
     ops_status = str(ops_dashboard.get("status") or "unknown")
@@ -151,6 +152,8 @@ def build_autopilot_workbench_snapshot(
         "registered_trigger_count": int(trigger_summary.get("total") or 0),
         "active_trigger_count": int(trigger_summary.get("enabled") or 0),
         "scheduler_running": scheduler_running,
+        "scheduler_tick_in_progress": scheduler_tick_in_progress,
+        "scheduler_tick_started_at": trigger_scheduler.get("tick_started_at"),
         "self_iteration_status": self_iteration_status,
         "platform_self_repair_queued_count": _first_int(platform_self_repair.get("queued_count"), 0),
         "capability_ready_count": capability_ready_count,
@@ -198,7 +201,13 @@ def build_autopilot_workbench_snapshot(
         "triggers": _section(
             "triggers",
             "Triggers",
-            "passed" if not queued_triggers and (not trigger_summary.get("total") or scheduler_running) else "attention",
+            (
+                "active"
+                if claimed_triggers or scheduler_tick_in_progress
+                else "passed"
+                if not queued_triggers and (not trigger_summary.get("total") or scheduler_running)
+                else "attention"
+            ),
             {
                 "registered": trigger_summary.get("total"),
                 "active": trigger_summary.get("enabled"),
@@ -207,6 +216,8 @@ def build_autopilot_workbench_snapshot(
                 "historical_queue": len(queued_trigger_records),
                 "terminal_queue": len(terminal_triggers),
                 "scheduler_running": scheduler_running,
+                "scheduler_tick_in_progress": scheduler_tick_in_progress,
+                "scheduler_tick_started_at": trigger_scheduler.get("tick_started_at"),
             },
             _bounded_trigger_items(trigger_registry, queued_trigger_records),
             WORKBENCH_ENDPOINTS["trigger_configs"],
@@ -304,7 +315,7 @@ def build_autopilot_workbench_snapshot(
         "agent_interop_e2e": _section(
             "agent_interop_e2e",
             "Agent Interop E2E Lab",
-            "passed" if str(agent_interop_e2e.get("status") or "not_run") == "not_run" else str(agent_interop_e2e.get("status") or "unknown"),
+            str(agent_interop_e2e.get("status") or "not_run"),
             {
                 "status": str(agent_interop_e2e.get("status") or "not_run"),
                 "passed_count": _nested(agent_interop_e2e, "summary", "passed_count") or 0,
@@ -390,6 +401,8 @@ def _workbench_status(
         attention_reasons.append("operations dashboard requires attention")
     if attention_reasons:
         return "attention", attention_reasons
+    if int(summary.get("claimed_trigger_count") or 0) > 0 or summary.get("scheduler_tick_in_progress") is True:
+        return "active", ["Autopilot is preparing or running a scheduled trigger"]
     return "passed", []
 
 
