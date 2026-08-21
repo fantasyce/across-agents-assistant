@@ -415,6 +415,65 @@ def test_receipt_survives_restart_is_idempotent_and_hash_chained(tmp_path):
     assert restarted.verify_chain()["receipt_count"] == 2
 
 
+def test_missing_chain_anchor_with_receipts_remains_tampered_after_reopen(tmp_path):
+    db_path = str(tmp_path / "missing-anchor.db")
+    packages = PromotionPackageStore(db_path)
+    package = packages.put(promotion_document())
+    store = ApprovalReceiptStore(db_path)
+    first = store.record_promotion_decision(
+        package_id=package["package_id"],
+        expected_package_sha256=package["package_sha256"],
+        decision="approved",
+        approver_id="human-reviewer",
+        idempotency_key="anchor-first",
+    )["approval"]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM approval_receipt_chain_state")
+
+    reopened = ApprovalReceiptStore(db_path)
+
+    assert reopened.get(first["receipt_id"])["integrity_status"] == "verified"
+    assert reopened.verify_chain()["integrity_status"] == "tampered"
+    assert authorization(package, reopened, first)["authorized"] is False
+    with pytest.raises(ApprovalReceiptError, match="history is tampered"):
+        reopened.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="rejected",
+            approver_id="human-reviewer",
+            idempotency_key="anchor-second",
+        )
+    reopened_again = ApprovalReceiptStore(db_path)
+    assert reopened_again.verify_chain()["integrity_status"] == "tampered"
+    assert authorization(package, reopened_again, first)["authorized"] is False
+    with pytest.raises(ApprovalReceiptError, match="history is tampered"):
+        reopened_again.record_promotion_decision(
+            package_id=package["package_id"],
+            expected_package_sha256=package["package_sha256"],
+            decision="approved",
+            approver_id="human-reviewer",
+            idempotency_key="anchor-third",
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipt_chain_state").fetchone()[0] == 0
+
+
+def test_empty_new_receipt_store_bootstraps_verified_genesis_anchor(tmp_path):
+    db_path = str(tmp_path / "genesis-anchor.db")
+
+    store = ApprovalReceiptStore(db_path)
+
+    chain = store.verify_chain()
+    assert chain["integrity_status"] == "verified"
+    assert chain["receipt_count"] == 0
+    assert chain["chain_tip"] == "0" * 64
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT receipt_count, chain_tip FROM approval_receipt_chain_state WHERE id = 1"
+        ).fetchone() == (0, "0" * 64)
+
+
 def test_concurrent_receipts_are_serialized_into_one_verified_chain(tmp_path):
     db_path = str(tmp_path / "concurrent.db")
     store = ApprovalReceiptStore(db_path)

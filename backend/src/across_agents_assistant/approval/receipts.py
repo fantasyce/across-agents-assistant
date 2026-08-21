@@ -502,14 +502,12 @@ class ApprovalReceiptStore:
             current = conn.execute(
                 "SELECT COUNT(*) AS receipt_count FROM approval_receipts"
             ).fetchone()
-            tip = conn.execute(
-                "SELECT receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
-            ).fetchone()
-            conn.execute(
-                """INSERT OR IGNORE INTO approval_receipt_chain_state (id, receipt_count, chain_tip)
-                   VALUES (1, ?, ?)""",
-                (int(current["receipt_count"]), tip["receipt_hash"] if tip else "0" * 64),
-            )
+            if int(current["receipt_count"]) == 0:
+                conn.execute(
+                    """INSERT OR IGNORE INTO approval_receipt_chain_state
+                       (id, receipt_count, chain_tip) VALUES (1, 0, ?)""",
+                    ("0" * 64,),
+                )
 
 
 def evaluate_promotion_authorization(

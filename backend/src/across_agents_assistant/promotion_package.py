@@ -54,6 +54,7 @@ PROMOTION_PACKAGE_CHECK_IDS = (
     "plugin_set_complete",
     "plugin_versions_match",
     "release_ready",
+    "release_task_set_matches",
     "run_binding_matches",
     "run_completed",
     "task_receipt_bindings_match",
@@ -234,7 +235,11 @@ def build_promotion_package(
         failed=failed,
     )
 
-    release_component = _release_component(release_evidence, failed=failed)
+    release_component = _release_component(
+        release_evidence,
+        expected_task_ids=expected_task_ids,
+        failed=failed,
+    )
     review = build_promotion_review_packet(autopilot_evidence)
     if (
         review.get("status") != "ready_for_human_review"
@@ -554,25 +559,57 @@ def _plugin_components(
         failed.add("plugin_set_complete")
         return [], _empty_compatibility_component()
 
-    if (
+    top_level_invalid = (
         compatibility_report.get("schema_version") != COMPATIBILITY_SCHEMA
         or compatibility_report.get("status") != "compatible"
+        or type(compatibility_report.get("compatible_plugin_count")) is not int
         or compatibility_report.get("compatible_plugin_count") != 3
+        or type(compatibility_report.get("incompatible_plugin_count")) is not int
         or compatibility_report.get("incompatible_plugin_count") != 0
-    ):
+        or _nonnegative_int(compatibility_report.get("portable_tool_count")) is None
+    )
+    if top_level_invalid:
         failed.add("plugin_compatibility_ready")
 
     rows_by_id = {str(row["plugin_id"]): row for row in rows_list}
     identities: list[dict[str, Any]] = []
     public_plugins: list[dict[str, Any]] = []
+    aggregate_tool_count = 0
     for plugin_id in sorted(REQUIRED_PLUGIN_IDS):
         row = rows_by_id[plugin_id]
         raw_descriptor = plugin_descriptors[plugin_id]
+        compatibility = _mapping(compatibility_plugins[plugin_id])
+        tool_count = _nonnegative_int(compatibility.get("tool_count"))
+        tool_set_digest = _string(compatibility.get("tool_set_digest"))
+        profiles = compatibility.get("profiles")
+        findings = compatibility.get("findings")
+        profiles_valid = (
+            isinstance(profiles, Mapping)
+            and set(profiles) == {"mcp_core", "claude_desktop_portable"}
+            and all(
+                isinstance(profiles.get(profile_id), Mapping)
+                and set(profiles[profile_id]) == {"status", "finding_count"}
+                and profiles[profile_id].get("status") == "compatible"
+                and type(profiles[profile_id].get("finding_count")) is int
+                and profiles[profile_id].get("finding_count") == 0
+                for profile_id in ("mcp_core", "claude_desktop_portable")
+            )
+        )
+        compatibility_shape_valid = (
+            tool_count is not None
+            and _digest_value(tool_set_digest)
+            and profiles_valid
+            and isinstance(findings, list)
+            and not findings
+        )
+        if not compatibility_shape_valid:
+            failed.add("plugin_compatibility_ready")
+        if tool_count is not None:
+            aggregate_tool_count += tool_count
         if not isinstance(raw_descriptor, Mapping):
             failed.add("plugin_provenance_matches")
             continue
         descriptor = raw_descriptor
-        compatibility = _mapping(compatibility_plugins[plugin_id])
         version = _string(row.get("version"))
         descriptor_version = _string(descriptor.get("version"))
         producer_commit = _string(descriptor.get("commit")).lower()
@@ -619,16 +656,26 @@ def _plugin_components(
                 "status": compatibility.get("status"),
                 "version": _string(compatibility.get("version")),
                 "provenance_digest": _string(compatibility.get("provenance_digest")),
-                "tool_count": _nonnegative_int(compatibility.get("tool_count")),
-                "tool_set_digest": _public_digest(compatibility.get("tool_set_digest")),
+                "tool_count": tool_count,
+                "tool_set_digest": _public_digest(tool_set_digest),
+                "profiles": {
+                    profile_id: {
+                        "status": profiles[profile_id].get("status"),
+                        "finding_count": profiles[profile_id].get("finding_count"),
+                    }
+                    for profile_id in ("mcp_core", "claude_desktop_portable")
+                } if profiles_valid else {},
             }
         )
+    portable_tool_count = _nonnegative_int(compatibility_report.get("portable_tool_count"))
+    if portable_tool_count != aggregate_tool_count:
+        failed.add("plugin_compatibility_ready")
     return identities, {
         "schema_version": COMPATIBILITY_SCHEMA,
         "status": "compatible",
         "compatible_plugin_count": 3,
         "incompatible_plugin_count": 0,
-        "portable_tool_count": _nonnegative_int(compatibility_report.get("portable_tool_count")),
+        "portable_tool_count": portable_tool_count,
         "plugins": public_plugins,
     }
 
@@ -636,9 +683,11 @@ def _plugin_components(
 def _release_component(
     release: Mapping[str, Any],
     *,
+    expected_task_ids: Sequence[str],
     failed: set[str],
 ) -> dict[str, Any]:
     evaluation = _mapping(release.get("release_evaluation"))
+    task_scope = _mapping(release.get("task_scope"))
     gates = _mapping(release.get("pre_release_gate_summary"))
     evaluated_task_count = _nonnegative_int(evaluation.get("evaluated_task_count"))
     terminal_task_count = _nonnegative_int(evaluation.get("terminal_task_count"))
@@ -648,6 +697,23 @@ def _release_component(
     skipped_task_count = _nonnegative_int(evaluation.get("skipped_task_count"))
     release_evidence_count = _nonnegative_int(evaluation.get("release_evidence_count"))
     passed_evidence_count = _nonnegative_int(evaluation.get("passed_evidence_count"))
+    scoped_task_ids = task_scope.get("task_ids")
+    evaluated_task_ids = evaluation.get("task_ids")
+    exact_task_scope = (
+        task_scope.get("schema_version") == "across-release-task-scope/1.0"
+        and isinstance(scoped_task_ids, list)
+        and scoped_task_ids == list(expected_task_ids)
+        and len(scoped_task_ids) == len(set(scoped_task_ids))
+        and isinstance(evaluated_task_ids, list)
+        and evaluated_task_ids == list(expected_task_ids)
+        and len(evaluated_task_ids) == len(set(evaluated_task_ids))
+        and evaluated_task_count == len(expected_task_ids)
+        and terminal_task_count == len(expected_task_ids)
+        and passed_task_count == len(expected_task_ids)
+    )
+    task_set_was_valid = not {"identifiers_valid", "task_set_complete"}.intersection(failed)
+    if task_set_was_valid and not exact_task_scope:
+        failed.add("release_task_set_matches")
     gate_total = _nonnegative_int(gates.get("total"))
     gate_passed = _nonnegative_int(gates.get("passed"))
     zero_gate_fields = (
@@ -664,10 +730,6 @@ def _release_component(
         release.get("schema_version") == "1.0"
         and release.get("status") == "ready"
         and evaluation.get("release_readiness") == "ready"
-        and evaluated_task_count is not None
-        and evaluated_task_count > 0
-        and terminal_task_count == evaluated_task_count
-        and passed_task_count == evaluated_task_count
         and blocked_task_count == 0
         and manual_task_count == 0
         and skipped_task_count == 0
@@ -685,6 +747,7 @@ def _release_component(
         "schema_version": "1.0",
         "status": "ready",
         "release_readiness": "ready",
+        "task_ids": list(expected_task_ids) if exact_task_scope else [],
         "evaluated_task_count": evaluated_task_count,
         "terminal_task_count": terminal_task_count,
         "passed_task_count": passed_task_count,

@@ -97,6 +97,7 @@ def test_promotion_package_public_contract_stays_generic_stable_and_secret_free(
         "plugin_set_complete",
         "plugin_versions_match",
         "release_ready",
+        "release_task_set_matches",
         "run_binding_matches",
         "run_completed",
         "task_receipt_bindings_match",
@@ -5548,6 +5549,7 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
         for plugin_id in ("across-autopilot", "across-context", "across-orchestrator")
     ]
     captured = {}
+    release_calls = []
 
     def compose(**kwargs):
         captured.update(kwargs)
@@ -5564,7 +5566,11 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
         "load_agent_interop_e2e_latest",
         lambda: {"mcp_schema_compatibility": {"status": "compatible"}},
     )
-    monkeypatch.setattr(api_server, "_build_release_verification_report", lambda **kwargs: {"status": "ready"})
+    monkeypatch.setattr(
+        api_server,
+        "_promotion_release_evidence",
+        lambda task_ids: release_calls.append(list(task_ids)) or {"status": "ready"},
+    )
     monkeypatch.setattr(api_server, "build_promotion_package", compose)
     original_get = service.promotion_packages.get
     monkeypatch.setattr(
@@ -5587,6 +5593,10 @@ def test_promotion_package_creation_assembles_all_evidence_server_side(monkeypat
         "across-autopilot", "across-context", "across-orchestrator"
     }
     assert captured["release_evidence"] == {"status": "ready"}
+    assert release_calls == [
+        ["task-alpha", "task-zeta"],
+        ["task-alpha", "task-zeta"],
+    ]
     with sqlite3.connect(service.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM promotion_packages").fetchone()[0] == 1
 

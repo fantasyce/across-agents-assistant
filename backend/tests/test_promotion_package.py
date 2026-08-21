@@ -156,7 +156,10 @@ def _arguments() -> dict[str, object]:
             ),
             "tool_count": index + 10,
             "tool_set_digest": str(index + 1) * 64,
-            "profiles": {},
+            "profiles": {
+                "mcp_core": {"status": "compatible", "finding_count": 0},
+                "claude_desktop_portable": {"status": "compatible", "finding_count": 0},
+            },
             "findings": [],
         }
         for index, row in enumerate(rows)
@@ -231,15 +234,20 @@ def _arguments() -> dict[str, object]:
             "status": "compatible",
             "compatible_plugin_count": 3,
             "incompatible_plugin_count": 0,
-            "portable_tool_count": 36,
+            "portable_tool_count": 33,
             "plugins": compatibility_plugins,
             "private_sentinel": "private-compatibility-sentinel",
         },
         "release_evidence": {
             "schema_version": "1.0",
             "status": "ready",
+            "task_scope": {
+                "schema_version": "across-release-task-scope/1.0",
+                "task_ids": ["task-alpha", "task-zeta"],
+            },
             "release_evaluation": {
                 "release_readiness": "ready",
+                "task_ids": ["task-alpha", "task-zeta"],
                 "evaluated_task_count": 2,
                 "terminal_task_count": 2,
                 "passed_task_count": 2,
@@ -555,6 +563,46 @@ def test_blocks_contradictory_ready_release_evidence(mutation):
     mutation(arguments["release_evidence"])
 
     assert _blocked(arguments) == ("release_ready",)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda release: release.pop("task_scope"),
+        lambda release: release["task_scope"].update(task_ids=["task-alpha", "task-unrelated"]),
+        lambda release: release["release_evaluation"].update(task_ids=["task-alpha"]),
+        lambda release: release["release_evaluation"].update(evaluated_task_count=3),
+        lambda release: release["release_evaluation"].update(terminal_task_count=1),
+        lambda release: release["release_evaluation"].update(passed_task_count=1),
+    ],
+)
+def test_release_readiness_is_bound_to_exact_sealed_task_set(mutation):
+    arguments = _arguments()
+    mutation(arguments["release_evidence"])
+
+    assert _blocked(arguments) == ("release_task_set_matches",)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda report: report["plugins"]["across-context"].pop("tool_set_digest"),
+        lambda report: report["plugins"]["across-context"].update(tool_set_digest="private-invalid"),
+        lambda report: report["plugins"]["across-context"].update(tool_count=-1),
+        lambda report: report["plugins"]["across-context"].update(tool_count=1.5),
+        lambda report: report.update(portable_tool_count=-1),
+        lambda report: report.update(portable_tool_count=10_000),
+        lambda report: report["plugins"]["across-context"].update(profiles=[]),
+        lambda report: report["plugins"]["across-context"]["profiles"]["mcp_core"].update(status="incompatible"),
+        lambda report: report["plugins"]["across-context"]["profiles"]["mcp_core"].update(finding_count=1),
+        lambda report: report["plugins"]["across-context"].update(findings=[{"private": "do-not-echo"}]),
+    ],
+)
+def test_compatible_snapshot_fails_closed_on_nested_schema_contradictions(mutation):
+    arguments = _arguments()
+    mutation(arguments["compatibility_report"])
+
+    assert _blocked(arguments) == ("plugin_compatibility_ready",)
 
 
 def test_sealed_package_drops_arbitrary_reviewer_text():

@@ -10685,21 +10685,41 @@ def _promotion_blocked(exc: PromotionPackageBlocked) -> HTTPException:
     )
 
 
-def _promotion_release_evidence() -> Dict[str, Any]:
-    """Build current release evidence without writing an acceptance report."""
+def _promotion_release_evidence(task_ids: List[str]) -> Dict[str, Any]:
+    """Build release evidence scoped to the exact sealed promotion task set."""
 
-    return _build_release_verification_report(
+    scoped_task_ids = sorted(set(task_ids))
+    task_payloads = {}
+    for task_id in scoped_task_ids:
+        loaded = _load_task_info_read_only(task_id)
+        task_payloads[task_id] = dict(loaded) if isinstance(loaded, Mapping) else _pydantic_dump(loaded)
+    scoped_task_state = SimpleNamespace(
+        _persistence=None,
+        get_all_tasks=lambda: [task_payloads[task_id] for task_id in scoped_task_ids],
+    )
+    report = _build_release_verification_report(
         write_report=False,
-        task_state=_task_state,
-        external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
+        task_state=scoped_task_state,
+        external_task_rows=None,
+        task_row_mapper=lambda row: dict(row) if isinstance(row, Mapping) else {},
         startup_diagnostics=_build_startup_diagnostics(),
-        load_task_payload=_load_task_info_read_only,
-        serialize_task_payload=_pydantic_dump,
+        load_task_payload=lambda task_id: task_payloads[task_id],
+        serialize_task_payload=lambda payload: dict(payload),
         redact_sensitive=_redact_sensitive_evidence,
         app_version=None,
         expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
         required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
     )
+    report["task_scope"] = {
+        "schema_version": "across-release-task-scope/1.0",
+        "task_ids": scoped_task_ids,
+    }
+    evaluation = report.get("release_evaluation")
+    if not isinstance(evaluation, dict):
+        evaluation = {}
+        report["release_evaluation"] = evaluation
+    evaluation["task_ids"] = scoped_task_ids
+    return report
 
 
 def _promotion_task_evidence(task_id: str) -> Dict[str, Any]:
@@ -10810,7 +10830,7 @@ async def _assemble_promotion_package(run_id: str) -> Dict[str, Any]:
             if isinstance(interop, Mapping)
             else None
         )
-        release_evidence = await asyncio.to_thread(_promotion_release_evidence)
+        release_evidence = await asyncio.to_thread(_promotion_release_evidence, task_ids)
         document = build_promotion_package(
             run_id=run_id,
             run_status=run_status,

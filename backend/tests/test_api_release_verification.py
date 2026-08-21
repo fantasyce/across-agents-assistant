@@ -512,15 +512,42 @@ def test_release_verification_evaluation_uses_interop_evidence_without_task_rows
 
 def test_promotion_assembly_builds_release_evidence_without_writing_report(monkeypatch, tmp_path):
     observed = {}
+    payloads = {
+        task_id: {
+            "task_id": task_id,
+            "status": "completed",
+            "last_owner_decision": {"delivery_quality": {"quality_gate": "passed"}},
+        }
+        for task_id in ("task-alpha", "task-zeta")
+    }
 
     def build_report(**kwargs):
         observed.update(kwargs)
-        return {"status": "ready"}
+        scoped_rows = kwargs["task_state"].get_all_tasks()
+        assert [row["task_id"] for row in scoped_rows] == ["task-alpha", "task-zeta"]
+        assert [kwargs["task_row_mapper"](row)["task_id"] for row in scoped_rows] == [
+            "task-alpha", "task-zeta"
+        ]
+        return {
+            "status": "ready",
+            "release_evaluation": {
+                "evaluated_task_count": 2,
+                "terminal_task_count": 2,
+                "passed_task_count": 2,
+            },
+        }
 
     monkeypatch.setattr(api_server, "_build_release_verification_report", build_report)
+    monkeypatch.setattr(api_server, "_build_startup_diagnostics", lambda: _startup_report())
+    monkeypatch.setattr(api_server, "_load_task_info_read_only", lambda task_id: payloads[task_id])
 
-    report = api_server._promotion_release_evidence()
+    report = api_server._promotion_release_evidence(["task-alpha", "task-zeta"])
 
-    assert report == {"status": "ready"}
+    assert report["task_scope"] == {
+        "schema_version": "across-release-task-scope/1.0",
+        "task_ids": ["task-alpha", "task-zeta"],
+    }
+    assert report["release_evaluation"]["task_ids"] == ["task-alpha", "task-zeta"]
     assert observed["write_report"] is False
     assert observed.get("write_report_directory") is None
+    assert observed["external_task_rows"] is None

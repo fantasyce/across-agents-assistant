@@ -210,6 +210,14 @@ def test_generated_payload_manifest_projects_exactly_three_public_plugin_descrip
             ),
             "tool_count": 1,
             "tool_set_digest": "a" * 64,
+            "profiles": {
+                "mcp_core": {"status": "compatible", "finding_count": 0},
+                "claude_desktop_portable": {
+                    "status": "compatible",
+                    "finding_count": 0,
+                },
+            },
+            "findings": [],
         }
         for row in rows
     }
