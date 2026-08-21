@@ -554,6 +554,145 @@ def test_blocks_traversal_and_absolute_changed_paths(path: str):
     assert _blocked(arguments) == ("changed_paths_safe",)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        " backend/src/across_agents_assistant/promotion_package.py",
+        "backend/src/across_agents_assistant/promotion_package.py ",
+    ],
+)
+def test_blocks_whitespace_padded_changed_paths_without_normalizing(path: str):
+    arguments = _arguments()
+    arguments["autopilot_evidence"]["candidate"]["changed_files"] = [path]
+
+    assert _blocked(arguments) == ("changed_paths_safe",)
+
+
+@pytest.mark.parametrize("padded", [" run-batch-5", "run-batch-5 "])
+def test_blocks_whitespace_padded_url_run_identity(padded: str):
+    arguments = _arguments()
+    arguments["run_id"] = padded
+
+    assert _blocked(arguments) == (
+        "evidence_graph_task_set_complete",
+        "evidence_graph_valid",
+        "identifiers_valid",
+        "run_binding_matches",
+    )
+
+
+@pytest.mark.parametrize("padded", [" run-batch-5", "run-batch-5 "])
+def test_blocks_whitespace_padded_status_and_evidence_run_ids(padded: str):
+    arguments = _arguments()
+    arguments["run_status"]["run_id"] = padded
+    arguments["autopilot_evidence"]["run_id"] = padded
+
+    assert _blocked(arguments) == ("identifiers_valid", "run_binding_matches")
+
+
+@pytest.mark.parametrize("padded", [" spec-repo-quality", "spec-repo-quality "])
+def test_blocks_whitespace_padded_spec_id(padded: str):
+    arguments = _arguments()
+    arguments["autopilot_evidence"]["spec_id"] = padded
+
+    assert _blocked(arguments) == ("evidence_graph_valid", "identifiers_valid")
+
+
+@pytest.mark.parametrize("padded", [" candidate-batch-5", "candidate-batch-5 "])
+def test_blocks_whitespace_padded_candidate_ids(padded: str):
+    arguments = _arguments()
+    arguments["autopilot_evidence"]["candidate"]["candidate_id"] = padded
+    arguments["autopilot_evidence"]["candidate"]["promotion_package"]["candidate_id"] = padded
+
+    assert _blocked(arguments) == ("identifiers_valid",)
+
+
+@pytest.mark.parametrize("padded", [" task-alpha", "task-alpha "])
+def test_blocks_whitespace_padded_autopilot_task_id(padded: str):
+    arguments = _arguments()
+    arguments["autopilot_evidence"]["orchestrator"]["tasks"][1]["task_id"] = padded
+
+    assert _blocked(arguments) == (
+        "evidence_graph_task_set_complete",
+        "identifiers_valid",
+        "task_set_complete",
+    )
+
+
+@pytest.mark.parametrize("padded", [" task-alpha", "task-alpha "])
+def test_blocks_whitespace_padded_loaded_task_id(padded: str):
+    arguments = _arguments()
+    arguments["task_evidence"][1]["task_id"] = padded
+
+    assert _blocked(arguments) == ("identifiers_valid", "task_set_complete")
+
+
+@pytest.mark.parametrize("padded", [" task-alpha", "task-alpha "])
+def test_blocks_whitespace_padded_hash_covered_orchestrator_task_id(padded: str):
+    arguments = _arguments()
+    arguments["task_evidence"][1]["raw_receipt"] = _signed_receipt(
+        "orchestrator_evidence",
+        padded,
+    )
+
+    assert _blocked(arguments) == ("task_receipt_bindings_match",)
+
+
+@pytest.mark.parametrize("padded", [" across-context", "across-context "])
+def test_blocks_whitespace_padded_plugin_id_with_fixed_check(padded: str):
+    arguments = _arguments()
+    row = next(row for row in arguments["plugin_rows"] if row["plugin_id"] == "across-context")
+    row["plugin_id"] = padded
+
+    assert _blocked(arguments) == ("plugin_set_complete",)
+
+
+@pytest.mark.parametrize("field", ["task_id", "job_id", "run_id", "node_id"])
+@pytest.mark.parametrize("side", ["leading", "trailing"])
+def test_worker_binding_builder_rejects_whitespace_padded_link_ids(field: str, side: str):
+    receipt = _signed_receipt("worker_projection", "task-zeta")
+    node = receipt["node"]
+    link = {
+        "schema_version": "across-aaa-worker-task-link/1.0",
+        "task_id": "task-zeta",
+        "job_id": receipt["job_id"],
+        "run_id": receipt["run_id"],
+        "node_id": node["node_id"],
+        "manifest_hash": receipt["manifest_hash"],
+        "status": "completed",
+    }
+    value = str(link[field])
+    link[field] = f" {value}" if side == "leading" else f"{value} "
+
+    with pytest.raises(PromotionPackageBlocked) as captured:
+        build_worker_task_receipt_binding(task_link=link, raw_receipt=receipt)
+
+    assert captured.value.check_ids == ("worker_receipt_binding_valid",)
+
+
+@pytest.mark.parametrize("side", ["leading", "trailing"])
+def test_blocks_whitespace_padded_task_receipt_source_enum(side: str):
+    arguments = _arguments()
+    value = "orchestrator_evidence"
+    arguments["task_evidence"][1]["source"] = f" {value}" if side == "leading" else f"{value} "
+
+    assert _blocked(arguments) == ("task_receipts_verified",)
+
+
+@pytest.mark.parametrize("side", ["leading", "trailing"])
+def test_graph_rejects_whitespace_padded_task_node_and_edge_ids(side: str):
+    arguments = _arguments()
+    graph = arguments["evidence_graph"]
+    node = next(node for node in graph["nodes"] if node.get("task_id") == "task-alpha")
+    edge = next(edge for edge in graph["edges"] if edge.get("to") == "task:task-alpha")
+    pad = lambda value: f" {value}" if side == "leading" else f"{value} "
+    node["id"] = pad(node["id"])
+    node["task_id"] = pad(node["task_id"])
+    edge["to"] = pad(edge["to"])
+
+    assert _blocked(arguments) == ("evidence_graph_task_set_complete", "evidence_graph_valid")
+
+
 def test_blocks_malformed_identifier():
     arguments = _arguments()
     arguments["autopilot_evidence"]["candidate"]["candidate_id"] = "candidate id with spaces"

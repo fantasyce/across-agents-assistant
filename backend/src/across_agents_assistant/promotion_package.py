@@ -741,7 +741,7 @@ def _changed_files(value: Any) -> list[str] | None:
     for item in value:
         if type(item) is not str:
             return None
-        path = item.replace("\\", "/").strip()
+        path = item.replace("\\", "/")
         segments = path.split("/")
         if (
             not path
@@ -808,7 +808,7 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 
 def _string(value: Any) -> str:
-    return value.strip() if type(value) is str else ""
+    return value if type(value) is str else ""
 
 
 def _identifier(value: Any) -> bool:
