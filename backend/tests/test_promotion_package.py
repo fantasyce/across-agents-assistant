@@ -568,6 +568,34 @@ def test_blocks_whitespace_padded_changed_paths_without_normalizing(path: str):
     assert _blocked(arguments) == ("changed_paths_safe",)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend\\src\\private.py",
+        "backend/src\\private.py",
+        "backend\\src/private.py",
+    ],
+)
+def test_blocks_changed_paths_that_require_backslash_canonicalization(path: str):
+    arguments = _arguments()
+    arguments["autopilot_evidence"]["candidate"]["changed_files"] = [path]
+
+    assert _blocked(arguments) == ("changed_paths_safe",)
+
+
+def test_preserves_valid_posix_changed_paths_exactly():
+    arguments = _arguments()
+    paths = [
+        "backend/src/across_agents_assistant/promotion_package.py",
+        "backend/tests/test_promotion_package.py",
+    ]
+    arguments["autopilot_evidence"]["candidate"]["changed_files"] = paths
+
+    package = build_promotion_package(**arguments)
+
+    assert package["components"]["candidate_review"]["changed_files"] == paths
+
+
 @pytest.mark.parametrize("padded", [" run-batch-5", "run-batch-5 "])
 def test_blocks_whitespace_padded_url_run_identity(padded: str):
     arguments = _arguments()

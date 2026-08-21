@@ -741,11 +741,12 @@ def _changed_files(value: Any) -> list[str] | None:
     for item in value:
         if type(item) is not str:
             return None
-        path = item.replace("\\", "/")
+        path = item
         segments = path.split("/")
         if (
             not path
             or len(path) > 512
+            or "\\" in path
             or _SAFE_RELATIVE_PATH.fullmatch(path) is None
             or path.startswith(("/", "~"))
             or _WINDOWS_ABSOLUTE.match(item) is not None
