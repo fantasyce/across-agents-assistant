@@ -51,10 +51,10 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.13.4` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.14.0` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.0` |
-| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.5` |
-| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.2` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.8` |
+| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.3` |
 
 Install or repair the three optional components from **Settings → Plugins**.
 Packaged builds carry verified plugin payloads, so the one-click path does not
@@ -70,7 +70,19 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.13.4` Includes
+## What `v0.14.0` Includes
+
+- An immutable, content-addressed promotion package that binds the complete run,
+  task set, verified receipts, plugin provenance, compatibility evidence, and
+  release readiness before a separate human approval can authorize promotion.
+- Atomic managed-plugin lifecycle transactions for Context, Orchestrator, and
+  Autopilot, including dependent-runtime drain, reconnect, rollback, and
+  provenance verification across repair, upgrade, uninstall, and failure paths.
+- Portable MCP compatibility validation and raw-receipt verification before
+  redaction, with fail-closed task-set, approval-chain, and compatibility
+  contracts that do not trust caller-supplied evidence.
+- Updated managed producer pins for Context `v0.11.0`, Orchestrator `v0.10.8`,
+  and Autopilot `v0.5.3`.
 
 - One generic Work entry with goal-driven Autopilot resolution; starter cards
   and scenario-specific host fields no longer define the task model.
