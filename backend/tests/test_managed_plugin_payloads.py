@@ -257,6 +257,29 @@ def test_generated_payload_manifest_projects_exactly_three_public_plugin_descrip
 
 
 @pytest.mark.parametrize(
+    "version",
+    [
+        "1.2.3-1alpha",
+        "1.2.3-1-alpha",
+        "1.2.3-rc.1+build.5",
+        "1.2.3-x.7.z.92",
+        "1.2.3-01alpha",
+        "1.2.3+001.sha-5114f85",
+    ],
+)
+def test_manifest_generator_accepts_complete_semver_grammar(tmp_path, version):
+    output = tmp_path / "manifest.json"
+
+    subprocess.run(
+        _manifest_generator_command(output, **{"context-version": version}),
+        check=True,
+    )
+
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    assert manifest["plugins"]["across-context"]["version"] == version
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"context-version": "../../context"},
@@ -264,6 +287,12 @@ def test_generated_payload_manifest_projects_exactly_three_public_plugin_descrip
         {"context-version": "0.11.0 "},
         {"context-version": " 0.11.0"},
         {"context-version": "01.11.0"},
+        {"context-version": "1.2.3-01"},
+        {"context-version": "1.2.3-"},
+        {"context-version": "1.2.3-alpha..1"},
+        {"context-version": "1.2.3+"},
+        {"context-version": "1.2.3+build..5"},
+        {"context-version": "1.2.3-alpha_1"},
         {"architecture": "ppc64"},
         {"context-source-kind": "checkout"},
         {"context-source-kind": "private"},

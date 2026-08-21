@@ -15,10 +15,17 @@ FIRST_PARTY_PLUGIN_IDS = (
 
 _HEX_40 = re.compile(r"[0-9a-f]{40}")
 _HEX_64 = re.compile(r"[0-9a-f]{64}")
+_SEMVER_NUMERIC_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
+_SEMVER_NON_NUMERIC_IDENTIFIER = r"(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+_SEMVER_PRERELEASE_IDENTIFIER = (
+    rf"(?:{_SEMVER_NUMERIC_IDENTIFIER}|{_SEMVER_NON_NUMERIC_IDENTIFIER})"
+)
 _RELEASE_VERSION = re.compile(
-    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-(?:(?:0|[1-9][0-9]*)|(?:[A-Za-z-][0-9A-Za-z-]*))"
-    r"(?:\.(?:(?:0|[1-9][0-9]*)|(?:[A-Za-z-][0-9A-Za-z-]*)))*)?"
+    rf"{_SEMVER_NUMERIC_IDENTIFIER}\."
+    rf"{_SEMVER_NUMERIC_IDENTIFIER}\."
+    rf"{_SEMVER_NUMERIC_IDENTIFIER}"
+    rf"(?:-{_SEMVER_PRERELEASE_IDENTIFIER}"
+    rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
 SUPPORTED_ARCHITECTURES = frozenset({"arm64", "x86_64"})
