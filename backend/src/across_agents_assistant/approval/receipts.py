@@ -62,7 +62,8 @@ class ApprovalReceiptStore:
             if subject.subject_sha256
             else _sha256_json(_secret_free_subject(subject.payload))
         )
-        dedupe_key = _sha256_json({
+        idempotency_token = _bounded_text(idempotency_key or request_id or "", 500)
+        dedupe_material = {
             "scope": clean_scope,
             "decision": clean_decision,
             "proposer_id": proposer,
@@ -70,15 +71,39 @@ class ApprovalReceiptStore:
             "subject_type": subject_type,
             "subject_id_sha256": subject_id_hash,
             "subject_sha256": subject_sha256,
-            "idempotency_key": _bounded_text(idempotency_key or request_id or "", 500),
-        })
+            "idempotency_key": idempotency_token,
+        }
+        if not idempotency_token:
+            dedupe_material["append_nonce"] = uuid.uuid4().hex
+        dedupe_key = _sha256_json(dedupe_material)
         with self._connection(write=True) as conn:
-            existing = conn.execute(
-                "SELECT * FROM approval_receipts WHERE dedupe_key = ?",
-                (dedupe_key,),
-            ).fetchone()
-            if existing:
-                return self._public(existing, integrity_status=self._verify_row(conn, existing))
+            if idempotency_token:
+                existing = conn.execute(
+                    "SELECT * FROM approval_receipts WHERE dedupe_key = ?",
+                    (dedupe_key,),
+                ).fetchone()
+                if existing:
+                    status = self._verify_row(conn, existing)
+                    if status != "verified":
+                        raise ApprovalReceiptError("approval receipt history is tampered")
+                    return self._public(existing, integrity_status=status)
+                candidates = conn.execute(
+                    """SELECT * FROM approval_receipts
+                       WHERE scope = ? AND subject_type = ?
+                         AND subject_id_sha256 = ? AND subject_sha256 = ?
+                         AND decision = ? AND proposer_id = ? AND approver_id = ?""",
+                    (
+                        clean_scope,
+                        subject_type,
+                        subject_id_hash,
+                        subject_sha256,
+                        clean_decision,
+                        proposer,
+                        approver,
+                    ),
+                ).fetchall()
+                if any(self._verify_row(conn, candidate) != "verified" for candidate in candidates):
+                    raise ApprovalReceiptError("approval receipt history is tampered")
 
             previous = conn.execute(
                 "SELECT receipt_id, receipt_hash FROM approval_receipts ORDER BY sequence DESC LIMIT 1"
@@ -90,6 +115,7 @@ class ApprovalReceiptStore:
                 "schema_version": APPROVAL_RECEIPT_SCHEMA,
                 "receipt_id": receipt_id,
                 "sequence": sequence,
+                "dedupe_key": dedupe_key,
                 "request_id_sha256": _sha256_text(_bounded_text(request_id or "", 500)) if request_id else None,
                 "subject_type": subject_type,
                 "subject_id_sha256": subject_id_hash,
@@ -202,6 +228,7 @@ class ApprovalReceiptStore:
                 "failures": failures,
                 "chain_tip": anchor["chain_tip"] if anchor else observed_tip,
                 "observed_chain_tip": observed_tip,
+                "receipt_anchors": [_receipt_anchor(row) for row in rows],
             }
 
     def _verify_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> str:
@@ -210,6 +237,8 @@ class ApprovalReceiptStore:
         except (TypeError, json.JSONDecodeError):
             return "tampered"
         if _sha256_json(payload) != row["receipt_hash"]:
+            return "tampered"
+        if "dedupe_key" in payload and payload.get("dedupe_key") != row["dedupe_key"]:
             return "tampered"
         payload_columns = {
             "receipt_id": "receipt_id",
@@ -391,12 +420,22 @@ def evaluate_promotion_authorization(
         and receipt.get("subject_id_sha256") == _sha256_text(package_id)
         and receipt.get("subject_sha256") == package_digest
     )
-    chain_complete = bool(
-        chain_state.get("integrity_status") == "verified"
-        and chain_state.get("failures") == []
-        and type(chain_state.get("receipt_count")) is int
-        and chain_state.get("receipt_count") >= 0
-        and chain_state.get("chain_tip") == chain_state.get("observed_chain_tip")
+    anchors = chain_state.get("receipt_anchors")
+    chain_complete = _chain_projection_verified(chain_state)
+    receipt_anchor = _matching_receipt_anchor(anchors, receipt)
+    matching_subject_anchors = [
+        anchor
+        for anchor in anchors
+        if isinstance(anchor, Mapping)
+        and anchor.get("scope") == receipt.get("scope")
+        and anchor.get("subject_type") == receipt.get("subject_type")
+        and anchor.get("subject_id_sha256") == receipt.get("subject_id_sha256")
+        and anchor.get("subject_sha256") == receipt.get("subject_sha256")
+    ] if isinstance(anchors, list) else []
+    latest_subject_anchor = (
+        max(matching_subject_anchors, key=lambda anchor: anchor["sequence"])
+        if matching_subject_anchors
+        else None
     )
     checks = {
         "package_integrity_verified": _promotion_package_record_verified(package),
@@ -404,6 +443,13 @@ def evaluate_promotion_authorization(
         "decision_integrity_verified": _public_receipt_verified(receipt),
         "decision_approved": receipt.get("decision") == "approved",
         "subject_binding_matches": subject_binding_matches,
+        "decision_bound_to_chain": bool(chain_complete and receipt_anchor),
+        "latest_subject_decision": bool(
+            receipt_anchor
+            and latest_subject_anchor
+            and receipt_anchor.get("receipt_id") == latest_subject_anchor.get("receipt_id")
+            and receipt_anchor.get("receipt_hash") == latest_subject_anchor.get("receipt_hash")
+        ),
         "separate_actors": bool(
             decision_present
             and receipt.get("proposer_id")
@@ -450,6 +496,65 @@ def _public_receipt_verified(receipt: Mapping[str, Any]) -> bool:
         if key not in {"receipt_hash", "integrity_status"}
     }
     return _sha256_json(payload) == receipt.get("receipt_hash")
+
+
+def _receipt_anchor(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "receipt_id": row["receipt_id"],
+        "sequence": row["sequence"],
+        "receipt_hash": row["receipt_hash"],
+        "scope": row["scope"],
+        "subject_type": row["subject_type"],
+        "subject_id_sha256": row["subject_id_sha256"],
+        "subject_sha256": row["subject_sha256"],
+    }
+
+
+def _chain_projection_verified(chain: Mapping[str, Any]) -> bool:
+    anchors = chain.get("receipt_anchors")
+    receipt_count = chain.get("receipt_count")
+    if (
+        chain.get("integrity_status") != "verified"
+        or chain.get("failures") != []
+        or type(receipt_count) is not int
+        or not isinstance(anchors, list)
+        or receipt_count != len(anchors)
+    ):
+        return False
+    for sequence, anchor in enumerate(anchors, start=1):
+        if (
+            not isinstance(anchor, Mapping)
+            or anchor.get("sequence") != sequence
+            or type(anchor.get("receipt_id")) is not str
+            or type(anchor.get("receipt_hash")) is not str
+            or type(anchor.get("scope")) is not str
+            or type(anchor.get("subject_type")) is not str
+            or type(anchor.get("subject_id_sha256")) is not str
+            or type(anchor.get("subject_sha256")) is not str
+        ):
+            return False
+    observed_tip = anchors[-1]["receipt_hash"] if anchors else "0" * 64
+    return (
+        chain.get("observed_chain_tip") == observed_tip
+        and chain.get("chain_tip") == observed_tip
+    )
+
+
+def _matching_receipt_anchor(
+    anchors: Any,
+    receipt: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    if not isinstance(anchors, list):
+        return None
+    for anchor in anchors:
+        if (
+            isinstance(anchor, Mapping)
+            and anchor.get("receipt_id") == receipt.get("receipt_id")
+            and anchor.get("sequence") == receipt.get("sequence")
+            and anchor.get("receipt_hash") == receipt.get("receipt_hash")
+        ):
+            return anchor
+    return None
 
 
 def _secret_free_subject(value: Any) -> Any:

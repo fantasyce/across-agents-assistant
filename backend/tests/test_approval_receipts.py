@@ -52,13 +52,22 @@ def promotion_subject(record, *, digest=None):
     )
 
 
-def promotion_decision(store, record, *, decision="approved", proposer="agent-builder", approver="human-reviewer"):
+def promotion_decision(
+    store,
+    record,
+    *,
+    decision="approved",
+    proposer="agent-builder",
+    approver="human-reviewer",
+    idempotency_key=None,
+):
     return store.record(
         subject=promotion_subject(record),
         scope="release_promotion",
         decision=decision,
         proposer_id=proposer,
         approver_id=approver,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -122,6 +131,49 @@ def test_promotion_authorization_requires_an_explicit_approved_decision(tmp_path
     assert approved["authorized"] is True
     assert approved["status"] == "authorized"
     assert all(approved["checks"].values())
+
+
+def test_stale_approval_cannot_authorize_after_a_later_matching_rejection(tmp_path):
+    db_path = str(tmp_path / "stale-approval.db")
+    packages = PromotionPackageStore(db_path)
+    decisions = ApprovalReceiptStore(db_path)
+    record = packages.put(promotion_document())
+    approval = promotion_decision(decisions, record, decision="approved")
+    rejection = promotion_decision(decisions, record, decision="rejected")
+
+    stale = authorization(record, decisions, approval)
+    latest = authorization(record, decisions, rejection)
+
+    assert stale["authorized"] is False
+    assert stale["checks"]["latest_subject_decision"] is False
+    assert latest["authorized"] is False
+    assert latest["checks"]["latest_subject_decision"] is True
+
+
+def test_receipt_from_one_database_cannot_use_an_unrelated_verified_chain(tmp_path):
+    package_db = str(tmp_path / "package.db")
+    unrelated_db = str(tmp_path / "unrelated.db")
+    packages = PromotionPackageStore(package_db)
+    decisions = ApprovalReceiptStore(package_db)
+    record = packages.put(promotion_document())
+    approval = promotion_decision(decisions, record)
+
+    unrelated = ApprovalReceiptStore(unrelated_db)
+    unrelated.record(
+        subject=subject(),
+        scope="tool_execution",
+        decision="approved",
+        proposer_id="agent",
+        approver_id="human",
+    )
+    result = evaluate_promotion_authorization(
+        record,
+        approval,
+        unrelated.verify_chain(),
+    )
+
+    assert result["authorized"] is False
+    assert result["checks"]["decision_bound_to_chain"] is False
 
 
 def test_promotion_authorization_rejects_wrong_hash_and_same_actor_claims(tmp_path):
@@ -230,7 +282,11 @@ def test_repeated_concurrent_promotion_approval_is_idempotent_and_chain_valid(tm
     record = packages.put(promotion_document())
 
     def approve(_index):
-        return promotion_decision(decisions, record)
+        return promotion_decision(
+            decisions,
+            record,
+            idempotency_key="concurrent-promotion-approval",
+        )
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         receipts = list(executor.map(approve, range(16)))
@@ -239,6 +295,56 @@ def test_repeated_concurrent_promotion_approval_is_idempotent_and_chain_valid(tm
     assert decisions.verify_chain()["integrity_status"] == "verified"
     assert decisions.verify_chain()["receipt_count"] == 1
     assert authorization(record, decisions, receipts[0])["authorized"] is True
+
+
+def test_decisions_without_idempotency_key_always_append_and_latest_wins(tmp_path):
+    db_path = str(tmp_path / "append-decisions.db")
+    packages = PromotionPackageStore(db_path)
+    decisions = ApprovalReceiptStore(db_path)
+    record = packages.put(promotion_document())
+
+    first = promotion_decision(decisions, record, decision="approved")
+    second = promotion_decision(decisions, record, decision="rejected")
+    third = promotion_decision(decisions, record, decision="approved")
+    latest = decisions.latest_for_subject(
+        scope="release_promotion",
+        subject_type="promotion_package",
+        subject_id=record["package_id"],
+        subject_sha256=record["package_sha256"],
+    )
+
+    assert [first["sequence"], second["sequence"], third["sequence"]] == [1, 2, 3]
+    assert len({first["receipt_id"], second["receipt_id"], third["receipt_id"]}) == 3
+    assert latest["receipt_id"] == third["receipt_id"]
+    assert authorization(record, decisions, third)["authorized"] is True
+
+
+def test_dedupe_key_tampering_is_detected_and_cannot_enable_duplicate_append(tmp_path):
+    db_path = str(tmp_path / "dedupe-tamper.db")
+    packages = PromotionPackageStore(db_path)
+    decisions = ApprovalReceiptStore(db_path)
+    record = packages.put(promotion_document())
+    approval = promotion_decision(
+        decisions,
+        record,
+        idempotency_key="promotion-request-1",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE approval_receipts SET dedupe_key = ? WHERE receipt_id = ?",
+            ("f" * 64, approval["receipt_id"]),
+        )
+
+    assert decisions.get(approval["receipt_id"])["integrity_status"] == "tampered"
+    assert decisions.verify_chain()["integrity_status"] == "tampered"
+    with pytest.raises(ApprovalReceiptError, match="tampered"):
+        promotion_decision(
+            decisions,
+            record,
+            idempotency_key="promotion-request-1",
+        )
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM approval_receipts").fetchone()[0] == 1
 
 
 def test_approval_never_mutates_the_immutable_package_bytes(tmp_path):
