@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.3 - 2026-08-22
+
+- Updated the managed Orchestrator payload, source mirror, Live E2E workflow,
+  and verified Worker release catalog to `v0.10.10` after its producer-first
+  release completed.
+- Integrated the CodeQL-clean Orchestrator release without changing the
+  Context `v0.11.1` or Autopilot `v0.5.3` public contracts.
+- Refreshed all four Worker download URLs and hashes from the published
+  Orchestrator `SHA256SUMS` asset.
+
 ## 0.14.2 - 2026-08-21
 
 - Reused the prepared backend environment in the vNext fixture E2E instead of
