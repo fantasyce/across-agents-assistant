@@ -97,6 +97,77 @@ def test_filesystem_transaction_cleans_workspace_when_snapshot_copy_fails(tmp_pa
     assert list(transaction_root.iterdir()) == []
 
 
+def test_filesystem_transaction_reports_and_retains_failed_commit_cleanup(tmp_path, monkeypatch):
+    lifecycle = importlib.import_module("across_agents_assistant.managed_plugin_lifecycle")
+    plugin_dir = tmp_path / "across" / "plugins" / "across-context"
+    wrapper = tmp_path / "across" / "bin" / "across-context"
+    transaction_root = tmp_path / "transactions"
+    plugin_dir.mkdir(parents=True)
+    wrapper.parent.mkdir(parents=True)
+    (plugin_dir / "runtime.txt").write_text("version-a\n", encoding="utf-8")
+    wrapper.write_text("wrapper-a\n", encoding="utf-8")
+    transaction = lifecycle.ManagedPluginFilesystemTransaction(
+        plugin_id="across-context",
+        plugin_dir=plugin_dir,
+        wrapper_path=wrapper,
+        transaction_root=transaction_root,
+    )
+    original_rmtree = lifecycle.shutil.rmtree
+
+    def fail_workspace_cleanup(path, *args, **kwargs):
+        if transaction._workspace is not None and path == transaction._workspace:
+            raise OSError("workspace is busy")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", fail_workspace_cleanup)
+
+    with pytest.raises(lifecycle.ManagedPluginLifecycleCleanupError, match="snapshot retained"):
+        with transaction:
+            pass
+
+    assert transaction._workspace is not None
+    assert transaction._workspace.is_dir()
+
+
+def test_filesystem_transaction_preserves_lifecycle_error_when_rollback_cleanup_fails(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    lifecycle = importlib.import_module("across_agents_assistant.managed_plugin_lifecycle")
+    plugin_dir = tmp_path / "across" / "plugins" / "across-context"
+    wrapper = tmp_path / "across" / "bin" / "across-context"
+    transaction_root = tmp_path / "transactions"
+    plugin_dir.mkdir(parents=True)
+    wrapper.parent.mkdir(parents=True)
+    (plugin_dir / "runtime.txt").write_text("version-a\n", encoding="utf-8")
+    wrapper.write_text("wrapper-a\n", encoding="utf-8")
+    transaction = lifecycle.ManagedPluginFilesystemTransaction(
+        plugin_id="across-context",
+        plugin_dir=plugin_dir,
+        wrapper_path=wrapper,
+        transaction_root=transaction_root,
+    )
+    original_rmtree = lifecycle.shutil.rmtree
+
+    def fail_workspace_cleanup(path, *args, **kwargs):
+        if transaction._workspace is not None and path == transaction._workspace:
+            raise OSError("workspace is busy")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", fail_workspace_cleanup)
+
+    with pytest.raises(RuntimeError, match="post-install probe failed"):
+        with transaction:
+            (plugin_dir / "runtime.txt").write_text("version-b\n", encoding="utf-8")
+            raise RuntimeError("post-install probe failed")
+
+    assert "snapshot retained" in caplog.text
+    assert (plugin_dir / "runtime.txt").read_text(encoding="utf-8") == "version-a\n"
+    assert transaction._workspace is not None
+    assert transaction._workspace.is_dir()
+
+
 @pytest.mark.parametrize("symlink_root", ["plugin", "wrapper"])
 def test_filesystem_transaction_rejects_symlinked_runtime_roots(tmp_path, symlink_root):
     lifecycle = importlib.import_module("across_agents_assistant.managed_plugin_lifecycle")
@@ -1121,6 +1192,81 @@ def test_orchestrator_runtime_reset_waits_for_inflight_cli_call(tmp_path, monkey
     assert not cli_thread.is_alive()
     assert not reset_thread.is_alive()
     assert reset_done.is_set()
+
+
+def test_orchestrator_public_operation_blocks_lifecycle_between_probe_and_dispatch(
+    tmp_path,
+    monkeypatch,
+):
+    orchestrator_plugin = importlib.import_module("across_agents_assistant.orchestrator_plugin")
+    plugin_runtime = importlib.import_module("across_agents_assistant.plugin_runtime")
+    manager = orchestrator_plugin.OrchestratorPluginManager(
+        orchestrator_plugin.OrchestratorPluginConfig(
+            mode="external",
+            endpoint="http://old-runtime.test",
+            command=str(tmp_path / "missing-orchestrator"),
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+            auto_run=False,
+        )
+    )
+    probe_completed = threading.Event()
+    lifecycle_attempted = threading.Event()
+    lifecycle_completed = threading.Event()
+    dispatch_completed = threading.Event()
+    dispatched_endpoints: list[str | None] = []
+    operation_results: list[dict] = []
+    operation_errors: list[BaseException] = []
+
+    def deterministic_ensure_external():
+        manager._transport = "http"
+        manager._endpoint = "http://old-runtime.test"
+        probe_completed.set()
+        assert lifecycle_attempted.wait(timeout=1.0)
+        lifecycle_completed.wait(timeout=0.25)
+
+    def lifecycle_reset():
+        assert probe_completed.wait(timeout=1.0)
+        lifecycle_attempted.set()
+        with plugin_runtime.managed_plugin_lifecycle_guard("across-orchestrator"):
+            with plugin_runtime.managed_plugin_runtime_guard("across-orchestrator"):
+                manager._transport = "cli"
+                manager._endpoint = "http://new-runtime.test"
+                lifecycle_completed.set()
+
+    def dispatch_http(_path, _payload):
+        dispatched_endpoints.append(manager._endpoint)
+        assert not lifecycle_completed.is_set()
+        dispatch_completed.set()
+        return {"task_id": "task-1", "status": "cancelled"}
+
+    def dispatch_cli(_args):
+        raise AssertionError("lifecycle reset interleaved before public operation dispatch")
+
+    def run_operation():
+        try:
+            operation_results.append(manager.cancel_task("task-1"))
+        except BaseException as exc:
+            operation_errors.append(exc)
+
+    monkeypatch.setattr(manager, "_ensure_external", deterministic_ensure_external)
+    monkeypatch.setattr(manager, "_http_post_unlocked", dispatch_http)
+    monkeypatch.setattr(manager, "_cli_json_unlocked", dispatch_cli)
+    lifecycle_thread = threading.Thread(target=lifecycle_reset)
+    operation_thread = threading.Thread(target=run_operation)
+    lifecycle_thread.start()
+    operation_thread.start()
+    operation_thread.join(timeout=2.0)
+    lifecycle_thread.join(timeout=2.0)
+
+    assert not operation_thread.is_alive()
+    assert not lifecycle_thread.is_alive()
+    assert operation_errors == []
+    assert operation_results == [{"task_id": "task-1", "status": "cancelled"}]
+    assert dispatch_completed.is_set()
+    assert dispatched_endpoints == ["http://old-runtime.test"]
+    assert lifecycle_completed.is_set()
+    assert manager._endpoint == "http://new-runtime.test"
 
 
 def test_worker_reconcile_holds_orchestrator_runtime_guard(tmp_path, monkeypatch):

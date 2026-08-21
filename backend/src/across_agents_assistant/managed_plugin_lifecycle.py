@@ -3,13 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Type
+import logging
 import os
 import shutil
 import tempfile
 
 
+logger = logging.getLogger("across_agents_assistant.managed_plugin_lifecycle")
+
+
 class ManagedPluginLifecycleRecoveryError(RuntimeError):
     """Raised when a failed lifecycle mutation cannot restore its snapshot."""
+
+
+class ManagedPluginLifecycleCleanupError(RuntimeError):
+    """Raised when transaction evidence cannot be removed after completion."""
 
 
 class ManagedPluginFilesystemTransaction:
@@ -78,7 +86,14 @@ class ManagedPluginFilesystemTransaction:
                 f"Failed to recover {self.plugin_id} after lifecycle failure; "
                 f"snapshot preserved at {recovery_path}"
             ) from recovery_error
-        self._cleanup()
+        try:
+            self._cleanup()
+        except ManagedPluginLifecycleCleanupError as cleanup_error:
+            logger.error(str(cleanup_error), exc_info=cleanup_error)
+            if exc is not None:
+                add_note = getattr(exc, "add_note", None)
+                if callable(add_note):
+                    add_note(str(cleanup_error))
         return False
 
     def _restore(self) -> None:
@@ -100,6 +115,14 @@ class ManagedPluginFilesystemTransaction:
             os.replace(self._workspace / "wrapper", self.wrapper_path)
 
     def _cleanup(self) -> None:
-        if self._workspace is not None:
-            shutil.rmtree(self._workspace, ignore_errors=True)
-            self._workspace = None
+        if self._workspace is None:
+            return
+        workspace = self._workspace
+        try:
+            shutil.rmtree(workspace)
+        except Exception as cleanup_error:
+            raise ManagedPluginLifecycleCleanupError(
+                f"Failed to clean up {self.plugin_id} lifecycle workspace; "
+                f"snapshot retained at {workspace}"
+            ) from cleanup_error
+        self._workspace = None
