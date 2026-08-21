@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple, Set, Mapping
@@ -288,6 +288,18 @@ from .tools import builtin_tools
 from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
+from .persistence.promotion_package_store import PromotionPackageStoreError
+from .approval.receipts import (
+    ApprovalReceiptError,
+    ApprovalReceiptSubject,
+    evaluate_promotion_authorization,
+)
+from .promotion_package import (
+    PromotionPackageBlocked,
+    build_promotion_package,
+    build_worker_task_receipt_binding,
+)
+from .managed_plugin_payloads import plugin_payload
 
 # Harness layer imports
 from .harness import (
@@ -1996,6 +2008,26 @@ class ReplayApprovalDecision(BaseModel):
     decision: str = Field(default="approved", pattern=r"^(approved|rejected)$")
     request_id: Optional[str] = Field(default=None, max_length=500)
     idempotency_key: Optional[str] = Field(default=None, max_length=500)
+
+
+class PromotionPackageCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromotionPackageDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern=r"^(approved|rejected)$")
+    approver_id: str = Field(min_length=1, max_length=200)
+    expected_package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("approver_id")
+    @classmethod
+    def _non_empty_approver(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("approver_id must not be blank")
+        return clean
 
 
 def _approval_scope_for_tool(tool_name: str) -> str:
@@ -10629,6 +10661,273 @@ async def get_autopilot_promotion_review(run_id: str):
         raise _autopilot_http_error("Get Across Autopilot promotion review", exc)
     except Exception as exc:
         raise _safe_http_500("Get Across Autopilot promotion review")
+
+
+_PROMOTION_SOURCE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_PROMOTION_PACKAGE_ID = re.compile(r"promotion-[a-f0-9]{64}")
+_PROMOTION_PLUGIN_IDS = (
+    "across-autopilot",
+    "across-context",
+    "across-orchestrator",
+)
+
+
+def _promotion_blocked(exc: PromotionPackageBlocked) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "promotion_package_blocked",
+            "failed_checks": list(exc.check_ids),
+        },
+    )
+
+
+def _promotion_release_evidence() -> Dict[str, Any]:
+    """Build current release evidence without writing an acceptance report."""
+
+    return _build_release_verification_report(
+        write_report=False,
+        task_state=_task_state,
+        external_task_rows=lambda: get_orchestrator_plugin_manager().list_task_summaries(),
+        startup_diagnostics=_build_startup_diagnostics(),
+        load_task_payload=_load_task_info_read_only,
+        serialize_task_payload=_pydantic_dump,
+        redact_sensitive=_redact_sensitive_evidence,
+        app_version=None,
+        expected_files=RELEASE_VERIFICATION_EXPECTED_FILES,
+        required_probes=RELEASE_VERIFICATION_REQUIRED_PROBES,
+    )
+
+
+def _promotion_task_evidence(task_id: str) -> Dict[str, Any]:
+    """Load one authoritative raw receipt through existing read-only paths."""
+
+    remote = get_worker_task_bridge().read_only_status(task_id)
+    if remote is not None:
+        if not isinstance(remote, Mapping):
+            raise PromotionPackageBlocked(("task_receipts_verified",))
+        raw_receipt = remote.get("evidence_receipt")
+        task_link = {
+            "schema_version": remote.get("schema_version"),
+            "task_id": task_id,
+            "job_id": remote.get("job_id"),
+            "run_id": remote.get("run_id"),
+            "node_id": remote.get("node_id"),
+            "manifest_hash": remote.get("manifest_hash"),
+            "status": remote.get("status"),
+        }
+        return {
+            "task_id": task_id,
+            "source": "worker_projection",
+            "raw_receipt": raw_receipt,
+            "worker_binding": build_worker_task_receipt_binding(
+                task_link=task_link,
+                raw_receipt=raw_receipt,
+            ),
+        }
+
+    bundle = get_orchestrator_plugin_manager().get_evidence_bundle(task_id)
+    if not isinstance(bundle, Mapping):
+        raise PromotionPackageBlocked(("task_receipts_verified",))
+    raw_receipt = (
+        bundle
+        if bundle.get("schema_version") == "across-evidence-receipt/1.0"
+        else bundle.get("evidence_receipt")
+    )
+    return {
+        "task_id": task_id,
+        "source": "orchestrator_evidence",
+        "raw_receipt": raw_receipt,
+    }
+
+
+async def _assemble_promotion_package(run_id: str) -> Dict[str, Any]:
+    """Load, verify, compose, and persist one promotion package server-side."""
+
+    if _PROMOTION_SOURCE_ID.fullmatch(str(run_id or "")) is None:
+        raise HTTPException(status_code=422, detail="promotion run identifier is invalid")
+    try:
+        client = get_autopilot_client()
+        run_status = await asyncio.to_thread(client.status, run_id)
+        autopilot_evidence = await asyncio.to_thread(client.evidence, run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Autopilot run evidence was not found") from None
+    except OrchestratorPluginHTTPError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Autopilot run evidence was not found") from None
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except PluginLifecycleError:
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except Exception:
+        logger.warning("Promotion package Autopilot evidence load failed.", exc_info=True)
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+
+    if not isinstance(run_status, Mapping) or not isinstance(autopilot_evidence, Mapping):
+        raise HTTPException(status_code=404, detail="Autopilot run evidence was not found")
+    raw_tasks = (
+        autopilot_evidence.get("orchestrator", {}).get("tasks")
+        if isinstance(autopilot_evidence.get("orchestrator"), Mapping)
+        else None
+    )
+    if not isinstance(raw_tasks, list):
+        raise _promotion_blocked(PromotionPackageBlocked(("task_set_complete",)))
+    task_ids = sorted({
+        item.get("task_id")
+        for item in raw_tasks
+        if isinstance(item, Mapping) and type(item.get("task_id")) is str
+    })
+    if (
+        not task_ids
+        or len(task_ids) > 256
+        or any(_PROMOTION_SOURCE_ID.fullmatch(task_id) is None for task_id in task_ids)
+        or any(
+            not isinstance(item, Mapping) or type(item.get("task_id")) is not str
+            for item in raw_tasks
+        )
+    ):
+        raise _promotion_blocked(PromotionPackageBlocked(("identifiers_valid", "task_set_complete")))
+
+    try:
+        task_evidence = [
+            await asyncio.to_thread(_promotion_task_evidence, task_id)
+            for task_id in task_ids
+        ]
+        plugin_rows = await asyncio.to_thread(
+            discover_across_plugins,
+            plugin_ids=list(_PROMOTION_PLUGIN_IDS),
+            probe=False,
+        )
+        plugin_descriptors = {
+            plugin_id: await asyncio.to_thread(plugin_payload, plugin_id) or {}
+            for plugin_id in _PROMOTION_PLUGIN_IDS
+        }
+        interop = await asyncio.to_thread(load_agent_interop_e2e_latest)
+        compatibility_report = (
+            interop.get("mcp_schema_compatibility")
+            if isinstance(interop, Mapping)
+            else None
+        )
+        release_evidence = await asyncio.to_thread(_promotion_release_evidence)
+        document = build_promotion_package(
+            run_id=run_id,
+            run_status=run_status,
+            autopilot_evidence=autopilot_evidence,
+            task_evidence=task_evidence,
+            evidence_graph=autopilot_evidence.get("evidence_graph"),
+            plugin_rows=plugin_rows,
+            plugin_descriptors=plugin_descriptors,
+            compatibility_report=compatibility_report,
+            release_evidence=release_evidence,
+        )
+        return await asyncio.to_thread(persistence.promotion_packages.put, document)
+    except PromotionPackageBlocked as exc:
+        raise _promotion_blocked(exc) from None
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Promotion source evidence was not found") from None
+    except OrchestratorPluginHTTPError as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Promotion source evidence was not found") from None
+        raise HTTPException(status_code=503, detail="promotion evidence source is unavailable") from None
+    except (PluginLifecycleError, PromotionPackageStoreError, OSError):
+        raise HTTPException(status_code=503, detail="promotion runtime or persistence is unavailable") from None
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Promotion package assembly failed.", exc_info=True)
+        raise HTTPException(status_code=503, detail="promotion runtime or persistence is unavailable") from None
+
+
+def _promotion_package_projection(package_id: str) -> Dict[str, Any]:
+    if _PROMOTION_PACKAGE_ID.fullmatch(str(package_id or "")) is None:
+        raise HTTPException(status_code=422, detail="promotion package identifier is invalid")
+    try:
+        package = persistence.promotion_packages.get(package_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Promotion package was not found") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="promotion persistence is unavailable") from None
+    if package.get("integrity_status") != "verified":
+        raise HTTPException(status_code=409, detail="promotion package integrity verification failed")
+    try:
+        approval = persistence.approval_receipts.latest_for_subject(
+            scope="release_promotion",
+            subject_type="promotion_package",
+            subject_id=package_id,
+            subject_sha256=package["package_sha256"],
+        )
+        chain = persistence.approval_receipts.verify_chain()
+        authorization = evaluate_promotion_authorization(package, approval, chain)
+    except Exception:
+        raise HTTPException(status_code=503, detail="promotion persistence is unavailable") from None
+    return {
+        "package": package,
+        "approval": approval,
+        "authorization": authorization,
+        "final_promotion_authorized": authorization["authorized"],
+    }
+
+
+@app.post("/api/autopilot/runs/{run_id}/promotion-packages")
+async def create_autopilot_promotion_package(
+    run_id: str,
+    req: Optional[PromotionPackageCreateRequest] = Body(default=None),
+):
+    del req
+    record = await _assemble_promotion_package(run_id)
+    return _promotion_package_projection(record["package_id"])
+
+
+@app.get("/api/autopilot/promotion-packages/{package_id}")
+async def get_autopilot_promotion_package(package_id: str):
+    return _promotion_package_projection(package_id)
+
+
+@app.post("/api/autopilot/promotion-packages/{package_id}/decisions")
+async def decide_autopilot_promotion_package(
+    package_id: str,
+    req: PromotionPackageDecisionRequest,
+):
+    projection = _promotion_package_projection(package_id)
+    package = projection["package"]
+    if req.expected_package_sha256 != package["package_sha256"]:
+        raise HTTPException(status_code=409, detail="expected promotion package hash does not match")
+    try:
+        chain = persistence.approval_receipts.verify_chain()
+        if chain.get("integrity_status") != "verified" or chain.get("failures") != []:
+            raise HTTPException(status_code=409, detail="approval receipt chain integrity verification failed")
+        await asyncio.to_thread(
+            persistence.approval_receipts.record,
+            subject=ApprovalReceiptSubject(
+                subject_type="promotion_package",
+                subject_id=package_id,
+                payload={},
+                subject_sha256=package["package_sha256"],
+            ),
+            scope="release_promotion",
+            decision=req.decision,
+            proposer_id=f"autopilot-run:{package['document']['identities']['run_id']}",
+            approver_id=req.approver_id,
+            risk_level="release_promotion",
+            idempotency_key=(
+                f"promotion-decision:{package_id}:{package['package_sha256']}:"
+                f"{req.decision}:{req.approver_id}"
+            ),
+        )
+    except HTTPException:
+        raise
+    except ApprovalReceiptError:
+        raise HTTPException(status_code=409, detail="promotion decision could not be verified") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="promotion persistence is unavailable") from None
+    result = _promotion_package_projection(package_id)
+    authorization_checks = result["authorization"].get("checks", {})
+    if (
+        authorization_checks.get("decision_integrity_verified") is not True
+        or authorization_checks.get("chain_integrity_verified") is not True
+        or authorization_checks.get("decision_bound_to_chain") is not True
+    ):
+        raise HTTPException(status_code=409, detail="promotion decision integrity verification failed")
+    return result
 
 
 @app.get("/api/autopilot/runs/{run_id}/events")

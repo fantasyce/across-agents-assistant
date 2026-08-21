@@ -508,3 +508,19 @@ def test_release_verification_evaluation_uses_interop_evidence_without_task_rows
     assert report["release_evaluation"]["supplemental_evidence"][0]["endpoint"] == "/api/autopilot/agent-interop-e2e"
     assert "quality-gated release task evidence" in report["release_evaluation"]["recommendation"]
     assert any("Release E2E" in item for item in report["remediations"])
+
+
+def test_promotion_assembly_builds_release_evidence_without_writing_report(monkeypatch, tmp_path):
+    observed = {}
+
+    def build_report(**kwargs):
+        observed.update(kwargs)
+        return {"status": "ready"}
+
+    monkeypatch.setattr(api_server, "_build_release_verification_report", build_report)
+
+    report = api_server._promotion_release_evidence()
+
+    assert report == {"status": "ready"}
+    assert observed["write_report"] is False
+    assert observed.get("write_report_directory") is None
