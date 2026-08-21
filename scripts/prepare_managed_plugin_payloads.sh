@@ -291,57 +291,26 @@ if ! "$ORCHESTRATOR_RUNTIME_DIR/across-orchestrator" worker-listener --help 2>&1
     exit 1
 fi
 
-cat > "$OUTPUT_DIR/manifest.json" <<JSON
-{
-  "schema_version": "across-managed-plugin-payloads/1.0",
-  "platform": "macos",
-  "architecture": "$(uname -m)",
-  "runtimes": {
-    "node": {
-      "version": "$NODE_VERSION",
-      "path": "runtimes/node-$NODE_VERSION",
-      "executable": "bin/node",
-      "sha256": "$NODE_BINARY_SHA256"
-    }
-  },
-  "plugins": {
-    "across-context": {
-      "version": "$CONTEXT_VERSION",
-      "commit": "$CONTEXT_COMMIT",
-      "source_kind": "$CONTEXT_SOURCE_KIND",
-      "source_dirty": $CONTEXT_SOURCE_DIRTY,
-      "runtime": "node",
-      "archive": "packages/across-context-$CONTEXT_VERSION.tar.gz",
-      "sha256": "$CONTEXT_SHA256",
-      "metadata": "package.json",
-      "package_name": "@across/context",
-      "entrypoint": "src/cli.js"
-    },
-    "across-orchestrator": {
-      "version": "$ORCHESTRATOR_VERSION",
-      "commit": "$ORCHESTRATOR_COMMIT",
-      "source_kind": "$ORCHESTRATOR_SOURCE_KIND",
-      "source_dirty": $ORCHESTRATOR_SOURCE_DIRTY,
-      "runtime": "native",
-      "executable": "runtimes/orchestrator-$ORCHESTRATOR_VERSION/across-orchestrator",
-      "sha256": "$ORCHESTRATOR_BINARY_SHA256",
-      "source_archive": "packages/across-orchestrator-$ORCHESTRATOR_VERSION.tar.gz",
-      "source_sha256": "$ORCHESTRATOR_SHA256"
-    },
-    "across-autopilot": {
-      "version": "$AUTOPILOT_VERSION",
-      "commit": "$AUTOPILOT_COMMIT",
-      "source_kind": "$AUTOPILOT_SOURCE_KIND",
-      "source_dirty": $AUTOPILOT_SOURCE_DIRTY,
-      "runtime": "node",
-      "archive": "packages/across-autopilot-$AUTOPILOT_VERSION.tar.gz",
-      "sha256": "$AUTOPILOT_SHA256",
-      "metadata": "package.json",
-      "package_name": "@across/autopilot",
-      "entrypoint": "src/cli.js"
-    }
-  }
-}
-JSON
+"$BUILD_PYTHON" "$PROJECT_ROOT/scripts/write_managed_plugin_payload_manifest.py" \
+    --output "$OUTPUT_DIR/manifest.json" \
+    --architecture "$(uname -m)" \
+    --node-version "$NODE_VERSION" \
+    --node-sha256 "$NODE_BINARY_SHA256" \
+    --context-version "$CONTEXT_VERSION" \
+    --context-commit "$CONTEXT_COMMIT" \
+    --context-source-kind "$CONTEXT_SOURCE_KIND" \
+    --context-source-dirty "$CONTEXT_SOURCE_DIRTY" \
+    --context-sha256 "$CONTEXT_SHA256" \
+    --orchestrator-version "$ORCHESTRATOR_VERSION" \
+    --orchestrator-commit "$ORCHESTRATOR_COMMIT" \
+    --orchestrator-source-kind "$ORCHESTRATOR_SOURCE_KIND" \
+    --orchestrator-source-dirty "$ORCHESTRATOR_SOURCE_DIRTY" \
+    --orchestrator-sha256 "$ORCHESTRATOR_BINARY_SHA256" \
+    --orchestrator-source-sha256 "$ORCHESTRATOR_SHA256" \
+    --autopilot-version "$AUTOPILOT_VERSION" \
+    --autopilot-commit "$AUTOPILOT_COMMIT" \
+    --autopilot-source-kind "$AUTOPILOT_SOURCE_KIND" \
+    --autopilot-source-dirty "$AUTOPILOT_SOURCE_DIRTY" \
+    --autopilot-sha256 "$AUTOPILOT_SHA256"
 
 echo "Managed plugin payloads are ready at $OUTPUT_DIR"

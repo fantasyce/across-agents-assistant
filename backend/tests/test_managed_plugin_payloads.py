@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -112,10 +113,62 @@ def _managed_env(tmp_path: Path, payload_root: Path) -> dict[str, str]:
     }
 
 
-def test_candidate_payload_manifest_projects_exactly_three_public_plugin_descriptors(tmp_path):
-    payload_root = Path(__file__).resolve().parents[2] / "build" / "plugin-payloads"
+def test_generated_payload_manifest_projects_exactly_three_public_plugin_descriptors(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    generator = repo_root / "scripts" / "write_managed_plugin_payload_manifest.py"
+    preparation_script = repo_root / "scripts" / "prepare_managed_plugin_payloads.sh"
+    payload_root = tmp_path / "plugin-payloads"
     manifest_path = payload_root / "manifest.json"
-    assert manifest_path.is_file(), "candidate plugin payload manifest must be prepared before acceptance"
+    subprocess.run(
+        [
+            sys.executable,
+            str(generator),
+            "--output",
+            str(manifest_path),
+            "--architecture",
+            "test-architecture",
+            "--node-version",
+            "22.17.1",
+            "--node-sha256",
+            "0" * 64,
+            "--context-version",
+            "0.11.0",
+            "--context-commit",
+            "1" * 40,
+            "--context-source-kind",
+            "test-candidate",
+            "--context-source-dirty",
+            "false",
+            "--context-sha256",
+            "2" * 64,
+            "--orchestrator-version",
+            "0.10.7",
+            "--orchestrator-commit",
+            "3" * 40,
+            "--orchestrator-source-kind",
+            "test-candidate",
+            "--orchestrator-source-dirty",
+            "false",
+            "--orchestrator-sha256",
+            "4" * 64,
+            "--orchestrator-source-sha256",
+            "5" * 64,
+            "--autopilot-version",
+            "0.5.3",
+            "--autopilot-commit",
+            "6" * 40,
+            "--autopilot-source-kind",
+            "test-candidate",
+            "--autopilot-source-dirty",
+            "false",
+            "--autopilot-sha256",
+            "7" * 64,
+        ],
+        check=True,
+    )
+    assert "write_managed_plugin_payload_manifest.py" in preparation_script.read_text(
+        encoding="utf-8"
+    )
     env = _managed_env(tmp_path, payload_root)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
