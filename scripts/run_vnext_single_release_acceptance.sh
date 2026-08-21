@@ -37,7 +37,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 for repo in "$ROOT_DIR" "$ORCHESTRATOR_ROOT" "$CONTEXT_ROOT" "$AUTOPILOT_ROOT"; do
-  if [[ ! -d "$repo/.git" ]]; then
+  if [[ ! -e "$repo/.git" ]]; then
     echo "Missing Across repository: $repo" >&2
     exit 2
   fi
@@ -106,6 +106,11 @@ run_gate \
   independent_design_scan \
   "$ROOT_DIR" \
   "if matches=\$(rg -n -i 'homerail|xiaotianfotos' macOS-Client/Sources backend/src assets README.md CHANGELOG.md build_app.sh); then printf '%s\\n' \"\$matches\"; exit 1; else scan_status=\$?; test \"\$scan_status\" -eq 1; fi"
+
+run_gate \
+  acceptance_environment_setup \
+  "$ROOT_DIR" \
+  "ACROSS_ORCHESTRATOR_SOURCE='$ORCHESTRATOR_ROOT' bash scripts/prepare_vnext_acceptance_environment.sh"
 
 run_gate orchestrator_check "$ORCHESTRATOR_ROOT" "bash scripts/check.sh"
 run_gate context_check "$CONTEXT_ROOT" "bash scripts/check.sh"

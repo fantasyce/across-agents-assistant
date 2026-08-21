@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.1 - 2026-08-21
+
+- Made the unified vNext acceptance runner bootstrap clean AAA and
+  Orchestrator Python environments before dependent gates.
+- Accepted Git worktrees as valid four-repository acceptance inputs.
+- Updated managed producer pins to Context `v0.11.1` and Orchestrator
+  `v0.10.9`, incorporating stable time-relative and checkout-independent
+  acceptance fixtures.
+
 ## 0.14.0 - 2026-08-21
 
 ### Added
