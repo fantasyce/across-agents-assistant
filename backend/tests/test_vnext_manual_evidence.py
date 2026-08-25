@@ -681,3 +681,16 @@ def test_acceptance_runner_bootstraps_clean_repositories_and_accepts_worktrees()
     assert "requirements_no_pyobjc.txt" in bootstrap
     assert '"$ORCHESTRATOR_ROOT[dev]"' in bootstrap
     assert 'test -x "$ORCHESTRATOR_ROOT/.venv/bin/across-orchestrator"' in bootstrap
+
+
+def test_acceptance_runner_does_not_leak_source_overrides_into_producer_tests():
+    script = (ROOT / "scripts/run_vnext_single_release_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+
+    autopilot_gate = next(
+        line for line in script.splitlines() if line.startswith("run_gate autopilot_check")
+    )
+    assert "env -u ACROSS_ORCHESTRATOR_SOURCE" in autopilot_gate
+    assert "-u ACROSS_CONTEXT_SOURCE" in autopilot_gate
+    assert "-u ACROSS_AUTOPILOT_SOURCE" in autopilot_gate
