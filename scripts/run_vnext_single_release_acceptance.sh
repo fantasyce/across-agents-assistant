@@ -114,7 +114,7 @@ run_gate \
 
 run_gate orchestrator_check "$ORCHESTRATOR_ROOT" "bash scripts/check.sh"
 run_gate context_check "$CONTEXT_ROOT" "bash scripts/check.sh"
-run_gate autopilot_check "$AUTOPILOT_ROOT" "bash scripts/check.sh && npm audit --audit-level=high"
+run_gate autopilot_check "$AUTOPILOT_ROOT" "env -u ACROSS_ORCHESTRATOR_SOURCE -u ACROSS_CONTEXT_SOURCE -u ACROSS_AUTOPILOT_SOURCE bash scripts/check.sh && npm audit --audit-level=high"
 run_gate plugin_boundary_contracts "$ROOT_DIR" "bash scripts/run_plugin_boundary_checks.sh"
 run_gate growth_asset_regeneration "$ROOT_DIR" "uv run --with pillow python scripts/prepare_growth_asset_atlases.py"
 run_gate aaa_local_gates "$ROOT_DIR" "bash scripts/run_pre_release_local_gates.sh"

@@ -3,6 +3,7 @@ import re
 import tomllib
 
 import across_agents_assistant
+from across_agents_assistant.plugin_runtime import KNOWN_PLUGINS
 
 
 def test_release_version_sources_are_consistent():
@@ -26,3 +27,25 @@ def test_backend_requirements_reject_incompatible_mcp_major_versions():
         mcp_requirement = next(line for line in requirements if line.startswith("mcp[cli]"))
 
         assert mcp_requirement == "mcp[cli]>=1.28.1,<2"
+
+
+def test_bundled_plugin_source_versions_match_host_install_sources():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    preparation = (root / "scripts" / "prepare_managed_plugin_payloads.sh").read_text(
+        encoding="utf-8"
+    )
+    bundled_versions = {
+        "across-context": re.search(r'^CONTEXT_VERSION="([^"]+)"$', preparation, re.MULTILINE),
+        "across-orchestrator": re.search(
+            r'^ORCHESTRATOR_VERSION="([^"]+)"$', preparation, re.MULTILINE
+        ),
+        "across-autopilot": re.search(
+            r'^AUTOPILOT_VERSION="([^"]+)"$', preparation, re.MULTILINE
+        ),
+    }
+
+    assert all(match is not None for match in bundled_versions.values())
+    for plugin in KNOWN_PLUGINS:
+        source_version = re.search(r"[#@]v(\d+\.\d+\.\d+)$", plugin.default_install_source or "")
+        assert source_version is not None
+        assert bundled_versions[plugin.plugin_id].group(1) == source_version.group(1)
