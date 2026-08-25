@@ -50,7 +50,7 @@ def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" not in workflow
-    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.10" in workflow
+    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.11" in workflow
     assert "scripts/run_live_e2e.sh" in workflow
     assert "ACROSS_AGENTS_ORCHESTRATOR_COMMAND" in workflow
     assert "ACROSS_AGENTS_LIVE_E2E_GATE_ID=\"github_live_e2e\"" in workflow

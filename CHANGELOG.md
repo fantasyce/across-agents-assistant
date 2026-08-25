@@ -7,11 +7,13 @@
   adapter.
 - Made the bridge fail closed on tool policy, task ownership, lifecycle, and
   private local control-path checks while keeping MCP traffic byte-transparent.
-- Corrected the reproducible managed-plugin payload pin so formal builds now
-  bundle Orchestrator `v0.10.10`, matching the host install source, source
-  mirror, Live E2E workflow, and Worker catalog.
-- Kept Context `v0.11.1`, Orchestrator `v0.10.10`, and Autopilot `v0.5.3`
-  unchanged because their payloads and public plugin contracts did not change.
+- Integrated Orchestrator `v0.10.11`, which stores read-only agent reports in
+  Orchestrator-owned task storage so inspection tasks do not need to modify the
+  inspected project; managed report paths and hashes fail closed on mismatch.
+- Aligned the bundled Orchestrator payload, host install source, source mirror,
+  Live E2E workflow, and Worker catalog with the producer-first release.
+- Kept Context `v0.11.1` and Autopilot `v0.5.3` unchanged because their
+  payloads and public plugin contracts did not change.
 
 ## 0.14.3 - 2026-08-22
 
