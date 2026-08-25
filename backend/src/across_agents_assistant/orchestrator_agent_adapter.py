@@ -163,6 +163,7 @@ def _invoke_kimi_with_heartbeat(bridge, agent_id: str, message: str, **kwargs):
 
 def build_agent_bridge():
     from .agent_bridge.bridge import AgentBridge
+    from .agent_bridge.host_mcp_proxy import HostMCPToolProvider
     from .agent_manager import AgentManager
     from .llm_gateway.gateway import get_gateway
     from .local_agent.client import UniversalAgentClient
@@ -171,6 +172,7 @@ def build_agent_bridge():
     return AgentBridge(
         UniversalAgentClient(manager),
         llm_gateway=get_gateway(),
+        host_tool_provider=HostMCPToolProvider(),
     )
 
 

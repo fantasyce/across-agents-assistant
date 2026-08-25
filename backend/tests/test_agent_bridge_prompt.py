@@ -93,6 +93,52 @@ def test_workspace_write_file_tool_description_warns_about_large_arguments(tmp_p
     assert "append=true" in write_tool.description
 
 
+def test_cloud_tool_registry_includes_host_readonly_mcp_tools(tmp_path):
+    """Catch the task-process boundary dropping MCP tools connected by AAA."""
+
+    class HostToolProvider:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "agent-runtime-proof__verify_local_runtime",
+                    "description": "Verify a local runtime without mutation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"binding_id": {"type": "string"}},
+                        "required": ["binding_id"],
+                    },
+                    "risk_level": "low",
+                    "source": "mcp",
+                    "server_id": "agent-runtime-proof",
+                    "original_name": "verify_local_runtime",
+                    "requires_approval": False,
+                    "safety_labels": ["mcp", "readonly"],
+                    "sandbox": {"allowed_paths": [], "readonly": True},
+                }
+            ]
+
+        def call_tool(self, tool_name, arguments):
+            assert tool_name == "agent-runtime-proof__verify_local_runtime"
+            assert arguments == {"binding_id": "deepseek-harness.agent-runtime-proof"}
+            return {"output": "MATCHED proof_id=sha256:test", "metadata": {"source": "mcp"}}
+
+    project_dir = tmp_path / "workspace"
+    project_dir.mkdir()
+    session = AgentSession(
+        agent_id="deepseek",
+        client=object(),
+        host_tool_provider=HostToolProvider(),
+    )
+
+    registry = session._build_workspace_tool_registry(str(project_dir))
+    tool = registry.get_tool("agent-runtime-proof__verify_local_runtime")
+
+    assert tool is not None
+    result = tool.handler(binding_id="deepseek-harness.agent-runtime-proof")
+    assert result["output"] == "MATCHED proof_id=sha256:test"
+    assert result["metadata"] == {"source": "mcp"}
+
+
 def test_workspace_write_guard_rejects_unassigned_files(tmp_path):
     session = AgentSession(agent_id="deepseek", client=object())
     project_dir = tmp_path / "workspace"

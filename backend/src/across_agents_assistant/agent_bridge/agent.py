@@ -28,11 +28,19 @@ class AgentSession:
     provides invoke() method for agent communication.
     """
 
-    def __init__(self, agent_id: str, client: Any, llm_gateway: Any = None, tool_executor: Any = None):
+    def __init__(
+        self,
+        agent_id: str,
+        client: Any,
+        llm_gateway: Any = None,
+        tool_executor: Any = None,
+        host_tool_provider: Any = None,
+    ):
         self.agent_id = agent_id
         self._client = client
         self._llm_gateway = llm_gateway
         self._tool_executor = tool_executor
+        self._host_tool_provider = host_tool_provider
         self._is_initialized = False
         self._last_heartbeat: float = 0
         self._session_metadata: Dict[str, Any] = {}
@@ -460,6 +468,28 @@ class AgentSession:
                     allowed_writable_files=allowed_writable_files,
                 ),
             ))
+        if self._host_tool_provider:
+            for schema in self._host_tool_provider.get_all_tools_schema():
+                if schema.get("source") != "mcp":
+                    continue
+                if schema.get("risk_level") != "low" or schema.get("requires_approval") is not False:
+                    continue
+                if not (schema.get("sandbox") or {}).get("readonly"):
+                    continue
+                tool_name = str(schema.get("name") or "")
+                if not tool_name or local_registry.get_tool(tool_name):
+                    continue
+
+                def call_host_tool(_tool_name=tool_name, **params):
+                    return self._host_tool_provider.call_tool(_tool_name, params)
+
+                local_registry.register(ToolDefinition(
+                    name=tool_name,
+                    description=str(schema.get("description") or ""),
+                    parameters=dict(schema.get("parameters") or {"type": "object", "properties": {}}),
+                    risk_level="low",
+                    handler=call_host_tool,
+                ))
         return local_registry
 
     def _wrap_workspace_tool(

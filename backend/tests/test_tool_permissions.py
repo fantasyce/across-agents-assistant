@@ -1,7 +1,10 @@
+import asyncio
 import os
 import tempfile
 import textwrap
 import stat
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("ACROSS_AGENTS_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
@@ -459,6 +462,113 @@ def test_mcp_tool_schemas_include_safety_metadata():
     assert "write-capable" in schema["safety_labels"]
 
 
+def test_readonly_mcp_server_prevents_runtime_name_false_positive():
+    """Catch regressions where `runtime` is treated as write-capable via `run`."""
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "agent-runtime-proof": {"allowed_paths": [], "readonly": True}
+    }
+    manager.server_tools = {
+        "agent-runtime-proof": [
+            {
+                "name": "agent-runtime-proof__verify_local_runtime",
+                "description": "Verify a local runtime without mutation.",
+                "parameters": {"type": "object", "properties": {}},
+                "risk_level": "high",
+                "original_name": "verify_local_runtime",
+                "annotations": {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                },
+            }
+        ]
+    }
+
+    schema = manager.get_all_tools_schema()[0]
+
+    assert schema["risk_level"] == "low"
+    assert schema["requires_approval"] is False
+    assert "readonly" in schema["safety_labels"]
+    assert "write-capable" not in schema["safety_labels"]
+
+
+def test_mcp_tool_fields_support_current_sdk_aliases():
+    from mcp.types import CallToolResult, Tool
+
+    tool = Tool(
+        name="verify_local_runtime",
+        description="Verify without mutation.",
+        inputSchema={"type": "object", "properties": {"binding_id": {"type": "string"}}},
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    manager = MCPClientManager()
+
+    assert manager._mcp_tool_input_schema(tool) == {
+        "type": "object",
+        "properties": {"binding_id": {"type": "string"}},
+    }
+    assert manager._mcp_tool_annotations(tool) == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    }
+    assert manager._mcp_result_is_error(CallToolResult(content=[], isError=False)) is False
+    assert manager._mcp_result_is_error(CallToolResult(content=[], isError=True)) is True
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_mcp_endpoint_exposes_and_calls_only_readonly_low_risk_tools(monkeypatch):
+    import across_agents_assistant.api_server as srv
+
+    readonly_schema = {
+        "name": "agent-runtime-proof__verify_local_runtime",
+        "description": "Verify without mutation.",
+        "parameters": {"type": "object", "properties": {}},
+        "risk_level": "low",
+        "source": "mcp",
+        "server_id": "agent-runtime-proof",
+        "original_name": "verify_local_runtime",
+        "requires_approval": False,
+        "safety_labels": ["mcp", "readonly"],
+        "sandbox": {"allowed_paths": [], "readonly": True},
+    }
+    write_schema = {
+        **readonly_schema,
+        "name": "notes__create_note",
+        "risk_level": "high",
+        "server_id": "notes",
+        "original_name": "create_note",
+        "requires_approval": True,
+        "safety_labels": ["mcp", "write-capable", "requires-approval"],
+        "sandbox": {"allowed_paths": [], "readonly": False},
+    }
+
+    async def fake_call_tool(server_id, tool_name, arguments):
+        assert server_id == "agent-runtime-proof"
+        assert tool_name == "verify_local_runtime"
+        assert arguments == {"binding_id": "codex.agent-runtime-proof"}
+        return "MATCHED proof_id=sha256:test"
+
+    monkeypatch.setattr(srv, "_runtime_tool_schemas", lambda: [readonly_schema, write_schema])
+    monkeypatch.setattr(srv.mcp_manager, "call_tool", fake_call_tool)
+
+    tools = await srv.get_agent_bridge_mcp_tools()
+    result = await srv.call_agent_bridge_mcp_tool(
+        srv.AgentBridgeMCPToolCallRequest(
+            tool_name="agent-runtime-proof__verify_local_runtime",
+            arguments={"binding_id": "codex.agent-runtime-proof"},
+        )
+    )
+
+    assert [tool["name"] for tool in tools] == ["agent-runtime-proof__verify_local_runtime"]
+    assert result == {"output": "MATCHED proof_id=sha256:test", "metadata": {"source": "mcp"}}
+
+    with pytest.raises(srv.HTTPException) as exc:
+        await srv.call_agent_bridge_mcp_tool(
+            srv.AgentBridgeMCPToolCallRequest(tool_name="notes__create_note", arguments={})
+        )
+    assert exc.value.status_code == 403
+
+
 def test_across_context_memory_write_tools_are_high_risk():
     manager = MCPClientManager()
 
@@ -536,3 +646,80 @@ async def test_mcp_readonly_mode_blocks_write_tools_without_path_arguments():
     result = await manager.call_tool("notes", "create_note", {"title": "Demo"})
 
     assert result == "Error: This MCP server is in readonly mode. Write operations are not allowed."
+
+
+@pytest.mark.asyncio
+async def test_mcp_readonly_mode_allows_runtime_name_without_write_verb():
+    class Result:
+        isError = False
+        content = [type("Text", (), {"type": "text", "text": "MATCHED proof_id=sha256:test"})()]
+
+    class Session:
+        async def call_tool(self, tool_name, arguments):
+            assert tool_name == "verify_local_runtime"
+            assert arguments == {"binding_id": "codex.agent-runtime-proof"}
+            return Result()
+
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "agent-runtime-proof": {"allowed_paths": [], "readonly": True}
+    }
+    manager.sessions["agent-runtime-proof"] = Session()
+
+    result = await manager.call_tool(
+        "agent-runtime-proof",
+        "verify_local_runtime",
+        {"binding_id": "codex.agent-runtime-proof"},
+    )
+
+    assert "MATCHED proof_id=sha256:test" in result
+
+
+@pytest.mark.asyncio
+async def test_standard_mcp_transport_opens_and_closes_in_same_owner_task(monkeypatch):
+    import across_agents_assistant.tools.mcp_client as mcp_module
+
+    owner_tasks = []
+    closed_tasks = []
+
+    @asynccontextmanager
+    async def fake_stdio_client(params):
+        owner = asyncio.current_task()
+        owner_tasks.append(owner)
+        try:
+            yield object(), object()
+        finally:
+            closed_tasks.append(asyncio.current_task())
+            assert asyncio.current_task() is owner
+
+    class FakeSession:
+        def __init__(self, read, write):
+            self.owner = None
+
+        async def __aenter__(self):
+            self.owner = asyncio.current_task()
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            assert asyncio.current_task() is self.owner
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+        async def call_tool(self, tool_name, arguments):
+            return SimpleNamespace(content=[], isError=False)
+
+    monkeypatch.setattr(mcp_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(mcp_module, "ClientSession", FakeSession)
+    manager = MCPClientManager()
+    manager.register_server("task_affine", "/usr/bin/true", [], readonly=True)
+
+    connected, error = await asyncio.create_task(manager.connect_server("task_affine"))
+    assert connected, error
+    await asyncio.create_task(manager.disconnect_server("task_affine"))
+
+    assert owner_tasks
+    assert closed_tasks == owner_tasks
