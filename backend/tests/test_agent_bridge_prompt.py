@@ -54,6 +54,64 @@ def test_local_agent_invocation_forwards_bridge_timeout_to_client():
     assert captured["timeout"] == 37.0
 
 
+def test_local_agent_invocation_forwards_readonly_host_mcp_proxy_command(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def send(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="done")
+
+    class HostToolProvider:
+        def get_all_tools_schema(self):
+            return [{"name": "arp__verify", "source": "mcp"}]
+
+    monkeypatch.setattr(
+        "across_agents_assistant.agent_bridge.agent.host_mcp_proxy_command",
+        lambda: ["/Applications/AAA/backend", "host-mcp-proxy"],
+    )
+    session = AgentSession(
+        agent_id="codex",
+        client=FakeClient(),
+        host_tool_provider=HostToolProvider(),
+    )
+
+    response = session.invoke("Verify runtime", project_dir="/tmp/demo-project")
+
+    assert response.success is True
+    assert captured["host_mcp_proxy_command"] == [
+        "/Applications/AAA/backend",
+        "host-mcp-proxy",
+    ]
+
+
+def test_local_agent_unavailable_tool_response_is_failure():
+    class FakeClient:
+        def send(self, **kwargs):
+            return SimpleNamespace(text="Unable to complete: the requested MCP tool is unavailable.")
+
+    response = AgentSession(agent_id="codex", client=FakeClient()).invoke("Verify runtime")
+
+    assert response.success is False
+    assert "unavailable" in response.error.lower()
+
+
+def test_local_agent_structured_exit_error_is_failure():
+    class FakeClient:
+        def send(self, **kwargs):
+            return SimpleNamespace(
+                text="MCP client for aaa_host failed to start",
+                error_code="exit_error",
+                timed_out=False,
+                requires_approval=False,
+            )
+
+    response = AgentSession(agent_id="codex", client=FakeClient()).invoke("Verify runtime")
+
+    assert response.success is False
+    assert "failed to start" in response.error
+
+
 def test_cloud_tool_prompt_instructs_chunked_large_file_writes():
     session = AgentSession(agent_id="deepseek", client=object())
 

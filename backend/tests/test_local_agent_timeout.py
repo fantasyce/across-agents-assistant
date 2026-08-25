@@ -148,6 +148,130 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
     assert observed["start_new_session"] is True
 
 
+def test_universal_agent_client_configures_task_scoped_codex_mcp_proxy(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class CodexManager:
+        def get_active_agent(self):
+            return "codex"
+
+        def get_agent_config(self, agent_id):
+            return {"output_format": "raw"}
+
+    monkeypatch.setattr(
+        client_mod.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"),
+    )
+    monkeypatch.setattr(local_agent_health, "resolve_local_agent_executable", lambda agent_id: "/usr/local/bin/codex")
+    monkeypatch.setattr(local_agent_health, "get_configured_agent_model", lambda agent_id: "")
+
+    class FakeProcess:
+        returncode = 0
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        client_mod.UniversalAgentClient,
+        "_communicate_with_activity_timeout",
+        staticmethod(lambda process, *, max_wall_timeout, idle_timeout: (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n',
+            "",
+            None,
+            None,
+        )),
+    )
+
+    client = UniversalAgentClient(CodexManager())
+    reply = client.send(
+        "verify runtime",
+        target_agent="codex",
+        project_dir=str(tmp_path),
+        host_mcp_proxy_command=["/Applications/AAA/backend", "host-mcp-proxy"],
+        read_only=True,
+    )
+
+    assert reply.text == "done"
+    args = observed["args"]
+    assert 'mcp_servers.aaa_host.command="/Applications/AAA/backend"' in args
+    assert 'mcp_servers.aaa_host.args=["host-mcp-proxy"]' in args
+    assert "--ignore-user-config" in args
+    assert "--ignore-rules" in args
+    assert "--ephemeral" in args
+    assert args[args.index("--sandbox") + 1] == "read-only"
+
+
+def test_readonly_codex_task_normalizes_unsafe_custom_args_template(monkeypatch, tmp_path):
+    observed = {}
+
+    from across_agents_assistant import local_agent_health
+    from across_agents_assistant.local_agent import client as client_mod
+
+    class CodexManager:
+        def get_active_agent(self):
+            return "codex"
+
+        def get_agent_config(self, agent_id):
+            return {
+                "output_format": "raw",
+                "args_template": [
+                    "exec",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--dangerously-bypass-hook-trust",
+                    "--sandbox",
+                    "danger-full-access",
+                    "-sdanger-full-access",
+                    "{message}",
+                ],
+            }
+
+    monkeypatch.setattr(client_mod.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=b"PATH=/usr/bin\0HOME=/tmp\0"))
+    monkeypatch.setattr(local_agent_health, "resolve_local_agent_executable", lambda agent_id: "/usr/local/bin/codex")
+    monkeypatch.setattr(local_agent_health, "get_configured_agent_model", lambda agent_id: "")
+
+    class FakeProcess:
+        returncode = 0
+
+    def fake_popen(args, **kwargs):
+        observed["args"] = args
+        return FakeProcess()
+
+    monkeypatch.setattr(client_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        client_mod.UniversalAgentClient,
+        "_communicate_with_activity_timeout",
+        staticmethod(lambda process, *, max_wall_timeout, idle_timeout: (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n',
+            "",
+            None,
+            None,
+        )),
+    )
+
+    client = UniversalAgentClient(CodexManager())
+    client.send(
+        "verify runtime",
+        target_agent="codex",
+        project_dir=str(tmp_path),
+        host_mcp_proxy_command=["/Applications/AAA/backend", "host-mcp-proxy"],
+        read_only=True,
+    )
+
+    args = observed["args"]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in args
+    assert "--dangerously-bypass-hook-trust" not in args
+    assert "-sdanger-full-access" not in args
+    assert "danger-full-access" not in args
+    assert args.count("--sandbox") == 1
+    assert args[args.index("--sandbox") + 1] == "read-only"
+
+
 def test_universal_agent_client_terminates_process_group(monkeypatch):
     observed = {}
 

@@ -14,6 +14,7 @@ from ..tools.tool_registry import ToolRegistry, ToolDefinition, registry as glob
 from ..workspace_hygiene import is_workspace_noise_path
 from .protocol import AgentResponse, InvokeRequest
 from .errors import AgentException, AgentError
+from .host_mcp_proxy import host_mcp_proxy_command
 
 logger = logging.getLogger("across_agents_assistant.agent_bridge")
 
@@ -74,11 +75,14 @@ class AgentSession:
             )
 
     def _client_send_accepts_timeout(self) -> bool:
+        return self._client_send_accepts("timeout")
+
+    def _client_send_accepts(self, name: str) -> bool:
         try:
             import inspect
 
             parameters = inspect.signature(self._client.send).parameters
-            return "timeout" in parameters or any(
+            return name in parameters or any(
                 param.kind == inspect.Parameter.VAR_KEYWORD
                 for param in parameters.values()
             )
@@ -132,6 +136,10 @@ class AgentSession:
             }
             if self._client_send_accepts_timeout():
                 send_kwargs["timeout"] = timeout
+            if self._host_tool_provider and self._client_send_accepts("host_mcp_proxy_command"):
+                send_kwargs["host_mcp_proxy_command"] = host_mcp_proxy_command()
+            if self._client_send_accepts("read_only"):
+                send_kwargs["read_only"] = bool((context or {}).get("read_only"))
             reply = self._client.send(**send_kwargs)
 
             elapsed = time.time() - start_time
@@ -146,7 +154,18 @@ class AgentSession:
                     elapsed_sec=elapsed
                 )
 
-            is_error = "未找到" in reply.text or "未配置" in reply.text or "超时" in reply.text or "失败" in reply.text
+            normalized_reply = reply.text.strip().lower()
+            is_error = (
+                bool(getattr(reply, "error_code", None))
+                or bool(getattr(reply, "timed_out", False))
+                or bool(getattr(reply, "requires_approval", False))
+                or "未找到" in reply.text
+                or "未配置" in reply.text
+                or "超时" in reply.text
+                or "失败" in reply.text
+                or normalized_reply.startswith("unable to")
+                or normalized_reply.startswith("blocked:")
+            )
             return AgentResponse(
                 message_id=f"msg-{int(time.time() * 1000)}",
                 request_id=request_id,

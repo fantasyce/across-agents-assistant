@@ -1,6 +1,9 @@
 import json
 
-from across_agents_assistant.agent_bridge.host_mcp_proxy import HostMCPToolProvider
+from across_agents_assistant.agent_bridge.host_mcp_proxy import (
+    HostMCPStdioProxy,
+    HostMCPToolProvider,
+)
 
 
 def test_host_mcp_provider_uses_private_host_api_contract():
@@ -50,3 +53,40 @@ def test_host_mcp_provider_uses_private_host_api_contract():
             },
         ),
     ]
+
+
+def test_host_mcp_stdio_proxy_preserves_readonly_schema_and_routes_call():
+    class Provider:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "agent-runtime-proof__verify_local_runtime",
+                    "description": "Verify without mutation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"pid": {"type": "integer"}},
+                    },
+                    "annotations": {
+                        "readOnlyHint": True,
+                        "destructiveHint": False,
+                        "openWorldHint": False,
+                    },
+                }
+            ]
+
+        def call_tool(self, tool_name, arguments):
+            assert tool_name == "agent-runtime-proof__verify_local_runtime"
+            assert arguments == {"pid": 42}
+            return {"output": "MATCHED proof_id=sha256:test", "metadata": {"source": "mcp"}}
+
+    proxy = HostMCPStdioProxy(provider=Provider())
+
+    tools = proxy.list_tools()
+    result = proxy.call_tool("agent-runtime-proof__verify_local_runtime", {"pid": 42})
+
+    assert len(tools) == 1
+    assert tools[0].name == "agent-runtime-proof__verify_local_runtime"
+    assert tools[0].inputSchema["properties"]["pid"]["type"] == "integer"
+    assert tools[0].annotations.readOnlyHint is True
+    assert tools[0].annotations.destructiveHint is False
+    assert result == "MATCHED proof_id=sha256:test"
