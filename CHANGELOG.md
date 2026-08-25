@@ -7,6 +7,9 @@
   adapter.
 - Made the bridge fail closed on tool policy, task ownership, lifecycle, and
   private local control-path checks while keeping MCP traffic byte-transparent.
+- Corrected the reproducible managed-plugin payload pin so formal builds now
+  bundle Orchestrator `v0.10.10`, matching the host install source, source
+  mirror, Live E2E workflow, and Worker catalog.
 - Kept Context `v0.11.1`, Orchestrator `v0.10.10`, and Autopilot `v0.5.3`
   unchanged because their payloads and public plugin contracts did not change.
 

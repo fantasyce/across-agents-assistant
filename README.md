@@ -78,6 +78,9 @@ require the user to install Git, npm, Node, or Python.
 - The bridge fails closed: it filters tools by policy, validates task
   ownership and lifecycle, preserves byte-transparent MCP traffic, and cleans
   up private local proxy paths when the task ends.
+- Reproducible formal builds now bundle the same Orchestrator `v0.10.10`
+  declared by the host install source, source mirror, Live E2E workflow, and
+  Worker catalog.
 - Context remains at `v0.11.1`, Orchestrator at `v0.10.10`, and Autopilot at
   `v0.5.3`; their payloads and public plugin contracts are unchanged.
 
