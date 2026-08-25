@@ -14,6 +14,7 @@ from ..tools.tool_registry import ToolRegistry, ToolDefinition, registry as glob
 from ..workspace_hygiene import is_workspace_noise_path
 from .protocol import AgentResponse, InvokeRequest
 from .errors import AgentException, AgentError
+from .host_mcp_proxy import host_mcp_proxy_command
 
 logger = logging.getLogger("across_agents_assistant.agent_bridge")
 
@@ -28,11 +29,19 @@ class AgentSession:
     provides invoke() method for agent communication.
     """
 
-    def __init__(self, agent_id: str, client: Any, llm_gateway: Any = None, tool_executor: Any = None):
+    def __init__(
+        self,
+        agent_id: str,
+        client: Any,
+        llm_gateway: Any = None,
+        tool_executor: Any = None,
+        host_tool_provider: Any = None,
+    ):
         self.agent_id = agent_id
         self._client = client
         self._llm_gateway = llm_gateway
         self._tool_executor = tool_executor
+        self._host_tool_provider = host_tool_provider
         self._is_initialized = False
         self._last_heartbeat: float = 0
         self._session_metadata: Dict[str, Any] = {}
@@ -66,11 +75,14 @@ class AgentSession:
             )
 
     def _client_send_accepts_timeout(self) -> bool:
+        return self._client_send_accepts("timeout")
+
+    def _client_send_accepts(self, name: str) -> bool:
         try:
             import inspect
 
             parameters = inspect.signature(self._client.send).parameters
-            return "timeout" in parameters or any(
+            return name in parameters or any(
                 param.kind == inspect.Parameter.VAR_KEYWORD
                 for param in parameters.values()
             )
@@ -124,6 +136,10 @@ class AgentSession:
             }
             if self._client_send_accepts_timeout():
                 send_kwargs["timeout"] = timeout
+            if self._host_tool_provider and self._client_send_accepts("host_mcp_proxy_command"):
+                send_kwargs["host_mcp_proxy_command"] = host_mcp_proxy_command()
+            if self._client_send_accepts("read_only"):
+                send_kwargs["read_only"] = bool((context or {}).get("read_only"))
             reply = self._client.send(**send_kwargs)
 
             elapsed = time.time() - start_time
@@ -138,7 +154,18 @@ class AgentSession:
                     elapsed_sec=elapsed
                 )
 
-            is_error = "未找到" in reply.text or "未配置" in reply.text or "超时" in reply.text or "失败" in reply.text
+            normalized_reply = reply.text.strip().lower()
+            is_error = (
+                bool(getattr(reply, "error_code", None))
+                or bool(getattr(reply, "timed_out", False))
+                or bool(getattr(reply, "requires_approval", False))
+                or "未找到" in reply.text
+                or "未配置" in reply.text
+                or "超时" in reply.text
+                or "失败" in reply.text
+                or normalized_reply.startswith("unable to")
+                or normalized_reply.startswith("blocked:")
+            )
             return AgentResponse(
                 message_id=f"msg-{int(time.time() * 1000)}",
                 request_id=request_id,
@@ -460,6 +487,28 @@ class AgentSession:
                     allowed_writable_files=allowed_writable_files,
                 ),
             ))
+        if self._host_tool_provider:
+            for schema in self._host_tool_provider.get_all_tools_schema():
+                if schema.get("source") != "mcp":
+                    continue
+                if schema.get("risk_level") != "low" or schema.get("requires_approval") is not False:
+                    continue
+                if not (schema.get("sandbox") or {}).get("readonly"):
+                    continue
+                tool_name = str(schema.get("name") or "")
+                if not tool_name or local_registry.get_tool(tool_name):
+                    continue
+
+                def call_host_tool(_tool_name=tool_name, **params):
+                    return self._host_tool_provider.call_tool(_tool_name, params)
+
+                local_registry.register(ToolDefinition(
+                    name=tool_name,
+                    description=str(schema.get("description") or ""),
+                    parameters=dict(schema.get("parameters") or {"type": "object", "properties": {}}),
+                    risk_level="low",
+                    handler=call_host_tool,
+                ))
         return local_registry
 
     def _wrap_workspace_tool(

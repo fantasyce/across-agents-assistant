@@ -54,6 +54,64 @@ def test_local_agent_invocation_forwards_bridge_timeout_to_client():
     assert captured["timeout"] == 37.0
 
 
+def test_local_agent_invocation_forwards_readonly_host_mcp_proxy_command(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def send(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="done")
+
+    class HostToolProvider:
+        def get_all_tools_schema(self):
+            return [{"name": "arp__verify", "source": "mcp"}]
+
+    monkeypatch.setattr(
+        "across_agents_assistant.agent_bridge.agent.host_mcp_proxy_command",
+        lambda: ["/Applications/AAA/backend", "host-mcp-proxy"],
+    )
+    session = AgentSession(
+        agent_id="codex",
+        client=FakeClient(),
+        host_tool_provider=HostToolProvider(),
+    )
+
+    response = session.invoke("Verify runtime", project_dir="/tmp/demo-project")
+
+    assert response.success is True
+    assert captured["host_mcp_proxy_command"] == [
+        "/Applications/AAA/backend",
+        "host-mcp-proxy",
+    ]
+
+
+def test_local_agent_unavailable_tool_response_is_failure():
+    class FakeClient:
+        def send(self, **kwargs):
+            return SimpleNamespace(text="Unable to complete: the requested MCP tool is unavailable.")
+
+    response = AgentSession(agent_id="codex", client=FakeClient()).invoke("Verify runtime")
+
+    assert response.success is False
+    assert "unavailable" in response.error.lower()
+
+
+def test_local_agent_structured_exit_error_is_failure():
+    class FakeClient:
+        def send(self, **kwargs):
+            return SimpleNamespace(
+                text="MCP client for aaa_host failed to start",
+                error_code="exit_error",
+                timed_out=False,
+                requires_approval=False,
+            )
+
+    response = AgentSession(agent_id="codex", client=FakeClient()).invoke("Verify runtime")
+
+    assert response.success is False
+    assert "failed to start" in response.error
+
+
 def test_cloud_tool_prompt_instructs_chunked_large_file_writes():
     session = AgentSession(agent_id="deepseek", client=object())
 
@@ -91,6 +149,52 @@ def test_workspace_write_file_tool_description_warns_about_large_arguments(tmp_p
     assert write_tool is not None
     assert "below about 6000 characters" in write_tool.description
     assert "append=true" in write_tool.description
+
+
+def test_cloud_tool_registry_includes_host_readonly_mcp_tools(tmp_path):
+    """Catch the task-process boundary dropping MCP tools connected by AAA."""
+
+    class HostToolProvider:
+        def get_all_tools_schema(self):
+            return [
+                {
+                    "name": "agent-runtime-proof__verify_local_runtime",
+                    "description": "Verify a local runtime without mutation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"binding_id": {"type": "string"}},
+                        "required": ["binding_id"],
+                    },
+                    "risk_level": "low",
+                    "source": "mcp",
+                    "server_id": "agent-runtime-proof",
+                    "original_name": "verify_local_runtime",
+                    "requires_approval": False,
+                    "safety_labels": ["mcp", "readonly"],
+                    "sandbox": {"allowed_paths": [], "readonly": True},
+                }
+            ]
+
+        def call_tool(self, tool_name, arguments):
+            assert tool_name == "agent-runtime-proof__verify_local_runtime"
+            assert arguments == {"binding_id": "deepseek-harness.agent-runtime-proof"}
+            return {"output": "MATCHED proof_id=sha256:test", "metadata": {"source": "mcp"}}
+
+    project_dir = tmp_path / "workspace"
+    project_dir.mkdir()
+    session = AgentSession(
+        agent_id="deepseek",
+        client=object(),
+        host_tool_provider=HostToolProvider(),
+    )
+
+    registry = session._build_workspace_tool_registry(str(project_dir))
+    tool = registry.get_tool("agent-runtime-proof__verify_local_runtime")
+
+    assert tool is not None
+    result = tool.handler(binding_id="deepseek-harness.agent-runtime-proof")
+    assert result["output"] == "MATCHED proof_id=sha256:test"
+    assert result["metadata"] == {"source": "mcp"}
 
 
 def test_workspace_write_guard_rejects_unassigned_files(tmp_path):

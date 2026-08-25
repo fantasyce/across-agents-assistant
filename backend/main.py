@@ -31,6 +31,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "orchestrator-agent-adapter":
 
     sys.exit(adapter_main(sys.argv[2:]))
 
+if len(sys.argv) > 1 and sys.argv[1] == "host-mcp-proxy":
+    from across_agents_assistant.agent_bridge.host_mcp_proxy import run_host_mcp_stdio_proxy
+
+    sys.exit(run_host_mcp_stdio_proxy())
+
 if len(sys.argv) > 1 and sys.argv[1] == "autopilot-workflow-adapter":
     from across_agents_assistant.autopilot_workflow_adapter import main as workflow_adapter_main
 

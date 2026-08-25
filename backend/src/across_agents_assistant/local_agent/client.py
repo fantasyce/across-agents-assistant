@@ -158,6 +158,8 @@ class UniversalAgentClient:
         idle_timeout: Optional[float] = None,
         max_wall_timeout: Optional[float] = None,
         model: Optional[str] = None,
+        host_mcp_proxy_command: Optional[list[str]] = None,
+        read_only: bool = False,
     ) -> LocalAgentReply:
         t0 = time.time()
 
@@ -257,6 +259,51 @@ class UniversalAgentClient:
             if "exec" in args and "--json" not in args:
                 exec_index = args.index("exec")
                 args[exec_index + 1:exec_index + 1] = ["--json"]
+            if "exec" in args and host_mcp_proxy_command:
+                exec_index = args.index("exec")
+                proxy_command, *proxy_args = host_mcp_proxy_command
+                args[exec_index + 1:exec_index + 1] = [
+                    "--ignore-user-config",
+                    "--ignore-rules",
+                    "--ephemeral",
+                    "-c",
+                    f"mcp_servers.aaa_host.command={json.dumps(proxy_command)}",
+                    "-c",
+                    f"mcp_servers.aaa_host.args={json.dumps(proxy_args)}",
+                ]
+            if read_only and "exec" in args:
+                normalized_args: list[str] = []
+                skip_next = False
+                forbidden_flags = {
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--dangerously-bypass-hook-trust",
+                    "--approve-for-me",
+                    "--full-auto",
+                }
+                compact_sandbox_flags = {
+                    "-sread-only",
+                    "-sworkspace-write",
+                    "-sdanger-full-access",
+                }
+                for arg in args:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if arg in {"--sandbox", "-s"}:
+                        skip_next = True
+                        continue
+                    if (
+                        arg.startswith("--sandbox=")
+                        or arg.startswith("-s=")
+                        or arg in compact_sandbox_flags
+                    ):
+                        continue
+                    if arg in forbidden_flags:
+                        continue
+                    normalized_args.append(arg)
+                args = normalized_args
+                exec_index = args.index("exec")
+                args[exec_index + 1:exec_index + 1] = ["--sandbox", "read-only"]
             if project_dir and os.path.isdir(project_dir):
                 prompt_index = len(args) - 1
                 args[prompt_index:prompt_index] = ["--cd", project_dir]

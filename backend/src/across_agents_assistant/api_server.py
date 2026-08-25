@@ -12899,6 +12899,46 @@ async def get_tools():
     return _runtime_tool_schemas()
 
 
+def _agent_bridge_mcp_tool_schemas() -> List[Dict[str, Any]]:
+    return [
+        schema
+        for schema in _available_tool_schemas()
+        if schema.get("source") == "mcp"
+        and schema.get("risk_level") == "low"
+        and schema.get("requires_approval") is False
+        and bool((schema.get("sandbox") or {}).get("readonly"))
+    ]
+
+
+@app.get("/api/agent-bridge/mcp-tools", response_model=List[Dict[str, Any]])
+async def get_agent_bridge_mcp_tools():
+    """Expose only fail-closed read-only MCP tools to task adapter processes."""
+    return _agent_bridge_mcp_tool_schemas()
+
+
+class AgentBridgeMCPToolCallRequest(BaseModel):
+    tool_name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/api/agent-bridge/mcp-tools/call")
+async def call_agent_bridge_mcp_tool(req: AgentBridgeMCPToolCallRequest):
+    schema = next(
+        (item for item in _agent_bridge_mcp_tool_schemas() if item.get("name") == req.tool_name),
+        None,
+    )
+    if not schema:
+        raise HTTPException(status_code=403, detail="Tool is not available to the task agent")
+    server_id = str(schema.get("server_id") or "")
+    original_name = str(schema.get("original_name") or "")
+    if not server_id or not original_name:
+        raise HTTPException(status_code=409, detail="MCP tool routing metadata is incomplete")
+    output = await mcp_manager.call_tool(server_id, original_name, dict(req.arguments or {}))
+    if str(output).startswith("Error"):
+        raise HTTPException(status_code=502, detail="MCP tool execution failed")
+    return {"output": str(output), "metadata": {"source": "mcp"}}
+
+
 class AgentCapabilityUpdateRequest(BaseModel):
     enabled_skill_ids: Optional[List[str]] = None
     enabled_plugin_ids: Optional[List[str]] = None

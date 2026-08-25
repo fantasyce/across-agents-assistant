@@ -2,6 +2,7 @@ import asyncio
 import logging
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,6 +45,80 @@ HIGH_RISK_TOOL_KEYWORDS = [
     "install",
     "publish",
 ]
+
+
+class _OwnedMCPConnection:
+    """Keep an AnyIO-backed stdio session inside one asyncio owner task."""
+
+    def __init__(self, params: StdioServerParameters):
+        self._params = params
+        self._commands: asyncio.Queue = asyncio.Queue()
+        self._ready = asyncio.get_running_loop().create_future()
+        self._task = asyncio.create_task(self._run())
+
+    async def start(self):
+        return await self._ready
+
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]):
+        if self._task.done():
+            raise RuntimeError("MCP connection is closed")
+        result = asyncio.get_running_loop().create_future()
+        await self._commands.put(("call", tool_name, dict(arguments or {}), result))
+        return await result
+
+    async def aclose(self) -> None:
+        if self._task.done():
+            await self._task
+            return
+        closed = asyncio.get_running_loop().create_future()
+        await self._commands.put(("close", "", {}, closed))
+        await closed
+        await self._task
+
+    async def abort(self) -> None:
+        """Cancel a connection that did not finish starting, and reap its task."""
+        if not self._task.done():
+            self._task.cancel()
+        try:
+            await self._task
+        except BaseException:
+            pass
+
+    async def _run(self) -> None:
+        close_waiter = None
+        try:
+            from contextlib import AsyncExitStack
+
+            async with AsyncExitStack() as stack:
+                read, write = await stack.enter_async_context(stdio_client(self._params))
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
+                tools_response = await session.list_tools()
+                if not self._ready.done():
+                    self._ready.set_result(tools_response)
+
+                while True:
+                    operation, tool_name, arguments, waiter = await self._commands.get()
+                    if operation == "close":
+                        close_waiter = waiter
+                        break
+                    try:
+                        result = await session.call_tool(tool_name, arguments=arguments)
+                    except Exception as exc:
+                        if not waiter.done():
+                            waiter.set_exception(exc)
+                    else:
+                        if not waiter.done():
+                            waiter.set_result(result)
+        except BaseException as exc:
+            if not self._ready.done():
+                self._ready.set_exception(exc)
+            if close_waiter is not None and not close_waiter.done():
+                close_waiter.set_exception(exc)
+            raise
+        else:
+            if close_waiter is not None and not close_waiter.done():
+                close_waiter.set_result(None)
 
 
 class MCPClientManager:
@@ -230,17 +305,19 @@ class MCPClientManager:
 
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
-        if server_id in self.sessions:
-            del self.sessions[server_id]
-        self._external_across_context_servers.discard(server_id)
-        self._server_implementations.pop(server_id, None)
-        self._server_connection_notes.pop(server_id, None)
-        if server_id in self._exit_stacks:
-            await self._exit_stacks[server_id].aclose()
-            del self._exit_stacks[server_id]
-        if server_id in self.server_tools:
-            del self.server_tools[server_id]
-        logger.info(f"Disconnected from MCP server {server_id}.")
+        session = self.sessions.pop(server_id, None)
+        exit_stack = self._exit_stacks.pop(server_id, None)
+        try:
+            if isinstance(session, _OwnedMCPConnection):
+                await session.aclose()
+            if exit_stack is not None:
+                await exit_stack.aclose()
+        finally:
+            self._external_across_context_servers.discard(server_id)
+            self._server_implementations.pop(server_id, None)
+            self._server_connection_notes.pop(server_id, None)
+            self.server_tools.pop(server_id, None)
+            logger.info(f"Disconnected from MCP server {server_id}.")
 
     async def shutdown(self) -> None:
         """Close every live stdio transport before the host process exits."""
@@ -300,7 +377,7 @@ class MCPClientManager:
             result_text = "\n".join(texts)
             full_result = f"{echo_info}\n\n【执行结果】\n{result_text}"
 
-            if result.isError:
+            if self._mcp_result_is_error(result):
                 logger.warning(f"MCP tool {tool_name} returned error: {texts}")
                 return f"Error from tool: {''.join(texts)}\n\n{echo_info}"
 
@@ -312,6 +389,27 @@ class MCPClientManager:
     def _is_across_context_cli_server(self, server_id: str, params: StdioServerParameters) -> bool:
         command_name = os.path.basename(str(params.command))
         return server_id == "across_context" and command_name == "across-context"
+
+    @staticmethod
+    def _mcp_tool_input_schema(tool: Any) -> Dict[str, Any]:
+        schema = getattr(tool, "inputSchema", None)
+        if schema is None:
+            schema = getattr(tool, "input_schema", None)
+        return dict(schema) if isinstance(schema, dict) else {"type": "object", "properties": {}}
+
+    @staticmethod
+    def _mcp_tool_annotations(tool: Any) -> Dict[str, Any]:
+        annotations = getattr(tool, "annotations", None)
+        if hasattr(annotations, "model_dump"):
+            annotations = annotations.model_dump(by_alias=True, exclude_none=True)
+        return dict(annotations) if isinstance(annotations, dict) else {}
+
+    @staticmethod
+    def _mcp_result_is_error(result: Any) -> bool:
+        value = getattr(result, "isError", None)
+        if value is None:
+            value = getattr(result, "is_error", False)
+        return bool(value)
 
     def _is_across_context_command_name(self, command: str) -> bool:
         return os.path.basename(str(command)) == "across-context"
@@ -392,6 +490,7 @@ class MCPClientManager:
                 "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
                 "risk_level": risk_level,
                 "original_name": name,
+                "annotations": dict(t.get("annotations") or {}),
             })
         self._external_across_context_servers.add(server_id)
         self._server_implementations[server_id] = "external"
@@ -411,28 +510,28 @@ class MCPClientManager:
         timeout: Optional[float] = None,
     ):
         async def connect_once():
-            from contextlib import AsyncExitStack
-
-            stack = AsyncExitStack()
-            self._exit_stacks[server_id] = stack
-
-            read, write = await stack.enter_async_context(stdio_client(params))
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-
-            self.sessions[server_id] = session
+            connection = _OwnedMCPConnection(params)
+            self.sessions[server_id] = connection
+            try:
+                tools_response = await connection.start()
+            except BaseException:
+                self.sessions.pop(server_id, None)
+                await connection.abort()
+                raise
+            if self.sessions.get(server_id) is not connection:
+                raise RuntimeError(f"MCP server {server_id} was closed during startup")
             logger.info(f"Successfully connected and initialized MCP server {server_id}.")
 
-            tools_response = await session.list_tools()
             self.server_tools[server_id] = []
             for t in tools_response.tools:
                 risk_level = self._infer_tool_risk_level(server_id, t.name, t.description or "")
                 self.server_tools[server_id].append({
                     "name": f"{server_id}__{t.name}",
                     "description": t.description or "",
-                    "parameters": t.inputSchema,
+                    "parameters": self._mcp_tool_input_schema(t),
                     "risk_level": risk_level,
-                    "original_name": t.name
+                    "original_name": t.name,
+                    "annotations": self._mcp_tool_annotations(t),
                 })
             self._server_implementations[server_id] = implementation
             self._server_connection_notes.pop(server_id, None)
@@ -702,11 +801,9 @@ class MCPClientManager:
 
     def _is_write_operation(self, tool_name: str, arguments: Dict[str, Any]) -> bool:
         """Check if a tool call is a write operation."""
-        tool_lower = tool_name.lower()
-        for keyword in HIGH_RISK_TOOL_KEYWORDS:
-            if keyword in tool_lower:
-                return True
-        return False
+        tokenized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(tool_name or ""))
+        tokens = set(re.findall(r"[a-z0-9]+", tokenized.lower()))
+        return any(keyword in tokens for keyword in HIGH_RISK_TOOL_KEYWORDS)
 
     def _normalize_risk_level(self, risk_level: Optional[str]) -> str:
         normalized = str(risk_level or "medium").strip().lower()
@@ -729,9 +826,11 @@ class MCPClientManager:
         tool_name: str,
         risk_level: str,
         sandbox: Dict[str, Any],
+        *,
+        declared_readonly: bool = False,
     ) -> List[str]:
         labels = ["mcp"]
-        if self._is_write_operation(tool_name, {}):
+        if not declared_readonly and self._is_write_operation(tool_name, {}):
             labels.append("write-capable")
         if sandbox.get("readonly"):
             labels.append("readonly")
@@ -748,7 +847,13 @@ class MCPClientManager:
             sandbox = getattr(self, "_sandbox_settings", {}).get(server_id, {})
             for t in tools:
                 original_name = t.get("original_name") or t["name"].split("__", 1)[-1]
-                risk_level = self._higher_risk_level(
+                annotations = dict(t.get("annotations") or {})
+                declared_readonly = (
+                    bool(sandbox.get("readonly"))
+                    and annotations.get("readOnlyHint") is True
+                    and annotations.get("destructiveHint") is False
+                )
+                risk_level = "low" if declared_readonly else self._higher_risk_level(
                     t.get("risk_level"),
                     self._infer_tool_risk_level(server_id, original_name, t.get("description", "")),
                 )
@@ -761,7 +866,14 @@ class MCPClientManager:
                     "server_id": server_id,
                     "original_name": original_name,
                     "requires_approval": risk_level != "low",
-                    "safety_labels": self._tool_safety_labels(server_id, original_name, risk_level, sandbox),
+                    "safety_labels": self._tool_safety_labels(
+                        server_id,
+                        original_name,
+                        risk_level,
+                        sandbox,
+                        declared_readonly=declared_readonly,
+                    ),
+                    "annotations": annotations,
                     "sandbox": {
                         "allowed_paths": list(sandbox.get("allowed_paths") or []),
                         "readonly": bool(sandbox.get("readonly", False)),

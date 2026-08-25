@@ -69,6 +69,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     adapter_parser.add_argument("--agent", required=True)
     adapter_parser.add_argument("--timeout", type=float, default=300.0)
+    sub.add_parser(
+        "host-mcp-proxy",
+        help="Proxy the host's fail-closed read-only MCP tools over stdio.",
+    )
     model_decision_parser = sub.add_parser(
         "autopilot-model-decision",
         help="Return a structured host-model decision for Across Autopilot.",
@@ -117,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         from .orchestrator_agent_adapter import main as adapter_main
 
         return adapter_main(["--agent", args.agent, "--timeout", str(args.timeout)])
+
+    if args.command == "host-mcp-proxy":
+        from .agent_bridge.host_mcp_proxy import run_host_mcp_stdio_proxy
+
+        return run_host_mcp_stdio_proxy()
 
     if args.command == "autopilot-model-decision":
         from .autopilot_model_decision_cli import main as model_decision_main

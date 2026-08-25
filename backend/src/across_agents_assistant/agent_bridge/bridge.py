@@ -27,10 +27,17 @@ class AgentBridge:
     - Lifecycle management for agent sessions
     """
 
-    def __init__(self, local_agent_client: Any, llm_gateway: Any = None, tool_executor: Any = None):
+    def __init__(
+        self,
+        local_agent_client: Any,
+        llm_gateway: Any = None,
+        tool_executor: Any = None,
+        host_tool_provider: Any = None,
+    ):
         self._client = local_agent_client
         self._llm_gateway = llm_gateway
         self._tool_executor = tool_executor
+        self._host_tool_provider = host_tool_provider
         self._sessions: Dict[str, AgentSession] = {}
         self._task_results: Dict[str, TaskResult] = {}
         self._initialize_sessions()
@@ -43,6 +50,7 @@ class AgentBridge:
                 client=self._client,
                 llm_gateway=self._llm_gateway,
                 tool_executor=self._tool_executor,
+                host_tool_provider=self._host_tool_provider,
             )
         logger.info(f"Initialized AgentBridge with {len(self._sessions)} agents")
 
