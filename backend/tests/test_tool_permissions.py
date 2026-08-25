@@ -540,6 +540,22 @@ def test_mcp_tool_fields_support_current_sdk_aliases():
 
 
 @pytest.mark.asyncio
+async def test_mcp_call_tool_does_not_expose_runtime_exception_text():
+    manager = MCPClientManager()
+
+    class FailingSession:
+        async def call_tool(self, tool_name, arguments):
+            raise RuntimeError("private stack and path marker")
+
+    manager.sessions["failing"] = FailingSession()
+
+    result = await manager.call_tool("failing", "inspect", {})
+
+    assert result == "Error executing tool."
+    assert "private stack and path marker" not in result
+
+
+@pytest.mark.asyncio
 async def test_agent_bridge_mcp_endpoint_exposes_and_calls_only_readonly_low_risk_tools(monkeypatch):
     import across_agents_assistant.api_server as srv
 
