@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.4 - 2026-08-26
+
+- Added a generic, task-scoped stdio bridge for eligible read-only and
+  low-risk host MCP tools used by direct local agents and the Orchestrator
+  adapter.
+- Made the bridge fail closed on tool policy, task ownership, lifecycle, and
+  private local control-path checks while keeping MCP traffic byte-transparent.
+- Kept Context `v0.11.1`, Orchestrator `v0.10.10`, and Autopilot `v0.5.3`
+  unchanged because their payloads and public plugin contracts did not change.
+
 ## 0.14.3 - 2026-08-22
 
 - Updated the managed Orchestrator payload, source mirror, Live E2E workflow,

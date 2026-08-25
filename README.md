@@ -51,7 +51,7 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.14.3` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.14.4` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.1` |
 | Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.10` |
 | Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.3` |
@@ -70,7 +70,18 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.14.3` Includes
+## What `v0.14.4` Includes
+
+- Eligible read-only, low-risk host MCP tools can now be exposed to local task
+  agents through a private task-scoped bridge, including direct Agent runs and
+  Orchestrator-managed work.
+- The bridge fails closed: it filters tools by policy, validates task
+  ownership and lifecycle, preserves byte-transparent MCP traffic, and cleans
+  up private local proxy paths when the task ends.
+- Context remains at `v0.11.1`, Orchestrator at `v0.10.10`, and Autopilot at
+  `v0.5.3`; their payloads and public plugin contracts are unchanged.
+
+### Previous `v0.14.3` release
 
 - Managed Orchestrator integration now uses `v0.10.10` across the bundled
   payload, install source, source mirror, Live E2E workflow, and verified
