@@ -382,9 +382,9 @@ class MCPClientManager:
                 return f"Error from tool: {''.join(texts)}\n\n{echo_info}"
 
             return full_result
-        except Exception as e:
-            logger.error(f"Exception calling MCP tool {tool_name}: {e}")
-            return f"Error executing tool: {e}"
+        except Exception:
+            logger.error("MCP tool execution failed: server=%s tool=%s", server_id, tool_name)
+            return "Error executing tool."
 
     def _is_across_context_cli_server(self, server_id: str, params: StdioServerParameters) -> bool:
         command_name = os.path.basename(str(params.command))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.5 - 2026-08-26
+
+- Prevented MCP runtime exception text from reaching the task-scoped Agent
+  bridge response or logs; callers now receive a constant sanitized error.
+- Added regression coverage for exception and local-path disclosure through
+  the generic read-only MCP bridge.
+
 ## 0.14.4 - 2026-08-26
 
 - Added a generic, task-scoped stdio bridge for eligible read-only and
