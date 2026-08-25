@@ -75,6 +75,15 @@ class _OwnedMCPConnection:
         await closed
         await self._task
 
+    async def abort(self) -> None:
+        """Cancel a connection that did not finish starting, and reap its task."""
+        if not self._task.done():
+            self._task.cancel()
+        try:
+            await self._task
+        except BaseException:
+            pass
+
     async def _run(self) -> None:
         close_waiter = None
         try:
@@ -297,17 +306,18 @@ class MCPClientManager:
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
         session = self.sessions.pop(server_id, None)
-        if isinstance(session, _OwnedMCPConnection):
-            await session.aclose()
-        self._external_across_context_servers.discard(server_id)
-        self._server_implementations.pop(server_id, None)
-        self._server_connection_notes.pop(server_id, None)
-        if server_id in self._exit_stacks:
-            await self._exit_stacks[server_id].aclose()
-            del self._exit_stacks[server_id]
-        if server_id in self.server_tools:
-            del self.server_tools[server_id]
-        logger.info(f"Disconnected from MCP server {server_id}.")
+        exit_stack = self._exit_stacks.pop(server_id, None)
+        try:
+            if isinstance(session, _OwnedMCPConnection):
+                await session.aclose()
+            if exit_stack is not None:
+                await exit_stack.aclose()
+        finally:
+            self._external_across_context_servers.discard(server_id)
+            self._server_implementations.pop(server_id, None)
+            self._server_connection_notes.pop(server_id, None)
+            self.server_tools.pop(server_id, None)
+            logger.info(f"Disconnected from MCP server {server_id}.")
 
     async def shutdown(self) -> None:
         """Close every live stdio transport before the host process exits."""
@@ -501,8 +511,15 @@ class MCPClientManager:
     ):
         async def connect_once():
             connection = _OwnedMCPConnection(params)
-            tools_response = await connection.start()
             self.sessions[server_id] = connection
+            try:
+                tools_response = await connection.start()
+            except BaseException:
+                self.sessions.pop(server_id, None)
+                await connection.abort()
+                raise
+            if self.sessions.get(server_id) is not connection:
+                raise RuntimeError(f"MCP server {server_id} was closed during startup")
             logger.info(f"Successfully connected and initialized MCP server {server_id}.")
 
             self.server_tools[server_id] = []
@@ -834,7 +851,7 @@ class MCPClientManager:
                 declared_readonly = (
                     bool(sandbox.get("readonly"))
                     and annotations.get("readOnlyHint") is True
-                    and annotations.get("destructiveHint") is not True
+                    and annotations.get("destructiveHint") is False
                 )
                 risk_level = "low" if declared_readonly else self._higher_risk_level(
                     t.get("risk_level"),

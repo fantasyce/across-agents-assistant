@@ -492,6 +492,30 @@ def test_readonly_mcp_server_prevents_runtime_name_false_positive():
     assert "write-capable" not in schema["safety_labels"]
 
 
+def test_readonly_mcp_tool_requires_explicit_nondestructive_annotation():
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "agent-runtime-proof": {"allowed_paths": [], "readonly": True}
+    }
+    manager.server_tools = {
+        "agent-runtime-proof": [
+            {
+                "name": "agent-runtime-proof__verify_local_runtime",
+                "description": "Verify a local runtime without mutation.",
+                "parameters": {"type": "object", "properties": {}},
+                "risk_level": "medium",
+                "original_name": "verify_local_runtime",
+                "annotations": {"readOnlyHint": True},
+            }
+        ]
+    }
+
+    schema = manager.get_all_tools_schema()[0]
+
+    assert schema["risk_level"] != "low"
+    assert schema["requires_approval"] is True
+
+
 def test_mcp_tool_fields_support_current_sdk_aliases():
     from mcp.types import CallToolResult, Tool
 
@@ -723,3 +747,122 @@ async def test_standard_mcp_transport_opens_and_closes_in_same_owner_task(monkey
 
     assert owner_tasks
     assert closed_tasks == owner_tasks
+
+
+@pytest.mark.asyncio
+async def test_standard_mcp_connect_timeout_closes_owner_transport(monkeypatch):
+    import across_agents_assistant.tools.mcp_client as mcp_module
+
+    opened = asyncio.Event()
+    closed = asyncio.Event()
+
+    @asynccontextmanager
+    async def fake_stdio_client(params):
+        opened.set()
+        try:
+            yield object(), object()
+        finally:
+            closed.set()
+
+    class BlockingSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def initialize(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(mcp_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(mcp_module, "ClientSession", BlockingSession)
+    manager = MCPClientManager()
+    manager.register_server("timeout", "/usr/bin/true", [], readonly=True)
+
+    connected, error = await manager._connect_stdio_server(
+        "timeout",
+        manager.server_configs["timeout"],
+        implementation="standard_mcp",
+        timeout=0.01,
+    )
+
+    assert opened.is_set()
+    assert connected is False
+    assert "Failed to connect" in error
+    await asyncio.wait_for(closed.wait(), timeout=0.2)
+    assert "timeout" not in manager.sessions
+
+
+@pytest.mark.asyncio
+async def test_disconnect_wins_while_standard_mcp_connection_is_starting(monkeypatch):
+    import across_agents_assistant.tools.mcp_client as mcp_module
+
+    initializing = asyncio.Event()
+    release_initialize = asyncio.Event()
+
+    @asynccontextmanager
+    async def fake_stdio_client(params):
+        yield object(), object()
+
+    class SlowSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def initialize(self):
+            initializing.set()
+            await release_initialize.wait()
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[])
+
+    monkeypatch.setattr(mcp_module, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(mcp_module, "ClientSession", SlowSession)
+    manager = MCPClientManager()
+    manager.register_server("racing", "/usr/bin/true", [], readonly=True)
+
+    connect_task = asyncio.create_task(manager.connect_server("racing"))
+    await initializing.wait()
+    disconnect_task = asyncio.create_task(manager.disconnect_server("racing"))
+    await asyncio.sleep(0)
+    release_initialize.set()
+
+    connected, error = await connect_task
+    await disconnect_task
+
+    assert connected is False
+    assert "closed during startup" in error
+    assert "racing" not in manager.sessions
+    assert "racing" not in manager.server_tools
+    assert "racing" not in manager._server_implementations
+
+
+@pytest.mark.asyncio
+async def test_disconnect_removes_tool_metadata_when_transport_close_fails():
+    class FailingExitStack:
+        async def aclose(self):
+            raise RuntimeError("close failed")
+
+    manager = MCPClientManager()
+    manager._exit_stacks["stale"] = FailingExitStack()
+    manager.server_tools["stale"] = [{"name": "stale__tool"}]
+    manager._external_across_context_servers.add("stale")
+    manager._server_implementations["stale"] = "standard_mcp"
+    manager._server_connection_notes["stale"] = "old"
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await manager.disconnect_server("stale")
+
+    assert "stale" not in manager._exit_stacks
+    assert "stale" not in manager.server_tools
+    assert "stale" not in manager._external_across_context_servers
+    assert "stale" not in manager._server_implementations
+    assert "stale" not in manager._server_connection_notes
