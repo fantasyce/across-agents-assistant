@@ -1,33 +1,33 @@
 {
   "schema_version": "across-worker-release-catalog/1.0",
   "published": true,
-  "version": "0.10.11",
+  "version": "0.10.12",
   "bootstrap": {
-    "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.11/install-worker-0.10.11.py",
+    "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.12/install-worker-0.10.12.py",
     "sha256": "925d2dea6d1b992e6fafd34861a9fa8fc9193785ba9d07c2559683b60a859f76"
   },
   "assets": {
     "macos-arm64": {
-      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.11/across-worker-0.10.11-macos-arm64.tar.gz",
-      "sha256": "f56106764941cf442a58fdcb434ec7d941fbba972a754310da16253cb5929d48"
+      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.12/across-worker-0.10.12-macos-arm64.tar.gz",
+      "sha256": "6990973b55fa450372d25221a22fc60675650889fcb18c5ad4bd662dd39165a3"
     },
     "macos-x86_64": {
-      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.11/across-worker-0.10.11-macos-x86_64.tar.gz",
-      "sha256": "f56106764941cf442a58fdcb434ec7d941fbba972a754310da16253cb5929d48"
+      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.12/across-worker-0.10.12-macos-x86_64.tar.gz",
+      "sha256": "6990973b55fa450372d25221a22fc60675650889fcb18c5ad4bd662dd39165a3"
     },
     "linux-arm64": {
-      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.11/across-worker-0.10.11-linux-arm64.tar.gz",
-      "sha256": "f56106764941cf442a58fdcb434ec7d941fbba972a754310da16253cb5929d48"
+      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.12/across-worker-0.10.12-linux-arm64.tar.gz",
+      "sha256": "6990973b55fa450372d25221a22fc60675650889fcb18c5ad4bd662dd39165a3"
     },
     "linux-x86_64": {
-      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.11/across-worker-0.10.11-linux-x86_64.tar.gz",
-      "sha256": "f56106764941cf442a58fdcb434ec7d941fbba972a754310da16253cb5929d48"
+      "url": "https://github.com/fantasyce/across-orchestrator/releases/download/v0.10.12/across-worker-0.10.12-linux-x86_64.tar.gz",
+      "sha256": "6990973b55fa450372d25221a22fc60675650889fcb18c5ad4bd662dd39165a3"
     }
   },
   "workflow_packs": {
     "scenario-simulation": {
-      "url": "https://github.com/fantasyce/across-autopilot/releases/download/v0.5.3/across-scenario-simulation-worker-pack-0.5.3.tar.gz",
-      "sha256": "a763920403ee642e8a3cc2d80c800e3c0f227853cb76218362b09c46ee7198dc"
+      "url": "https://github.com/fantasyce/across-autopilot/releases/download/v0.5.4/across-scenario-simulation-worker-pack-0.5.4.tar.gz",
+      "sha256": "073881b755f28c08336b9d435d5cfe6a6912f6c9fc72fa0bc7653b5abe7e5228"
     }
   }
 }

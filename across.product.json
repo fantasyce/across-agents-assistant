@@ -7,28 +7,34 @@
   "summary": "Across starts as a simple project workspace and grows through optional memory, durable execution, goal-driven workflows, and approved remote Worker capacity, while keeping evidence, credentials, and final approval under local user control.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.14.5",
+      "version": "v0.15.0",
       "published_at": "2026-08-26",
-      "tag": "v0.14.5",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.14.5"
+      "tag": "v0.15.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.15.0"
     },
     "across_autopilot": {
-      "version": "v0.5.3",
-      "published_at": "2026-08-21",
-      "tag": "v0.5.3",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.5.3"
+      "version": "v0.5.4",
+      "published_at": "2026-08-26",
+      "tag": "v0.5.4",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.5.4"
     },
     "across_orchestrator": {
-      "version": "v0.10.11",
-      "published_at": "2026-08-22",
-      "tag": "v0.10.11",
-      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.10.11"
+      "version": "v0.10.12",
+      "published_at": "2026-08-26",
+      "tag": "v0.10.12",
+      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.10.12"
     },
     "across_context": {
       "version": "v0.11.1",
       "published_at": "2026-07-20",
       "tag": "v0.11.1",
       "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.11.1"
+    },
+    "agent_runtime_proof": {
+      "version": "v1.0.1",
+      "published_at": "2026-08-25",
+      "tag": "v1.0.1",
+      "release_url": "https://github.com/fantasyce/agent-runtime-proof/releases/tag/v1.0.1"
     }
   },
   "primary_users": [
@@ -130,6 +136,17 @@
         "context packs",
         "loop memory summaries",
         "governed Worker experience"
+      ]
+    },
+    "agent_runtime_proof": {
+      "repository": "fantasyce/agent-runtime-proof",
+      "role": "local agent runtime attestation",
+      "integration": "generic external MCP plugin",
+      "managed_by_aaa": false,
+      "owns": [
+        "runtime candidate discovery",
+        "local runtime verification",
+        "portable runtime evidence"
       ]
     }
   },
