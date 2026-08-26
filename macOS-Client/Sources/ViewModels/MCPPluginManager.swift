@@ -1,6 +1,91 @@
 import Foundation
 import Combine
 
+enum MCPPluginManifestImportError: LocalizedError {
+    case manifestMissing
+    case manifestInvalid
+    case invalidServer(String)
+    case reservedServer(String)
+    case unsupportedEnvironment(String)
+    case serverBusy(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .manifestMissing:
+            return "The selected item does not contain an .mcp.json file."
+        case .manifestInvalid:
+            return "The MCP manifest is not valid JSON."
+        case .invalidServer(let serverID):
+            return "The MCP server \(serverID) is missing a valid command."
+        case .reservedServer(let serverID):
+            return "The MCP server id \(serverID) is reserved by AAA."
+        case .unsupportedEnvironment(let serverID):
+            return "The MCP server \(serverID) contains environment values that AAA will not store in preferences."
+        case .serverBusy(let serverID):
+            return "The MCP server \(serverID) is already being updated. Try again after the current connection finishes."
+        }
+    }
+}
+
+enum MCPPluginManifestImporter {
+    private struct Manifest: Decodable {
+        let mcpServers: [String: Server]
+    }
+
+    private struct Server: Decodable {
+        let command: String
+        let args: [String]?
+        let env: [String: String]?
+    }
+
+    static func load(from selectedURL: URL) throws -> [MCPPlugin] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: selectedURL.path, isDirectory: &isDirectory) else {
+            throw MCPPluginManifestImportError.manifestMissing
+        }
+        let manifestURL = isDirectory.boolValue
+            ? selectedURL.appendingPathComponent(".mcp.json", isDirectory: false)
+            : selectedURL
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+            throw MCPPluginManifestImportError.manifestMissing
+        }
+        let manifest: Manifest
+        do {
+            manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+        } catch {
+            throw MCPPluginManifestImportError.manifestInvalid
+        }
+        return try manifest.mcpServers.keys.sorted().map { serverID in
+            guard let server = manifest.mcpServers[serverID],
+                  serverID.range(
+                    of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                    options: .regularExpression
+                  ) != nil,
+                  !serverID.contains("__"),
+                  !server.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MCPPluginManifestImportError.invalidServer(serverID)
+            }
+            if !(server.env ?? [:]).isEmpty {
+                throw MCPPluginManifestImportError.unsupportedEnvironment(serverID)
+            }
+            return MCPPlugin(
+                id: serverID,
+                name: serverID
+                    .replacingOccurrences(of: "-", with: " ")
+                    .replacingOccurrences(of: "_", with: " ")
+                    .localizedCapitalized,
+                description: "Imported local MCP server.",
+                command: server.command,
+                args: server.args ?? [],
+                isEnabled: true,
+                isBuiltIn: false,
+                isReadOnly: true,
+                configurationKind: .none
+            )
+        }
+    }
+}
+
 enum MCPPluginConfigurationKind: String, Codable, Equatable {
     case none
     case directory
@@ -101,7 +186,7 @@ struct MCPPlugin: Codable, Identifiable, Equatable {
     }
 
     var canAutoConnectOnLaunch: Bool {
-        guard isBuiltIn && isConfigurationComplete else { return false }
+        guard isConfigurationComplete else { return false }
         // Local file, SQLite, and knowledge-base MCP servers only bind their
         // configured scope at startup; filesystem reads happen when tools run.
         // Keep custom RAG manual so launch does not open network endpoints.
@@ -135,6 +220,10 @@ class MCPPluginManager: ObservableObject {
     private var didStartDeferredAutoConnect = false
     private var deferredAutoConnectIDs: [String] = []
     private let autoConnectPriority = ["across_context", "filesystem", "sqlite", "local_kb"]
+    private var activeConnectionTasks: [String: URLSessionDataTask] = [:]
+    private var pendingRemovalIDs: Set<String> = []
+    private var pendingReplacementRollbacks: [String: MCPPlugin] = [:]
+    private var busyPluginIDs: Set<String> = []
 
     // MARK: - Built-in Plugin Helpers
 
@@ -301,7 +390,14 @@ class MCPPluginManager: ObservableObject {
             }
 
             // Add custom plugins from saved
-            let customSaved = saved.filter { !$0.isBuiltIn }
+            let customSaved = saved.filter { !$0.isBuiltIn }.map { plugin -> MCPPlugin in
+                var sanitized = plugin
+                if !(sanitized.env ?? [:]).isEmpty {
+                    sanitized.env = nil
+                    shouldSaveMergedPlugins = true
+                }
+                return sanitized
+            }
             merged.append(contentsOf: customSaved)
 
             self.plugins = merged
@@ -348,7 +444,13 @@ class MCPPluginManager: ObservableObject {
     }
 
     func savePlugins() {
-        if let data = try? JSONEncoder().encode(plugins) {
+        let sanitized = plugins.map { plugin -> MCPPlugin in
+            guard !plugin.isBuiltIn else { return plugin }
+            var custom = plugin
+            custom.env = nil
+            return custom
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
             AppUserDefaults.current.set(data, forKey: userDefaultsKey)
         }
     }
@@ -369,6 +471,16 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
+    func updateReadOnly(id: String, isReadOnly: Bool) {
+        guard !busyPluginIDs.contains(id), !pendingRemovalIDs.contains(id) else { return }
+        guard let index = plugins.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) else { return }
+        plugins[index].isReadOnly = isReadOnly
+        savePlugins()
+        if plugins[index].isEnabled && plugins[index].isConfigurationComplete {
+            connectPlugin(id: id)
+        }
+    }
+
     func togglePlugin(id: String) {
         if let index = plugins.firstIndex(where: { $0.id == id }) {
             plugins[index].isEnabled.toggle()
@@ -386,21 +498,89 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
-    func addCustomPlugin(plugin: MCPPlugin) {
+    @discardableResult
+    func addCustomPlugin(plugin: MCPPlugin) -> Bool {
+        guard !plugin.isBuiltIn else { return false }
+        guard !busyPluginIDs.contains(plugin.id),
+              !pendingRemovalIDs.contains(plugin.id) else { return false }
+        if let index = plugins.firstIndex(where: { $0.id == plugin.id }) {
+            guard !plugins[index].isBuiltIn else { return false }
+            let wasEnabled = plugins[index].isEnabled
+            let previous = plugins[index]
+            plugins[index] = plugin
+            if plugin.isEnabled && plugin.isConfigurationComplete {
+                pendingReplacementRollbacks[plugin.id] = previous
+                connectPlugin(id: plugin.id)
+            } else if wasEnabled {
+                savePlugins()
+                disconnectPlugin(id: plugin.id)
+            } else {
+                savePlugins()
+            }
+            return true
+        }
         plugins.append(plugin)
         savePlugins()
         if plugin.isEnabled && plugin.isConfigurationComplete {
             connectPlugin(id: plugin.id)
         }
+        return true
+    }
+
+    @discardableResult
+    func importPlugins(from selectedURL: URL) throws -> [String] {
+        let imported = try MCPPluginManifestImporter.load(from: selectedURL)
+        let builtInIDs = Set(plugins.filter(\.isBuiltIn).map(\.id))
+        if let collision = imported.first(where: { builtInIDs.contains($0.id) }) {
+            throw MCPPluginManifestImportError.reservedServer(collision.id)
+        }
+        if let busy = imported.first(where: {
+            busyPluginIDs.contains($0.id) || pendingRemovalIDs.contains($0.id)
+        }) {
+            throw MCPPluginManifestImportError.serverBusy(busy.id)
+        }
+        for plugin in imported {
+            guard addCustomPlugin(plugin: plugin) else {
+                throw MCPPluginManifestImportError.serverBusy(plugin.id)
+            }
+        }
+        return imported.map(\.id)
     }
 
     func removeCustomPlugin(id: String) {
-        if let index = plugins.firstIndex(where: { $0.id == id }) {
-            if plugins[index].isEnabled {
-                disconnectPlugin(id: id)
-            }
-            plugins.remove(at: index)
+        if let index = plugins.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) {
+            plugins[index].isEnabled = false
+            plugins[index].status = "disconnecting"
+            plugins[index].errorMessage = nil
+            pendingRemovalIDs.insert(id)
+            busyPluginIDs.insert(id)
             savePlugins()
+            if activeConnectionTasks[id] == nil {
+                performPendingRemoval(id: id)
+            }
+        }
+    }
+
+    private func performPendingRemoval(id: String) {
+        guard pendingRemovalIDs.contains(id) else { return }
+        disconnectPlugin(id: id, forget: true) { [weak self] success, errorMessage in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                guard self.pendingRemovalIDs.contains(id) else { return }
+                if success {
+                    self.pendingRemovalIDs.remove(id)
+                    self.pendingReplacementRollbacks.removeValue(forKey: id)
+                    self.busyPluginIDs.remove(id)
+                    self.plugins.removeAll { $0.id == id && !$0.isBuiltIn }
+                    self.savePlugins()
+                } else if let index = self.plugins.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) {
+                    self.pendingRemovalIDs.remove(id)
+                    self.busyPluginIDs.remove(id)
+                    self.plugins[index].status = "error"
+                    self.plugins[index].errorMessage = errorMessage ?? "Failed to remove MCP plugin"
+                    self.savePlugins()
+                }
+            }
         }
     }
 
@@ -423,6 +603,32 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
+    func recordConnectionFailure(id: String, message: String) {
+        // Keep the user's installation enabled. A missing executable or a
+        // transient startup failure should remain visible and retryable on the
+        // next launch instead of silently changing persisted intent.
+        let applyFailure = {
+            self.busyPluginIDs.remove(id)
+            if let previous = self.pendingReplacementRollbacks.removeValue(forKey: id),
+               let index = self.plugins.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) {
+                self.plugins[index] = previous
+                self.plugins[index].status = "error"
+                self.plugins[index].errorMessage = message
+                self.savePlugins()
+                return
+            }
+            if let index = self.plugins.firstIndex(where: { $0.id == id }) {
+                self.plugins[index].status = "error"
+                self.plugins[index].errorMessage = message
+            }
+        }
+        if Thread.isMainThread {
+            applyFailure()
+        } else {
+            DispatchQueue.main.async(execute: applyFailure)
+        }
+    }
+
     // MARK: - API Calls to Python Backend
 
     struct MCPConnectRequest: Codable {
@@ -436,6 +642,7 @@ class MCPPluginManager: ObservableObject {
 
     struct MCPDisconnectRequest: Codable {
         let server_id: String
+        let forget: Bool
     }
 
     struct MCPConnectResponse: Codable {
@@ -450,15 +657,25 @@ class MCPPluginManager: ObservableObject {
         }
     }
 
-    private func connectPlugin(id: String, retryCount: Int = 0, completion: (() -> Void)? = nil) {
-        guard let plugin = plugins.first(where: { $0.id == id }) else {
+    private func connectPlugin(
+        id: String,
+        retryCount: Int = 0,
+        lifecycleAlreadyClaimed: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
+        guard !pendingRemovalIDs.contains(id) else {
             completion?()
             return
         }
-
-        // Prevent concurrent connection attempts if we are already explicitly connecting,
-        // EXCEPT when we are in the retry loop (where we intentionally want to try again)
-        if retryCount == 0 && plugin.status == "connecting" {
+        if !lifecycleAlreadyClaimed {
+            guard !busyPluginIDs.contains(id) else {
+                completion?()
+                return
+            }
+            busyPluginIDs.insert(id)
+        }
+        guard let plugin = plugins.first(where: { $0.id == id }) else {
+            busyPluginIDs.remove(id)
             completion?()
             return
         }
@@ -466,6 +683,7 @@ class MCPPluginManager: ObservableObject {
         // Validation for plugins requiring user-supplied paths or endpoints.
         if plugin.requiresConfiguration {
             if !plugin.isConfigurationComplete {
+                busyPluginIDs.remove(id)
                 updateStatus(id: id, status: "disconnected")
                 completion?()
                 return
@@ -484,6 +702,7 @@ class MCPPluginManager: ObservableObject {
         )
 
         guard let url = URL(string: "http://backend/api/mcp/connect") else {
+            busyPluginIDs.remove(id)
             completion?()
             return
         }
@@ -495,37 +714,36 @@ class MCPPluginManager: ObservableObject {
         do {
             request.httpBody = try JSONEncoder().encode(req)
         } catch {
-            updateStatus(id: id, status: "error", errorMessage: "Failed to encode request")
-            if let index = plugins.firstIndex(where: { $0.id == id }) {
-                if !plugins[index].isBuiltIn {
-                    plugins[index].isEnabled = false
-                    savePlugins()
-                }
-            }
+            recordConnectionFailure(id: id, message: "Failed to encode request")
             completion?()
             return
         }
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.activeConnectionTasks[id] = nil
+                if self.pendingRemovalIDs.contains(id) {
+                    self.performPendingRemoval(id: id)
+                    completion?()
+                    return
+                }
+
             if let error = error {
                 if retryCount < 40 {
                     // Backend might still be starting up, retry after 0.5 seconds (up to 20 seconds total)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.connectPlugin(id: id, retryCount: retryCount + 1, completion: completion)
+                            self.connectPlugin(
+                                id: id,
+                                retryCount: retryCount + 1,
+                                lifecycleAlreadyClaimed: true,
+                                completion: completion
+                            )
                     }
                     return
                 }
-                self?.updateStatus(id: id, status: "error", errorMessage: "Network error: \(error.localizedDescription)")
-                DispatchQueue.main.async {
-                    if let index = self?.plugins.firstIndex(where: { $0.id == id }) {
-                        // Do NOT auto-disable built-in plugins on network error, so they can retry on next launch
-                        if !(self?.plugins[index].isBuiltIn ?? false) {
-                            self?.plugins[index].isEnabled = false
-                            self?.savePlugins()
-                        }
-                    }
+                    self.recordConnectionFailure(id: id, message: "Network error: \(error.localizedDescription)")
                     completion?()
-                }
                 return
             }
 
@@ -535,47 +753,60 @@ class MCPPluginManager: ObservableObject {
                 if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let detail = json["detail"] as? String {
                     errorMsg = detail
                 }
-                self?.updateStatus(id: id, status: "error", errorMessage: errorMsg)
-                DispatchQueue.main.async {
-                    if let index = self?.plugins.firstIndex(where: { $0.id == id }) {
-                        // Custom plugin HTTP failures likely indicate a broken command/configuration.
-                        // Built-in plugins stay enabled so users can repair the path/endpoint in place.
-                        if !(self?.plugins[index].isBuiltIn ?? false) {
-                            self?.plugins[index].isEnabled = false
-                            self?.savePlugins()
-                        }
-                    }
+                    self.recordConnectionFailure(id: id, message: errorMsg)
                     completion?()
-                }
                 return
             }
 
             let connectResponse = data.flatMap { try? JSONDecoder().decode(MCPConnectResponse.self, from: $0) }
-            self?.updateStatus(
+                if self.pendingReplacementRollbacks.removeValue(forKey: id) != nil {
+                    self.savePlugins()
+                }
+                self.busyPluginIDs.remove(id)
+                self.updateStatus(
                 id: id,
                 status: "connected",
                 errorMessage: nil,
                 implementationMode: connectResponse?.implementation
             )
-            DispatchQueue.main.async {
                 completion?()
             }
-        }.resume()
+        }
+        activeConnectionTasks[id] = task
+        task.resume()
     }
 
-    private func disconnectPlugin(id: String) {
-        updateStatus(id: id, status: "disconnected")
+    private func disconnectPlugin(
+        id: String,
+        forget: Bool = false,
+        completion: ((Bool, String?) -> Void)? = nil
+    ) {
+        if !forget {
+            updateStatus(id: id, status: "disconnected")
+        }
 
-        let req = MCPDisconnectRequest(server_id: id)
-        guard let url = URL(string: "http://backend/api/mcp/disconnect") else { return }
+        let req = MCPDisconnectRequest(server_id: id, forget: forget)
+        guard let url = URL(string: "http://backend/api/mcp/disconnect") else {
+            completion?(false, "Invalid backend URL")
+            return
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONEncoder().encode(req)
 
-        URLSession.shared.dataTask(with: request) { _, _, _ in
-            // Ignore response for disconnect
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error {
+                completion?(false, error.localizedDescription)
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                completion?(false, "Backend rejected MCP disconnect")
+                return
+            }
+            completion?(true, nil)
         }.resume()
     }
 }

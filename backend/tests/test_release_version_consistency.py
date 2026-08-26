@@ -1,3 +1,4 @@
+import json
 import pathlib
 import re
 import tomllib
@@ -49,3 +50,44 @@ def test_bundled_plugin_source_versions_match_host_install_sources():
         source_version = re.search(r"[#@]v(\d+\.\d+\.\d+)$", plugin.default_install_source or "")
         assert source_version is not None
         assert bundled_versions[plugin.plugin_id].group(1) == source_version.group(1)
+
+
+def test_product_manifest_tracks_agent_runtime_proof_as_external_plugin():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    product = json.loads((root / "across.product.json").read_text(encoding="utf-8"))
+
+    assert product["current_releases"]["agent_runtime_proof"]["version"] == "v1.0.1"
+    component = product["components"]["agent_runtime_proof"]
+    assert component["repository"] == "fantasyce/agent-runtime-proof"
+    assert component["integration"] == "generic external MCP plugin"
+    assert component["managed_by_aaa"] is False
+
+
+def test_worker_catalog_matches_current_managed_producer_versions():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    preparation = (root / "scripts" / "prepare_managed_plugin_payloads.sh").read_text(
+        encoding="utf-8"
+    )
+    catalog = json.loads(
+        (
+            root
+            / "backend"
+            / "src"
+            / "across_agents_assistant"
+            / "assets"
+            / "worker-release-catalog.json"
+        ).read_text(encoding="utf-8")
+    )
+    orchestrator_version = re.search(
+        r'^ORCHESTRATOR_VERSION="([^"]+)"$', preparation, re.MULTILINE
+    )
+    autopilot_version = re.search(
+        r'^AUTOPILOT_VERSION="([^"]+)"$', preparation, re.MULTILINE
+    )
+
+    assert orchestrator_version is not None
+    assert autopilot_version is not None
+    assert catalog["version"] == orchestrator_version.group(1)
+    scenario_url = catalog["workflow_packs"]["scenario-simulation"]["url"]
+    assert f"/v{autopilot_version.group(1)}/" in scenario_url
+    assert f"-{autopilot_version.group(1)}.tar.gz" in scenario_url

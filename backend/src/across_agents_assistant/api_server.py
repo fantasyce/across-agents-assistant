@@ -1830,6 +1830,13 @@ class MCPConnectRequest(BaseModel):
     allowed_paths: Optional[List[str]] = None
     readonly: Optional[bool] = False
 
+    @field_validator("server_id")
+    @classmethod
+    def validate_server_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) or "__" in value:
+            raise ValueError("MCP server id is invalid")
+        return value
+
 @app.post("/api/mcp/connect")
 async def connect_mcp_server(req: MCPConnectRequest):
     """Register and connect to an MCP server dynamically."""
@@ -1849,10 +1856,14 @@ async def connect_mcp_server(req: MCPConnectRequest):
                 main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "main.py"))
                 req.args = [main_path, "mcp", server_name] + req.args[2:]
 
-        mcp_manager.register_server(req.server_id, req.command, req.args, req.env,
-                                 allowed_paths=req.allowed_paths,
-                                 readonly=req.readonly)
-        success, error_msg = await mcp_manager.connect_server(req.server_id)
+        success, error_msg = await mcp_manager.register_and_connect_server(
+            req.server_id,
+            req.command,
+            req.args,
+            req.env,
+            allowed_paths=req.allowed_paths,
+            readonly=bool(req.readonly),
+        )
         if success:
             implementation = mcp_manager.get_server_implementation(req.server_id)
             connection_note = mcp_manager.get_server_connection_note(req.server_id)
@@ -1872,12 +1883,16 @@ async def connect_mcp_server(req: MCPConnectRequest):
 
 class MCPDisconnectRequest(BaseModel):
     server_id: str
+    forget: bool = False
 
 @app.post("/api/mcp/disconnect")
 async def disconnect_mcp_server(req: MCPDisconnectRequest):
     """Disconnect an MCP server."""
     try:
-        await mcp_manager.disconnect_server(req.server_id)
+        if req.forget:
+            await mcp_manager.disconnect_and_forget_server(req.server_id)
+        else:
+            await mcp_manager.disconnect_server(req.server_id)
         return {"status": "success"}
     except Exception as e:
         raise _safe_http_500("Disconnect MCP server")

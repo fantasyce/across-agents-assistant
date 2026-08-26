@@ -51,14 +51,18 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.14.5` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.15.0` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.1` |
-| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.11` |
-| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.3` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.12` |
+| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.4` |
 
 Install or repair the three optional components from **Settings → Plugins**.
 Packaged builds carry verified plugin payloads, so the one-click path does not
 require the user to install Git, npm, Node, or Python.
+
+Agent Runtime Proof `v1.0.1` is supported through AAA's generic local MCP
+plugin import. It remains an independently installed external plugin rather
+than a fourth first-party managed component.
 
 ## Product Tour
 
@@ -70,7 +74,22 @@ require the user to install Git, npm, Node, or Python.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.14.5` Includes
+## What `v0.15.0` Includes
+
+- Local stdio MCP plugins can now be imported from a standard `.mcp.json`
+  manifest, persisted across AAA restarts, replaced atomically by stable server
+  ID, and rolled back when a replacement cannot start.
+- Imported plugins fail closed: AAA rejects embedded environment values,
+  defaults tools to read-only, requires explicit MCP safety annotations, and
+  protects built-in server IDs. Agent Runtime Proof `v1.0.1` is the first
+  formally accepted external plugin using this generic path.
+- Orchestrator `v0.10.12` preserves artifact freshness, remote Worker claim,
+  review-state, and stable policy-error invariants. Autopilot `v0.5.4` adds
+  bounded lease, preparation, interruption, and dead-executor recovery.
+- Context remains at `v0.11.1`; its current release already satisfies the
+  required governed-memory contract.
+
+### Previous `v0.14.5` release
 
 - Eligible read-only, low-risk host MCP tools can now be exposed to local task
   agents through a private task-scoped bridge, including direct Agent runs and

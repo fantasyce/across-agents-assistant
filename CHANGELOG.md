@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0 - 2026-08-26
+
+- Added generic local stdio MCP plugin import from standard `.mcp.json`
+  manifests, durable preferences, same-ID replacement, restart reconnect, and
+  rollback to the previous live runtime when replacement fails.
+- Made external plugin import fail closed on embedded environment values,
+  built-in server ID collisions, missing MCP safety annotations, and unsafe
+  write policy. Formally accepted Agent Runtime Proof `v1.0.1` through this
+  generic external-plugin path.
+- Integrated Orchestrator `v0.10.12` with artifact-freshness, remote Worker
+  claim, review-state, and stable policy-error safeguards.
+- Integrated Autopilot `v0.5.4` with bounded trigger leases, preparation retry,
+  interruption evidence, and dead-executor reconciliation.
+- Kept Context `v0.11.1` unchanged after verifying that its released governed
+  memory contract already covers the required capability.
+
 ## 0.14.5 - 2026-08-26
 
 - Prevented MCP runtime exception text from reaching the task-scoped Agent

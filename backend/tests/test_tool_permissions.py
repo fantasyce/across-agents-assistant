@@ -677,6 +677,39 @@ def test_mcp_safety_report_summarizes_server_risk():
     assert "Readonly mode blocks write-capable tools at call time." in readonly["warnings"]
 
 
+def test_mcp_safety_report_matches_readonly_annotated_tool_schema():
+    manager = MCPClientManager()
+    manager._sandbox_settings = {
+        "agent-runtime-proof": {"allowed_paths": [], "readonly": True}
+    }
+    manager.server_tools = {
+        "agent-runtime-proof": [
+            {
+                "name": "agent-runtime-proof__list_local_runtime_candidates",
+                "description": "List safe local runtime candidate summaries.",
+                "parameters": {"type": "object", "properties": {}},
+                "risk_level": "high",
+                "original_name": "list_local_runtime_candidates",
+                "annotations": {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False,
+                },
+            }
+        ]
+    }
+
+    schema = manager.get_all_tools_schema()[0]
+    server = manager.get_safety_report()["servers"][0]
+
+    assert schema["risk_level"] == "low"
+    assert schema["requires_approval"] is False
+    assert server["risk_counts"] == {"high": 0, "low": 1, "medium": 0, "unknown": 0}
+    assert server["highest_risk"] == "low"
+    assert server["requires_approval_count"] == 0
+    assert "High-risk MCP tools require approval." not in server["warnings"]
+
+
 @pytest.mark.asyncio
 async def test_mcp_readonly_mode_blocks_write_tools_without_path_arguments():
     manager = MCPClientManager()
@@ -705,6 +738,13 @@ async def test_mcp_readonly_mode_allows_runtime_name_without_write_verb():
         "agent-runtime-proof": {"allowed_paths": [], "readonly": True}
     }
     manager.sessions["agent-runtime-proof"] = Session()
+    manager.server_tools["agent-runtime-proof"] = [
+        {
+            "name": "agent-runtime-proof__verify_local_runtime",
+            "original_name": "verify_local_runtime",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False},
+        }
+    ]
 
     result = await manager.call_tool(
         "agent-runtime-proof",
@@ -713,6 +753,28 @@ async def test_mcp_readonly_mode_allows_runtime_name_without_write_verb():
     )
 
     assert "MATCHED proof_id=sha256:test" in result
+
+
+@pytest.mark.asyncio
+async def test_mcp_readonly_mode_rejects_unproven_generic_tool_even_without_write_verb():
+    class Session:
+        async def call_tool(self, tool_name, arguments):
+            raise AssertionError("an unproven readonly tool must never execute")
+
+    manager = MCPClientManager()
+    manager._sandbox_settings = {"generic": {"allowed_paths": [], "readonly": True}}
+    manager.sessions["generic"] = Session()
+    manager.server_tools["generic"] = [
+        {
+            "name": "generic__sync",
+            "original_name": "sync",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True},
+        }
+    ]
+
+    result = await manager.call_tool("generic", "sync", {})
+
+    assert result == "Error: This MCP server is in readonly mode. The tool is not declared read-only."
 
 
 @pytest.mark.asyncio
