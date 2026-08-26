@@ -38,6 +38,15 @@ swiftc -parse-as-library \
   -o "$TMP_DIR/AppPreferencesBehavior"
 "$TMP_DIR/AppPreferencesBehavior"
 
+echo "== MCPPluginBehavior =="
+swiftc -parse-as-library \
+  macOS-Client/Tests/MCPPluginBehavior.swift \
+  macOS-Client/Sources/Utils/AppUserDefaults.swift \
+  macOS-Client/Tests/StandaloneLocalAppPathsStub.swift \
+  macOS-Client/Sources/ViewModels/MCPPluginManager.swift \
+  -o "$TMP_DIR/MCPPluginBehavior"
+"$TMP_DIR/MCPPluginBehavior"
+
 echo "== PluginLifecycleBehavior =="
 swiftc -parse-as-library \
   macOS-Client/Tests/PluginLifecycleBehavior.swift \

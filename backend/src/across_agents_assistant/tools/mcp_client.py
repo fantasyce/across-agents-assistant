@@ -132,6 +132,63 @@ class MCPClientManager:
         self._external_across_context_servers: set[str] = set()
         self._server_implementations: Dict[str, str] = {}
         self._server_connection_notes: Dict[str, str] = {}
+        self._server_lifecycle_locks: Dict[str, asyncio.Lock] = {}
+
+    async def register_and_connect_server(
+        self,
+        server_id: str,
+        command: str,
+        args: List[str],
+        env: Optional[Dict[str, str]] = None,
+        allowed_paths: Optional[List[str]] = None,
+        readonly: bool = False,
+    ):
+        """Replace one stdio runtime, restoring the verified predecessor on failure."""
+        lock = self._server_lifecycle_locks.setdefault(server_id, asyncio.Lock())
+        async with lock:
+            previous_config = self.server_configs.get(server_id)
+            previous_sandbox = dict(getattr(self, "_sandbox_settings", {}).get(server_id, {}))
+            previous_was_live = (
+                server_id in self.sessions
+                or server_id in self._exit_stacks
+                or server_id in self.server_tools
+            )
+            if previous_was_live:
+                await self.disconnect_server(server_id)
+            self.register_server(
+                server_id,
+                command,
+                args,
+                env,
+                allowed_paths=allowed_paths,
+                readonly=readonly,
+            )
+            success, error = await self.connect_server(server_id)
+            if success:
+                return True, None
+
+            await self.disconnect_server(server_id, forget=True)
+            if previous_config is None:
+                return False, error
+
+            self.server_configs[server_id] = previous_config
+            self._sandbox_settings[server_id] = previous_sandbox
+            if not previous_was_live:
+                return False, error
+
+            restored, restore_error = await self.connect_server(server_id)
+            if not restored:
+                return False, (
+                    f"{error or 'Replacement failed'}; rollback failed: "
+                    f"{restore_error or 'previous runtime did not reconnect'}"
+                )
+            return False, f"{error or 'Replacement failed'}; previous runtime restored"
+
+    async def disconnect_and_forget_server(self, server_id: str) -> None:
+        """Serialize removal behind any in-flight replacement for the same id."""
+        lock = self._server_lifecycle_locks.setdefault(server_id, asyncio.Lock())
+        async with lock:
+            await self.disconnect_server(server_id, forget=True)
 
     def register_server(self, server_id: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None,
                         allowed_paths: Optional[List[str]] = None, readonly: bool = False):
@@ -303,7 +360,7 @@ class MCPClientManager:
         finally:
             self._connecting.discard(server_id)
 
-    async def disconnect_server(self, server_id: str):
+    async def disconnect_server(self, server_id: str, *, forget: bool = False):
         """Disconnect from an MCP server."""
         session = self.sessions.pop(server_id, None)
         exit_stack = self._exit_stacks.pop(server_id, None)
@@ -317,6 +374,9 @@ class MCPClientManager:
             self._server_implementations.pop(server_id, None)
             self._server_connection_notes.pop(server_id, None)
             self.server_tools.pop(server_id, None)
+            if forget:
+                self.server_configs.pop(server_id, None)
+                getattr(self, "_sandbox_settings", {}).pop(server_id, None)
             logger.info(f"Disconnected from MCP server {server_id}.")
 
     async def shutdown(self) -> None:
@@ -328,6 +388,7 @@ class MCPClientManager:
             except Exception:
                 logger.warning("Failed to disconnect MCP server %s during shutdown.", server_id, exc_info=True)
         self._connecting.clear()
+        self._server_lifecycle_locks.clear()
 
     def get_server_implementation(self, server_id: str) -> Optional[str]:
         return self._server_implementations.get(server_id)
@@ -343,8 +404,11 @@ class MCPClientManager:
 
         # Sandbox validation
         sandbox = getattr(self, '_sandbox_settings', {}).get(server_id, {})
-        if sandbox.get('readonly') and self._is_write_operation(tool_name, arguments):
-            return "Error: This MCP server is in readonly mode. Write operations are not allowed."
+        if sandbox.get('readonly'):
+            if self._is_write_operation(tool_name, arguments):
+                return "Error: This MCP server is in readonly mode. Write operations are not allowed."
+            if not self._tool_declares_readonly(server_id, tool_name):
+                return "Error: This MCP server is in readonly mode. The tool is not declared read-only."
         if sandbox.get('allowed_paths'):
             file_args = self._extract_file_paths(arguments)
             for file_path in file_args:
@@ -805,6 +869,22 @@ class MCPClientManager:
         tokens = set(re.findall(r"[a-z0-9]+", tokenized.lower()))
         return any(keyword in tokens for keyword in HIGH_RISK_TOOL_KEYWORDS)
 
+    def _tool_declares_readonly(self, server_id: str, tool_name: str) -> bool:
+        """Require an explicit MCP safety contract before a readonly host calls a tool."""
+        for tool in self.server_tools.get(server_id, []):
+            names = {
+                str(tool.get("name") or ""),
+                str(tool.get("original_name") or ""),
+            }
+            if tool_name not in names and not str(tool.get("name") or "").endswith(f"__{tool_name}"):
+                continue
+            annotations = dict(tool.get("annotations") or {})
+            return (
+                annotations.get("readOnlyHint") is True
+                and annotations.get("destructiveHint") is False
+            )
+        return False
+
     def _normalize_risk_level(self, risk_level: Optional[str]) -> str:
         normalized = str(risk_level or "medium").strip().lower()
         return normalized if normalized in RISK_ORDER else "medium"
@@ -852,6 +932,7 @@ class MCPClientManager:
                     bool(sandbox.get("readonly"))
                     and annotations.get("readOnlyHint") is True
                     and annotations.get("destructiveHint") is False
+                    and not self._is_write_operation(original_name, {})
                 )
                 risk_level = "low" if declared_readonly else self._higher_risk_level(
                     t.get("risk_level"),
@@ -893,7 +974,14 @@ class MCPClientManager:
             highest_risk = "low"
             for tool in tools:
                 original_name = tool.get("original_name") or str(tool.get("name") or "").split("__", 1)[-1]
-                risk = self._higher_risk_level(
+                annotations = dict(tool.get("annotations") or {})
+                declared_readonly = (
+                    bool(sandbox.get("readonly"))
+                    and annotations.get("readOnlyHint") is True
+                    and annotations.get("destructiveHint") is False
+                    and not self._is_write_operation(original_name, {})
+                )
+                risk = "low" if declared_readonly else self._higher_risk_level(
                     tool.get("risk_level"),
                     self._infer_tool_risk_level(server_id, original_name, tool.get("description", "")),
                 )

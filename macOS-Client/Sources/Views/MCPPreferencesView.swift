@@ -1,10 +1,12 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct MCPPreferencesView: View {
     @StateObject private var manager = MCPPluginManager.shared
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject private var appPreferences: AppPreferences
+    @State private var importError: String?
     var onClose: (() -> Void)? = nil
     var embeddedInHub: Bool = false
 
@@ -20,10 +22,30 @@ struct MCPPreferencesView: View {
                 VStack(alignment: .leading, spacing: MinimalSettingsMetrics.sectionSpacing) {
                     MinimalSettingsPageHeader(title: appPreferences.text("mcp.title"))
 
+                    HStack(spacing: 12) {
+                        Text(appPreferences.text("mcp.importHelp"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 16)
+                        Button(action: importMCPConfiguration) {
+                            Label(appPreferences.text("mcp.importConfiguration"), systemImage: "square.and.arrow.down")
+                        }
+                        .controlSize(.small)
+                        .accessibilityHint(appPreferences.text("mcp.importHelp"))
+                    }
+
+                    if let importError {
+                        MinimalSettingsNotice(
+                            text: importError,
+                            color: .red,
+                            systemImage: "exclamationmark.circle.fill"
+                        )
+                    }
+
                     VStack(spacing: 0) {
                         Divider()
-                        ForEach(manager.plugins.indices, id: \.self) { index in
-                            MCPCardView(plugin: $manager.plugins[index])
+                        ForEach(Array($manager.plugins.enumerated()), id: \.element.id) { index, plugin in
+                            MCPCardView(plugin: plugin)
                             if index < manager.plugins.count - 1 {
                                 Divider().padding(.leading, 34)
                             }
@@ -44,6 +66,23 @@ struct MCPPreferencesView: View {
             }
         )
         .ignoresSafeArea(.all, edges: embeddedInHub ? Edge.Set() : .top)
+    }
+
+    private func importMCPConfiguration() {
+        let panel = NSOpenPanel()
+        panel.title = appPreferences.text("mcp.importConfiguration")
+        panel.prompt = appPreferences.text("mcp.importAction")
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            _ = try manager.importPlugins(from: url)
+            importError = nil
+        } catch {
+            importError = error.localizedDescription
+        }
     }
 
 }
@@ -150,9 +189,30 @@ struct MCPCardView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         } else {
-            Text(appPreferences.text("mcp.customConfiguration"))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(([plugin.command] + plugin.args).joined(separator: " "))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+
+                Toggle(
+                    appPreferences.text("mcp.readOnly"),
+                    isOn: Binding(
+                        get: { plugin.isReadOnly },
+                        set: { MCPPluginManager.shared.updateReadOnly(id: plugin.id, isReadOnly: $0) }
+                    )
+                )
+                .controlSize(.small)
+                .help(appPreferences.text("mcp.readOnlyHelp"))
+
+                Button(role: .destructive) {
+                    MCPPluginManager.shared.removeCustomPlugin(id: plugin.id)
+                } label: {
+                    Text(appPreferences.text("mcp.removePlugin"))
+                }
+                .controlSize(.small)
+            }
         }
     }
 
