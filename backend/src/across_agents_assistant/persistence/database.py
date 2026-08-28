@@ -363,6 +363,86 @@ class Database:
                 )
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS goal_contract_revisions (
+                    goal_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    schema_version TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    expected_revision INTEGER NOT NULL,
+                    idempotency_key TEXT UNIQUE,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (goal_id, revision),
+                    UNIQUE (task_id, revision)
+                )
+            ''')
+            cursor.execute('''
+                CREATE TRIGGER IF NOT EXISTS goal_contract_revisions_no_update
+                BEFORE UPDATE ON goal_contract_revisions
+                BEGIN SELECT RAISE(ABORT, 'goal contract revisions are immutable'); END
+            ''')
+            cursor.execute('''
+                CREATE TRIGGER IF NOT EXISTS goal_contract_revisions_no_delete
+                BEFORE DELETE ON goal_contract_revisions
+                BEGIN SELECT RAISE(ABORT, 'goal contract revisions are immutable'); END
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS goal_change_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    base_goal_revision INTEGER NOT NULL,
+                    schema_version TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    decision_state TEXT NOT NULL,
+                    decision_receipt_json TEXT,
+                    create_idempotency_key TEXT UNIQUE,
+                    decision_idempotency_key TEXT UNIQUE,
+                    decision_request_sha256 TEXT,
+                    created_at REAL NOT NULL,
+                    decided_at REAL
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS goal_evidence_bindings (
+                    evidence_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    goal_revision INTEGER NOT NULL,
+                    task_id TEXT NOT NULL,
+                    criterion_ids_json TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    trust_state TEXT NOT NULL,
+                    idempotency_key TEXT UNIQUE,
+                    created_at REAL NOT NULL
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS goal_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    goal_revision INTEGER NOT NULL,
+                    criterion_ids_json TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    idempotency_key TEXT UNIQUE,
+                    created_at REAL NOT NULL
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS goal_invalidation_events (
+                    invalidation_id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    from_revision INTEGER NOT NULL,
+                    to_revision INTEGER,
+                    affected_criterion_ids_json TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    idempotency_key TEXT UNIQUE,
+                    created_at REAL NOT NULL
+                )
+            ''')
+
             # Additive migrations for existing databases so startup stays compatible
             self._ensure_column(cursor, "sessions", "project_id", "TEXT")
             self._ensure_column(cursor, "sessions", "project_dir", "TEXT")
@@ -517,6 +597,26 @@ class Database:
             cursor.execute(
                 'CREATE INDEX IF NOT EXISTS idx_delivery_contracts_task_updated '
                 'ON delivery_contracts(task_id, updated_at DESC)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_goal_revisions_task_current '
+                'ON goal_contract_revisions(task_id, revision DESC)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_goal_proposals_goal_revision '
+                'ON goal_change_proposals(goal_id, base_goal_revision, decision_state)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_goal_evidence_goal_revision '
+                'ON goal_evidence_bindings(goal_id, goal_revision)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_goal_reviews_goal_revision '
+                'ON goal_reviews(goal_id, goal_revision)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_goal_invalidations_goal_revision '
+                'ON goal_invalidation_events(goal_id, from_revision)'
             )
 
             # 凭证元数据表（仅记录元数据，不含 API key）

@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 from across_agents_assistant.workspace_hygiene import IGNORED_DIR_NAMES, scan_workspace_hygiene
 from across_agents_assistant.agent_ids import LOCAL_CLI_AGENT_IDS
 from across_agents_assistant.llm_gateway.provider_registry import get_default_provider_ids
+from across_agents_assistant.goal_contract.adapter import project_delivery_probe_results
 
 from .project_acceptance import (
     _check_requested_framework_alignment,
@@ -3343,6 +3344,7 @@ def run_delivery_contract_acceptance(
         "failed_constraints": failed_constraints,
         "evidence_gaps": evidence_gaps,
         "probe_results": probe_results,
+        "criterion_results": project_delivery_probe_results(contract, probe_results),
         "capability_total": len(required_capabilities),
         "capability_evidence_level": "L2" if probe_results and all(r.get("passed") for r in probe_results) else "L1",
         "quality_report": quality_report,
