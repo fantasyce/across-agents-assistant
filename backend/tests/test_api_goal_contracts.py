@@ -120,3 +120,25 @@ def test_direct_agent_evidence_uses_public_binding_schema_and_revalidation_is_ap
     )
     assert request["schema_version"] == "across-goal-revalidation-request/1.0"
     assert service.goal_contracts.list_evidence("goal-task-001", 1)[0]["trust_state"] == "verified"
+
+
+def test_goal_plugin_probe_api_preserves_managed_runtime_matrix(monkeypatch, tmp_path):
+    import across_agents_assistant.goal_contract.api as goal_api
+
+    client, _ = _client(monkeypatch, tmp_path)
+    contract = _fixture("simple.json")
+    observed = {}
+
+    def fake_probe(value, *, allow_missing=False):
+        observed["value"] = value
+        observed["allow_missing"] = allow_missing
+        return {"schema_version": "across-goal-contract-probe-matrix/1.0", "status": "passed"}
+
+    monkeypatch.setattr(goal_api, "run_managed_goal_contract_probe", fake_probe)
+    response = client.post(
+        "/api/goal-contract/plugin-probe",
+        json={"contract": contract, "allow_missing": False},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "passed"
+    assert observed == {"value": contract, "allow_missing": False}

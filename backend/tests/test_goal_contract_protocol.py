@@ -74,3 +74,8 @@ def test_goal_change_proposal_is_pending_and_base_revision_bound():
     invalid_revision["base_goal_revision"] = 0
     with pytest.raises(ValueError, match="base_goal_revision"):
         normalize_goal_change_proposal(invalid_revision)
+
+    nested_host_field = copy.deepcopy(fixture)
+    nested_host_field["operations"][0]["path"] = "/confirmed_by/agent"
+    with pytest.raises(ValueError, match="host-owned"):
+        normalize_goal_change_proposal(nested_host_field)

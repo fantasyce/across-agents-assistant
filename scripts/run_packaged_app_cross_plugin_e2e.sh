@@ -88,7 +88,48 @@ request() {
 for plugin_id in across-context across-orchestrator across-autopilot; do
   request POST "/api/plugins/$plugin_id/actions" "$TMP_DIR/$plugin_id-install.json" '{"action":"install"}'
 done
+for action in repair upgrade; do
+  for plugin_id in across-context across-orchestrator across-autopilot; do
+    request POST "/api/plugins/$plugin_id/actions" "$TMP_DIR/$plugin_id-$action.json" "{\"action\":\"$action\"}"
+  done
+done
+for plugin_id in across-context across-orchestrator across-autopilot; do
+  request POST "/api/plugins/$plugin_id/actions" "$TMP_DIR/$plugin_id-uninstall.json" '{"action":"uninstall"}'
+  request POST "/api/plugins/$plugin_id/actions" "$TMP_DIR/$plugin_id-reinstall.json" '{"action":"install"}'
+done
 request GET '/api/plugins?probe=true' "$TMP_DIR/plugins.json"
+cat > "$TMP_DIR/goal-probe-request.json" <<'JSON'
+{
+  "contract": {
+    "schema_version": "across-goal-contract/1.0",
+    "goal_id": "goal-packaged-cross-plugin",
+    "revision": 1,
+    "task_id": "task-packaged-cross-plugin",
+    "statement": "Verify the installed managed-plugin Goal Contract boundary.",
+    "success_outcome": "Every installed plugin returns the same Goal binding and evidence hash.",
+    "scope": {"includes": ["installed plugin verification"], "excludes": ["release", "promotion"]},
+    "acceptance_criteria": [
+      {
+        "criterion_id": "criterion-packaged-cross-plugin",
+        "description": "Installed plugin probes return an identical binding.",
+        "required": true,
+        "validator_kind": "installed_contract_probe",
+        "review_policy": "automatic",
+        "source": "user_confirmed"
+      }
+    ],
+    "dependencies": [],
+    "execution_profile": "orchestrated",
+    "source": "user",
+    "confirmed_by": "human:user",
+    "confirmed_at": "2026-08-28T00:00:00Z",
+    "created_at": "2026-08-28T00:00:00Z"
+  },
+  "allow_missing": false
+}
+JSON
+GOAL_PROBE_BODY="$(tr -d '\n' < "$TMP_DIR/goal-probe-request.json")"
+request POST '/api/goal-contract/plugin-probe' "$TMP_DIR/goal-probe.json" "$GOAL_PROBE_BODY"
 request POST '/api/autopilot/runs' "$TMP_DIR/run.json" '{"spec":"aaa-release-readiness-gate","trigger":"packaged-cross-plugin-e2e"}'
 
 TMP_DIR="$TMP_DIR" python3 - <<'PY'
@@ -110,6 +151,14 @@ for plugin_id in ("across-context", "across-orchestrator", "across-autopilot"):
         raise SystemExit(f"{plugin_id} did not converge through install, integrity, and probe.")
 
 payload = json.loads((root / "run.json").read_text(encoding="utf-8"))
+goal_probe = json.loads((root / "goal-probe.json").read_text(encoding="utf-8"))
+if goal_probe.get("status") != "passed" or set(goal_probe.get("plugins", {})) != {
+    "across-context", "across-orchestrator", "across-autopilot"
+}:
+    raise SystemExit("Installed managed plugins did not return a complete Goal Contract probe matrix.")
+bindings = [goal_probe.get("goal_contract", {}), *goal_probe.get("plugins", {}).values()]
+if any(binding != bindings[0] for binding in bindings[1:]):
+    raise SystemExit("Installed managed plugins returned mismatched Goal Contract bindings.")
 run = payload.get("run", {})
 evidence = payload.get("evidence", {})
 if run.get("status") != "completed" or evidence.get("status") != "completed":
@@ -127,6 +176,8 @@ print(json.dumps({
     "status": "passed",
     "runtime": "formal-packaged-backend-isolated-profile",
     "plugin_convergence": "passed",
+    "plugin_lifecycle_install_repair_upgrade_uninstall_reinstall": "passed",
+    "goal_contract_probe": "passed",
     "autopilot_to_orchestrator": "passed",
     "orchestrator_to_context": "passed",
     "cleanup": "trap-enforced",

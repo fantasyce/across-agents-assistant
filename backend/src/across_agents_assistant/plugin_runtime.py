@@ -30,6 +30,7 @@ from .runtime_boundary import (
     is_product_mode,
     sanitized_product_runtime_env,
 )
+from .goal_contract.protocol import normalize_goal_contract, stable_goal_hash
 
 
 @dataclass(frozen=True)
@@ -419,6 +420,51 @@ def run_autopilot_cli_json(
         allowed_returncodes=allowed_returncodes,
         cwd=cwd,
     )
+
+
+def run_managed_goal_contract_probe(
+    contract: Mapping[str, Any] | None,
+    *,
+    env: Mapping[str, str] | None = None,
+    allow_missing: bool = False,
+) -> dict[str, Any]:
+    if contract is None:
+        return {
+            "schema_version": "across-goal-contract-probe-matrix/1.0",
+            "status": "legacy_without_goal",
+            "goal_contract": None,
+            "plugins": {},
+            "missing_plugins": [],
+        }
+    normalized = normalize_goal_contract(contract)
+    expected = {
+        "schema_version": "across-goal-contract-probe/1.0",
+        "goal_id": normalized["goal_id"],
+        "goal_revision": normalized["revision"],
+        "criterion_ids": sorted(item["criterion_id"] for item in normalized["acceptance_criteria"]),
+        "evidence_hash": stable_goal_hash(normalized),
+    }
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    results: dict[str, Any] = {}
+    missing: list[str] = []
+    for command in ("across-context", "across-orchestrator", "across-autopilot"):
+        try:
+            result = _run_cli_json(command, ["goal-contract", "--contract-json", payload, "--json"], env=env)
+        except PluginLifecycleError as exc:
+            if allow_missing and "not installed" in str(exc):
+                missing.append(command)
+                continue
+            raise
+        if result != expected:
+            raise PluginLifecycleError(f"{command} returned a mismatched Goal Contract binding")
+        results[command] = result
+    return {
+        "schema_version": "across-goal-contract-probe-matrix/1.0",
+        "status": "passed" if not missing else "degraded",
+        "goal_contract": expected,
+        "plugins": results,
+        "missing_plugins": missing,
+    }
 
 
 def list_context_memories(

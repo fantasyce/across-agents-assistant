@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..persistence.goal_contract_store import GoalContractStoreError
 from ..persistence.service import PersistenceService
+from ..plugin_runtime import run_managed_goal_contract_probe
 from .service import GoalContractService
 
 
@@ -33,6 +34,12 @@ class GoalRevalidationRequest(BaseModel):
     criterion_ids: list[str] = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=500)
+
+
+class GoalPluginProbeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contract: dict[str, Any] | None = None
+    allow_missing: bool = False
 
 
 def install_goal_contract_routes(
@@ -87,6 +94,16 @@ def install_goal_contract_routes(
                 idempotency_key=request.idempotency_key,
             )
         )
+
+    @router.post("/api/goal-contract/plugin-probe")
+    async def probe_goal_contract_plugins(request: GoalPluginProbeRequest):
+        try:
+            return run_managed_goal_contract_probe(request.contract, allow_missing=request.allow_missing)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"reason_code": "goal_request_invalid", "message": str(exc)},
+            ) from exc
 
     app.include_router(router)
 
