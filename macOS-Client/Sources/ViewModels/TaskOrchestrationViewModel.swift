@@ -1,9 +1,17 @@
 import Foundation
 import Combine
 
+private enum GoalActionError: Error {
+    case rejected(String)
+}
+
 class TaskOrchestrationViewModel: ObservableObject {
     @Published var tasks: [TaskSummary] = []
     @Published var selectedTask: TaskDetail?
+    @Published var selectedGoalContract: GoalContractEnvelope?
+    @Published var goalTaskState: GoalTaskDetailState = .legacyEmpty
+    @Published var isLoadingGoalContract = false
+    @Published var goalContractError: String?
     @Published var viewMode: ViewMode = .empty
     @Published var isLoading = false
     @Published var isSubmittingTask = false
@@ -39,6 +47,7 @@ class TaskOrchestrationViewModel: ObservableObject {
     private var projectDirectoryFilter: String?
     private var taskListRequestGeneration = 0
     private var trajectoryRequestGeneration = 0
+    private var goalRequestGeneration = 0
     private let requestData: (URLRequest) async throws -> (Data, URLResponse)
     private let trajectoryExportsDirectory: URL
 
@@ -943,6 +952,7 @@ class TaskOrchestrationViewModel: ObservableObject {
             errorMessage = nil
 
             stopSSE()
+            clearGoalContract()
             let summaryStatus = tasks.first(where: { $0.taskId == taskId })?.status
             let isSuspendedSummary = summaryStatus.map(ResumableTask.isRecoverableDisplayStatus) ?? false
 
@@ -975,6 +985,7 @@ class TaskOrchestrationViewModel: ObservableObject {
                 selectedTask = taskDetail
                 viewMode = .detail
                 isLoading = false
+                loadGoalContract(taskId)
 
                 if !isSuspendedSummary {
                     reconnectAttempts = 0
@@ -1240,12 +1251,14 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
         viewMode = .createForm
         selectedTask = nil
+        clearGoalContract()
         stopSSE()
     }
 
     func enterWorkflowPicker() {
         errorMessage = nil
         selectedTask = nil
+        clearGoalContract()
         viewMode = .empty
         stopSSE()
     }
@@ -1678,11 +1691,166 @@ class TaskOrchestrationViewModel: ObservableObject {
 
             selectedTask = taskDetail
             upsertTaskSummary(from: taskDetail)
+            loadGoalContract(taskId)
             return taskDetail
         } catch {
             print("Failed to refresh selected task detail for \(taskId): \(error)")
             return nil
         }
+    }
+
+    func clearGoalContract() {
+        goalRequestGeneration += 1
+        selectedGoalContract = nil
+        isLoadingGoalContract = false
+        goalContractError = nil
+        goalTaskState = .legacyEmpty
+    }
+
+    @discardableResult
+    func loadGoalContract(_ taskId: String) -> Task<Void, Never> {
+        Task { @MainActor in
+            await performGoalContractLoad(taskId)
+        }
+    }
+
+    @MainActor
+    private func performGoalContractLoad(_ taskId: String) async {
+        goalRequestGeneration += 1
+        let generation = goalRequestGeneration
+        selectedGoalContract = nil
+        isLoadingGoalContract = true
+        goalContractError = nil
+        goalTaskState = .loading
+
+        guard let baseURL else {
+            applyGoalContractFailure("Goal details are unavailable.", generation: generation)
+            return
+        }
+
+        do {
+            let request = Self.goalRequest(baseURL: baseURL, taskId: taskId)
+            let (data, response) = try await requestData(request)
+            guard generation == goalRequestGeneration else { return }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            if httpResponse.statusCode == 404 {
+                selectedGoalContract = nil
+                isLoadingGoalContract = false
+                goalTaskState = .legacyEmpty
+                return
+            }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let envelope = try JSONDecoder().decode(GoalContractEnvelope.self, from: data)
+            guard envelope.contract.taskId == taskId,
+                  envelope.projection.taskId == taskId,
+                  generation == goalRequestGeneration else { return }
+            selectedGoalContract = envelope
+            isLoadingGoalContract = false
+            goalTaskState = GoalProjectionReducer.reduce(envelope, loading: false, error: nil)
+        } catch {
+            guard generation == goalRequestGeneration else { return }
+            applyGoalContractFailure("Goal details are unavailable.", generation: generation)
+        }
+    }
+
+    @discardableResult
+    func decideGoalProposal(
+        taskId: String,
+        proposalId: String,
+        decision: String,
+        expectedRevision: Int,
+        operationIndexes: [Int] = [],
+        approverId: String = "human:local",
+        idempotencyKey: String = UUID().uuidString
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            let body = GoalProposalDecisionRequest(
+                decision: decision,
+                expectedRevision: expectedRevision,
+                operationIndexes: operationIndexes,
+                approverId: approverId,
+                idempotencyKey: idempotencyKey
+            )
+            await performGoalMutation(
+                path: "api/tasks/\(taskId)/goal/proposals/\(proposalId)/decision",
+                taskId: taskId,
+                body: body
+            )
+        }
+    }
+
+    @discardableResult
+    func requestGoalRevalidation(
+        taskId: String,
+        expectedRevision: Int,
+        criterionIds: [String],
+        reason: String,
+        idempotencyKey: String = UUID().uuidString
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            let body = GoalRevalidationRequest(
+                expectedRevision: expectedRevision,
+                criterionIds: criterionIds,
+                reason: reason,
+                idempotencyKey: idempotencyKey
+            )
+            await performGoalMutation(
+                path: "api/tasks/\(taskId)/goal/revalidate",
+                taskId: taskId,
+                body: body
+            )
+        }
+    }
+
+    @MainActor
+    private func performGoalMutation<Body: Encodable>(path: String, taskId: String, body: Body) async {
+        guard let baseURL else {
+            goalContractError = "Goal action is unavailable."
+            goalTaskState = .error("Goal action is unavailable.")
+            return
+        }
+        do {
+            var request = URLRequest(url: baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.httpBody = try JSONEncoder().encode(body)
+            let (data, response) = try await requestData(request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let message = Self.backendErrorMessage(from: data) ?? "Goal action was rejected."
+                throw GoalActionError.rejected(message)
+            }
+            await performGoalContractLoad(taskId)
+        } catch {
+            let message: String
+            if case GoalActionError.rejected(let detail) = error {
+                message = detail
+            } else {
+                message = "Goal action is unavailable."
+            }
+            goalContractError = message
+            goalTaskState = .error(message)
+        }
+    }
+
+    private static func goalRequest(baseURL: URL, taskId: String) -> URLRequest {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/tasks/\(taskId)/goal"))
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    @MainActor
+    private func applyGoalContractFailure(_ message: String, generation: Int) {
+        guard generation == goalRequestGeneration else { return }
+        isLoadingGoalContract = false
+        goalContractError = message
+        goalTaskState = GoalProjectionReducer.reduce(nil, loading: false, error: message)
     }
 
     private func upsertTaskSummary(from task: TaskDetail) {
