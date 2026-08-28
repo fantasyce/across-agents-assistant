@@ -1011,11 +1011,6 @@ class TaskOrchestrationViewModel: ObservableObject {
     ) {
         Task { @MainActor in
             guard !isSubmittingTask else { return }
-            guard !isOrchestratorPluginUnavailable else {
-                errorMessage = orchestratorPluginUnavailableMessage
-                onCompletion?(false)
-                return
-            }
             isSubmittingTask = true
             isLoading = true
             errorMessage = nil
@@ -1244,11 +1239,6 @@ class TaskOrchestrationViewModel: ObservableObject {
     }
 
     func enterCreateMode() {
-        guard !isOrchestratorPluginUnavailable else {
-            errorMessage = orchestratorPluginUnavailableMessage
-            viewMode = .empty
-            return
-        }
         viewMode = .createForm
         selectedTask = nil
         clearGoalContract()

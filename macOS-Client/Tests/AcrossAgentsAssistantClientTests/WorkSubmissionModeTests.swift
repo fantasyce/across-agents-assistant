@@ -14,15 +14,15 @@ struct WorkSubmissionModeTests {
         #expect(!mode.showsOrchestratorUpgradeHint)
     }
 
-    @Test func missingOrchestratorFallsBackToDirectAgentWithoutChangingPreference() {
+    @Test func missingOrchestratorKeepsGoalTrackedDeliveryOnTheDirectRuntime() {
         let mode = WorkSubmissionMode.resolve(
             automaticDeliveryProtection: true,
             orchestratorUnavailable: true
         )
 
         #expect(mode == .directAgentFallback)
-        #expect(!mode.usesProtectedDelivery)
-        #expect(mode.usesDirectAgent)
+        #expect(mode.usesProtectedDelivery)
+        #expect(!mode.usesDirectAgent)
         #expect(mode.showsOrchestratorUpgradeHint)
     }
 

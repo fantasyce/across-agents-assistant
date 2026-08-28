@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import across_agents_assistant.api_server as api_server
 from across_agents_assistant.api_server import app
 from across_agents_assistant.persistence.database import Database
+from across_agents_assistant.persistence.service import PersistenceService
 from across_agents_assistant.persistence.task_persistence import TaskPersistenceService
 from across_agents_assistant.task_review.release_e2e import RELEASE_E2E_SCENARIO_ID
 
@@ -938,6 +939,8 @@ def test_auto_task_submission_uses_external_orchestrator_plugin(monkeypatch, tmp
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
     monkeypatch.setattr(api_server, "_check_llm_provider_readiness", lambda: [])
+    goal_persistence = PersistenceService(str(tmp_path / "goals.db"))
+    monkeypatch.setattr(api_server, "persistence", goal_persistence)
 
     with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
         monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
@@ -961,6 +964,40 @@ def test_auto_task_submission_uses_external_orchestrator_plugin(monkeypatch, tmp
     assert server.last_submit["goal"] == "Build the public README task handoff"
     assert server.last_submit["agent"] == "openclaw"
     assert server.last_submit["deliverables"] == ["across-results/task-report.md"]
+    goal = goal_persistence.goal_contracts.get_current("task-api-external")
+    assert goal is not None
+    assert goal["confirmed_by"] == "local-human:work-submit"
+    assert goal["scope"]["includes"] == ["across-results/task-report.md"]
+    assert goal["source"] == "user"
+
+
+def test_auto_task_submission_cancels_orchestrator_when_goal_persistence_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+    monkeypatch.setattr(api_server, "_check_llm_provider_readiness", lambda: [])
+    monkeypatch.setattr(
+        api_server,
+        "_create_submitted_goal_contract",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("goal store unavailable")),
+    )
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        response = TestClient(app).post(
+            "/api/tasks/auto",
+            json={
+                "description": "Build the public README task handoff",
+                "task_types": ["artifact"],
+                "owner_agent": "openclaw",
+                "project_dir": str(tmp_path / "project"),
+            },
+        )
+
+    assert response.status_code == 502
+    assert server.status == "cancelled"
+    assert ("POST", "/tasks/task-api-external/cancel") in server.requests
 
 
 def test_release_e2e_builtin_mode_still_requires_orchestrator_plugin(monkeypatch, tmp_path):

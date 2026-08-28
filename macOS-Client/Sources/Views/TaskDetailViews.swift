@@ -119,7 +119,14 @@ struct TaskDetailPanel: View {
                     .padding(.top, 4)
                 }
             } else if viewModel.isOrchestratorPluginUnavailable {
-                orchestratorPluginUnavailableView
+                MinimalWorkflowStateView(
+                    state: .empty,
+                    title: appPreferences.text("tasks.overview.newTask"),
+                    detail: appPreferences.text("tasks.orchestratorPlugin.directFallback"),
+                    actionTitle: appPreferences.text("tasks.overview.newTask")
+                ) {
+                    viewModel.enterCreateMode()
+                }
             } else {
                 MinimalWorkflowStateView(
                     state: .empty,

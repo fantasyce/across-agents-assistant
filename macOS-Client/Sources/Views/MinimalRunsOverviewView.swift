@@ -163,7 +163,7 @@ struct MinimalRunsOverviewView: View {
             MinimalIconButton(
                 systemName: "plus",
                 label: preferences.text("tasks.new"),
-                isDisabled: viewModel.isOrchestratorPluginUnavailable
+                isDisabled: false
             ) {
                 onStartWork()
             }
@@ -463,18 +463,12 @@ struct MinimalRunsOverviewView: View {
             }
         } else if viewModel.isOrchestratorPluginUnavailable {
             MinimalWorkflowStateView(
-                state: .unavailable,
-                title: preferences.text("tasks.orchestratorPlugin.title"),
-                detail: viewModel.orchestratorPluginUnavailableMessage,
-                actionTitle: viewModel.canInstallOrchestratorPlugin
-                    ? preferences.text("tasks.orchestratorPlugin.install")
-                    : preferences.text("tasks.orchestratorPlugin.retry")
+                state: .empty,
+                title: preferences.text("tasks.overview.newTask"),
+                detail: preferences.text("tasks.orchestratorPlugin.directFallback"),
+                actionTitle: preferences.text("tasks.overview.newTask")
             ) {
-                if viewModel.canInstallOrchestratorPlugin {
-                    viewModel.installOrchestratorPlugin()
-                } else {
-                    viewModel.loadOrchestratorPluginStatus()
-                }
+                onStartWork()
             }
         } else {
             MinimalWorkflowStateView(

@@ -290,6 +290,8 @@ from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
 from .goal_contract.api import install_goal_contract_routes
+from .goal_contract.protocol import criterion_id
+from .goal_contract.service import GoalContractService
 from .approval.receipts import (
     ApprovalReceiptError,
     evaluate_promotion_authorization,
@@ -465,6 +467,7 @@ _task_state = TaskState()
 _task_persistence_initialized = False
 _server_started_at = time.time()
 _autopilot_trigger_scheduler: AutopilotTriggerScheduler | None = None
+_direct_task_runners: Dict[str, asyncio.Task] = {}
 
 
 def get_autopilot_client() -> AutopilotClient:
@@ -16025,6 +16028,7 @@ async def accept_task_result(task_id: str):
             request_id=f"task-result-review:{task_id}",
             idempotency_key=f"task-result-review:{task_id}",
         )
+        _record_goal_acceptance_evidence(task_id, info)
         return {
             "task_id": task_id,
             "review_status": review["review_status"],
@@ -16550,6 +16554,241 @@ def _required_capability_plan_error(plan: Mapping[str, Any]) -> HTTPException | 
     )
 
 
+def _goal_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _create_submitted_goal_contract(
+    *,
+    task_id: str,
+    statement: str,
+    deliverables: List[str],
+    execution_profile: str,
+) -> Dict[str, Any]:
+    """Persist the user's submitted Work goal before AAA reports submission success."""
+    normalized_task_id = str(task_id).strip()
+    normalized_statement = str(statement).strip()
+    normalized_deliverables = list(dict.fromkeys(str(item).strip() for item in deliverables if str(item).strip()))
+    if not normalized_task_id or not normalized_statement or not normalized_deliverables:
+        raise ValueError("Submitted work requires a task id, goal statement, and deliverables")
+    now = _goal_timestamp()
+    criteria = []
+    for deliverable in normalized_deliverables:
+        description = f"Deliver and verify {deliverable}"
+        criteria.append(
+            {
+                "criterion_id": criterion_id(description, "task_result_review"),
+                "description": description,
+                "required": True,
+                "validator_kind": "task_result_review",
+                "review_policy": "automatic",
+                "source": "user_confirmed",
+            }
+        )
+    contract = {
+        "schema_version": "across-goal-contract/1.0",
+        "goal_id": f"goal-{normalized_task_id}",
+        "revision": 1,
+        "task_id": normalized_task_id,
+        "statement": normalized_statement,
+        "success_outcome": "All submitted deliverables are verified and the completed result is accepted.",
+        "scope": {
+            "includes": normalized_deliverables,
+            "excludes": [],
+        },
+        "acceptance_criteria": criteria,
+        "dependencies": [],
+        "execution_profile": execution_profile,
+        "source": "user",
+        "confirmed_by": "local-human:work-submit",
+        "confirmed_at": now,
+        "created_at": now,
+    }
+    return persistence.goal_contracts.create_revision(
+        contract,
+        expected_revision=0,
+        idempotency_key=f"work-submit-goal:{normalized_task_id}",
+    )
+
+
+def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, Any] | None:
+    """Bind the accepted, quality-passed task result to every required criterion."""
+    contract = persistence.goal_contracts.get_current(task_id)
+    if contract is None:
+        # Historical tasks remain reviewable without inventing a Goal Contract.
+        return None
+    artifact_digests: Dict[str, str] = {}
+    for index, raw_artifact in enumerate(info.artifacts):
+        artifact = dict(raw_artifact)
+        logical_id = str(
+            artifact.get("id")
+            or artifact.get("artifact_id")
+            or artifact.get("name")
+            or f"artifact-{index + 1}"
+        )
+        supplied_digest = str(artifact.get("sha256") or artifact.get("digest") or "").lower()
+        digest = supplied_digest if re.fullmatch(r"[0-9a-f]{64}", supplied_digest) else hashlib.sha256(
+            json.dumps(artifact, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        artifact_digests[logical_id] = digest
+    evidence_facts = {
+        "task_id": task_id,
+        "status": info.status,
+        "artifacts": info.artifacts,
+        "quality_health": info.quality_health,
+        "delivery_report": info.delivery_report,
+        "direct_response": getattr(info, "direct_response", None),
+    }
+    input_fingerprint = hashlib.sha256(
+        json.dumps(evidence_facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    if not artifact_digests:
+        artifact_digests["task-result-review"] = input_fingerprint
+    required_criteria = [
+        str(item["criterion_id"])
+        for item in contract["acceptance_criteria"]
+        if item.get("required")
+    ]
+    return GoalContractService(persistence).record_direct_evidence(
+        task_id=task_id,
+        goal_revision=int(contract["revision"]),
+        criterion_ids=required_criteria,
+        artifact_digests=artifact_digests,
+        validator_id="aaa-host:task-result-review",
+        verdict="verified",
+        input_fingerprint=input_fingerprint,
+        idempotency_key=f"task-result-review-evidence:{task_id}:{contract['revision']}",
+    )
+
+
+async def _run_direct_goal_task(
+    *,
+    task_id: str,
+    statement: str,
+    owner_agent: str,
+    project_dir: Optional[str],
+) -> None:
+    try:
+        task = _task_state.get_task(task_id)
+        if task is None or task.status == TaskStatus.CANCELLED:
+            return
+        _task_state.set_task_status(task_id, TaskStatus.RUNNING)
+        for subtask in task.subtasks:
+            _task_state.update_subtask_status(task_id, subtask.subtask_id, JobStatus.RUNNING)
+        response = await _chat_with_model_capability(
+            message=statement,
+            system_prompt=(
+                "Complete this user goal as a Direct Agent task. Stay inside the selected project, "
+                "return a concise result, and do not claim completion without checking the requested outcome."
+            ),
+            agent_id=owner_agent,
+            project_dir=project_dir,
+            scope="task.direct",
+            max_tokens=4096,
+            max_wall_timeout=1800,
+        )
+        _task_state.finish_direct_task(task_id, response=response.text or "Direct Agent task completed.")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Direct Agent task failed for task=%s", task_id)
+        _task_state.finish_direct_task(task_id, error=_safe_error_message("Direct Agent task"))
+
+
+def _schedule_direct_goal_task(
+    *,
+    task_id: str,
+    statement: str,
+    owner_agent: str,
+    project_dir: Optional[str],
+) -> None:
+    runner = asyncio.create_task(
+        _run_direct_goal_task(
+            task_id=task_id,
+            statement=statement,
+            owner_agent=owner_agent,
+            project_dir=project_dir,
+        ),
+        name=f"aaa-direct-task-{task_id}",
+    )
+    _direct_task_runners[task_id] = runner
+
+    def discard(completed: asyncio.Task) -> None:
+        if _direct_task_runners.get(task_id) is completed:
+            _direct_task_runners.pop(task_id, None)
+
+    runner.add_done_callback(discard)
+
+
+def _submit_direct_goal_task(req: AutoTaskRequest) -> AutoTaskResponse:
+    planning_request = _external_task_planning_request(req)
+    if requests_remote_worker(planning_request):
+        raise _external_orchestrator_unavailable_response(
+            {"connection_note": "Across Orchestrator is required for an explicitly requested remote Worker."}
+        )
+    requested_workflow = str(
+        (req.project_signals or {}).get("requested_workflow_id")
+        or (req.project_signals or {}).get("workflow_id")
+        or ""
+    ).strip()
+    if requested_workflow:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "capability_decision_required",
+                "decision_ids": ["install_requested_workflow", "install_orchestrator"],
+            },
+        )
+    _init_task_persistence()
+    owner_agent = (
+        normalize_agent_id(req.owner_agent)
+        or normalize_agent_id(agent_manager.get_active_agent())
+        or LOCAL_AGENT_ID
+    )
+    deliverables = _deliverables_for_external_task(req)
+    task = _task_state.create_task(
+        description=req.description,
+        project_dir=req.project_dir,
+        owner_agent=owner_agent,
+        allowed_subtask_agents=[owner_agent],
+        task_types=req.task_types,
+        delivery_mode="direct",
+    )
+    direct_subtask = _task_state.add_subtask(
+        task.task_id,
+        req.description,
+        owner_agent,
+        subtask_id=f"st-direct-{task.task_id.removeprefix('task-')}",
+    )
+    try:
+        _create_submitted_goal_contract(
+            task_id=task.task_id,
+            statement=req.description,
+            deliverables=deliverables,
+            execution_profile="direct",
+        )
+    except Exception:
+        _task_state.cancel_task(task.task_id)
+        raise
+    if direct_subtask is None:
+        _task_state.cancel_task(task.task_id)
+        raise RuntimeError("Direct Agent task could not create its execution unit")
+    _schedule_direct_goal_task(
+        task_id=task.task_id,
+        statement=req.description,
+        owner_agent=owner_agent,
+        project_dir=req.project_dir,
+    )
+    return AutoTaskResponse(
+        task_id=task.task_id,
+        status="pending",
+        message="Task submitted to the AAA Direct Agent runtime",
+        implementation="direct",
+        external_task=False,
+        execution_route="direct",
+    )
+
+
 async def _submit_auto_orchestrated_task(
     req: AutoTaskRequest,
 ) -> AutoTaskResponse:
@@ -16627,10 +16866,27 @@ async def _submit_auto_orchestrated_task(
                 plugin.submit_task,
                 **submit_kwargs,
             )
+            task_id = str(task.get("task_id") or "")
+            try:
+                _create_submitted_goal_contract(
+                    task_id=task_id,
+                    statement=req.description,
+                    deliverables=deliverables,
+                    execution_profile="workflow-pack" if execution_contract.get("workflow_id") else "orchestrated",
+                )
+            except Exception:
+                try:
+                    await asyncio.to_thread(
+                        plugin.cancel_task,
+                        task_id,
+                        reason="goal_contract_persistence_failed",
+                    )
+                except Exception:
+                    logger.exception("Unable to cancel the parent task after Goal Contract persistence failed")
+                raise
             worker_execution = None
             workflow_id = str(execution_contract.get("workflow_id") or "")
             if execution_contract.get("route") == "worker":
-                task_id = str(task.get("task_id") or "")
                 try:
                     worker_execution = await asyncio.to_thread(
                         get_worker_task_bridge().submit_workflow,
@@ -16650,7 +16906,7 @@ async def _submit_auto_orchestrated_task(
                         logger.exception("Unable to cancel the parent task after Worker dispatch failed")
                     raise
             return AutoTaskResponse(
-                task_id=str(task.get("task_id") or ""),
+                task_id=task_id,
                 status=str(task.get("status") or "created"),
                 message="Task submitted to external Across Orchestrator",
                 implementation="external",
@@ -16663,7 +16919,13 @@ async def _submit_auto_orchestrated_task(
         except Exception as exc:
             logger.exception("External Across Orchestrator task submission failed")
             raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator task submission"))
-    raise _external_orchestrator_unavailable_response(plugin_status)
+    try:
+        return _submit_direct_goal_task(req)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Direct Agent task submission failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("Direct Agent task submission"))
 
 
 @app.get("/api/release/e2e/scenarios", response_model=ReleaseE2EScenarioListResponse)
@@ -17456,6 +17718,9 @@ async def cancel_task(task_id: str):
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         _task_state.cancel_task(task_id)
+        runner = _direct_task_runners.pop(task_id, None)
+        if runner is not None and not runner.done():
+            runner.cancel()
         return {"status": "success", "task_id": task_id}
     except HTTPException:
         raise
