@@ -1796,6 +1796,33 @@ class TaskOrchestrationViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func reviewGoalCriterion(
+        taskId: String,
+        expectedRevision: Int,
+        criterionId: String,
+        decision: String,
+        reason: String,
+        reviewerId: String = "human:local",
+        idempotencyKey: String = UUID().uuidString
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            let body = GoalCriterionReviewRequest(
+                expectedRevision: expectedRevision,
+                criterionId: criterionId,
+                decision: decision,
+                reason: reason,
+                reviewerId: reviewerId,
+                idempotencyKey: idempotencyKey
+            )
+            await performGoalMutation(
+                path: "api/tasks/\(taskId)/goal/reviews",
+                taskId: taskId,
+                body: body
+            )
+        }
+    }
+
     @MainActor
     private func performGoalMutation<Body: Encodable>(path: String, taskId: String, body: Body) async {
         guard let baseURL else {

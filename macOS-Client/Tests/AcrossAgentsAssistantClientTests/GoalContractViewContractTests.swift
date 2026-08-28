@@ -28,6 +28,8 @@ struct GoalContractViewContractTests {
         #expect(goal.contains("Accept selected changes"))
         #expect(goal.contains("Reject changes"))
         #expect(goal.contains("Revalidate stale evidence"))
+        #expect(goal.contains("Reject criterion review"))
+        #expect(goal.contains("Pass criterion review"))
         #expect(goal.contains(".disabled(selectedOperationIndexes"))
     }
 

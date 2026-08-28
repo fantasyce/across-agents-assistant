@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -8,7 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..persistence.goal_contract_store import GoalContractStoreError
 from ..persistence.service import PersistenceService
-from ..plugin_runtime import run_managed_goal_contract_probe
+from ..plugin_runtime import (
+    PluginLifecycleError,
+    build_direct_goal_revalidation_attempt,
+    run_managed_goal_contract_probe,
+    run_managed_goal_revalidation_attempt,
+)
 from .service import GoalContractService
 
 
@@ -36,6 +41,16 @@ class GoalRevalidationRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=500)
 
 
+class GoalCriterionReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1)
+    criterion_id: str = Field(min_length=1, max_length=500)
+    decision: str
+    reason: str = Field(min_length=1, max_length=2000)
+    reviewer_id: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=500)
+
+
 class GoalPluginProbeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     contract: dict[str, Any] | None = None
@@ -46,6 +61,7 @@ def install_goal_contract_routes(
     app: FastAPI,
     *,
     service_provider: Callable[[], PersistenceService],
+    revalidation_verifier: Callable[[str, int, list[str], dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> None:
     router = APIRouter()
 
@@ -85,12 +101,89 @@ def install_goal_contract_routes(
 
     @router.post("/api/tasks/{task_id}/goal/revalidate")
     async def revalidate_goal(task_id: str, request: GoalRevalidationRequest):
-        return _translate(
-            lambda: goals().request_revalidation(
+        service = goals()
+        replay = _translate(
+            lambda: service.completed_revalidation_replay(
+                task_id=task_id,
+                expected_revision=request.expected_revision,
+                idempotency_key=request.idempotency_key,
+            )
+        )
+        if replay is not None:
+            return replay
+        pending = _translate(
+            lambda: service.request_revalidation(
                 task_id=task_id,
                 expected_revision=request.expected_revision,
                 criterion_ids=request.criterion_ids,
                 reason=request.reason,
+                idempotency_key=request.idempotency_key,
+            )
+        )
+        if revalidation_verifier is None:
+            return pending
+        if pending.get("state") == "completed":
+            envelope = service.get_goal(task_id)
+            replacement_ids = set(map(str, pending.get("replacement_evidence_ids") or ()))
+            evidence_binding = next(
+                (item for item in envelope["evidence_bindings"] if item.get("evidence_id") in replacement_ids),
+                None,
+            )
+            return {
+                "attempt": pending.get("attempt"),
+                "invalidation": pending,
+                "completed_invalidations": [pending],
+                "evidence_binding": evidence_binding,
+                "projection": envelope["projection"],
+            }
+        try:
+            attempt_payload = service.revalidation_attempt_payload(
+                task_id=task_id,
+                expected_revision=request.expected_revision,
+                criterion_ids=request.criterion_ids,
+            )
+            try:
+                attempt = run_managed_goal_revalidation_attempt(attempt_payload)
+            except PluginLifecycleError:
+                contract = service.get_goal(task_id)["contract"]
+                if contract.get("execution_profile") != "direct":
+                    raise
+                attempt = build_direct_goal_revalidation_attempt(attempt_payload)
+            material = await revalidation_verifier(
+                task_id,
+                request.expected_revision,
+                request.criterion_ids,
+                attempt,
+            )
+            return service.complete_revalidation(
+                task_id=task_id,
+                expected_revision=request.expected_revision,
+                criterion_ids=request.criterion_ids,
+                artifact_digests=material["artifact_digests"],
+                validator_id=material["validator_id"],
+                verdict=material["verdict"],
+                input_fingerprint=material["input_fingerprint"],
+                attempt=attempt,
+                idempotency_key=request.idempotency_key,
+            )
+        except (KeyError, ValueError, GoalContractStoreError) as exc:
+            return _translate(lambda: (_ for _ in ()).throw(exc))
+        except PluginLifecycleError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"reason_code": "goal_revalidation_runtime_unavailable", "message": str(exc)},
+            ) from exc
+
+    @router.post("/api/tasks/{task_id}/goal/reviews")
+    async def review_goal_criterion(task_id: str, request: GoalCriterionReviewRequest):
+        return _translate(
+            lambda: goals().record_criterion_review(
+                task_id=task_id,
+                expected_revision=request.expected_revision,
+                criterion_id=request.criterion_id,
+                decision=request.decision,
+                reason=request.reason,
+                reviewer_id=request.reviewer_id,
                 idempotency_key=request.idempotency_key,
             )
         )

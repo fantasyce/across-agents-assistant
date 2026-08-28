@@ -97,3 +97,60 @@ def test_goal_contract_probe_handles_legacy_and_rejects_future_schema(tmp_path):
     future["schema_version"] = "across-goal-contract/2.0"
     with pytest.raises(ValueError, match="schema_version"):
         plugin_runtime.run_managed_goal_contract_probe(future, env={"ACROSS_HOME": str(tmp_path), "PATH": ""})
+
+
+def test_goal_revalidation_uses_isolated_installed_orchestrator(monkeypatch, tmp_path):
+    across_home = tmp_path / "across"
+    command = across_home / "bin" / "across-orchestrator"
+    command.parent.mkdir(parents=True)
+    command.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "assert sys.argv[1:3] == ['goal-revalidation', '--payload-json']\n"
+        "payload = json.loads(sys.argv[3])\n"
+        "print(json.dumps({\n"
+        " 'schema_version': 'across-goal-revalidation-attempt/1.0',\n"
+        " 'attempt_id': 'revalidation-attempt-installed',\n"
+        " 'attempt_number': 1,\n"
+        " 'criterion_ids': payload['criterion_ids'],\n"
+        " 'changed_fingerprints': payload['changed_fingerprints'],\n"
+        " 'supersedes_evidence_ids': ['evidence-old'],\n"
+        " 'preserved_evidence_ids': ['evidence-kept'],\n"
+        " 'state': 'queued'\n"
+        "}))\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+    monkeypatch.setattr(plugin_runtime, "_command_integrity_issues", lambda *_args: [])
+    payload = {
+        "graph": {"criteria": {}},
+        "changed_fingerprints": ["source-a"],
+        "criterion_ids": ["criterion-a"],
+        "prior_attempt_number": 0,
+    }
+
+    result = plugin_runtime.run_managed_goal_revalidation_attempt(
+        payload, env={"ACROSS_HOME": str(across_home), "PATH": ""}
+    )
+
+    assert result["attempt_id"] == "revalidation-attempt-installed"
+    assert result["criterion_ids"] == ["criterion-a"]
+
+
+def test_direct_goal_revalidation_preserves_unaffected_evidence_without_orchestrator():
+    result = plugin_runtime.build_direct_goal_revalidation_attempt({
+        "graph": {
+            "criteria": {
+                "criterion-a": {"evidence_ids": ["evidence-a"]},
+                "criterion-b": {"evidence_ids": ["evidence-b"]},
+            }
+        },
+        "changed_fingerprints": ["source-a"],
+        "criterion_ids": ["criterion-a"],
+        "prior_attempt_number": 2,
+    })
+
+    assert result["attempt_id"].startswith("direct-revalidation-attempt-")
+    assert result["attempt_number"] == 3
+    assert result["supersedes_evidence_ids"] == ["evidence-a"]
+    assert result["preserved_evidence_ids"] == ["evidence-b"]

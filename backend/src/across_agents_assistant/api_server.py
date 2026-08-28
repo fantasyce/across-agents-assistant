@@ -289,6 +289,7 @@ from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
+from .persistence.goal_contract_store import GoalContractStoreError
 from .goal_contract.api import install_goal_contract_routes
 from .goal_contract.protocol import criterion_id
 from .goal_contract.service import GoalContractService
@@ -979,7 +980,13 @@ async def _api_lifespan(app: FastAPI):
 
 app = FastAPI(title="Across Agents Assistant API", lifespan=_api_lifespan)
 
-install_goal_contract_routes(app, service_provider=lambda: persistence)
+install_goal_contract_routes(
+    app,
+    service_provider=lambda: persistence,
+    revalidation_verifier=lambda task_id, revision, criterion_ids, attempt: _verify_goal_revalidation(
+        task_id, revision, criterion_ids, attempt
+    ),
+)
 
 
 async def _external_task_info_with_worker(task_payload: Mapping[str, Any], *, evidence: Mapping[str, Any] | None = None) -> Dict[str, Any]:
@@ -16624,12 +16631,7 @@ def _create_submitted_goal_contract(
     )
 
 
-def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, Any] | None:
-    """Bind the accepted, quality-passed task result to every required criterion."""
-    contract = persistence.goal_contracts.get_current(task_id)
-    if contract is None:
-        # Historical tasks remain reviewable without inventing a Goal Contract.
-        return None
+def _goal_acceptance_evidence_material(task_id: str, info: TaskInfo) -> Dict[str, Any]:
     artifact_digests: Dict[str, str] = {}
     for index, raw_artifact in enumerate(info.artifacts):
         artifact = dict(raw_artifact)
@@ -16657,6 +16659,21 @@ def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, 
     ).hexdigest()
     if not artifact_digests:
         artifact_digests["task-result-review"] = input_fingerprint
+    return {
+        "artifact_digests": artifact_digests,
+        "input_fingerprint": input_fingerprint,
+        "validator_id": "aaa-host:task-result-review",
+        "verdict": "verified",
+    }
+
+
+def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, Any] | None:
+    """Bind the accepted, quality-passed task result to every required criterion."""
+    contract = persistence.goal_contracts.get_current(task_id)
+    if contract is None:
+        # Historical tasks remain reviewable without inventing a Goal Contract.
+        return None
+    material = _goal_acceptance_evidence_material(task_id, info)
     required_criteria = [
         str(item["criterion_id"])
         for item in contract["acceptance_criteria"]
@@ -16666,12 +16683,40 @@ def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, 
         task_id=task_id,
         goal_revision=int(contract["revision"]),
         criterion_ids=required_criteria,
-        artifact_digests=artifact_digests,
-        validator_id="aaa-host:task-result-review",
-        verdict="verified",
-        input_fingerprint=input_fingerprint,
+        artifact_digests=material["artifact_digests"],
+        validator_id=material["validator_id"],
+        verdict=material["verdict"],
+        input_fingerprint=material["input_fingerprint"],
         idempotency_key=f"task-result-review-evidence:{task_id}:{contract['revision']}",
     )
+
+
+async def _verify_goal_revalidation(
+    task_id: str,
+    revision: int,
+    criterion_ids: list[str],
+    attempt: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Re-run the host's terminal-result validator for a new Orchestrator attempt."""
+    del revision, criterion_ids, attempt
+    info = await get_task(task_id)
+    if info.status != TaskStatus.COMPLETED.value:
+        raise GoalContractStoreError(
+            "goal_revalidation_not_ready", "only successfully completed work can be revalidated"
+        )
+    blocking_quality = {"failed", "failure", "partial", "blocked", "error", "inconsistent"}
+    quality_values = [
+        str((info.quality_health or {}).get("delivery_quality") or "").lower(),
+        str((info.quality_health or {}).get("quality_gate") or "").lower(),
+        str((info.delivery_report or {}).get("quality_gate") or "").lower(),
+    ]
+    if any(value in blocking_quality for value in quality_values if value):
+        raise GoalContractStoreError(
+            "goal_revalidation_failed", "task result no longer passes its quality gates"
+        )
+    material = _goal_acceptance_evidence_material(task_id, info)
+    material["validator_id"] = "aaa-host:goal-revalidation"
+    return material
 
 
 async def _run_direct_goal_task(

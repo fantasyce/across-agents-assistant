@@ -12,6 +12,7 @@ struct GoalContractSummaryView: View {
     @State private var selectedOperationIndexes: Set<Int> = []
     @State private var pendingDecision: PendingGoalDecision?
     @State private var pendingRevalidation = false
+    @State private var pendingCriterionReview: PendingCriterionReview?
 
     private let acceptAllAccessibilityLabel = "Accept all changes"
     private let acceptSelectedAccessibilityLabel = "Accept selected changes"
@@ -66,6 +67,17 @@ struct GoalContractSummaryView: View {
         ) {
             Button(appPreferences.text("tasks.goal.revalidate")) { submitRevalidation() }
             Button(appPreferences.text("tasks.goal.cancel"), role: .cancel) { pendingRevalidation = false }
+        }
+        .confirmationDialog(
+            appPreferences.text("tasks.goal.confirmCriterionReview"),
+            isPresented: Binding(
+                get: { pendingCriterionReview != nil },
+                set: { if !$0 { pendingCriterionReview = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(appPreferences.text("tasks.goal.confirmCriterionReview")) { submitCriterionReview() }
+            Button(appPreferences.text("tasks.goal.cancel"), role: .cancel) { pendingCriterionReview = nil }
         }
     }
 
@@ -219,10 +231,39 @@ struct GoalContractSummaryView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 8)
+            if let criterion, criterion.reviewPolicy != "automatic", coverage.evidenceState.rawValue == "verified" {
+                HStack(spacing: 6) {
+                    Button(appPreferences.text("tasks.goal.reviewReject"), role: .destructive) {
+                        pendingCriterionReview = PendingCriterionReview(
+                            criterionId: coverage.criterionId,
+                            decision: "rejected",
+                            revision: contract.revision
+                        )
+                    }
+                    .accessibilityLabel("Reject criterion review")
+                    Button(
+                        appPreferences.text(
+                            coverage.reviewState.rawValue == "rejected"
+                                ? "tasks.goal.reviewPassAfterFix"
+                                : "tasks.goal.reviewPass"
+                        )
+                    ) {
+                        pendingCriterionReview = PendingCriterionReview(
+                            criterionId: coverage.criterionId,
+                            decision: "passed",
+                            revision: contract.revision
+                        )
+                    }
+                    .accessibilityLabel("Pass criterion review")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
         .padding(.vertical, 7)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private func proposalView(_ proposal: GoalChangeProposal, revision: Int) -> some View {
@@ -312,6 +353,21 @@ struct GoalContractSummaryView: View {
         pendingRevalidation = false
     }
 
+    private func submitCriterionReview() {
+        guard let review = pendingCriterionReview else { return }
+        viewModel.reviewGoalCriterion(
+            taskId: taskId,
+            expectedRevision: review.revision,
+            criterionId: review.criterionId,
+            decision: review.decision,
+            reason: review.decision == "passed"
+                ? "Human reviewer confirmed the corrected criterion now passes."
+                : "Human reviewer rejected the criterion and requested a fix.",
+            idempotencyKey: UUID().uuidString
+        )
+        pendingCriterionReview = nil
+    }
+
     private func staleCriterionIds(_ envelope: GoalContractEnvelope) -> [String] {
         envelope.projection.criterionCoverage
             .filter { $0.evidenceState.rawValue == "stale" }
@@ -343,5 +399,11 @@ private struct PendingGoalDecision {
     let proposalId: String
     let decision: String
     let operationIndexes: [Int]
+    let revision: Int
+}
+
+private struct PendingCriterionReview {
+    let criterionId: String
+    let decision: String
     let revision: Int
 }

@@ -6,7 +6,7 @@ enum GoalProjectionValue: Equatable, Hashable, Codable {
 
     private static let knownValues: Set<String> = [
         "confirmed", "needs_confirmation", "not_started", "running", "finished", "failed", "cancelled",
-        "none", "partial", "satisfied", "stale", "pending", "passed", "waived", "not_required",
+        "none", "partial", "satisfied", "stale", "pending", "passed", "rejected", "waived", "not_required",
         "change_pending", "valid", "revalidation_required", "completed", "waiting_for_decision",
         "waiting_for_review", "waiting_for_evidence", "goal_needs_confirmation", "dependency_unsatisfied",
         "criterion_evidence_missing", "criterion_evidence_stale", "criterion_evidence_failed", "review_pending",
@@ -40,12 +40,13 @@ struct GoalContractEnvelope: Decodable, Equatable {
     let pendingProposals: [GoalChangeProposal]
     let evidenceBindings: [GoalEvidenceBinding]
     let invalidations: [GoalInvalidation]
+    let reviews: [GoalCriterionReview]
 
     enum CodingKeys: String, CodingKey {
         case contract, projection
         case pendingProposals = "pending_proposals"
         case evidenceBindings = "evidence_bindings"
-        case invalidations
+        case invalidations, reviews
     }
 
     init(from decoder: Decoder) throws {
@@ -55,6 +56,7 @@ struct GoalContractEnvelope: Decodable, Equatable {
         pendingProposals = try container.decodeIfPresent([GoalChangeProposal].self, forKey: .pendingProposals) ?? []
         evidenceBindings = try container.decodeIfPresent([GoalEvidenceBinding].self, forKey: .evidenceBindings) ?? []
         invalidations = try container.decodeIfPresent([GoalInvalidation].self, forKey: .invalidations) ?? []
+        reviews = try container.decodeIfPresent([GoalCriterionReview].self, forKey: .reviews) ?? []
     }
 }
 
@@ -302,6 +304,39 @@ struct GoalRevalidationRequest: Encodable, Equatable {
         case expectedRevision = "expected_revision"
         case criterionIds = "criterion_ids"
         case reason
+        case idempotencyKey = "idempotency_key"
+    }
+}
+
+struct GoalCriterionReview: Decodable, Equatable, Identifiable {
+    let reviewId: String
+    let criterionIds: [String]
+    let status: String
+    let reason: String
+    let reviewerId: String
+    var id: String { reviewId }
+
+    enum CodingKeys: String, CodingKey {
+        case reviewId = "review_id"
+        case criterionIds = "criterion_ids"
+        case status, reason
+        case reviewerId = "reviewer_id"
+    }
+}
+
+struct GoalCriterionReviewRequest: Encodable, Equatable {
+    let expectedRevision: Int
+    let criterionId: String
+    let decision: String
+    let reason: String
+    let reviewerId: String
+    let idempotencyKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case expectedRevision = "expected_revision"
+        case criterionId = "criterion_id"
+        case decision, reason
+        case reviewerId = "reviewer_id"
         case idempotencyKey = "idempotency_key"
     }
 }

@@ -467,6 +467,53 @@ def run_managed_goal_contract_probe(
     }
 
 
+def run_managed_goal_revalidation_attempt(
+    payload: Mapping[str, Any],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Ask the installed Orchestrator to compute one selective revalidation attempt."""
+    encoded = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    result = _run_cli_json(
+        "across-orchestrator",
+        ["goal-revalidation", "--payload-json", encoded, "--json"],
+        env=env,
+        timeout=15,
+    )
+    if not isinstance(result, dict) or result.get("schema_version") != "across-goal-revalidation-attempt/1.0":
+        raise PluginLifecycleError("Across Orchestrator returned an invalid revalidation attempt")
+    return result
+
+
+def build_direct_goal_revalidation_attempt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the equivalent host-owned attempt when a Direct Agent has no Orchestrator."""
+    graph = dict(payload.get("graph") or {})
+    criteria = dict(graph.get("criteria") or {})
+    selected = sorted(set(map(str, payload.get("criterion_ids") or ())))
+    if not selected or not set(selected).issubset(set(map(str, criteria))):
+        raise PluginLifecycleError("Direct Agent revalidation criteria are invalid")
+    superseded = sorted({
+        str(evidence_id)
+        for criterion_id in selected
+        for evidence_id in dict(criteria.get(criterion_id) or {}).get("evidence_ids") or ()
+    })
+    all_evidence = {
+        str(evidence_id)
+        for raw in criteria.values()
+        for evidence_id in dict(raw or {}).get("evidence_ids") or ()
+    }
+    return {
+        "schema_version": "across-goal-revalidation-attempt/1.0",
+        "attempt_id": f"direct-revalidation-attempt-{uuid.uuid4().hex}",
+        "attempt_number": max(0, int(payload.get("prior_attempt_number") or 0)) + 1,
+        "criterion_ids": selected,
+        "changed_fingerprints": sorted(set(map(str, payload.get("changed_fingerprints") or ()))),
+        "supersedes_evidence_ids": superseded,
+        "preserved_evidence_ids": sorted(all_evidence - set(superseded)),
+        "state": "queued",
+    }
+
+
 def list_context_memories(
     *,
     project_root: str | None = None,

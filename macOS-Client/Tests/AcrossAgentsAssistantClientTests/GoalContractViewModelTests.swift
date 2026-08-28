@@ -60,6 +60,32 @@ struct GoalContractViewModelTests {
         #expect(viewModel.goalContractError == nil)
     }
 
+    @Test @MainActor
+    func criterionReviewSendsHumanDecisionAndRefreshesProjection() async throws {
+        let stub = GoalMutationStub(goalData: Data(GoalContractModelsTests.envelopeJSON().utf8))
+        let viewModel = TaskOrchestrationViewModel(requestData: { request in
+            try await stub.response(for: request)
+        })
+
+        await viewModel.reviewGoalCriterion(
+            taskId: "task-1",
+            expectedRevision: 2,
+            criterionId: "criterion-1",
+            decision: "rejected",
+            reason: "Needs correction",
+            idempotencyKey: "review-fixed"
+        ).value
+
+        let requests = await stub.requests
+        #expect(requests.count == 2)
+        #expect(requests[0].url?.path.hasSuffix("/api/tasks/task-1/goal/reviews") == true)
+        let body = try #require(requests[0].httpBody)
+        let object = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(object["criterion_id"] as? String == "criterion-1")
+        #expect(object["decision"] as? String == "rejected")
+        #expect(object["expected_revision"] as? Int == 2)
+    }
+
     private static func response(_ request: URLRequest, status: Int) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
     }

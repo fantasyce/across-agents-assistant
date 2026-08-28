@@ -35,13 +35,24 @@ struct GoalContractModelsTests {
             reason: "Source changed",
             idempotencyKey: "revalidate-1"
         )
+        let review = GoalCriterionReviewRequest(
+            expectedRevision: 3,
+            criterionId: "criterion-1",
+            decision: "passed",
+            reason: "Fixed and verified",
+            reviewerId: "human:local",
+            idempotencyKey: "review-1"
+        )
 
         let decisionObject = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(decision)) as? [String: Any])
         let revalidationObject = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(revalidation)) as? [String: Any])
+        let reviewObject = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(review)) as? [String: Any])
         #expect(decisionObject["expected_revision"] as? Int == 3)
         #expect(decisionObject["idempotency_key"] as? String == "decision-1")
         #expect(revalidationObject["criterion_ids"] as? [String] == ["criterion-1"])
         #expect(revalidationObject["idempotency_key"] as? String == "revalidate-1")
+        #expect(reviewObject["criterion_id"] as? String == "criterion-1")
+        #expect(reviewObject["reviewer_id"] as? String == "human:local")
     }
 
     static func envelopeJSON(
