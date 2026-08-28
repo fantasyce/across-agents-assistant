@@ -231,6 +231,7 @@ struct TaskDetailPanel: View {
                             }
                         )
                     }
+                    GoalContractSummaryView(viewModel: viewModel, taskId: task.taskId)
                     if let remoteExecution = task.remoteExecution {
                         remoteExecutionSection(remoteExecution)
                     }

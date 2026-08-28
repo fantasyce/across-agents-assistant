@@ -39,11 +39,22 @@ struct GoalContractEnvelope: Decodable, Equatable {
     let projection: GoalStateProjection
     let pendingProposals: [GoalChangeProposal]
     let evidenceBindings: [GoalEvidenceBinding]
+    let invalidations: [GoalInvalidation]
 
     enum CodingKeys: String, CodingKey {
         case contract, projection
         case pendingProposals = "pending_proposals"
         case evidenceBindings = "evidence_bindings"
+        case invalidations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        contract = try container.decode(GoalContract.self, forKey: .contract)
+        projection = try container.decode(GoalStateProjection.self, forKey: .projection)
+        pendingProposals = try container.decodeIfPresent([GoalChangeProposal].self, forKey: .pendingProposals) ?? []
+        evidenceBindings = try container.decodeIfPresent([GoalEvidenceBinding].self, forKey: .evidenceBindings) ?? []
+        invalidations = try container.decodeIfPresent([GoalInvalidation].self, forKey: .invalidations) ?? []
     }
 }
 
@@ -170,6 +181,8 @@ struct GoalChangeProposal: Decodable, Equatable, Identifiable {
     let baseGoalRevision: Int
     let proposedBy: String
     let reason: String
+    let operations: [GoalProposalOperation]
+    let impactSummary: GoalProposalImpactSummary
     let decisionState: String
     let createdAt: String
     var id: String { proposalId }
@@ -180,8 +193,58 @@ struct GoalChangeProposal: Decodable, Equatable, Identifiable {
         case baseGoalRevision = "base_goal_revision"
         case proposedBy = "proposed_by"
         case reason
+        case operations
+        case impactSummary = "impact_summary"
         case decisionState = "decision_state"
         case createdAt = "created_at"
+    }
+}
+
+struct GoalProposalOperation: Decodable, Equatable, Identifiable {
+    let op: String
+    let path: String
+    var id: String { "\(op):\(path)" }
+}
+
+struct GoalProposalImpactSummary: Decodable, Equatable {
+    let goalIds: [String]
+    let criterionIds: [String]
+    let evidenceIds: [String]
+    let requiresRevalidation: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case goalIds = "goal_ids"
+        case criterionIds = "criterion_ids"
+        case evidenceIds = "evidence_ids"
+        case requiresRevalidation = "requires_revalidation"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        goalIds = try container.decodeIfPresent([String].self, forKey: .goalIds) ?? []
+        criterionIds = try container.decodeIfPresent([String].self, forKey: .criterionIds) ?? []
+        evidenceIds = try container.decodeIfPresent([String].self, forKey: .evidenceIds) ?? []
+        requiresRevalidation = try container.decodeIfPresent(Bool.self, forKey: .requiresRevalidation) ?? false
+    }
+}
+
+struct GoalInvalidation: Decodable, Equatable, Identifiable {
+    let invalidationId: String
+    let goalId: String
+    let fromRevision: Int
+    let toRevision: Int?
+    let criterionIds: [String]
+    let reason: String
+    let state: String
+    var id: String { invalidationId }
+
+    enum CodingKeys: String, CodingKey {
+        case invalidationId = "invalidation_id"
+        case goalId = "goal_id"
+        case fromRevision = "from_revision"
+        case toRevision = "to_revision"
+        case criterionIds = "criterion_ids"
+        case reason, state
     }
 }
 

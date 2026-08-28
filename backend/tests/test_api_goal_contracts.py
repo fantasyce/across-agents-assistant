@@ -120,6 +120,11 @@ def test_direct_agent_evidence_uses_public_binding_schema_and_revalidation_is_ap
     )
     assert request["schema_version"] == "across-goal-revalidation-request/1.0"
     assert service.goal_contracts.list_evidence("goal-task-001", 1)[0]["trust_state"] == "verified"
+    refreshed = goals.get_goal("task-001")
+    assert refreshed["invalidations"] == [request]
+    coverage = {item["criterion_id"]: item for item in refreshed["projection"]["criterion_coverage"]}
+    assert coverage["criterion-36bc8486dd50ddc0"]["evidence_state"] == "stale"
+    assert refreshed["projection"]["validity_state"] == "revalidation_required"
 
 
 def test_goal_plugin_probe_api_preserves_managed_runtime_matrix(monkeypatch, tmp_path):

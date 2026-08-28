@@ -24,6 +24,13 @@ class GoalContractService:
         if contract is None:
             raise KeyError(task_id)
         evidence = self.store.list_evidence(contract["goal_id"], contract["revision"])
+        invalidations = self.store.list_invalidations(contract["goal_id"], contract["revision"])
+        stale_criteria = {
+            str(criterion_id)
+            for invalidation in invalidations
+            if invalidation.get("state") == "pending"
+            for criterion_id in invalidation.get("criterion_ids") or []
+        }
         criterion_evidence: dict[str, str] = {}
         for binding in evidence:
             state = str(binding.get("trust_state") or "unverified")
@@ -33,6 +40,9 @@ class GoalContractService:
             for criterion_id_value in binding.get("criterion_ids") or []:
                 prior = criterion_evidence.get(criterion_id_value)
                 criterion_evidence[criterion_id_value] = _stronger_evidence_state(prior, verdict)
+        for criterion_id_value in stale_criteria:
+            if criterion_id_value in criterion_evidence:
+                criterion_evidence[criterion_id_value] = "stale"
         pending = self.store.list_pending_proposals(contract["goal_id"], contract["revision"])
         facts = GoalProjectionFacts(
             contract=contract,
@@ -48,6 +58,7 @@ class GoalContractService:
             "projection": project_goal_state(facts),
             "pending_proposals": pending,
             "evidence_bindings": evidence,
+            "invalidations": invalidations,
         }
 
     def save_proposal(

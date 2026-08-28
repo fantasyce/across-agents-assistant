@@ -245,6 +245,15 @@ class GoalContractStore:
                 raise GoalContractStoreError("goal_invalidation_conflict", "invalidation event is invalid or already exists") from exc
         return payload
 
+    def list_invalidations(self, goal_id: str, revision: int) -> list[dict[str, Any]]:
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT payload_json FROM goal_invalidation_events
+                   WHERE goal_id = ? AND from_revision = ? ORDER BY created_at, invalidation_id""",
+                (str(goal_id), int(revision)),
+            ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
     def decide_proposal(
         self,
         proposal_id: str,
