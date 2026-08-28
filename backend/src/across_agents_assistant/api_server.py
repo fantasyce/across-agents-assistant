@@ -16104,6 +16104,30 @@ async def reject_task_result(task_id: str):
     except Exception:
         raise _safe_http_500("Reject task result")
 
+def _external_task_infos_for_listing(seen_task_ids: set[str]) -> List[TaskInfo]:
+    """Hydrate external task rows without occupying the API event loop.
+
+    An Orchestrator status read can legitimately wait while a local Agent
+    adapter is executing.  Keep that wait in the worker pool so core health,
+    cancellation, and other control-plane requests remain responsive.
+    """
+    external_infos: List[TaskInfo] = []
+    plugin = get_orchestrator_plugin_manager()
+    for row in plugin.list_task_summaries():
+        task_id = row.get("task_id")
+        if not task_id or task_id in seen_task_ids:
+            continue
+        task_payload = plugin.get_task(str(task_id))
+        bridge = get_worker_task_bridge()
+        worker_info = bridge.optional_status(str(task_id))
+        app_info = external_task_to_app_info(task_payload)
+        if worker_info:
+            app_info = bridge.project_task_info(app_info, worker_info)
+        external_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
+        seen_task_ids.add(str(task_id))
+    return external_infos
+
+
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
     """List active in-memory tasks plus persisted task history."""
@@ -16133,19 +16157,9 @@ async def list_tasks():
                 seen_task_ids.add(task_id)
 
         try:
-            plugin = get_orchestrator_plugin_manager()
-            for row in plugin.list_task_summaries():
-                task_id = row.get("task_id")
-                if not task_id or task_id in seen_task_ids:
-                    continue
-                task_payload = plugin.get_task(str(task_id))
-                bridge = get_worker_task_bridge()
-                worker_info = bridge.optional_status(str(task_id))
-                app_info = external_task_to_app_info(task_payload)
-                if worker_info:
-                    app_info = bridge.project_task_info(app_info, worker_info)
-                task_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
-                seen_task_ids.add(str(task_id))
+            task_infos.extend(
+                await asyncio.to_thread(_external_task_infos_for_listing, seen_task_ids)
+            )
         except Exception as exc:
             logger.debug("Skipping external Orchestrator tasks: %s", exc)
 

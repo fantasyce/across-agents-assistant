@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 
 import pytest
 
@@ -240,6 +241,42 @@ def test_list_tasks_includes_persisted_terminal_history(monkeypatch, tmp_path):
     assert len(result) == 1
     assert result[0].task_id == task_id
     assert result[0].status == "completed"
+
+
+def test_list_tasks_does_not_block_core_event_loop_on_slow_external_runtime(monkeypatch):
+    import asyncio
+    import across_agents_assistant.api_server as api_server
+
+    class FakeState:
+        _persistence = None
+
+        def get_all_tasks(self):
+            return []
+
+    class SlowExternalPlugin:
+        def list_task_summaries(self):
+            return [{"task_id": "task-slow-external"}]
+
+        def get_task(self, _task_id):
+            time.sleep(0.25)
+            raise RuntimeError("external runtime is still executing")
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(
+        api_server,
+        "get_orchestrator_plugin_manager",
+        lambda: SlowExternalPlugin(),
+    )
+
+    async def exercise():
+        started = asyncio.get_running_loop().time()
+        listing = asyncio.create_task(api_server.list_tasks())
+        await asyncio.sleep(0.02)
+        event_loop_delay = asyncio.get_running_loop().time() - started
+        await listing
+        return event_loop_delay
+
+    assert asyncio.run(exercise()) < 0.1
 
 
 def test_task_page_route_returns_lightweight_summaries(monkeypatch, tmp_path):
