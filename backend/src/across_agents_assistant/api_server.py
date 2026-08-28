@@ -589,7 +589,6 @@ def _init_task_persistence():
     if _task_persistence_initialized:
         return
 
-    from .persistence.service import persistence
     _task_state.set_persistence(persistence.tasks)
     _task_persistence_initialized = True
 
