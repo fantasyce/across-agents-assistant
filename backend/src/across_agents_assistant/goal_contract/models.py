@@ -15,4 +15,3 @@ class GoalProjectionFacts:
     pending_decisions: tuple[str, ...] = ()
     active_lease_count: int = 0
     execution_state: str = "not_started"
-
