@@ -6,6 +6,25 @@ PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 APP_NAME="Across Agents Assistant"
 APP_PATH="$PROJECT_ROOT/build/$APP_NAME.app"
 INSTALL_PATH="/Applications/$APP_NAME.app"
+ROLLBACK_ROOT="${ACROSS_LOCAL_APP_ROLLBACK_ROOT:-$HOME/.across/data/across-agents-assistant/rollback-apps}"
+ROLLBACK_PATH="$ROLLBACK_ROOT/$APP_NAME.last-known-good.app"
+ROLLBACK_STAGING="$ROLLBACK_ROOT/.$APP_NAME.rollback-staging.$$.app"
+INSTALL_STAGING="/Applications/.$APP_NAME.installing.$$.app"
+PREVIOUS_INSTALL="/Applications/.$APP_NAME.previous.$$.app"
+INSTALL_COMMITTED=0
+
+restore_previous_install() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ "$INSTALL_COMMITTED" != "1" && -d "$PREVIOUS_INSTALL" ]]; then
+    rm -rf "$INSTALL_PATH"
+    mv "$PREVIOUS_INSTALL" "$INSTALL_PATH"
+  fi
+  rm -rf "$INSTALL_STAGING" "$ROLLBACK_STAGING" "$PREVIOUS_INSTALL"
+  exit "$exit_code"
+}
+
+trap restore_previous_install EXIT
 
 # A formal local candidate must exercise the same current producer sources that
 # the developer is validating. Public/reproducible builds still use the pinned
@@ -91,11 +110,27 @@ echo "=== 2. Building app bundle ==="
 "$PROJECT_ROOT/build_app.sh"
 
 echo "=== 3. Installing local build to /Applications ==="
-rm -rf "$INSTALL_PATH"
-/usr/bin/ditto "$APP_PATH" "$INSTALL_PATH"
-xattr -cr "$INSTALL_PATH" || true
+mkdir -p "$ROLLBACK_ROOT"
+rm -rf "$INSTALL_STAGING" "$ROLLBACK_STAGING" "$PREVIOUS_INSTALL"
+/usr/bin/ditto "$APP_PATH" "$INSTALL_STAGING"
+xattr -cr "$INSTALL_STAGING" || true
+codesign --verify --deep --strict "$INSTALL_STAGING"
+
+if [[ -d "$INSTALL_PATH" ]]; then
+  /usr/bin/ditto "$INSTALL_PATH" "$ROLLBACK_STAGING"
+  codesign --verify --deep --strict "$ROLLBACK_STAGING"
+  rm -rf "$ROLLBACK_PATH"
+  mv "$ROLLBACK_STAGING" "$ROLLBACK_PATH"
+  mv "$INSTALL_PATH" "$PREVIOUS_INSTALL"
+fi
+
+mv "$INSTALL_STAGING" "$INSTALL_PATH"
 
 echo "=== 4. Opening clean app ==="
 open "$INSTALL_PATH"
+
+INSTALL_COMMITTED=1
+rm -rf "$PREVIOUS_INSTALL"
+trap - EXIT
 
 echo "=== Done. Running $INSTALL_PATH ==="
