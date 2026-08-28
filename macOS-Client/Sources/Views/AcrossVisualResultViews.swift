@@ -165,6 +165,11 @@ struct AcrossVisualResultOverview: View {
                     Label(secondaryActionTitle, systemImage: secondaryActionSystemImage)
                 }
                 .buttonStyle(.bordered)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    onSecondaryAction()
+                    return .handled
+                }
             }
             if let primaryActionTitle, let onPrimaryAction {
                 Button(action: onPrimaryAction) {
@@ -178,6 +183,12 @@ struct AcrossVisualResultOverview: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isPrimaryActionDisabled || isPrimaryActionLoading)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    guard !isPrimaryActionDisabled, !isPrimaryActionLoading else { return .ignored }
+                    onPrimaryAction()
+                    return .handled
+                }
             }
         }
         .controlSize(.regular)

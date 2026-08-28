@@ -1,10 +1,31 @@
 import json
+import signal
 import threading
 from types import SimpleNamespace
 
 import pytest
 
 from across_agents_assistant import orchestrator_agent_adapter as adapter
+
+
+def test_termination_signal_shuts_down_agent_bridge():
+    observed = []
+
+    class FakeClient:
+        def shutdown(self):
+            observed.append("client-shutdown")
+
+    class FakeBridge:
+        _client = FakeClient()
+
+        def shutdown(self):
+            observed.append("bridge-shutdown")
+
+    with pytest.raises(SystemExit) as exc_info:
+        adapter._terminate_bridge_on_signal(FakeBridge(), signal.SIGTERM)
+
+    assert observed == ["client-shutdown", "bridge-shutdown"]
+    assert exc_info.value.code == 128 + signal.SIGTERM
 
 
 def test_read_only_task_message_forbids_project_mutation():

@@ -274,6 +274,100 @@ def test_task_summary_index_does_not_start_or_probe_sidecar_by_default(tmp_path,
     ]
 
 
+def test_http_task_snapshot_stays_readable_while_a_long_runtime_operation_holds_the_lifecycle_guard(
+    tmp_path,
+    monkeypatch,
+):
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            endpoint="http://127.0.0.1:1",
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+    manager._transport = "http"
+    manager._endpoint = "http://127.0.0.1:1"
+    monkeypatch.setattr(
+        manager,
+        "_http_get_unlocked",
+        lambda path: {"task_id": path.rsplit("/", 1)[-1], "status": "running"},
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_runtime_guard():
+        with orchestrator_plugin.managed_plugin_runtime_guard("across-orchestrator"):
+            entered.set()
+            release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_runtime_guard)
+    holder.start()
+    assert entered.wait(timeout=1)
+    result = {}
+    reader = threading.Thread(
+        target=lambda: result.update(manager.get_task_snapshot("task-live"))
+    )
+    reader.start()
+    reader.join(timeout=0.25)
+    release.set()
+    holder.join(timeout=1)
+
+    assert not reader.is_alive(), "task snapshot was serialized behind the long task run"
+    assert result == {"task_id": "task-live", "status": "running"}
+
+
+def test_http_task_cancel_stays_usable_while_a_long_runtime_operation_holds_the_lifecycle_guard(
+    tmp_path,
+    monkeypatch,
+):
+    manager = OrchestratorPluginManager(
+        OrchestratorPluginConfig(
+            mode="external",
+            endpoint="http://127.0.0.1:1",
+            registry_path=tmp_path / "tasks.json",
+            plugin_home=tmp_path / "plugins",
+        )
+    )
+    manager._transport = "http"
+    manager._endpoint = "http://127.0.0.1:1"
+    monkeypatch.setattr(
+        manager,
+        "_http_post_unlocked",
+        lambda path, payload: {
+            "task_id": path.split("/")[2],
+            "status": "cancelled",
+            "reason": payload["reason"],
+        },
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_runtime_guard():
+        with orchestrator_plugin.managed_plugin_runtime_guard("across-orchestrator"):
+            entered.set()
+            release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_runtime_guard)
+    holder.start()
+    assert entered.wait(timeout=1)
+    result = {}
+    reader = threading.Thread(
+        target=lambda: result.update(manager.cancel_task("task-live", reason="user_cancel"))
+    )
+    reader.start()
+    reader.join(timeout=0.25)
+    release.set()
+    holder.join(timeout=1)
+
+    assert not reader.is_alive(), "task cancellation was serialized behind the task run"
+    assert result == {
+        "task_id": "task-live",
+        "status": "cancelled",
+        "reason": "user_cancel",
+    }
+
+
 def test_managed_orchestrator_sidecar_allows_client_project_roots(monkeypatch, tmp_path):
     captured = {}
 
@@ -298,6 +392,7 @@ def test_managed_orchestrator_sidecar_allows_client_project_roots(monkeypatch, t
     endpoints = iter((None, "http://127.0.0.1:43123"))
     monkeypatch.setattr(manager, "_cleanup_stale_aaa_sidecars", lambda: None)
     monkeypatch.setattr(manager, "_sidecar_runtime_info_path", lambda: runtime_info)
+    monkeypatch.setattr(manager, "_sidecar_log_path", lambda: tmp_path / "orchestrator-sidecar.log")
     monkeypatch.setattr(manager, "_runtime_info_endpoint", lambda: next(endpoints))
     monkeypatch.setattr(manager, "_http_get", lambda _path: {"ok": True})
     monkeypatch.setattr(orchestrator_plugin.subprocess, "Popen", fake_popen)
@@ -318,6 +413,9 @@ def test_managed_orchestrator_sidecar_allows_client_project_roots(monkeypatch, t
         "--allow-client-project-roots",
     ]
     assert captured["kwargs"]["cwd"] == "/"
+    assert captured["kwargs"]["stdout"] is not orchestrator_plugin.subprocess.PIPE
+    assert captured["kwargs"]["stderr"] is orchestrator_plugin.subprocess.STDOUT
+    assert captured["kwargs"]["stdout"].name.endswith("orchestrator-sidecar.log")
 
 
 def test_managed_orchestrator_restarts_a_stale_cached_sidecar(monkeypatch, tmp_path):

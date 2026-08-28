@@ -126,6 +126,16 @@ struct MinimalAssistantSendButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
+        .focusable(true)
+        .onKeyPress(.return) {
+            guard isEnabled else { return .ignored }
+            if isProcessing {
+                onStop()
+            } else {
+                onSend()
+            }
+            return .handled
+        }
         .onHover { isHovered = $0 }
         .accessibilityLabel(Text(isProcessing ? stopTitle : sendTitle))
         .help(isProcessing ? stopTitle : sendTitle)

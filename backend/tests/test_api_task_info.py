@@ -279,6 +279,55 @@ def test_list_tasks_does_not_block_core_event_loop_on_slow_external_runtime(monk
     assert asyncio.run(exercise()) < 0.1
 
 
+def test_list_tasks_skips_only_stale_external_rows(monkeypatch):
+    import asyncio
+    import across_agents_assistant.api_server as api_server
+
+    class FakeState:
+        _persistence = None
+
+        def get_all_tasks(self):
+            return []
+
+    class ExternalPluginWithStaleHistory:
+        def list_task_summaries(self):
+            return [
+                {"task_id": "task-stale"},
+                {"task_id": "task-current"},
+            ]
+
+    def snapshot(_plugin, task_id):
+        if task_id == "task-stale":
+            raise RuntimeError("external task no longer exists")
+        return {
+            "task_id": task_id,
+            "goal": "Current external task",
+            "status": "running",
+            "agent": "codex",
+            "project_root": "/tmp/project",
+            "subtasks": [],
+            "created_at": 1.0,
+            "updated_at": 2.0,
+        }
+
+    monkeypatch.setattr(api_server, "_task_state", FakeState())
+    monkeypatch.setattr(
+        api_server,
+        "get_orchestrator_plugin_manager",
+        lambda: ExternalPluginWithStaleHistory(),
+    )
+    monkeypatch.setattr(api_server, "_external_task_snapshot", snapshot)
+    monkeypatch.setattr(
+        api_server,
+        "get_worker_task_bridge",
+        lambda: type("Bridge", (), {"optional_status": lambda self, _task_id: None})(),
+    )
+
+    result = asyncio.run(api_server.list_tasks())
+
+    assert [task.task_id for task in result] == ["task-current"]
+
+
 def test_task_page_route_returns_lightweight_summaries(monkeypatch, tmp_path):
     import asyncio
     import across_agents_assistant.api_server as api_server

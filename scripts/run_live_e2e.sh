@@ -29,6 +29,7 @@ TMP_PARENT=""
 ACROSS_HOME_DIR=""
 AGENTS_HOME_DIR=""
 SOCKET_PATH=""
+PROJECT_ROOT=""
 BACKEND_PID=""
 
 cleanup() {
@@ -114,6 +115,8 @@ TMP_PARENT="$(mktemp -d "/tmp/across-live-e2e.XXXXXX")"
 ACROSS_HOME_DIR="$TMP_PARENT/across-home"
 AGENTS_HOME_DIR="$TMP_PARENT/across-agents-home"
 SOCKET_PATH="$AGENTS_HOME_DIR/run/across-agents.sock"
+PROJECT_ROOT="$TMP_PARENT/projects"
+mkdir -p "$PROJECT_ROOT"
 
 echo "Starting temporary AAA backend for live E2E..."
 # Developer mode is intentional here: the runner may use a source-checkout
@@ -155,11 +158,13 @@ PY
 
 echo "Running live E2E tier: $TIER"
 ACROSS_AGENTS_SOCKET="$SOCKET_PATH" \
+ACROSS_AGENTS_LIVE_E2E_PROJECT_ROOT="$PROJECT_ROOT" \
 PYTHONPATH=backend/src \
 "$PYTHON_BIN" backend/tests/e2e/run_e2e.py --tier "$TIER"
 
 echo "Running legacy socket API E2E with live runtime gate enabled"
 ACROSS_AGENTS_SOCKET="$SOCKET_PATH" \
+ACROSS_AGENTS_LIVE_E2E_PROJECT_ROOT="$PROJECT_ROOT" \
 ACROSS_AGENTS_RUN_LIVE_E2E=1 \
 PYTHONPATH=backend/src \
 "$PYTHON_BIN" -m pytest backend/tests/e2e/test_api_e2e.py -q

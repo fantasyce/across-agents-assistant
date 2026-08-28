@@ -121,3 +121,39 @@ def test_task_evidence_bundle_endpoint_is_read_only_and_sanitized(monkeypatch):
     encoded = json.dumps(body)
     assert "placeholder-key-should-not-leak" not in encoded
     assert body["last_owner_decision"]["provider_api_key"] == "[redacted]"
+
+
+def test_external_evidence_bundle_uses_unlocked_task_snapshot(monkeypatch):
+    class FakeExternalPlugin:
+        def is_external_task(self, task_id):
+            assert task_id == "task-external-snapshot"
+            return True
+
+        def get_task(self, _task_id):
+            raise AssertionError("evidence reads must not wait on the runtime operation lock")
+
+        def get_task_snapshot(self, task_id):
+            return {
+                "task_id": task_id,
+                "goal": "Inspect completed external evidence",
+                "status": "completed",
+            }
+
+        def get_evidence_snapshot(self, task_id):
+            return {"task_id": task_id, "status": "completed"}
+
+    async def project_task(_payload):
+        return {"remote_execution": False}
+
+    monkeypatch.setattr(api_server, "get_orchestrator_plugin_manager", lambda: FakeExternalPlugin())
+    monkeypatch.setattr(api_server, "_external_task_info_with_worker", project_task)
+    monkeypatch.setattr(
+        api_server,
+        "external_evidence_to_app_bundle",
+        lambda evidence, **_kwargs: {"task_id": evidence["task_id"], "snapshot": True},
+    )
+
+    response = TestClient(app).get("/api/tasks/task-external-snapshot/evidence-bundle")
+
+    assert response.status_code == 200
+    assert response.json() == {"task_id": "task-external-snapshot", "snapshot": True}

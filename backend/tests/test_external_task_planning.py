@@ -1,3 +1,6 @@
+import os
+import subprocess
+
 from across_agents_assistant.external_task_planning import (
     ExternalTaskPlanningRequest,
     agent_adapters_for_external_task,
@@ -159,6 +162,18 @@ def test_content_constraint_is_not_misclassified_as_read_only_task():
     assert is_read_only_external_task(req) is False
 
 
+def test_existing_reference_file_is_not_planned_as_a_delivery():
+    req = ExternalTaskPlanningRequest(
+        description=(
+            "Create across-results/result.md. The file must contain the exact phrase passed. "
+            "Quote the heading from the existing project README.md."
+        ),
+        task_types=["artifact"],
+    )
+
+    assert deliverables_for_external_task(req) == ["across-results/result.md"]
+
+
 def test_owner_and_subtask_agent_defaults_are_host_controlled():
     req = ExternalTaskPlanningRequest(description="Build a dashboard")
 
@@ -185,12 +200,27 @@ def test_real_agent_selection_declares_aaa_host_command_adapters():
     assert set(adapters) == {"openclaw", "hermes", "claude"}
     for agent_id, spec in adapters.items():
         assert spec["type"] == "command"
-        assert spec["command"][-4:] == [
-            "-m",
-            "across_agents_assistant.orchestrator_agent_adapter",
-            "--agent",
-            agent_id,
-        ]
+        assert spec["command"][1] == "-c"
+        assert "across_agents_assistant.orchestrator_agent_adapter" in spec["command"][2]
+        assert spec["command"][-2:] == ["--agent", agent_id]
+
+
+def test_developer_host_adapter_command_imports_aaa_from_an_unrelated_project_cwd(tmp_path):
+    """Orchestrator executes adapters from the target project, not the AAA checkout."""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [*host_agent_adapter_command("codex"), "--help"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--agent" in result.stdout
 
 
 def test_kimi_host_adapter_declares_only_required_runtime_state_paths():
@@ -222,6 +252,41 @@ def test_kimi_host_adapter_declares_only_required_runtime_state_paths():
     assert "~/.kimi-code/config.toml" not in filesystem_policy["runtime_state_files"]
     assert "sandboxPolicy" not in adapters["claude"]
     assert adapters["claude"]["command"][-1] == "claude"
+
+
+def test_codex_host_adapter_declares_its_required_runtime_state_root():
+    adapters = agent_adapters_for_external_task(
+        ExternalTaskPlanningRequest(
+            description="Build a dashboard",
+            owner_agent="codex",
+        )
+    )
+
+    policy = adapters["codex"]["sandboxPolicy"]
+    assert policy["network_policy"] == "adapter_scoped"
+    assert policy["filesystem_policy"] == {
+        "mode": "run_scoped",
+        "runtime_state_roots": ["~/.codex"],
+        "runtime_state_files": [],
+    }
+    assert policy["execution"]["max_wall_timeout_seconds"] == 1200
+
+
+def test_cloud_provider_host_adapter_has_scoped_network_access():
+    adapters = agent_adapters_for_external_task(
+        ExternalTaskPlanningRequest(
+            description="Build a dashboard",
+            owner_agent="minimax",
+        )
+    )
+
+    policy = adapters["minimax"]["sandboxPolicy"]
+    assert policy["network_policy"] == "adapter_scoped"
+    assert policy["filesystem_policy"] == {
+        "mode": "run_scoped",
+        "runtime_state_roots": [],
+        "runtime_state_files": [],
+    }
 
 
 def test_kimi_packaged_host_command_has_explicit_timeout(monkeypatch):

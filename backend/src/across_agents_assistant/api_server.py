@@ -166,11 +166,21 @@ def _should_fetch_external_task_evidence(task_payload: Dict[str, Any]) -> bool:
     return str((task_payload or {}).get("status") or "").strip().lower() in _EXTERNAL_TASK_EVIDENCE_STATUSES
 
 
+def _external_task_snapshot(plugin: Any, task_id: str) -> Dict[str, Any]:
+    getter = getattr(plugin, "get_task_snapshot", None) or plugin.get_task
+    return getter(task_id)
+
+
+def _external_evidence_snapshot(plugin: Any, task_id: str) -> Dict[str, Any]:
+    getter = getattr(plugin, "get_evidence_snapshot", None) or plugin.get_evidence_bundle
+    return getter(task_id)
+
+
 async def _external_task_evidence_async(plugin: Any, task_id: str, task_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not _should_fetch_external_task_evidence(task_payload):
         return None
     try:
-        return await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        return await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
     except Exception:
         return None
 
@@ -179,7 +189,7 @@ def _external_task_evidence_sync(plugin: Any, task_id: str, task_payload: Dict[s
     if not _should_fetch_external_task_evidence(task_payload):
         return None
     try:
-        return plugin.get_evidence_bundle(task_id)
+        return _external_evidence_snapshot(plugin, task_id)
     except Exception:
         return None
 
@@ -10776,7 +10786,8 @@ def _promotion_task_evidence(task_id: str) -> Dict[str, Any]:
             ),
         }
 
-    bundle = get_orchestrator_plugin_manager().get_evidence_bundle(task_id)
+    plugin = get_orchestrator_plugin_manager()
+    bundle = _external_evidence_snapshot(plugin, task_id)
     if not isinstance(bundle, Mapping):
         raise PromotionPackageBlocked(("task_receipts_verified",))
     raw_receipt = (
@@ -14550,7 +14561,7 @@ def _public_agent_card(card: Dict[str, Any], native_skills: List[Dict[str, Any]]
 def _load_task_info_read_only(task_id: str) -> "TaskInfo":
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = plugin.get_task(task_id)
+        task_payload = _external_task_snapshot(plugin, task_id)
         evidence = _external_task_evidence_sync(plugin, task_id, task_payload)
         return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
     task = _task_state.get_task(task_id)
@@ -15946,7 +15957,7 @@ async def get_task(task_id: str):
     try:
         if _is_external_orchestrator_task(task_id):
             plugin = get_orchestrator_plugin_manager()
-            task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+            task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
             return _attach_task_user_review(TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence))))
 
@@ -16124,14 +16135,20 @@ def _external_task_infos_for_listing(seen_task_ids: set[str]) -> List[TaskInfo]:
         task_id = row.get("task_id")
         if not task_id or task_id in seen_task_ids:
             continue
-        task_payload = plugin.get_task(str(task_id))
-        bridge = get_worker_task_bridge()
-        worker_info = bridge.optional_status(str(task_id))
-        app_info = external_task_to_app_info(task_payload)
-        if worker_info:
-            app_info = bridge.project_task_info(app_info, worker_info)
-        external_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
-        seen_task_ids.add(str(task_id))
+        try:
+            task_payload = _external_task_snapshot(plugin, str(task_id))
+            bridge = get_worker_task_bridge()
+            worker_info = bridge.optional_status(str(task_id))
+            app_info = external_task_to_app_info(task_payload)
+            if worker_info:
+                app_info = bridge.project_task_info(app_info, worker_info)
+            external_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
+            seen_task_ids.add(str(task_id))
+        except Exception as exc:
+            # Historical host indexes can outlive an Orchestrator runtime or
+            # its task-retention window. One stale row must not hide every
+            # current task from the App.
+            logger.debug("Skipping stale external Orchestrator task %s: %s", task_id, exc)
     return external_infos
 
 
@@ -16270,12 +16287,43 @@ def _external_owner_agent(req: AutoTaskRequest) -> str:
     return external_owner_agent(_external_task_planning_request(req))
 
 
-def _planned_subtasks_for_external_task(req: AutoTaskRequest, deliverables: List[str]) -> List[Dict[str, Any]]:
-    return planned_subtasks_for_external_task(_external_task_planning_request(req), deliverables)
+def _planned_subtasks_for_external_task(
+    req: AutoTaskRequest,
+    deliverables: List[str],
+    *,
+    owner_agent: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    planning_request = _external_task_planning_request(req)
+    if owner_agent and external_owner_agent(planning_request) == "demo":
+        planning_request = ExternalTaskPlanningRequest(
+            description=planning_request.description,
+            task_types=planning_request.task_types,
+            owner_agent=owner_agent,
+            allowed_subtask_agents=[owner_agent],
+            project_dir=planning_request.project_dir,
+            strict_dependency=planning_request.strict_dependency,
+            enable_wave_gate=planning_request.enable_wave_gate,
+        )
+    return planned_subtasks_for_external_task(planning_request, deliverables)
 
 
-def _agent_adapters_for_external_task(req: AutoTaskRequest) -> Dict[str, Dict[str, Any]]:
-    return agent_adapters_for_external_task(_external_task_planning_request(req))
+def _agent_adapters_for_external_task(
+    req: AutoTaskRequest,
+    *,
+    owner_agent: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    planning_request = _external_task_planning_request(req)
+    if owner_agent and external_owner_agent(planning_request) == "demo":
+        planning_request = ExternalTaskPlanningRequest(
+            description=planning_request.description,
+            task_types=planning_request.task_types,
+            owner_agent=owner_agent,
+            allowed_subtask_agents=[owner_agent],
+            project_dir=planning_request.project_dir,
+            strict_dependency=planning_request.strict_dependency,
+            enable_wave_gate=planning_request.enable_wave_gate,
+        )
+    return agent_adapters_for_external_task(planning_request)
 
 
 def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -> HTTPException:
@@ -16286,6 +16334,47 @@ def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -
             or "Across Orchestrator is required for task orchestration. Install or connect the plugin first."
         ),
     )
+
+
+def _available_local_agent_ids() -> List[str]:
+    """Return runnable local Agent ids without treating them as cloud credentials."""
+    from .local_agent_health import detect_local_agents
+
+    detected = detect_local_agents()
+    return [
+        agent_id
+        for agent_id in LOCAL_CLI_AGENT_IDS
+        if bool((detected.get(agent_id) or {}).get("available"))
+    ]
+
+
+def _resolved_external_execution_agent(
+    req: AutoTaskRequest,
+    capability_plan: Mapping[str, Any],
+) -> str:
+    """Resolve the concrete runtime Agent for an automatic protected task."""
+    requested = _external_owner_agent(req)
+    if requested != "demo":
+        return requested
+
+    chosen_providers = [
+        str(provider_id).strip()
+        for provider_id in capability_plan.get("chosen_providers") or []
+        if str(provider_id).strip()
+    ]
+    for provider_id in chosen_providers:
+        if provider_id != "local-agent":
+            return provider_id
+
+    if "local-agent" in chosen_providers:
+        available = set(_available_local_agent_ids())
+        # Prefer the task-oriented local runtimes with the strongest bounded,
+        # non-interactive execution contract. The user can still explicitly
+        # select any other Agent from task configuration surfaces.
+        for agent_id in ("codex", "kimi", "claude", "opencode", "cursor", "hermes", LOCAL_AGENT_ID):
+            if agent_id in available:
+                return agent_id
+    return requested
 
 
 def _derive_auto_task_capability_plan(
@@ -16313,6 +16402,15 @@ def _derive_auto_task_capability_plan(
     configured_providers = [
         provider_id for provider_id in _known_provider_ids() if _provider_has_backend_key(provider_id)
     ]
+    selected_local_agents = _selected_local_agents_for_capability_request(
+        req.owner_agent,
+        req.allowed_subtask_agents,
+    )
+    available_local_agents = set(_available_local_agent_ids())
+    if not configured_providers and any(
+        agent_id in available_local_agents for agent_id in selected_local_agents
+    ):
+        configured_providers = ["local-agent"]
     # Tests and legacy callers may supply readiness through the existing aggregate check.
     if not configured_providers and not _check_llm_provider_readiness():
         configured_providers = [llm_config.primary_provider]
@@ -16893,9 +16991,13 @@ async def _submit_auto_orchestrated_task(
                     agent_adapters = _autopilot_agent_adapters_for_plan(workflow_execution_plan)
             else:
                 deliverables = _deliverables_for_external_task(req)
-                planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
-                owner_agent = _external_owner_agent(req)
-                agent_adapters = _agent_adapters_for_external_task(req)
+                owner_agent = _resolved_external_execution_agent(req, capability_plan)
+                planned_subtasks = _planned_subtasks_for_external_task(
+                    req,
+                    deliverables,
+                    owner_agent=owner_agent,
+                )
+                agent_adapters = _agent_adapters_for_external_task(req, owner_agent=owner_agent)
             submit_kwargs = {
                 "goal": req.description,
                 "project_dir": req.project_dir or _default_external_orchestrator_project_dir(),
@@ -17274,7 +17376,7 @@ async def get_task_quality_benchmark(
 
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
         projected = await _external_task_info_with_worker(task_payload)
         if projected.get("remote_execution"):
             declared_outputs = _worker_expected_outputs(projected)
@@ -17288,7 +17390,7 @@ async def get_task_quality_benchmark(
             )
             report["app_version"] = __version__
             return _redact_sensitive_evidence(report)
-        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
         report = build_external_quality_benchmark(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -17341,7 +17443,7 @@ async def get_task_execution_trajectory(
                 source = "worker_projection"
             else:
                 plugin = get_orchestrator_plugin_manager()
-                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
                 if not isinstance(evidence, Mapping):
                     raise _ExecutionTrajectoryEvidenceInvalid
                 snapshot = deepcopy(dict(evidence))
@@ -17410,7 +17512,7 @@ async def get_task_evidence_bundle(
 
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
         projected = await _external_task_info_with_worker(task_payload)
         if projected.get("remote_execution"):
             payload = _sanitize_public_payload(projected)
@@ -17455,7 +17557,7 @@ async def get_task_evidence_bundle(
                     "required_probes": probes,
                 },
             }
-        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
         bundle = external_evidence_to_app_bundle(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -17522,7 +17624,7 @@ async def task_stream(task_id: str):
         async def external_event_generator():
             try:
                 plugin = get_orchestrator_plugin_manager()
-                task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+                task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
                 evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
                 task_info = await _external_task_info_with_worker(task_payload, evidence=evidence)
                 status_changed_data = {

@@ -136,7 +136,9 @@ extension MainPanelView {
             viewModel.showErrorMessage(appPreferences.text("work.projectRequired"))
             return
         }
-        let ownerAgent = settingsViewModel.preferredAgentId(current: viewModel.selectedAgentId) ?? "auto"
+        // Protected delivery is presented as automatic planning. Do not let a
+        // hidden, persisted chat Agent selection silently pin task execution.
+        let ownerAgent = "auto"
         let description = protectedTaskDescription(text: text, attachedFiles: attachedFiles)
 
         Task {

@@ -102,6 +102,13 @@ class UniversalAgentClient:
                 logging.getLogger("across_agents_assistant").error(f"Failed to cancel process for {session_id}: {e}")
         return False
 
+    def shutdown(self) -> None:
+        """Terminate every child invocation owned by this client."""
+        processes = list(dict.fromkeys(self.active_processes.values()))
+        self.active_processes.clear()
+        for process in processes:
+            self._terminate_process_tree(process)
+
     @staticmethod
     def _is_claude_family(agent_id: str) -> bool:
         return agent_id in CLAUDE_FAMILY_AGENT_IDS
@@ -307,6 +314,24 @@ class UniversalAgentClient:
             if project_dir and os.path.isdir(project_dir):
                 prompt_index = len(args) - 1
                 args[prompt_index:prompt_index] = ["--cd", project_dir]
+                if "--ephemeral" not in args:
+                    args.insert(len(args) - 1, "--ephemeral")
+                outer_sandbox_enforced = (
+                    os.environ.get("ACROSS_SANDBOX_FILESYSTEM_POLICY") == "run_scoped"
+                    and os.environ.get("ACROSS_SANDBOX_NETWORK_POLICY") == "adapter_scoped"
+                )
+                if outer_sandbox_enforced and not read_only:
+                    # macOS seatbelt policies do not compose cleanly: Codex's
+                    # nested workspace-write sandbox rejects writes already
+                    # allowed by Orchestrator's narrower kernel policy. Keep
+                    # the outer task-scoped sandbox authoritative.
+                    if "--sandbox" in args:
+                        sandbox_index = args.index("--sandbox")
+                        if sandbox_index + 1 < len(args):
+                            args[sandbox_index + 1] = "danger-full-access"
+                    else:
+                        prompt_index = len(args) - 1
+                        args[prompt_index:prompt_index] = ["--sandbox", "danger-full-access"]
 
         # Add session id logic for OpenClaw (override --to if session_id provided)
         if agent_id == LOCAL_AGENT_ID and session_id and not use_current:
@@ -319,8 +344,15 @@ class UniversalAgentClient:
             args.extend(["--session-id", session_id])
 
         try:
-            default_workspace = str(default_local_agent_workspace())
-            os.makedirs(default_workspace, exist_ok=True)
+            # Task adapters already have a real project cwd. Creating the chat
+            # fallback workspace here is both unnecessary and can violate the
+            # Orchestrator sandbox's task-scoped filesystem policy.
+            is_task_scenario = bool(project_dir and os.path.isdir(project_dir))
+            default_workspace = (
+                str(project_dir)
+                if is_task_scenario
+                else str(default_local_agent_workspace())
+            )
 
             # Resolve workspace: first check session-tracked workspace, then detect from message
             workspace_dir = None
@@ -387,10 +419,6 @@ class UniversalAgentClient:
             if not workspace_dir:
                 workspace_dir = default_workspace
 
-            # Task scenario: run inside project_dir without writing agent
-            # metadata into the user's deliverable tree.
-            is_task_scenario = bool(project_dir and os.path.isdir(project_dir))
-
             if self._is_claude_family(agent_id):
                 if is_task_scenario:
                     process_cwd = project_dir
@@ -439,8 +467,8 @@ class UniversalAgentClient:
                 start_new_session=(os.name != "nt"),
             )
 
-            if session_id:
-                self.active_processes[session_id] = process
+            process_key = session_id or f"invocation-{id(process)}"
+            self.active_processes[process_key] = process
 
             agent_timeout = self._resolve_agent_timeout(max_wall_timeout if max_wall_timeout is not None else timeout)
             if agent_id == "codex":
@@ -451,8 +479,7 @@ class UniversalAgentClient:
                     idle_timeout=agent_idle_timeout,
                 )
                 if timeout_kind:
-                    if session_id and session_id in self.active_processes:
-                        del self.active_processes[session_id]
+                    self.active_processes.pop(process_key, None)
                     elapsed = time.time() - t0
                     return LocalAgentReply(
                         text=(
@@ -479,14 +506,13 @@ class UniversalAgentClient:
                 if hermes_sid:
                     self.hermes_sessions[session_id] = hermes_sid
 
-            if session_id and session_id in self.active_processes:
-                del self.active_processes[session_id]
+            self.active_processes.pop(process_key, None)
 
             elapsed = time.time() - t0
         except subprocess.TimeoutExpired:
             self._terminate_process_tree(process)
-            if session_id and session_id in self.active_processes:
-                del self.active_processes[session_id]
+            if "process_key" in locals():
+                self.active_processes.pop(process_key, None)
             elapsed = time.time() - t0
             return LocalAgentReply(
                 text=f"抱歉，{agent_id} 执行超时（超过 {agent_timeout:g} 秒），已自动终止。",
@@ -498,8 +524,8 @@ class UniversalAgentClient:
             )
         except Exception as e:
             import logging
-            if session_id and session_id in self.active_processes:
-                del self.active_processes[session_id]
+            if "process_key" in locals():
+                self.active_processes.pop(process_key, None)
             logging.getLogger("across_agents_assistant").error(f"Failed to execute {agent_id}: {e}")
             return LocalAgentReply(
                 text=f"抱歉，处理失败或已被取消。无法连接到 {agent_id}。",

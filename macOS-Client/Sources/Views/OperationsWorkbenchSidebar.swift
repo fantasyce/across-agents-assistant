@@ -163,8 +163,13 @@ struct OperationsWorkbenchSidebar<MiddleContent: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(true)
         .focused($settingsIsFocused)
         .focusEffectDisabled()
+        .onKeyPress(.return) {
+            onOpenSettings()
+            return .handled
+        }
         .help(preferences.text("settings.title"))
     }
 }

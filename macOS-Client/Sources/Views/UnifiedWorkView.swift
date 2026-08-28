@@ -120,6 +120,11 @@ struct UnifiedWorkEmptyState: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .focusable(true)
+                        .onKeyPress(.return) {
+                            onOpenTask(task)
+                            return .handled
+                        }
                         .overlay(alignment: .bottom) { Divider() }
                     }
                 }
@@ -200,6 +205,14 @@ struct UnifiedWorkEmptyState: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    guard let goal = normalizedBeginnerGoal,
+                          !beginnerMission.isRunning,
+                          projectPath != nil else { return .ignored }
+                    onRunBeginnerMission(goal)
+                    return .handled
+                }
                 .help(normalizedBeginnerGoal == nil
                     ? preferences.text("work.beginner.goalRequired")
                     : preferences.text("work.beginner.run"))

@@ -11,6 +11,7 @@ from ..agent_loop import ChatToolLoop, LoopConfig, LLMGatewayAdapter
 from ..approval.executor import ToolExecutor
 from ..llm_gateway.provider_registry import get_default_provider_ids
 from ..tools.tool_registry import ToolRegistry, ToolDefinition, registry as global_tool_registry
+from ..tools import builtin_tools as _builtin_workspace_tools  # noqa: F401 - registers file tools for adapter subprocesses
 from ..workspace_hygiene import is_workspace_noise_path
 from .protocol import AgentResponse, InvokeRequest
 from .errors import AgentException, AgentError
@@ -410,6 +411,16 @@ class AgentSession:
         if tool_failures and not (created_files or modified_files):
             final_success = False
             final_error = final_error or "cloud_tool_execution_failed"
+
+        normalized_output = str(final_output or "").strip()
+        if (
+            final_success
+            and not (created_files or modified_files)
+            and normalized_output.lower().startswith("error:")
+        ):
+            final_success = False
+            final_error = "cloud_llm_invocation_failed"
+            final_output = ""
 
         return final_success, final_error, final_output
 

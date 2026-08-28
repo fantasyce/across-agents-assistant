@@ -122,6 +122,13 @@ struct MacEditorView: NSViewRepresentable {
 }
 
 class EditorScrollView: NSScrollView {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        guard documentView != nil else { return false }
+        return window?.makeFirstResponder(documentView) ?? false
+    }
+
     override var intrinsicContentSize: NSSize {
         return documentView?.intrinsicContentSize ?? super.intrinsicContentSize
     }

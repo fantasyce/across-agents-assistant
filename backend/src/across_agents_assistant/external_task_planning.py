@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
 import sys
 from typing import Any, Optional
+
+from .llm_gateway.provider_registry import get_default_provider_ids
 
 
 @dataclass(frozen=True)
@@ -35,7 +38,13 @@ _EXTERNAL_FILE_HINT_EXTENSIONS = {
 }
 _NEGATIVE_DELIVERABLE_LINE_RE = re.compile(r"(不允许|不要|禁止|do\s+not|must\s+not|no\s+files?|no\s+cdn|node_modules)", re.IGNORECASE)
 _DELIVERABLE_ACTION_RE = re.compile(
-    r"(?:创建|生成|输出|交付|新增|写入|create|generate|produce|deliver|write)\s+",
+    r"(?:创建|生成|输出|交付|新增|写入|更新|修改|修复|实现|"
+    r"create|generate|produce|deliver|write|update|modify|edit|fix|build|implement|add)\s+",
+    re.IGNORECASE,
+)
+_REFERENCE_INPUT_CLAUSE_RE = re.compile(
+    r"(?:现有|已有|当前|读取|引用|摘录|检查|参考)|"
+    r"\b(?:existing|current|read|quote|inspect|reference|referenced|from)\b",
     re.IGNORECASE,
 )
 _DELIVERABLE_SEGMENT_STOP_RE = re.compile(r"[，,。；;]")
@@ -73,6 +82,7 @@ _REMOTE_WORKER_NEGATIVE_RE = re.compile(
 _REMOTE_WORKER_CLAUSE_SPLIT_RE = re.compile(r"[。！？；;\n]+|(?<=[.!?])\s+")
 _EXTERNAL_FILE_HINT_MAX_LINE_LENGTH = 4096
 _HOST_AGENT_RUNTIME_STATE_ROOTS = {
+    "codex": ["~/.codex"],
     "kimi": [
         "~/.kimi-code/logs",
         "~/.kimi-code/sessions",
@@ -84,6 +94,7 @@ _HOST_AGENT_RUNTIME_STATE_ROOTS = {
 _HOST_AGENT_RUNTIME_STATE_FILES = {
     "kimi": ["~/.kimi-code/session_index.jsonl"],
 }
+_CLOUD_PROVIDER_IDS = set(get_default_provider_ids())
 
 
 def deliverables_for_external_task(req: ExternalTaskPlanningRequest) -> list[str]:
@@ -174,7 +185,7 @@ def agent_adapters_for_external_task(req: ExternalTaskPlanningRequest) -> dict[s
         }
         runtime_state_roots = _HOST_AGENT_RUNTIME_STATE_ROOTS.get(agent_id)
         runtime_state_files = _HOST_AGENT_RUNTIME_STATE_FILES.get(agent_id)
-        if runtime_state_roots or runtime_state_files:
+        if runtime_state_roots or runtime_state_files or agent_id in _CLOUD_PROVIDER_IDS:
             spec["sandboxPolicy"] = {
                 "network_policy": "adapter_scoped",
                 "execution": {
@@ -202,10 +213,16 @@ def host_agent_adapter_command(agent_id: str) -> list[str]:
             clean_agent_id,
         ]
     else:
+        source_root = str(Path(__file__).resolve().parents[1])
+        bootstrap = (
+            "import runpy,sys;"
+            f"sys.path.insert(0,{source_root!r});"
+            "runpy.run_module('across_agents_assistant.orchestrator_agent_adapter',run_name='__main__')"
+        )
         command = [
             sys.executable,
-            "-m",
-            "across_agents_assistant.orchestrator_agent_adapter",
+            "-c",
+            bootstrap,
             "--agent",
             clean_agent_id,
         ]
@@ -361,6 +378,11 @@ def external_file_hints_from_description(description: str) -> list[str]:
         # Negative guidance later in a sentence must not erase positive file
         # requirements stated in an earlier clause on the same line.
         for clause in _DELIVERABLE_CLAUSE_SPLIT_RE.split(line):
+            if (
+                _REFERENCE_INPUT_CLAUSE_RE.search(clause)
+                and not _DELIVERABLE_ACTION_RE.search(clause)
+            ):
+                continue
             for path in external_file_hints_from_line(clause):
                 if path not in hints:
                     hints.append(path)

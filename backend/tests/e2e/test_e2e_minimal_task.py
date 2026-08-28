@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import configured_providers, request
+from client import assert_release_task_checkpoint, live_project_dir, live_task_agent_fields, request, require_live_model_route
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,42 +59,29 @@ class TestE2EMinimalTask:
     """Create a trivial hello.py script and verify the full pipeline."""
 
     task_id: str = None
+    model_route: dict = None
 
     @pytest.fixture(autouse=True)
     def check_backend(self):
         _req("GET", "/api/llm/status")
+        if TestE2EMinimalTask.model_route is None:
+            TestE2EMinimalTask.model_route = require_live_model_route()
 
-    def test_01_readiness_no_keys(self):
-        """Verify an unconfigured fresh profile is blocked with an actionable decision."""
-        if configured_providers():
-            return
-        result = _req(
-            "POST",
-            "/api/tasks/auto",
-            {
-                "description": "Verify the no-key live E2E readiness boundary",
-                "project_dir": f"/tmp/no-key-e2e-{int(time.time())}",
-                "task_types": ["artifact"],
-                "allowed_subtask_agents": [],
-            },
-            expect=412,
-        )
-        detail = result.get("detail") or {}
-        assert detail.get("code") == "capability_decision_required"
-        assert "configure_model_provider" in (detail.get("decision_ids") or [])
+    def test_01_real_model_route_is_available(self):
+        """The release gate must use a cloud provider or runnable local Agent."""
+        assert TestE2EMinimalTask.model_route["kind"] in {"provider", "local_agent"}
+        assert TestE2EMinimalTask.model_route["id"]
 
     def test_02_submit_task(self):
         """Submit a minimal hello.py task via /api/tasks/auto."""
-        if not configured_providers():
-            pytest.skip("No model provider configured — no-key readiness was verified")
         result = _req(
             "POST",
             "/api/tasks/auto",
             {
                 "description": "Create a simple hello.py that prints 'Hello from E2E test'",
-                "project_dir": f"/tmp/hello-e2e-{int(time.time())}",
+                "project_dir": str(live_project_dir("hello")),
                 "task_types": ["artifact"],
-                "allowed_subtask_agents": [],
+                **live_task_agent_fields(TestE2EMinimalTask.model_route),
                 "strict_dependency": True,
                 "enable_wave_gate": True,
             },
@@ -104,8 +91,6 @@ class TestE2EMinimalTask:
 
     def test_03_task_has_contracts(self):
         """task-level / subtask-level contracts exist after decomposition."""
-        if not configured_providers():
-            pytest.skip("No model provider configured — live task was not submitted")
         assert TestE2EMinimalTask.task_id, "submit task first"
         deadline = time.time() + 90
         info = {}
@@ -120,25 +105,10 @@ class TestE2EMinimalTask:
 
     def test_04_wait_and_verify(self):
         """Wait for task completion and verify artifacts."""
-        if not configured_providers():
-            pytest.skip("No model provider configured — live task was not submitted")
         assert TestE2EMinimalTask.task_id, "submit task first"
         info = _wait_task(TestE2EMinimalTask.task_id, timeout=600)
         status = info.get("status", "unknown")
-        assert status in (
-            "completed",
-            "completed_with_failures",
-        ), (
-            f"Task ended with unexpected status: {status}\nFull: {json.dumps(info, indent=2)}"
-        )
-        # Verify artifacts exist
-        assert info.get("artifacts") is not None, f"No artifacts in task info: {info}"
-        # Verify acceptance_records exist
-        assert info.get("acceptance_records") is not None, (
-            f"No acceptance_records in task info: {info}"
-        )
-        report = info.get("delivery_report") or {}
-        assert report.get("quality_gate") in ("passed", "partial", "failed", None)
+        assert_release_task_checkpoint(info)
         # Verify project_dir exists
         assert info.get("project_dir"), (
             f"project_dir is empty: {info}"

@@ -323,6 +323,8 @@ struct AppleMinimalUIContractTests {
         #expect(shared.contains("isExpanded.toggle()"))
         #expect(shared.contains("isExpanded ? \"chevron.down\" : \"chevron.right\""))
         #expect(shared.contains(".contentShape(Rectangle())"))
+        #expect(shared.contains(".buttonStyle(.plain)\n                .focusable(true)"))
+        #expect(shared.contains(".onKeyPress(.return)"))
         #expect(loop.contains(".truncationMode(.tail)"))
         #expect(!loop.contains("if let endpoint = action.endpoint"))
         #expect(!loop.contains("if let endpoint = section.endpoint"))
@@ -401,7 +403,23 @@ struct AppleMinimalUIContractTests {
         #expect(editor.contains("event.keyCode == 48"))
         #expect(editor.contains("window?.selectNextKeyView(self)"))
         #expect(editor.contains("window?.selectPreviousKeyView(self)"))
+        #expect(editor.contains("override var acceptsFirstResponder: Bool { true }"))
+        #expect(editor.contains("window?.makeFirstResponder(documentView)"))
         #expect(chat.contains("accessibilityLabel: inputPlaceholder"))
+    }
+
+    @Test
+    func recentWorkRowsJoinTheKeyboardFocusChain() throws {
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let recent = try #require(Self.slice(
+            work,
+            from: "if !recentTasks.isEmpty {",
+            to: "Spacer(minLength: 80)"
+        ))
+
+        #expect(recent.contains(".focusable(true)"))
+        #expect(recent.contains(".onKeyPress(.return)"))
+        #expect(recent.contains("onOpenTask(task)"))
     }
 
     @Test
@@ -410,13 +428,31 @@ struct AppleMinimalUIContractTests {
         let toolbar = try Self.source("macOS-Client/Sources/Views/MainPanelToolbarControls.swift")
         let assistant = try Self.source("macOS-Client/Sources/Views/MinimalAssistantComponents.swift")
         let composer = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
 
         #expect(navigation.contains(".focusable(true)"))
         #expect(navigation.contains(".focused($focusedSurface"))
         #expect(navigation.contains(".focusEffectDisabled()"))
         #expect(!toolbar.contains(".focusable(!isDisabled)"))
         #expect(assistant.contains("action: onToggleMute\n            )\n            .focusable(true)"))
+        #expect(assistant.contains(".disabled(!isEnabled)\n        .focusable(true)"))
+        #expect(assistant.contains(".onKeyPress(.return)"))
         #expect(composer.contains(".toggleStyle(.checkbox)\n                        .focusable(true)"))
+        #expect(navigation.contains(".buttonStyle(.plain)\n        .focusable(true)\n        .focused($settingsIsFocused)"))
+        #expect(navigation.contains(".onKeyPress(.return)"))
+        #expect(work.contains(".disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)\n                .focusable(true)"))
+        #expect(work.contains(".onKeyPress(.return)"))
+    }
+
+    @Test
+    func resultDecisionControlsJoinTheKeyboardFocusChain() throws {
+        let results = try Self.source("macOS-Client/Sources/Views/AcrossVisualResultViews.swift")
+
+        #expect(results.contains("Button(action: onSecondaryAction)"))
+        #expect(results.contains("Button(action: onPrimaryAction)"))
+        #expect(results.contains(".focusable(true)"))
+        #expect(results.contains("onSecondaryAction()\n                    return .handled"))
+        #expect(results.contains("onPrimaryAction()\n                    return .handled"))
     }
 
     @Test
@@ -646,6 +682,11 @@ struct AppleMinimalUIContractTests {
         #expect(mainPanel.contains("workspaceOperationsViewModel.reviewSignals"))
         #expect(!actions.contains("openHumanReviewItem"))
         #expect(actions.contains("submitProtectedTask"))
+        let protectedSubmission = try #require(
+            Self.slice(actions, from: "private func submitProtectedTask", to: "private func protectedTaskDescription")
+        )
+        #expect(protectedSubmission.contains("let ownerAgent = \"auto\""))
+        #expect(!protectedSubmission.contains("preferredAgentId"))
         #expect(actions.contains("workSubmissionMode.usesProtectedDelivery"))
         #expect(actions.contains("submitDirectAgentWork"))
         #expect(!actions.contains("work.setupRequired"))
