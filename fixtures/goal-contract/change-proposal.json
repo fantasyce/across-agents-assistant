@@ -1,0 +1,47 @@
+{
+  "schema_version": "across-goal-change-proposal/1.0",
+  "proposal_id": "proposal-goal-task-001-002",
+  "goal_id": "goal-task-001",
+  "base_goal_revision": 1,
+  "proposed_by": "autopilot",
+  "reason": "The installed journey needs an accessibility review.",
+  "operations": [
+    {
+      "op": "add",
+      "path": "/acceptance_criteria/-",
+      "value": {
+        "criterion_id": "criterion-accessibility-review",
+        "description": "Interactive controls pass accessibility review.",
+        "required": true,
+        "validator_kind": "accessibility_review",
+        "review_policy": "independent_agent",
+        "source": "autopilot_proposal"
+      }
+    }
+  ],
+  "impact_summary": {
+    "goal_ids": [
+      "goal-task-001"
+    ],
+    "criterion_ids": [
+      "criterion-accessibility-review"
+    ],
+    "evidence_ids": [],
+    "requires_revalidation": true
+  },
+  "risk_summary": {
+    "level": "medium",
+    "reasons": [
+      "scope_change"
+    ]
+  },
+  "estimated_cost": {
+    "unit": "agent_turns",
+    "value": 2
+  },
+  "alternatives": [
+    "Keep the current scope and require manual review."
+  ],
+  "decision_state": "pending",
+  "created_at": "2026-08-28T00:05:00Z"
+}

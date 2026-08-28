@@ -1,0 +1,23 @@
+{
+  "schema_version": "across-goal-evidence-binding/1.0",
+  "evidence_id": "evidence-run-001-tests",
+  "goal_id": "goal-task-001",
+  "goal_revision": 1,
+  "criterion_ids": [
+    "criterion-36bc8486dd50ddc0"
+  ],
+  "task_id": "task-001",
+  "run_id": "run-001",
+  "attempt_id": "attempt-001",
+  "execution_identity": "worker:node-001",
+  "artifact_locator": "artifact://test-report",
+  "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "generated_at": "2026-08-28T00:10:00Z",
+  "input_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "validator_identity": "validator:pytest",
+  "validation_method": "test_suite",
+  "verdict": "passed",
+  "explanation": "The bound test suite passed before the source revision changed.",
+  "trust_state": "stale",
+  "receipt_reference": "receipt://run-001/tests"
+}
