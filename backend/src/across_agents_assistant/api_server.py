@@ -289,6 +289,7 @@ from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
+from .goal_contract.api import install_goal_contract_routes
 from .approval.receipts import (
     ApprovalReceiptError,
     evaluate_promotion_authorization,
@@ -975,6 +976,8 @@ async def _api_lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Across Agents Assistant API", lifespan=_api_lifespan)
+
+install_goal_contract_routes(app, service_provider=lambda: persistence)
 
 
 async def _external_task_info_with_worker(task_payload: Mapping[str, Any], *, evidence: Mapping[str, Any] | None = None) -> Dict[str, Any]:

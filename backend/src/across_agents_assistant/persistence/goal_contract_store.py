@@ -145,6 +145,106 @@ class GoalContractStore:
             ).fetchone()
         return _public_proposal(row) if row else None
 
+    def get_proposal_decision_replay(
+        self, proposal_id: str, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM goal_change_proposals
+                   WHERE proposal_id = ? AND decision_idempotency_key = ?""",
+                (str(proposal_id), str(idempotency_key)),
+            ).fetchone()
+        return _public_proposal(row) if row else None
+
+    def list_pending_proposals(self, goal_id: str, revision: int) -> list[dict[str, Any]]:
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM goal_change_proposals
+                   WHERE goal_id = ? AND base_goal_revision = ? AND decision_state = 'pending'
+                   ORDER BY created_at, proposal_id""",
+                (str(goal_id), int(revision)),
+            ).fetchall()
+        return [_public_proposal(row) for row in rows]
+
+    def save_evidence(
+        self, binding: Mapping[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
+        payload = dict(binding)
+        payload_json = _canonical(payload)
+        key = _optional_key(idempotency_key)
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if key:
+                row = conn.execute(
+                    "SELECT * FROM goal_evidence_bindings WHERE idempotency_key = ?", (key,)
+                ).fetchone()
+                if row:
+                    if row["payload_json"] != payload_json:
+                        raise GoalContractStoreError(
+                            "goal_idempotency_conflict",
+                            "evidence idempotency key was reused with different content",
+                        )
+                    return json.loads(row["payload_json"])
+            try:
+                conn.execute(
+                    """INSERT INTO goal_evidence_bindings
+                       (evidence_id, goal_id, goal_revision, task_id, criterion_ids_json,
+                        payload_json, trust_state, idempotency_key, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        payload["evidence_id"], payload["goal_id"], payload["goal_revision"],
+                        payload["task_id"], _canonical(payload["criterion_ids"]), payload_json,
+                        payload["trust_state"], key, time.time(),
+                    ),
+                )
+            except (KeyError, sqlite3.IntegrityError) as exc:
+                raise GoalContractStoreError("goal_evidence_conflict", "evidence binding is invalid or already exists") from exc
+        return payload
+
+    def list_evidence(self, goal_id: str, revision: int) -> list[dict[str, Any]]:
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                """SELECT payload_json FROM goal_evidence_bindings
+                   WHERE goal_id = ? AND goal_revision = ? ORDER BY created_at, evidence_id""",
+                (str(goal_id), int(revision)),
+            ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
+    def save_invalidation(
+        self, event: Mapping[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
+        payload = dict(event)
+        payload_json = _canonical(payload)
+        key = _optional_key(idempotency_key)
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if key:
+                row = conn.execute(
+                    "SELECT payload_json FROM goal_invalidation_events WHERE idempotency_key = ?", (key,)
+                ).fetchone()
+                if row:
+                    if row["payload_json"] != payload_json:
+                        raise GoalContractStoreError(
+                            "goal_idempotency_conflict",
+                            "revalidation idempotency key was reused with different content",
+                        )
+                    return json.loads(row["payload_json"])
+            try:
+                conn.execute(
+                    """INSERT INTO goal_invalidation_events
+                       (invalidation_id, goal_id, from_revision, to_revision,
+                        affected_criterion_ids_json, payload_json, idempotency_key, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        payload["invalidation_id"], payload["goal_id"], payload["from_revision"],
+                        payload.get("to_revision"), _canonical(payload["criterion_ids"]),
+                        payload_json, key, time.time(),
+                    ),
+                )
+            except (KeyError, sqlite3.IntegrityError) as exc:
+                raise GoalContractStoreError("goal_invalidation_conflict", "invalidation event is invalid or already exists") from exc
+        return payload
+
     def decide_proposal(
         self,
         proposal_id: str,
@@ -217,4 +317,3 @@ def _sha256(value: str) -> str:
 def _optional_key(value: str | None) -> str | None:
     text = str(value or "").strip()
     return text or None
-

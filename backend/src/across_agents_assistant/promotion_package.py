@@ -155,6 +155,7 @@ def build_promotion_package(
     plugin_descriptors: Mapping[str, Mapping[str, Any]],
     compatibility_report: Mapping[str, Any],
     release_evidence: Mapping[str, Any],
+    goal_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compose one deterministic package from already-loaded host evidence."""
 
@@ -168,6 +169,7 @@ def build_promotion_package(
         plugin_descriptors,
         compatibility_report,
         release_evidence,
+        goal_state,
     )
     if not _finite_tree(inputs):
         raise PromotionPackageBlocked(("finite_values",))
@@ -180,6 +182,7 @@ def build_promotion_package(
         and isinstance(plugin_descriptors, Mapping)
         and isinstance(compatibility_report, Mapping)
         and isinstance(release_evidence, Mapping)
+        and (goal_state is None or isinstance(goal_state, Mapping))
     ):
         raise PromotionPackageBlocked(("input_shapes_valid",))
 
@@ -240,6 +243,7 @@ def build_promotion_package(
         expected_task_ids=expected_task_ids,
         failed=failed,
     )
+    goal_component = _goal_component(goal_state, failed) if goal_state is not None else None
     review = build_promotion_review_packet(autopilot_evidence)
     if (
         review.get("status") != "ready_for_human_review"
@@ -267,6 +271,18 @@ def build_promotion_package(
         }
         for item in task_receipts
     ]
+    components = {
+        "candidate_review": public_review,
+        "task_receipts": task_receipts,
+        "evidence_graph": graph_component,
+        "compatibility": compatibility_component,
+        "lifecycle_provenance": {"plugins": plugin_identities},
+        "release_readiness": release_component,
+    }
+    checks = list(_PASSED_CHECK_IDS)
+    if goal_component is not None:
+        components["goal_contract"] = goal_component
+        checks.append("goal_contract_ready")
     return {
         "schema_version": PROMOTION_PACKAGE_SCHEMA,
         "status": "ready_for_human_approval",
@@ -281,15 +297,8 @@ def build_promotion_package(
             "autopilot_evidence_sha256": autopilot_digest,
             "tasks": source_tasks,
         },
-        "components": {
-            "candidate_review": public_review,
-            "task_receipts": task_receipts,
-            "evidence_graph": graph_component,
-            "compatibility": compatibility_component,
-            "lifecycle_provenance": {"plugins": plugin_identities},
-            "release_readiness": release_component,
-        },
-        "checks": list(_PASSED_CHECK_IDS),
+        "components": components,
+        "checks": checks,
         "policy": {
             "human_approval_required": True,
             "approval_scope": "release_promotion",
@@ -303,6 +312,56 @@ def build_promotion_package(
             "secrets_redacted": True,
             "raw_payload_exposed": False,
         },
+    }
+
+
+def _goal_component(value: Mapping[str, Any], failed: set[str]) -> dict[str, Any]:
+    goal_id = _string(value.get("goal_id"))
+    task_id = _string(value.get("task_id"))
+    revision = value.get("goal_revision")
+    coverage = value.get("criterion_coverage")
+    reason_codes = value.get("reason_codes")
+    valid = bool(
+        value.get("schema_version") == "across-goal-state-projection/1.0"
+        and _identifier(goal_id)
+        and _identifier(task_id)
+        and type(revision) is int
+        and revision > 0
+        and isinstance(coverage, list)
+        and coverage
+        and isinstance(reason_codes, list)
+        and not reason_codes
+        and value.get("is_complete") is True
+        and value.get("validity_state") == "valid"
+    )
+    public_coverage: list[dict[str, Any]] = []
+    if isinstance(coverage, list):
+        for item in coverage:
+            criterion = _mapping(item)
+            criterion_id = _string(criterion.get("criterion_id"))
+            required = criterion.get("required") is True
+            satisfied = criterion.get("satisfied") is True
+            if not _identifier(criterion_id) or (required and not satisfied):
+                valid = False
+            public_coverage.append(
+                {
+                    "criterion_id": criterion_id,
+                    "required": required,
+                    "satisfied": satisfied,
+                    "evidence_state": _string(criterion.get("evidence_state")),
+                    "review_state": _string(criterion.get("review_state")),
+                }
+            )
+    if not valid:
+        failed.add("goal_contract_ready")
+    return {
+        "schema_version": "across-promotion-goal-binding/1.0",
+        "goal_id": goal_id,
+        "goal_revision": revision,
+        "task_id": task_id,
+        "criterion_coverage": public_coverage,
+        "revalidation_state": value.get("validity_state"),
+        "reason_codes": list(reason_codes) if isinstance(reason_codes, list) else [],
     }
 
 

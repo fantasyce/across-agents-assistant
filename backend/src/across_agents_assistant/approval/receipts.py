@@ -16,6 +16,15 @@ from ..promotion_package import package_sha256
 APPROVAL_RECEIPT_SCHEMA = "across-approval-receipt/1.0"
 APPROVAL_CHAIN_SCHEMA = "across-approval-receipt-chain/1.0"
 SENSITIVE_SCOPES = {"workspace_promotion", "release", "release_promotion", "replay_external_side_effects"}
+EXPLICIT_RECEIPT_PURPOSES = {
+    "goal_confirmation",
+    "goal_change_decision",
+    "goal_review_waiver",
+    "workspace_promotion",
+    "release",
+    "release_promotion",
+    "replay_external_side_effects",
+}
 
 
 class ApprovalReceiptError(ValueError):
@@ -42,6 +51,7 @@ class ApprovalReceiptStore:
         *,
         subject: ApprovalReceiptSubject,
         scope: str,
+        purpose: str | None = None,
         decision: str,
         proposer_id: str,
         approver_id: str,
@@ -54,6 +64,7 @@ class ApprovalReceiptStore:
                 conn,
                 subject=subject,
                 scope=scope,
+                purpose=purpose,
                 decision=decision,
                 proposer_id=proposer_id,
                 approver_id=approver_id,
@@ -136,6 +147,7 @@ class ApprovalReceiptStore:
         *,
         subject: ApprovalReceiptSubject,
         scope: str,
+        purpose: str | None = None,
         decision: str,
         proposer_id: str,
         approver_id: str,
@@ -144,6 +156,9 @@ class ApprovalReceiptStore:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         clean_scope = _identifier(scope, "scope")
+        clean_purpose = _identifier(purpose or clean_scope, "purpose")
+        if purpose is not None and clean_purpose not in EXPLICIT_RECEIPT_PURPOSES:
+            raise ApprovalReceiptError("receipt purpose is not allowed")
         clean_decision = _decision(decision)
         proposer = _actor(proposer_id, "proposer_id")
         approver = _actor(approver_id, "approver_id")
@@ -163,6 +178,7 @@ class ApprovalReceiptStore:
         idempotency_token = _bounded_text(idempotency_key or request_id or "", 500)
         dedupe_material = {
             "scope": clean_scope,
+            "purpose": clean_purpose,
             "decision": clean_decision,
             "proposer_id": proposer,
             "approver_id": approver,
@@ -218,6 +234,7 @@ class ApprovalReceiptStore:
             "subject_id_sha256": subject_id_hash,
             "subject_sha256": subject_sha256,
             "scope": clean_scope,
+            "purpose": clean_purpose,
             "decision": clean_decision,
             "proposer_id": proposer,
             "approver_id": approver,
@@ -508,6 +525,35 @@ class ApprovalReceiptStore:
                        (id, receipt_count, chain_tip) VALUES (1, 0, ?)""",
                     ("0" * 64,),
                 )
+
+
+def verify_approval_receipt_purpose(
+    receipt: Mapping[str, Any],
+    *,
+    expected_purpose: str,
+    subject_type: str,
+    subject_id: str,
+    subject_payload: Mapping[str, Any],
+) -> bool:
+    """Fail closed when a valid receipt is replayed for another purpose or subject."""
+
+    purpose = _identifier(expected_purpose, "expected_purpose")
+    if purpose not in EXPLICIT_RECEIPT_PURPOSES:
+        raise ApprovalReceiptError("receipt purpose is not allowed")
+    if receipt.get("integrity_status") != "verified":
+        raise ApprovalReceiptError("receipt integrity is not verified")
+    if receipt.get("purpose") != purpose or receipt.get("scope") != purpose:
+        raise ApprovalReceiptError("receipt purpose does not match")
+    expected_type = _identifier(subject_type, "subject_type")
+    expected_id_hash = _sha256_text(_bounded_text(subject_id, 500))
+    expected_subject_hash = _sha256_json(_secret_free_subject(dict(subject_payload)))
+    if (
+        receipt.get("subject_type") != expected_type
+        or receipt.get("subject_id_sha256") != expected_id_hash
+        or receipt.get("subject_sha256") != expected_subject_hash
+    ):
+        raise ApprovalReceiptError("receipt subject does not match")
+    return True
 
 
 def evaluate_promotion_authorization(
