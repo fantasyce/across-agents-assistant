@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -191,7 +192,11 @@ def install_goal_contract_routes(
     @router.post("/api/goal-contract/plugin-probe")
     async def probe_goal_contract_plugins(request: GoalPluginProbeRequest):
         try:
-            return run_managed_goal_contract_probe(request.contract, allow_missing=request.allow_missing)
+            return await asyncio.to_thread(
+                run_managed_goal_contract_probe,
+                request.contract,
+                allow_missing=request.allow_missing,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,

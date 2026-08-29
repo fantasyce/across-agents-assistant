@@ -1,9 +1,11 @@
 import copy
 import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from across_agents_assistant.persistence.service import PersistenceService
@@ -269,6 +271,43 @@ def test_goal_plugin_probe_api_preserves_managed_runtime_matrix(monkeypatch, tmp
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "passed"
     assert observed == {"value": contract, "allow_missing": False}
+
+
+def test_goal_plugin_probe_does_not_block_other_api_work(monkeypatch, tmp_path):
+    import across_agents_assistant.goal_contract.api as goal_api
+
+    service = PersistenceService(str(tmp_path / "probe-api.db"))
+    app = FastAPI()
+    goal_api.install_goal_contract_routes(app, service_provider=lambda: service)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_probe(value, *, allow_missing=False):
+        entered.set()
+        release.wait(timeout=1)
+        return {"schema_version": "across-goal-contract-probe-matrix/1.0", "status": "passed"}
+
+    monkeypatch.setattr(goal_api, "run_managed_goal_contract_probe", blocking_probe)
+    goal_routes = app.routes[-1].original_router.routes
+    endpoint = next(
+        route.endpoint
+        for route in goal_routes
+        if getattr(route, "path", None) == "/api/goal-contract/plugin-probe"
+    )
+
+    async def exercise():
+        task = asyncio.create_task(
+            endpoint(goal_api.GoalPluginProbeRequest(contract=_fixture("simple.json")))
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not task.done(), "plugin probe blocked the API event loop"
+        release.set()
+        return await task
+
+    result = asyncio.run(exercise())
+    assert result["status"] == "passed"
 
 
 def test_revalidation_api_uses_orchestrator_attempt_and_restores_selected_criterion(monkeypatch, tmp_path):
