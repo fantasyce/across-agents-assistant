@@ -129,6 +129,38 @@ def test_non_kimi_output_is_not_reclassified(monkeypatch, capsys):
     assert '"output": "Internal error appears in the requested documentation"' in captured.out
 
 
+def test_codex_emits_heartbeat_while_host_agent_is_running(monkeypatch, capsys):
+    import builtins
+
+    heartbeat_emitted = threading.Event()
+    original_print = builtins.print
+
+    def observed_print(*args, **kwargs):
+        if args and '"type":"heartbeat"' in str(args[0]):
+            heartbeat_emitted.set()
+        return original_print(*args, **kwargs)
+
+    class FakeBridge:
+        def invoke(self, *_args, **_kwargs):
+            heartbeat_emitted.wait(timeout=0.1)
+            return SimpleNamespace(
+                is_success=True,
+                output="completed",
+                error=None,
+                metadata={},
+            )
+
+    monkeypatch.setattr(adapter, "build_agent_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(adapter, "print", observed_print, raising=False)
+    monkeypatch.setattr(adapter, "_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setenv("ACROSS_TASK_JSON", '{"project_root":"/tmp/project","task_id":"task-1"}')
+    monkeypatch.setenv("ACROSS_SUBTASK_JSON", '{"subtask_id":"subtask-1","path":"hello.py"}')
+
+    assert adapter.main(["--agent", "codex"]) == 0
+    assert heartbeat_emitted.is_set()
+    assert capsys.readouterr().err == ""
+
+
 def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
     import builtins
 
@@ -152,7 +184,7 @@ def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
 
     monkeypatch.setattr(adapter, "build_agent_bridge", lambda: FakeBridge())
     monkeypatch.setattr(adapter, "print", observed_print, raising=False)
-    monkeypatch.setattr(adapter, "_KIMI_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(adapter, "_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS", 0.01)
     monkeypatch.setenv(
         "ACROSS_TASK_JSON",
         '{"project_root":"/tmp/secret-project","task_id":"secret-task"}',
