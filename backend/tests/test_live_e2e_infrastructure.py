@@ -43,6 +43,16 @@ def test_live_e2e_runner_enables_live_gate_and_legacy_socket_e2e():
     assert '../across-orchestrator' not in script
 
 
+def test_live_e2e_runner_records_interrupts_as_failed_evidence():
+    script = _read("scripts/run_live_e2e.sh")
+
+    assert 'INTERRUPTED_EXIT_CODE=""' in script
+    assert 'trap \'INTERRUPTED_EXIT_CODE=130\' INT' in script
+    assert 'trap \'INTERRUPTED_EXIT_CODE=143\' TERM' in script
+    assert 'if [[ -n "$INTERRUPTED_EXIT_CODE" ]]; then' in script
+    assert 'exit_code="$INTERRUPTED_EXIT_CODE"' in script
+
+
 def test_live_e2e_requires_real_model_backed_tasks_instead_of_skipping():
     minimal = _read("backend/tests/e2e/test_e2e_minimal_task.py")
     rest_api = _read("backend/tests/e2e/test_e2e_rest_api.py")

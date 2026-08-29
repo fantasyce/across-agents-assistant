@@ -31,6 +31,7 @@ AGENTS_HOME_DIR=""
 SOCKET_PATH=""
 PROJECT_ROOT=""
 BACKEND_PID=""
+INTERRUPTED_EXIT_CODE=""
 
 cleanup() {
   if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
@@ -83,10 +84,15 @@ write_live_e2e_evidence() {
 finish() {
   local exit_code="$?"
   trap - EXIT
+  if [[ -n "$INTERRUPTED_EXIT_CODE" ]]; then
+    exit_code="$INTERRUPTED_EXIT_CODE"
+  fi
   write_live_e2e_evidence "$exit_code" || true
   cleanup
   exit "$exit_code"
 }
+trap 'INTERRUPTED_EXIT_CODE=130' INT
+trap 'INTERRUPTED_EXIT_CODE=143' TERM
 trap finish EXIT
 
 if [[ -z "$ORCHESTRATOR_COMMAND" ]]; then
