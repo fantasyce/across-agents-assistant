@@ -709,3 +709,9 @@ def test_acceptance_runner_blocks_release_on_real_goal_provider_consumer_contrac
     assert "goal_revalidation_complete" in packaged
     assert "result_review_rejected" in packaged
     assert "replacement_attempt" in packaged
+    assert "'/api/tasks/auto'" in packaged
+    assert '"/api/tasks/$GOAL_TASK_ID/run"' in packaged
+    assert '"/api/tasks/$GOAL_TASK_ID/status"' in packaged
+    assert "goal-task-submit.json" in packaged
+    assert 'payload.get("run", {}).get("orchestrator_tasks") or []' not in packaged
+    assert 'task_ids[0]' not in packaged

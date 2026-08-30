@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="${ACROSS_PACKAGED_APP_PATH:-/Applications/Across Agents Assistant.app}"
 BACKEND_PATH="$APP_PATH/Contents/Resources/backend"
 if [[ -d "$BACKEND_PATH" ]]; then
@@ -32,7 +33,8 @@ if [[ ! -x "$BACKEND_PATH" ]]; then
   exit 2
 fi
 
-mkdir -p "$TMP_DIR/project" "$TMP_DIR/tmp"
+mkdir -p "$TMP_DIR/project" "$TMP_DIR/tmp" "$TMP_DIR/fixture-bin"
+ln -s "$ROOT_DIR/scripts/packaged_goal_fixture_codex.py" "$TMP_DIR/fixture-bin/codex"
 cat > "$TMP_DIR/project/package.json" <<'JSON'
 {
   "name": "across-packaged-cross-plugin-fixture",
@@ -46,6 +48,9 @@ JSON
   ACROSS_HOME="$ACROSS_HOME" \
   ACROSS_AGENTS_HOME="$ACROSS_AGENTS_HOME" \
   TMPDIR="$TMP_DIR/tmp" \
+  PATH="$TMP_DIR/fixture-bin:$PATH" \
+  ACROSS_PACKAGED_GOAL_FIXTURE_AGENT=1 \
+  ACROSS_AGENTS_ORCHESTRATOR_AUTORUN=0 \
   ACROSS_AAA_CANDIDATE_RETENTION=0 \
     "$BACKEND_PATH" > "$TMP_DIR/backend.log" 2>&1
 ) &
@@ -138,13 +143,39 @@ import os
 from pathlib import Path
 
 root = Path(os.environ["TMP_DIR"])
-payload = json.loads((root / "run.json").read_text(encoding="utf-8"))
-task_ids = payload.get("run", {}).get("orchestrator_tasks") or []
-if not task_ids or not isinstance(task_ids[0], str):
-    raise SystemExit("The packaged workflow did not return an Orchestrator task identity.")
-(root / "goal-task-id.txt").write_text(task_ids[0] + "\n", encoding="utf-8")
+request = {
+    "description": "Create across-results/goal-contract-verification.md as the bounded packaged Goal result.",
+    "task_types": ["artifact"],
+    "owner_agent": "codex",
+    "allowed_subtask_agents": ["codex"],
+    "project_dir": str(root / "project"),
+    "strict_dependency": False,
+    "enable_wave_gate": False,
+}
+(root / "goal-task-request.json").write_text(
+    json.dumps(request, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+GOAL_TASK_BODY="$(tr -d '\n' < "$TMP_DIR/goal-task-request.json")"
+request POST '/api/tasks/auto' "$TMP_DIR/goal-task-submit.json" "$GOAL_TASK_BODY"
+TMP_DIR="$TMP_DIR" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["TMP_DIR"])
+payload = json.loads((root / "goal-task-submit.json").read_text(encoding="utf-8"))
+task_id = payload.get("task_id")
+if not isinstance(task_id, str) or not task_id.startswith("task-"):
+    raise SystemExit("The packaged Task API did not return an AAA Task identity.")
+if payload.get("implementation") != "external" or payload.get("external_task") is not True:
+    raise SystemExit("The packaged Goal Task did not route through installed Orchestrator.")
+(root / "goal-task-id.txt").write_text(task_id + "\n", encoding="utf-8")
 PY
 IFS= read -r GOAL_TASK_ID < "$TMP_DIR/goal-task-id.txt"
+request POST "/api/tasks/$GOAL_TASK_ID/run" "$TMP_DIR/goal-task-run.json"
+request GET "/api/tasks/$GOAL_TASK_ID/status" "$TMP_DIR/goal-task-status.json"
 request GET "/api/tasks/$GOAL_TASK_ID" "$TMP_DIR/goal-task.json"
 request GET "/api/tasks/$GOAL_TASK_ID/goal" "$TMP_DIR/goal-initial.json"
 request POST "/api/tasks/$GOAL_TASK_ID/reject" "$TMP_DIR/goal-rejected.json"
@@ -196,6 +227,8 @@ for plugin_id in ("across-context", "across-orchestrator", "across-autopilot"):
 
 payload = json.loads((root / "run.json").read_text(encoding="utf-8"))
 goal_probe = json.loads((root / "goal-probe.json").read_text(encoding="utf-8"))
+goal_task_submit = json.loads((root / "goal-task-submit.json").read_text(encoding="utf-8"))
+goal_task_status = json.loads((root / "goal-task-status.json").read_text(encoding="utf-8"))
 goal_task = json.loads((root / "goal-task.json").read_text(encoding="utf-8"))
 goal_rejected = json.loads((root / "goal-rejected.json").read_text(encoding="utf-8"))
 goal_revalidated = json.loads((root / "goal-revalidated.json").read_text(encoding="utf-8"))
@@ -216,7 +249,9 @@ if not run.get("orchestrator_tasks"):
     raise SystemExit("The packaged workflow did not produce an Orchestrator task.")
 if not run.get("memory_ids"):
     raise SystemExit("The packaged workflow did not produce a pending Context memory record.")
-if goal_task.get("status") != "completed":
+if goal_task_submit.get("task_id") != goal_task.get("task_id"):
+    raise SystemExit("The Goal Task identity changed between submission and review.")
+if goal_task_status.get("status") != "completed" or goal_task.get("status") != "completed":
     raise SystemExit("The Goal-backed packaged task was not completed before review.")
 if goal_rejected.get("task_review", {}).get("review_status") != "rejected":
     raise SystemExit("The first packaged Goal Attempt was not rejected by the review action.")

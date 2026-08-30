@@ -138,7 +138,7 @@ if [[ "$INCLUDE_PACKAGED_APP" == "1" ]]; then
   run_gate \
     goalboard_release_train_lock \
     "$ROOT_DIR" \
-    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; python3 scripts/write_goalboard_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goalboard-release-train-lock.json' && python3 scripts/write_goalboard_release_train_lock.py --verify '$RUN_DIR/goalboard-release-train-lock.json'"
+    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goalboard-release-train-lock.json' && '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --verify '$RUN_DIR/goalboard-release-train-lock.json'"
 fi
 
 SUMMARY_GENERATION_EXIT=0

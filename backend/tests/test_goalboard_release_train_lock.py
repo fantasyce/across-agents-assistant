@@ -175,3 +175,5 @@ def test_packaged_acceptance_requires_and_records_release_train_lock():
     packaged_e2e = script.index("packaged_app_cross_plugin_e2e")
     lock_gate = script.index("goalboard_release_train_lock")
     assert packaged_e2e < lock_gate
+    assert "'$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py" in script
+    assert "python3 scripts/write_goalboard_release_train_lock.py" not in script
