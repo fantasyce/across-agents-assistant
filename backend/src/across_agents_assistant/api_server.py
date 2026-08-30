@@ -301,6 +301,7 @@ from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
 from .persistence.goal_contract_store import GoalContractStoreError
 from .goal_contract.api import install_goal_contract_routes
+from .goal_contract.execution_evidence import build_execution_evidence_material
 from .goal_contract.protocol import criterion_id, stable_goal_hash
 from .goal_contract.service import GoalContractService
 from .approval.receipts import (
@@ -15974,7 +15975,9 @@ async def get_task(task_id: str):
             plugin = get_orchestrator_plugin_manager()
             task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-            return _attach_task_user_review(TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence))))
+            info = TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence)))
+            _synchronize_goal_execution_evidence(info, runtime_evidence=evidence)
+            return _attach_task_user_review(info)
 
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
         _repair_task_dispatch_if_possible(task_id, reason="api_detail_poll")
@@ -15986,14 +15989,101 @@ async def get_task(task_id: str):
             if _task_state._persistence:
                 full_task = _task_state._persistence.get_full_task(task_id)
                 if full_task:
-                    return _attach_task_user_review(_task_info_from_db(full_task))
+                    info = _task_info_from_db(full_task)
+                    _synchronize_goal_execution_evidence(info)
+                    return _attach_task_user_review(info)
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        return _attach_task_user_review(_task_to_info(task, _task_state))
+        info = _task_to_info(task, _task_state)
+        _synchronize_goal_execution_evidence(info)
+        return _attach_task_user_review(info)
     except HTTPException:
         raise
     except Exception as e:
         raise _safe_http_500("Get task")
+
+
+def _synchronize_goal_execution_evidence(
+    info: TaskInfo,
+    *,
+    runtime_evidence: Mapping[str, Any] | None = None,
+) -> None:
+    contract = persistence.goal_contracts.get_current(info.task_id)
+    if contract is None:
+        return
+    materials = build_execution_evidence_material(contract, _pydantic_dump(info), runtime_evidence)
+    goals = GoalContractService(persistence)
+    for material in materials:
+        goals.record_execution_evidence(
+            task_id=info.task_id,
+            goal_revision=int(contract["revision"]),
+            criterion_id=material["criterion_id"],
+            artifact_digests=material["artifact_digests"],
+            executor=material["executor"],
+            run_id=material["run_id"],
+            attempt_id=material["attempt_id"],
+            validator_id=material["validator_id"],
+            validator_authority=material["validator_authority"],
+            verdict=material["verdict"],
+            input_fingerprint=material["input_fingerprint"],
+            receipt_hash=material.get("receipt_hash"),
+            idempotency_key=(
+                f"task-execution-evidence:{info.task_id}:{contract['revision']}:"
+                f"{material['criterion_id']}:{material['attempt_id']}:{material['input_fingerprint']}"
+            ),
+        )
+
+
+def _goal_result_review_basis(
+    task_id: str,
+    *,
+    require_complete: bool = True,
+    info: TaskInfo | None = None,
+) -> tuple[list[str], str]:
+    envelope = GoalContractService(persistence).get_goal(task_id)
+    required = {
+        str(item["criterion_id"])
+        for item in envelope["contract"]["acceptance_criteria"]
+        if item.get("required", True)
+    }
+    stale = {
+        str(criterion_id)
+        for invalidation in envelope["invalidations"]
+        if invalidation.get("state") == "pending"
+        for criterion_id in invalidation.get("criterion_ids") or ()
+    }
+    superseded = {
+        str(evidence_id)
+        for binding in envelope["evidence_bindings"]
+        for evidence_id in binding.get("supersedes_evidence_ids") or ()
+    }
+    selected: dict[str, dict[str, Any]] = {}
+    for binding in reversed(envelope["evidence_bindings"]):
+        if (
+            binding.get("trust_state") != "verified"
+            or binding.get("verdict") != "verified"
+            or binding.get("evidence_id") in superseded
+        ):
+            continue
+        for criterion_id_value in binding.get("criterion_ids") or ():
+            criterion_id_text = str(criterion_id_value)
+            if criterion_id_text in required and criterion_id_text not in stale:
+                selected.setdefault(criterion_id_text, binding)
+    if require_complete and set(selected) != required:
+        raise GoalContractStoreError(
+            "goal_evidence_missing", "result review requires verified execution evidence"
+        )
+    bindings = list({item["evidence_id"]: item for item in selected.values()}.values())
+    attempt_ids = {str(item.get("attempt_id") or "") for item in bindings if item.get("attempt_id")}
+    if len(attempt_ids) > 1:
+        raise GoalContractStoreError(
+            "goal_evidence_conflict", "result review evidence belongs to multiple Attempts"
+        )
+    attempt_id = next(iter(attempt_ids), "")
+    if not attempt_id and info is not None:
+        serialized = json.dumps(_pydantic_dump(info), sort_keys=True, default=str).encode("utf-8")
+        attempt_id = f"task-attempt-{hashlib.sha256(serialized).hexdigest()[:24]}"
+    return sorted(item["evidence_id"] for item in bindings), attempt_id
 
 
 @app.post("/api/tasks/{task_id}/accept")
@@ -16030,45 +16120,74 @@ async def accept_task_result(task_id: str):
         if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
-        if current["review_status"] == "rejected":
-            raise HTTPException(status_code=409, detail="Rejected work cannot be accepted")
-        if current["review_status"] == "accepted":
-            review = current
-        else:
+        contract = persistence.goal_contracts.get_current(task_id)
+        if contract is not None:
+            basis_evidence_ids, attempt_id = _goal_result_review_basis(task_id)
+            result_review = GoalContractService(persistence).record_result_review(
+                task_id=task_id,
+                expected_revision=int(contract["revision"]),
+                decision="passed",
+                reason="The current verified delivery was accepted by the local human reviewer.",
+                reviewer_id="human:local",
+                basis_evidence_ids=basis_evidence_ids,
+                attempt_id=attempt_id,
+                idempotency_key=(
+                    f"goal-result-review:{task_id}:{contract['revision']}:{attempt_id}:passed:"
+                    f"{hashlib.sha256('|'.join(basis_evidence_ids).encode('utf-8')).hexdigest()[:16]}"
+                ),
+            )
             review = task_persistence.save_task_user_review(
                 task_id,
                 "accepted",
                 accepted_at=time.time(),
             )
-        approval_receipt = _record_approval_receipt(
-            subject_type="task_result",
-            subject_id=task_id,
-            subject_payload={
-                "task_id": task_id,
-                "status": info.status,
-                "artifact_ids": [
-                    str(artifact.get("id") or artifact.get("artifact_id"))
-                    for artifact in info.artifacts
-                    if artifact.get("id") or artifact.get("artifact_id")
-                ],
-            },
-            scope="task_result_review",
-            decision="approved",
-            proposer_id=info.owner_agent or "task-owner",
-            approver_id="local-human",
-            risk_level="medium",
-            request_id=f"task-result-review:{task_id}",
-            idempotency_key=f"task-result-review:{task_id}",
-        )
-        _record_goal_acceptance_evidence(task_id, info)
+            approval_receipt = result_review["review"]["decision_receipt"]
+            goal_envelope = GoalContractService(persistence).get_goal(task_id)
+        else:
+            if current["review_status"] == "rejected":
+                raise HTTPException(status_code=409, detail="Rejected work cannot be accepted")
+            if current["review_status"] == "accepted":
+                review = current
+            else:
+                review = task_persistence.save_task_user_review(
+                    task_id,
+                    "accepted",
+                    accepted_at=time.time(),
+                )
+            approval_receipt = _record_approval_receipt(
+                subject_type="task_result",
+                subject_id=task_id,
+                subject_payload={
+                    "task_id": task_id,
+                    "status": info.status,
+                    "artifact_ids": [
+                        str(artifact.get("id") or artifact.get("artifact_id"))
+                        for artifact in info.artifacts
+                        if artifact.get("id") or artifact.get("artifact_id")
+                    ],
+                },
+                scope="task_result_review",
+                decision="approved",
+                proposer_id=info.owner_agent or "task-owner",
+                approver_id="local-human",
+                risk_level="medium",
+                request_id=f"task-result-review:{task_id}",
+                idempotency_key=f"task-result-review:{task_id}",
+            )
         return {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
             "approval_receipt": approval_receipt,
+            **({"goal": goal_envelope} if contract is not None else {}),
         }
     except HTTPException:
         raise
+    except GoalContractStoreError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": exc.code, "message": str(exc)},
+        ) from exc
     except Exception:
         raise _safe_http_500("Accept task result")
 
@@ -16094,46 +16213,69 @@ async def reject_task_result(task_id: str):
         if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
-        if current["review_status"] == "accepted":
-            raise HTTPException(status_code=409, detail="Accepted work cannot be rejected")
-        if current["review_status"] == "rejected":
-            review = current
-        else:
-            review = task_persistence.save_task_user_review(
-                task_id,
-                "rejected",
-                accepted_at=None,
+        contract = persistence.goal_contracts.get_current(task_id)
+        if contract is not None:
+            basis_evidence_ids, attempt_id = _goal_result_review_basis(task_id, require_complete=False, info=info)
+            result_review = GoalContractService(persistence).record_result_review(
+                task_id=task_id,
+                expected_revision=int(contract["revision"]),
+                decision="rejected",
+                reason="The current delivery was rejected by the local human reviewer and requires repair.",
+                reviewer_id="human:local",
+                basis_evidence_ids=basis_evidence_ids,
+                attempt_id=attempt_id,
+                idempotency_key=f"goal-result-review:{task_id}:{contract['revision']}:{attempt_id}:rejected",
             )
-        approval_receipt = _record_approval_receipt(
-            subject_type="task_result",
-            subject_id=task_id,
-            subject_payload={
-                "task_id": task_id,
-                "status": info.status,
-                "quality_gate": (info.quality_health or {}).get("quality_gate"),
-                "delivery_quality": (info.quality_health or {}).get("delivery_quality"),
-                "artifact_ids": [
-                    str(artifact.get("id") or artifact.get("artifact_id"))
-                    for artifact in info.artifacts
-                    if artifact.get("id") or artifact.get("artifact_id")
-                ],
-            },
-            scope="task_result_review",
-            decision="rejected",
-            proposer_id=info.owner_agent or "task-owner",
-            approver_id="local-human",
-            risk_level="medium",
-            request_id=f"task-result-review:{task_id}:reject",
-            idempotency_key=f"task-result-review:{task_id}:reject",
-        )
+            review = task_persistence.save_task_user_review(task_id, "rejected", accepted_at=None)
+            approval_receipt = result_review["review"]["decision_receipt"]
+            goal_envelope = GoalContractService(persistence).get_goal(task_id)
+        else:
+            if current["review_status"] == "accepted":
+                raise HTTPException(status_code=409, detail="Accepted work cannot be rejected")
+            if current["review_status"] == "rejected":
+                review = current
+            else:
+                review = task_persistence.save_task_user_review(
+                    task_id,
+                    "rejected",
+                    accepted_at=None,
+                )
+            approval_receipt = _record_approval_receipt(
+                subject_type="task_result",
+                subject_id=task_id,
+                subject_payload={
+                    "task_id": task_id,
+                    "status": info.status,
+                    "quality_gate": (info.quality_health or {}).get("quality_gate"),
+                    "delivery_quality": (info.quality_health or {}).get("delivery_quality"),
+                    "artifact_ids": [
+                        str(artifact.get("id") or artifact.get("artifact_id"))
+                        for artifact in info.artifacts
+                        if artifact.get("id") or artifact.get("artifact_id")
+                    ],
+                },
+                scope="task_result_review",
+                decision="rejected",
+                proposer_id=info.owner_agent or "task-owner",
+                approver_id="local-human",
+                risk_level="medium",
+                request_id=f"task-result-review:{task_id}:reject",
+                idempotency_key=f"task-result-review:{task_id}:reject",
+            )
         return {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
             "approval_receipt": approval_receipt,
+            **({"goal": goal_envelope} if contract is not None else {}),
         }
     except HTTPException:
         raise
+    except GoalContractStoreError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": exc.code, "message": str(exc)},
+        ) from exc
     except Exception:
         raise _safe_http_500("Reject task result")
 
@@ -16714,7 +16856,7 @@ def _create_submitted_goal_contract(
                 "description": description,
                 "required": True,
                 "validator_kind": "task_result_review",
-                "review_policy": "automatic",
+                "review_policy": "human",
                 "source": "user_confirmed",
             }
         )
@@ -16778,30 +16920,6 @@ def _goal_acceptance_evidence_material(task_id: str, info: TaskInfo) -> Dict[str
         "validator_id": "aaa-host:task-result-review",
         "verdict": "verified",
     }
-
-
-def _record_goal_acceptance_evidence(task_id: str, info: TaskInfo) -> Dict[str, Any] | None:
-    """Bind the accepted, quality-passed task result to every required criterion."""
-    contract = persistence.goal_contracts.get_current(task_id)
-    if contract is None:
-        # Historical tasks remain reviewable without inventing a Goal Contract.
-        return None
-    material = _goal_acceptance_evidence_material(task_id, info)
-    required_criteria = [
-        str(item["criterion_id"])
-        for item in contract["acceptance_criteria"]
-        if item.get("required")
-    ]
-    return GoalContractService(persistence).record_direct_evidence(
-        task_id=task_id,
-        goal_revision=int(contract["revision"]),
-        criterion_ids=required_criteria,
-        artifact_digests=material["artifact_digests"],
-        validator_id=material["validator_id"],
-        verdict=material["verdict"],
-        input_fingerprint=material["input_fingerprint"],
-        idempotency_key=f"task-result-review-evidence:{task_id}:{contract['revision']}",
-    )
 
 
 async def _verify_goal_revalidation(

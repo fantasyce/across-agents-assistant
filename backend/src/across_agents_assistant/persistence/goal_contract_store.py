@@ -354,7 +354,7 @@ class GoalContractStore:
         revision: int,
         criterion_ids: list[str],
         attempt: Mapping[str, Any],
-        evidence_id: str,
+        evidence_ids: list[str],
         completion_idempotency_key: str,
     ) -> list[dict[str, Any]]:
         """Complete every pending invalidation covered by one verified attempt."""
@@ -374,7 +374,7 @@ class GoalContractStore:
                     continue
                 payload["state"] = "completed"
                 payload["attempt"] = dict(attempt)
-                payload["replacement_evidence_ids"] = [str(evidence_id)]
+                payload["replacement_evidence_ids"] = list(map(str, evidence_ids))
                 payload["completion_idempotency_key"] = str(completion_idempotency_key)
                 payload_json = _canonical(payload)
                 conn.execute(

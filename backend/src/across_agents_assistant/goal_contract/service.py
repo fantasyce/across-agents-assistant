@@ -94,7 +94,7 @@ class GoalContractService:
         executable_criteria = sorted(
             str(criterion["criterion_id"])
             for criterion in current.get("acceptance_criteria") or ()
-            if criterion.get("required") is True and criterion.get("review_policy") != "human"
+            if criterion.get("required") is True
         )
         if not executable_criteria:
             raise GoalContractStoreError(
@@ -290,44 +290,233 @@ class GoalContractService:
         attempt_id: str | None = None,
         supersedes_evidence_ids: Sequence[str] = (),
     ) -> dict[str, Any]:
-        contract = self._current(task_id, goal_revision)
-        allowed = {item["criterion_id"] for item in contract["acceptance_criteria"]}
         selected = sorted(set(str(item) for item in criterion_ids))
-        if not selected or not set(selected).issubset(allowed):
-            raise GoalContractStoreError("goal_criterion_invalid", "direct evidence criterion binding is invalid")
-        if verdict != "verified":
-            raise GoalContractStoreError("goal_evidence_untrusted", "direct evidence requires a trusted validator verdict")
+        if len(selected) != 1:
+            raise GoalContractStoreError(
+                "goal_criterion_invalid", "execution evidence must bind exactly one criterion"
+            )
+        direct_identity = _digest(
+            {
+                "task_id": task_id,
+                "goal_revision": goal_revision,
+                "criterion_id": selected[0],
+                "artifact_digests": dict(artifact_digests),
+                "input_fingerprint": input_fingerprint,
+            }
+        )
+        return self.record_execution_evidence(
+            task_id=task_id,
+            goal_revision=goal_revision,
+            criterion_id=selected[0],
+            artifact_digests=artifact_digests,
+            executor="aaa-direct-agent",
+            run_id=f"direct-run-{direct_identity[:16]}",
+            attempt_id=attempt_id or f"direct-attempt-{direct_identity[16:32]}",
+            validator_id=validator_id,
+            validator_authority="aaa-host",
+            verdict=verdict,
+            input_fingerprint=input_fingerprint,
+            receipt_hash=None,
+            supersedes_evidence_ids=supersedes_evidence_ids,
+            idempotency_key=idempotency_key,
+        )
+
+    def record_execution_evidence(
+        self,
+        *,
+        task_id: str,
+        goal_revision: int,
+        criterion_id: str,
+        artifact_digests: Mapping[str, str],
+        executor: str,
+        run_id: str,
+        attempt_id: str,
+        validator_id: str,
+        validator_authority: str,
+        verdict: str,
+        input_fingerprint: str,
+        receipt_hash: str | None,
+        idempotency_key: str,
+        supersedes_evidence_ids: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        contract = self._current(task_id, goal_revision)
+        allowed = {str(item["criterion_id"]) for item in contract["acceptance_criteria"]}
+        normalized_criterion = str(criterion_id or "").strip()
+        if normalized_criterion not in allowed:
+            raise GoalContractStoreError("goal_criterion_invalid", "execution evidence criterion binding is invalid")
+        normalized_artifacts = dict(sorted((str(key), str(value).lower()) for key, value in artifact_digests.items()))
+        if not normalized_artifacts or any(
+            len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
+            for value in normalized_artifacts.values()
+        ):
+            raise GoalContractStoreError("goal_evidence_untrusted", "execution evidence artifact digests are invalid")
+        if verdict != "verified" or validator_authority not in {"aaa-host", "across-orchestrator", "across-worker"}:
+            raise GoalContractStoreError("goal_evidence_untrusted", "execution evidence requires trusted validator authority")
+        normalized_executor = str(executor or "").strip()
+        normalized_validator = str(validator_id or "").strip()
+        normalized_input = str(input_fingerprint or "").lower()
+        if not normalized_executor or not normalized_validator or len(normalized_input) != 64:
+            raise GoalContractStoreError("goal_evidence_untrusted", "execution evidence identity is incomplete")
+        normalized_receipt = str(receipt_hash or "").lower() or None
+        if normalized_receipt is not None and (
+            len(normalized_receipt) != 64
+            or any(character not in "0123456789abcdef" for character in normalized_receipt)
+        ):
+            raise GoalContractStoreError("goal_evidence_untrusted", "execution evidence receipt hash is invalid")
         request = {
             "task_id": task_id,
             "goal_revision": goal_revision,
-            "criterion_ids": selected,
-            "artifact_digests": dict(sorted(artifact_digests.items())),
-            "validator_id": validator_id,
+            "criterion_id": normalized_criterion,
+            "artifact_digests": normalized_artifacts,
+            "executor": normalized_executor,
+            "run_id": str(run_id or "").strip(),
+            "attempt_id": str(attempt_id or "").strip(),
+            "validator_id": normalized_validator,
+            "validator_authority": validator_authority,
             "verdict": verdict,
-            "input_fingerprint": input_fingerprint,
-            "attempt_id": str(attempt_id or ""),
+            "input_fingerprint": normalized_input,
+            "receipt_hash": normalized_receipt,
             "supersedes_evidence_ids": sorted(set(map(str, supersedes_evidence_ids))),
         }
         digest = _digest(request)
+        normalized_run = request["run_id"] or f"execution-run-{digest[:16]}"
+        normalized_attempt = request["attempt_id"] or f"execution-attempt-{digest[16:32]}"
         binding = {
-            "schema_version": "across-goal-evidence-binding/1.0",
+            "schema_version": "across-goal-evidence-binding/1.1",
             "evidence_id": f"evidence-{digest[:24]}",
             "goal_id": contract["goal_id"],
             "goal_revision": goal_revision,
             "task_id": task_id,
-            "criterion_ids": selected,
-            "run_id": f"direct-run-{digest[:16]}",
-            "attempt_id": str(attempt_id or f"direct-attempt-{digest[16:32]}"),
-            "executor": "aaa-direct-agent",
-            "artifact_digests": request["artifact_digests"],
-            "input_fingerprint": input_fingerprint,
-            "validator": {"validator_id": validator_id, "authority": "aaa-host"},
+            "criterion_ids": [normalized_criterion],
+            "run_id": normalized_run,
+            "attempt_id": normalized_attempt,
+            "executor": normalized_executor,
+            "artifact_digests": normalized_artifacts,
+            "input_fingerprint": normalized_input,
+            "validator": {"validator_id": normalized_validator, "authority": validator_authority},
             "verdict": verdict,
             "trust_state": "verified",
         }
-        if supersedes_evidence_ids:
+        if normalized_receipt:
+            binding["receipt_hash"] = normalized_receipt
+        if request["supersedes_evidence_ids"]:
             binding["supersedes_evidence_ids"] = request["supersedes_evidence_ids"]
         return self.store.save_evidence(binding, idempotency_key=idempotency_key)
+
+    def record_result_review(
+        self,
+        *,
+        task_id: str,
+        expected_revision: int,
+        decision: str,
+        reason: str,
+        reviewer_id: str,
+        basis_evidence_ids: Sequence[str],
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        contract = self._current(task_id, expected_revision)
+        if decision not in {"passed", "rejected"}:
+            raise GoalContractStoreError("goal_review_invalid", "result review decision is invalid")
+        if not (reviewer_id.startswith("human:") or reviewer_id.startswith("local-human")):
+            raise GoalContractStoreError("goal_review_unauthorized", "result review requires a host human")
+        review_criteria = [
+            str(item["criterion_id"])
+            for item in contract["acceptance_criteria"]
+            if item.get("required", True) and item.get("review_policy") != "automatic"
+        ]
+        required_criteria = {
+            str(item["criterion_id"])
+            for item in contract["acceptance_criteria"]
+            if item.get("required", True)
+        }
+        evidence_by_id = {
+            str(item["evidence_id"]): item
+            for item in self.store.list_evidence(contract["goal_id"], expected_revision)
+        }
+        selected_ids = sorted(set(map(str, basis_evidence_ids)))
+        selected = [evidence_by_id[item] for item in selected_ids if item in evidence_by_id]
+        normalized_attempt = str(attempt_id or "").strip()
+        superseded_ids = {
+            str(evidence_id)
+            for item in evidence_by_id.values()
+            for evidence_id in item.get("supersedes_evidence_ids") or ()
+        }
+        if len(selected) != len(selected_ids) or any(
+            item.get("trust_state") != "verified"
+            or item.get("verdict") != "verified"
+            or item.get("attempt_id") != normalized_attempt
+            or item.get("evidence_id") in superseded_ids
+            for item in selected
+        ):
+            raise GoalContractStoreError("goal_evidence_missing", "result review evidence is not current and verified")
+        covered = {
+            str(criterion_id)
+            for item in selected
+            for criterion_id in item.get("criterion_ids") or ()
+        }
+        if decision == "passed" and (not normalized_attempt or not required_criteria.issubset(covered)):
+            raise GoalContractStoreError("goal_evidence_missing", "result review requires verified execution evidence")
+        if decision == "passed":
+            stale_criteria = {
+                str(criterion_id)
+                for invalidation in self.store.list_invalidations(contract["goal_id"], expected_revision)
+                if invalidation.get("state") == "pending"
+                for criterion_id in invalidation.get("criterion_ids") or ()
+            }
+            if required_criteria.intersection(stale_criteria):
+                raise GoalContractStoreError("goal_evidence_missing", "result review evidence requires revalidation")
+        prior_reviews = self.store.list_reviews(contract["goal_id"], expected_revision)
+        if (
+            decision == "passed"
+            and prior_reviews
+            and prior_reviews[-1].get("status") == "rejected"
+            and prior_reviews[-1].get("attempt_id") == normalized_attempt
+        ):
+            raise GoalContractStoreError(
+                "goal_repair_required", "a rejected Attempt must be replaced before it can pass review"
+            )
+        material = {
+            "goal_id": contract["goal_id"],
+            "goal_revision": expected_revision,
+            "task_id": task_id,
+            "criterion_ids": review_criteria,
+            "decision": decision,
+            "reason": str(reason or "").strip(),
+            "reviewer_id": reviewer_id,
+            "basis_evidence_ids": selected_ids,
+            "attempt_id": normalized_attempt,
+        }
+        digest = _digest(material)
+        receipt = self.persistence.record_approval_receipt(
+            subject_type="goal_result",
+            subject_id=f"{contract['goal_id']}:{expected_revision}:{digest[:16]}",
+            subject_payload=material,
+            scope="goal_result_review",
+            purpose="goal_result_review",
+            decision="approved" if decision == "passed" else "rejected",
+            proposer_id="goal-execution-validator",
+            approver_id=reviewer_id,
+            risk_level="medium",
+            idempotency_key=f"{idempotency_key}:receipt",
+        )
+        review = self.store.save_review(
+            {
+                "schema_version": "across-goal-result-review/1.1",
+                "review_id": f"goal-review-{digest[:24]}",
+                "goal_id": contract["goal_id"],
+                "goal_revision": expected_revision,
+                "criterion_ids": review_criteria,
+                "status": decision,
+                "reason": material["reason"],
+                "reviewer_id": reviewer_id,
+                "basis_evidence_ids": selected_ids,
+                "attempt_id": normalized_attempt,
+                "decision_receipt": receipt,
+            },
+            idempotency_key=idempotency_key,
+        )
+        return {"review": review, "projection": self.get_goal(task_id)["projection"]}
 
     def record_criterion_review(
         self,
@@ -437,32 +626,41 @@ class GoalContractService:
             for binding in self.store.list_evidence(contract["goal_id"], expected_revision)
             if set(binding.get("criterion_ids") or ()).intersection(selected)
         })
-        binding = self.record_direct_evidence(
-            task_id=task_id,
-            goal_revision=expected_revision,
-            criterion_ids=selected,
-            artifact_digests=artifact_digests,
-            validator_id=validator_id,
-            verdict=verdict,
-            input_fingerprint=input_fingerprint,
-            attempt_id=attempt_id,
-            supersedes_evidence_ids=superseded,
-            idempotency_key=f"{idempotency_key}:evidence",
-        )
-        normalized_attempt["replacement_evidence_ids"] = [binding["evidence_id"]]
+        executor = "aaa-direct-agent" if contract.get("execution_profile") == "direct" else "across-orchestrator"
+        bindings = [
+            self.record_execution_evidence(
+                task_id=task_id,
+                goal_revision=expected_revision,
+                criterion_id=criterion_id,
+                artifact_digests=artifact_digests,
+                executor=executor,
+                run_id=str(normalized_attempt.get("run_id") or f"revalidation-run-{attempt_id}"),
+                attempt_id=attempt_id,
+                validator_id=validator_id,
+                validator_authority="aaa-host",
+                verdict=verdict,
+                input_fingerprint=input_fingerprint,
+                receipt_hash=str(normalized_attempt.get("evidence_receipt_hash") or "") or None,
+                supersedes_evidence_ids=superseded,
+                idempotency_key=f"{idempotency_key}:evidence:{criterion_id}",
+            )
+            for criterion_id in selected
+        ]
+        normalized_attempt["replacement_evidence_ids"] = [item["evidence_id"] for item in bindings]
         completed = self.store.complete_invalidations(
             goal_id=contract["goal_id"],
             revision=expected_revision,
             criterion_ids=selected,
             attempt=normalized_attempt,
-            evidence_id=binding["evidence_id"],
+            evidence_ids=normalized_attempt["replacement_evidence_ids"],
             completion_idempotency_key=idempotency_key,
         )
         return {
             "attempt": normalized_attempt,
             "invalidation": completed[0],
             "completed_invalidations": completed,
-            "evidence_binding": binding,
+            "evidence_binding": bindings[0],
+            "evidence_bindings": bindings,
             "projection": self.get_goal(task_id)["projection"],
         }
 
@@ -481,11 +679,16 @@ class GoalContractService:
                     (item for item in envelope["evidence_bindings"] if item.get("evidence_id") in replacement_ids),
                     None,
                 )
+                bindings = [
+                    item for item in envelope["evidence_bindings"]
+                    if item.get("evidence_id") in replacement_ids
+                ]
                 return {
                     "attempt": invalidation.get("attempt"),
                     "invalidation": invalidation,
                     "completed_invalidations": [invalidation],
                     "evidence_binding": binding,
+                    "evidence_bindings": bindings,
                     "projection": envelope["projection"],
                 }
         return None

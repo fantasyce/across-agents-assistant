@@ -111,7 +111,7 @@ def test_direct_agent_evidence_uses_public_binding_schema_and_revalidation_is_ap
         input_fingerprint="b" * 64,
         idempotency_key="direct-evidence-1",
     )
-    assert binding["schema_version"] == "across-goal-evidence-binding/1.0"
+    assert binding["schema_version"] == "across-goal-evidence-binding/1.1"
     assert binding["run_id"].startswith("direct-run-")
     assert binding["attempt_id"].startswith("direct-attempt-")
 
@@ -495,7 +495,7 @@ def test_human_criterion_review_reject_then_pass_is_audited_and_changes_projecti
     assert [item["status"] for item in envelope["reviews"]] == ["rejected", "passed"]
 
 
-def test_task_result_acceptance_evidence_completes_submitted_goal(monkeypatch, tmp_path):
+def test_submitted_goal_requires_human_review_but_remains_executable(monkeypatch, tmp_path):
     import across_agents_assistant.api_server as api_server
 
     service = PersistenceService(str(tmp_path / "accepted-goal.db"))
@@ -513,20 +513,27 @@ def test_task_result_acceptance_evidence_completes_submitted_goal(monkeypatch, t
         delivery_report={"status": "passed"},
     )
 
-    first = api_server._record_goal_acceptance_evidence("task-accepted", info)
-    replay = api_server._record_goal_acceptance_evidence("task-accepted", info)
+    assert contract["acceptance_criteria"][0]["review_policy"] == "human"
+    claimed = {
+        "schema_version": "across-goal-execution-contract/1.0",
+        "goal_id": contract["goal_id"],
+        "goal_revision": 1,
+        "task_id": "task-accepted",
+        "criterion_ids": [contract["acceptance_criteria"][0]["criterion_id"]],
+        "input_fingerprint": api_server.stable_goal_hash(contract),
+    }
+    assert api_server.GoalContractService(service).authorize_execution_contract(claimed) == claimed
 
-    assert first == replay
     result = api_server.GoalContractService(service).get_goal("task-accepted")
-    assert result["projection"]["is_complete"] is True
+    assert result["projection"]["is_complete"] is False
     coverage = result["projection"]["criterion_coverage"]
     assert len(coverage) == 1
     assert coverage[0]["criterion_id"] == contract["acceptance_criteria"][0]["criterion_id"]
     assert coverage[0]["required"] is True
-    assert coverage[0]["evidence_state"] == "verified"
-    assert coverage[0]["review_state"] == "not_required"
-    assert coverage[0]["satisfied"] is True
-    assert len(result["evidence_bindings"]) == 1
+    assert coverage[0]["evidence_state"] == "missing"
+    assert coverage[0]["review_state"] == "pending"
+    assert coverage[0]["satisfied"] is False
+    assert result["evidence_bindings"] == []
 
 
 def test_missing_orchestrator_runs_goal_tracked_direct_agent_task(monkeypatch, tmp_path):
@@ -580,6 +587,69 @@ def test_missing_orchestrator_runs_goal_tracked_direct_agent_task(monkeypatch, t
     assert goal["confirmed_by"] == "local-human:work-submit"
     projection = api_server.GoalContractService(service).get_goal(response.task_id)["projection"]
     assert projection["is_complete"] is True
+
+
+def test_goal_backed_rejection_requires_a_new_execution_attempt_before_acceptance(monkeypatch, tmp_path):
+    import across_agents_assistant.api_server as api_server
+    from across_agents_assistant.goal_contract.service import GoalContractService
+    from across_agents_assistant.task_api_models import TaskInfo
+    from across_agents_assistant.task_history.state import TaskState
+
+    service = PersistenceService(str(tmp_path / "repair-review.db"))
+    state = TaskState()
+    state.set_persistence(service.tasks)
+    monkeypatch.setattr(api_server, "persistence", service)
+    monkeypatch.setattr(api_server, "_task_state", state)
+    api_server._create_submitted_goal_contract(
+        task_id="task-repair-review",
+        statement="Deliver the repaired report",
+        deliverables=["across-results/task-report.md"],
+        execution_profile="direct",
+    )
+    info = TaskInfo(
+        task_id="task-repair-review",
+        description="Deliver the repaired report",
+        status="completed",
+        external_task=False,
+        delivery_mode="direct",
+        owner_agent="codex",
+        subtasks=[],
+        artifacts=[],
+        direct_response="First incomplete result",
+        progress=1.0,
+        created_at=1.0,
+        updated_at=2.0,
+    )
+
+    async def fake_get_task(_task_id):
+        return info
+
+    monkeypatch.setattr(api_server, "get_task", fake_get_task)
+
+    async def scenario():
+        api_server._synchronize_goal_execution_evidence(info)
+        rejected = await api_server.reject_task_result(info.task_id)
+        try:
+            await api_server.accept_task_result(info.task_id)
+        except api_server.HTTPException as exc:
+            same_attempt_status = exc.status_code
+            same_attempt_reason = exc.detail["reason_code"]
+        else:
+            raise AssertionError("a rejected Attempt was accepted without repair")
+        info.direct_response = "Second repaired and verified result"
+        info.updated_at = 3.0
+        api_server._synchronize_goal_execution_evidence(info)
+        accepted = await api_server.accept_task_result(info.task_id)
+        return rejected, same_attempt_status, same_attempt_reason, accepted
+
+    rejected, same_attempt_status, same_attempt_reason, accepted = asyncio.run(scenario())
+    assert rejected["review_status"] == "rejected"
+    assert same_attempt_status == 409
+    assert same_attempt_reason == "goal_repair_required"
+    assert accepted["review_status"] == "accepted"
+    envelope = GoalContractService(service).get_goal(info.task_id)
+    assert [item["status"] for item in envelope["reviews"]] == ["rejected", "passed"]
+    assert envelope["projection"]["is_complete"] is True
 
 
 def test_explicit_workflow_pack_does_not_silently_degrade_without_orchestrator(monkeypatch, tmp_path):

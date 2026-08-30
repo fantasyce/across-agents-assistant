@@ -20,6 +20,7 @@ EXPLICIT_RECEIPT_PURPOSES = {
     "goal_confirmation",
     "goal_change_decision",
     "goal_criterion_review",
+    "goal_result_review",
     "goal_review_waiver",
     "workspace_promotion",
     "release",
