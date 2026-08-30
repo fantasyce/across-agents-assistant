@@ -11,6 +11,7 @@ RUN_DIR="$REPORT_ROOT/$RUN_ID"
 SUMMARY_PATH="$RUN_DIR/summary.json"
 AUTOMATED_ONLY=0
 INCLUDE_PACKAGED_APP="${ACROSS_VNEXT_INCLUDE_PACKAGED_APP:-0}"
+RELEASE_TRAIN_CANDIDATE="${ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE:-}"
 
 usage() {
   echo "usage: $0 [--automated-only] [--include-packaged-app]"
@@ -134,6 +135,10 @@ if [[ "$INCLUDE_PACKAGED_APP" == "1" ]]; then
     "ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT='$ORCHESTRATOR_ROOT' ACROSS_BUILD_CONTEXT_SOURCE_ROOT='$CONTEXT_ROOT' ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT='$AUTOPILOT_ROOT' bash scripts/build_and_run.sh"
   run_gate packaged_app_runtime "$ROOT_DIR" "bash scripts/verify_packaged_vnext_runtime.sh"
   run_gate packaged_app_cross_plugin_e2e "$ROOT_DIR" "bash scripts/run_packaged_app_cross_plugin_e2e.sh"
+  run_gate \
+    goalboard_release_train_lock \
+    "$ROOT_DIR" \
+    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; python3 scripts/write_goalboard_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goalboard-release-train-lock.json' && python3 scripts/write_goalboard_release_train_lock.py --verify '$RUN_DIR/goalboard-release-train-lock.json'"
 fi
 
 SUMMARY_GENERATION_EXIT=0

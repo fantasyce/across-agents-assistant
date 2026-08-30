@@ -18,6 +18,7 @@ AUTOPILOT_VERSION="0.6.0"
 AUTOPILOT_COMMIT="a20141b79046d2dd22eedf62a2fd69d95db76536"
 AUTOPILOT_SHA256="a33908ee78de8dcc3b7deeac251037be06028b8cad97aa60c838e6f0b1a6f82b"
 ORCHESTRATOR_VERSION="0.11.0"
+ORCHESTRATOR_CANDIDATE_VERSION="0.12.0"
 ORCHESTRATOR_COMMIT="dcf4ad5ad45feaf6c58c970c252290429049a80f"
 ORCHESTRATOR_SHA256="ed3dd61806aff467f7c2f9b6c39259295fcd1876d9da2c30dd96bd6cb88aa5b3"
 CONTEXT_SOURCE_KIND="released-pin"
@@ -62,6 +63,10 @@ if [[ -n "$ORCHESTRATOR_LOCAL_SOURCE" ]]; then
         exit 1
     fi
     ORCHESTRATOR_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ORCHESTRATOR_LOCAL_SOURCE/pyproject.toml" | head -1)
+    if [[ "$ORCHESTRATOR_VERSION" != "$ORCHESTRATOR_CANDIDATE_VERSION" ]]; then
+        echo "ERROR: Local Across Orchestrator candidate must be $ORCHESTRATOR_CANDIDATE_VERSION, found $ORCHESTRATOR_VERSION." >&2
+        exit 1
+    fi
     ORCHESTRATOR_COMMIT=$(git -C "$ORCHESTRATOR_LOCAL_SOURCE" rev-parse HEAD)
     ORCHESTRATOR_SOURCE_KIND="local-candidate"
     if [[ -n "$(git -C "$ORCHESTRATOR_LOCAL_SOURCE" status --porcelain --untracked-files=all)" ]]; then

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.17.0 - 2026-08-30
+
+- Completed the GoalBoard-inspired Goal Contract loop with criterion-scoped
+  execution evidence, human result review, repair Attempts, and selective
+  invalidation/revalidation without importing a second Goal authority.
+- Added server-authoritative Goal actions and immediate macOS state
+  reconciliation so accept, reject, repair, and revalidate remain consistent
+  across API, installed runtime, and visible UI state.
+- Added release-blocking real-provider contracts for Goal normalization and
+  Orchestrator revalidation plan/start/complete, including per-binding
+  mutation checks that reject partial durable writes.
+- Added an immutable four-component release-train lock for source, payload,
+  executable, App, capability, and acceptance-baseline hashes.
+
 ## 0.16.0 - 2026-08-30
 
 - Added versioned Goal Contracts with immutable Goal Store revisions,

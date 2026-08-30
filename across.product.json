@@ -7,10 +7,10 @@
   "summary": "Across starts as a simple project workspace and grows through optional memory, durable execution, goal-driven workflows, and approved remote Worker capacity, while keeping evidence, credentials, and final approval under local user control.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.16.0",
+      "version": "v0.17.0",
       "published_at": "2026-08-30",
-      "tag": "v0.16.0",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.16.0"
+      "tag": "v0.17.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.17.0"
     },
     "across_autopilot": {
       "version": "v0.6.0",
