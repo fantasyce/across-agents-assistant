@@ -53,7 +53,7 @@ supervised workflow capabilities only after they are installed and healthy.
 | --- | --- | --- |
 | Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.17.0` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.12.0` |
-| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.12.0` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.12.1` |
 | Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.6.0` |
 
 Install or repair the three optional components from **Settings → Plugins**.
@@ -82,7 +82,7 @@ than a fourth first-party managed component.
 - Added Goal Board review and recovery paths that keep required acceptance
   criteria, execution bindings, receipts, and revalidation visible without
   allowing a runtime to self-approve delivery.
-- Integrated Context `v0.12.0`, Orchestrator `v0.12.0`, and Autopilot `v0.6.0`
+- Integrated Context `v0.12.0`, Orchestrator `v0.12.1`, and Autopilot `v0.6.0`
   as symmetric managed plugins. Their released contracts preserve governed
   memory, crash-safe terminal receipts, required-criterion binding, and human
   review as the final trust boundary.

@@ -55,7 +55,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.12.0"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.12.1"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 # The self-contained runtime is a PyInstaller executable.  A first launch can
 # take longer on macOS while Gatekeeper and the page cache inspect it, and it

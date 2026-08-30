@@ -87,7 +87,7 @@ def test_worker_catalog_matches_current_managed_producer_versions():
 
     assert orchestrator_version is not None
     assert autopilot_version is not None
-    assert orchestrator_version.group(1) == "0.12.0"
+    assert orchestrator_version.group(1) == "0.12.1"
     assert catalog["published"] is True
     assert catalog["version"] == orchestrator_version.group(1)
     assert catalog["bootstrap"]["sha256"] == (
@@ -95,9 +95,9 @@ def test_worker_catalog_matches_current_managed_producer_versions():
     )
     for platform, asset in catalog["assets"].items():
         assert platform in {"macos-arm64", "macos-x86_64", "linux-arm64", "linux-x86_64"}
-        assert "/v0.12.0/" in asset["url"]
+        assert "/v0.12.1/" in asset["url"]
         assert asset["sha256"] == (
-            "c04b142eb5d42f188a0486fbaaabcec5fe086ea2b8d1982c0963c3a262b8914b"
+            "d81e8fb52edb97c89e49d48d997d90b4241e4984288dbccbd8d6d4c487170dbf"
         )
     scenario_url = catalog["workflow_packs"]["scenario-simulation"]["url"]
     assert f"/v{autopilot_version.group(1)}/" in scenario_url
