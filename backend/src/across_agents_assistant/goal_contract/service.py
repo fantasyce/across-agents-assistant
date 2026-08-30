@@ -9,6 +9,7 @@ from ..approval.receipts import ApprovalReceiptError, verify_approval_receipt_pu
 from ..persistence.goal_contract_store import GoalContractStoreError
 from ..persistence.service import PersistenceService
 from .models import GoalProjectionFacts
+from .protocol import stable_goal_hash
 from .projector import project_goal_state
 
 
@@ -66,6 +67,59 @@ class GoalContractService:
             "invalidations": invalidations,
             "reviews": reviews,
         }
+
+    def authorize_execution_contract(self, claimed: Mapping[str, Any]) -> dict[str, Any]:
+        """Bind execution only to AAA's current, human-confirmed Goal revision."""
+        if not isinstance(claimed, Mapping):
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "Goal execution contract must be an object"
+            )
+        required_fields = {
+            "schema_version", "goal_id", "goal_revision", "task_id", "criterion_ids", "input_fingerprint"
+        }
+        if set(claimed) != required_fields:
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "Goal execution contract fields do not match the host contract"
+            )
+        task_id = claimed.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "Goal execution contract task_id is invalid"
+            )
+        current = self.store.get_current(task_id.strip())
+        if current is None or not current.get("confirmed_by") or not current.get("confirmed_at"):
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "No current human-confirmed Goal revision exists for this task"
+            )
+        executable_criteria = sorted(
+            str(criterion["criterion_id"])
+            for criterion in current.get("acceptance_criteria") or ()
+            if criterion.get("required") is True and criterion.get("review_policy") != "human"
+        )
+        if not executable_criteria:
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "The current Goal has no host-authorized executable criteria"
+            )
+        expected = {
+            "schema_version": "across-goal-execution-contract/1.0",
+            "goal_id": current["goal_id"],
+            "goal_revision": current["revision"],
+            "task_id": current["task_id"],
+            "criterion_ids": executable_criteria,
+            "input_fingerprint": stable_goal_hash(current),
+        }
+        normalized_claim = dict(claimed)
+        criteria = normalized_claim.get("criterion_ids")
+        if not isinstance(criteria, list) or any(not isinstance(item, str) for item in criteria):
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "Goal execution contract criteria are invalid"
+            )
+        normalized_claim["criterion_ids"] = sorted(criteria)
+        if type(normalized_claim.get("goal_revision")) is not int or normalized_claim != expected:
+            raise GoalContractStoreError(
+                "goal_execution_contract_not_authoritative", "Goal execution contract does not match the current host revision"
+            )
+        return expected
 
     def save_proposal(
         self,

@@ -301,7 +301,7 @@ from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
 from .persistence.goal_contract_store import GoalContractStoreError
 from .goal_contract.api import install_goal_contract_routes
-from .goal_contract.protocol import criterion_id
+from .goal_contract.protocol import criterion_id, stable_goal_hash
 from .goal_contract.service import GoalContractService
 from .approval.receipts import (
     ApprovalReceiptError,
@@ -11924,6 +11924,17 @@ class AgentLoopReasonRequest(BaseModel):
 @app.post("/api/orchestrator/loops")
 async def start_external_agent_loop(req: AgentLoopStartRequest):
     """Start a durable agent loop through the external Across Orchestrator plugin."""
+    authoritative_goal_execution_contract = None
+    if req.goal_execution_contract is not None:
+        try:
+            authoritative_goal_execution_contract = GoalContractService(persistence).authorize_execution_contract(
+                req.goal_execution_contract
+            )
+        except GoalContractStoreError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason_code": exc.code, "message": str(exc)},
+            ) from exc
     manager = get_orchestrator_plugin_manager()
     try:
         loop = await asyncio.to_thread(
@@ -11935,7 +11946,7 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
             memory_policy=req.memory_policy,
             approval_policy=req.approval_policy,
             metadata=req.metadata,
-            goal_execution_contract=req.goal_execution_contract,
+            goal_execution_contract=authoritative_goal_execution_contract,
         )
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:

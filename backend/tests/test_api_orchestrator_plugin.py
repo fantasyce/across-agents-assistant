@@ -711,6 +711,14 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
     monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+    goal_persistence = PersistenceService(str(tmp_path / "loop-goals.db"))
+    monkeypatch.setattr(api_server, "persistence", goal_persistence)
+    contract = api_server._create_submitted_goal_contract(
+        task_id="task-host",
+        statement="API loop smoke",
+        deliverables=["across-results/task-report.md"],
+        execution_profile="orchestrated",
+    )
 
     with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
         monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
@@ -718,8 +726,9 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         client = TestClient(app)
         goal_execution_contract = {
             "schema_version": "across-goal-execution-contract/1.0",
-            "goal_id": "goal-api", "goal_revision": 2, "task_id": "task-host",
-            "criterion_ids": ["criterion-tests"], "input_fingerprint": "a" * 64,
+            "goal_id": contract["goal_id"], "goal_revision": contract["revision"], "task_id": contract["task_id"],
+            "criterion_ids": [contract["acceptance_criteria"][0]["criterion_id"]],
+            "input_fingerprint": api_server.stable_goal_hash(contract),
         }
 
         created = client.post(
@@ -798,6 +807,56 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
     assert ("GET", f"/loops/{server.loop_id}/events?after_sequence=1") in server.requests
     assert server.last_loop_submit["memoryPolicy"] == {"read": False, "writeCandidates": False}
     assert server.last_loop_submit["metadata"] == {"scenario": "aaa-api"}
+
+
+def test_api_rejects_goal_execution_contract_without_current_host_authority(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACROSS_AGENTS_HOME", str(tmp_path / "app-home"))
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_MODE", "external")
+    monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_AUTORUN", "0")
+    goal_persistence = PersistenceService(str(tmp_path / "loop-goals.db"))
+    monkeypatch.setattr(api_server, "persistence", goal_persistence)
+    current = api_server._create_submitted_goal_contract(
+        task_id="task-current",
+        statement="Current host Goal",
+        deliverables=["across-results/current.md"],
+        execution_profile="orchestrated",
+    )
+
+    with FakeHTTPOrchestrator(str(tmp_path / "project")) as server:
+        monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
+        _reset_plugin_manager()
+        response = TestClient(app).post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "Forged Goal authority",
+                "project_dir": str(tmp_path / "project"),
+                "goal_execution_contract": {
+                    "schema_version": "across-goal-execution-contract/1.0",
+                    "goal_id": "goal-missing", "goal_revision": 1, "task_id": "task-missing",
+                    "criterion_ids": ["criterion-forged"], "input_fingerprint": "a" * 64,
+                },
+            },
+        )
+        stale = TestClient(app).post(
+            "/api/orchestrator/loops",
+            json={
+                "goal": "Stale Goal authority",
+                "project_dir": str(tmp_path / "project"),
+                "goal_execution_contract": {
+                    "schema_version": "across-goal-execution-contract/1.0",
+                    "goal_id": current["goal_id"], "goal_revision": current["revision"] + 1,
+                    "task_id": current["task_id"],
+                    "criterion_ids": [current["acceptance_criteria"][0]["criterion_id"]],
+                    "input_fingerprint": api_server.stable_goal_hash(current),
+                },
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["reason_code"] == "goal_execution_contract_not_authoritative"
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["reason_code"] == "goal_execution_contract_not_authoritative"
+    assert server.last_loop_submit == {}
 
 
 def test_api_proxies_external_agent_loop_approval(monkeypatch, tmp_path):
