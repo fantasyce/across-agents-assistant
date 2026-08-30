@@ -35,6 +35,16 @@ def test_goal_contract_cross_process_catalog_is_release_complete():
     assert rows["goal-revalidation-complete"]["durable_write"] is True
 
 
+def test_provider_consumer_runner_uses_the_standard_backend_environment_with_dev_fallback():
+    runner = (ROOT / "scripts/run_goal_contract_provider_consumer_e2e.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"$ROOT_DIR/backend/.venv/bin/python"' in runner
+    assert '"$ROOT_DIR/.venv/bin/python"' in runner
+    assert "No AAA Python environment is available" in runner
+
+
 @pytest.fixture(scope="module")
 def real_orchestrator_runtime(tmp_path_factory):
     root = tmp_path_factory.mktemp("real-orchestrator-provider")
