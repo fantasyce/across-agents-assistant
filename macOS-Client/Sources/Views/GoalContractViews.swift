@@ -201,7 +201,7 @@ struct GoalContractSummaryView: View {
                             }
                         }
                     }
-                    if !staleCriterionIds(envelope).isEmpty {
+                    if envelope.availableAction("revalidate")?.enabled == true {
                         Button(appPreferences.text("tasks.goal.revalidate")) { pendingRevalidation = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)

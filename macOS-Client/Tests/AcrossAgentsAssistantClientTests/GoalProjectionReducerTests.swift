@@ -36,6 +36,21 @@ struct GoalProjectionReducerTests {
         #expect(GoalProjectionReducer.reduce(envelope, loading: false, error: nil) == .error("criterion_evidence_failed"))
     }
 
+    @Test func rejectedReviewKeepsTheGoalVisibleForRepair() throws {
+        var json = GoalContractModelsTests.envelopeJSON(
+            displayState: "repair_required",
+            evidenceState: "satisfied",
+            reasons: ["review_failed"]
+        )
+        json = json.replacingOccurrences(of: "\"review_state\": \"pending\"", with: "\"review_state\": \"rejected\"")
+        let envelope = try JSONDecoder().decode(GoalContractEnvelope.self, from: Data(json.utf8))
+
+        #expect(
+            GoalProjectionReducer.reduce(envelope, loading: false, error: nil)
+                == .active(.known("repair_required"))
+        )
+    }
+
     @Test func completionComesOnlyFromAuthoritativeProjection() throws {
         let complete = try decode(displayState: "completed", evidenceState: "satisfied", reasons: [], complete: true)
         let merelyFinished = try decode(displayState: "finished", evidenceState: "satisfied", reasons: [], complete: false)

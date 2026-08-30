@@ -19,6 +19,8 @@ struct GoalContractModelsTests {
         #expect(envelope.projection.evidenceState == .unknown("future_evidence_state"))
         #expect(envelope.projection.reasonCodes == [.unknown("future_reason_code")])
         #expect(envelope.projection.criterionCoverage.first?.criterionId == "criterion-1")
+        #expect(envelope.availableAction("accept_result")?.enabled == true)
+        #expect(envelope.availableAction("future_action")?.enabled == false)
     }
 
     @Test func proposalAndRevalidationRequestsEncodeRevisionAndIdempotency() throws {
@@ -90,7 +92,11 @@ struct GoalContractModelsTests {
             "display_state": "\(displayState)",
             "authority": {"goal": "aaa", "execution": "orchestrator_or_direct_agent", "evidence": "trusted_runtime", "decisions": "aaa"}
           },
-          "pending_proposals": [], "evidence_bindings": []
+          "pending_proposals": [], "evidence_bindings": [],
+          "available_actions": [
+            {"action_id":"accept_result","enabled":true,"disabled_reason_code":null},
+            {"action_id":"future_action","enabled":true,"disabled_reason_code":null}
+          ]
         }
         """
     }

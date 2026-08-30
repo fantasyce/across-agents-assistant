@@ -100,3 +100,14 @@ def test_failed_evidence_and_review_are_explicit_blockers():
     assert projection["review_state"] == "failed"
     assert "criterion_evidence_failed" in projection["reason_codes"]
     assert "review_failed" in projection["reason_codes"]
+
+
+def test_rejected_review_is_a_visible_repair_state_not_a_hidden_error_surface():
+    from across_agents_assistant.goal_contract.projector import project_goal_state
+
+    facts = _facts()
+    facts.reviews["criterion-b"] = "rejected"
+    projection = project_goal_state(facts)
+
+    assert projection["display_state"] == "repair_required"
+    assert projection["is_complete"] is False

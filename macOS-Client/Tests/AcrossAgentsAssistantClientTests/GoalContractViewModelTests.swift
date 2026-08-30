@@ -86,6 +86,56 @@ struct GoalContractViewModelTests {
         #expect(object["expected_revision"] as? Int == 2)
     }
 
+    @Test @MainActor
+    func acceptingResultAppliesReturnedGoalWithoutNavigation() async throws {
+        let completedGoal = GoalContractModelsTests.envelopeJSON(
+            displayState: "completed",
+            evidenceState: "satisfied",
+            reasons: []
+        )
+        .replacingOccurrences(of: "\"is_complete\": false", with: "\"is_complete\": true")
+        let responseData = Data("""
+        {
+          "task_review":{"task_id":"task-1","review_status":"accepted","accepted_at":42},
+          "goal":\(completedGoal),
+          "decision_receipt":{"receipt_id":"receipt-1","purpose":"goal_result_review","receipt_hash":"abc","integrity_status":"verified"}
+        }
+        """.utf8)
+        let viewModel = TaskOrchestrationViewModel(requestData: { request in
+            (responseData, Self.response(request, status: 200))
+        })
+        viewModel.selectedGoalContract = try JSONDecoder().decode(
+            GoalContractEnvelope.self,
+            from: Data(GoalContractModelsTests.envelopeJSON().utf8)
+        )
+
+        await viewModel.acceptTaskResult("task-1") {}.value
+
+        #expect(viewModel.selectedGoalContract?.projection.isComplete == true)
+        #expect(viewModel.goalTaskState == .completed)
+        #expect(viewModel.goalContractError == nil)
+    }
+
+    @Test @MainActor
+    func failedResultDecisionPreservesLastGoalAndSetsActionError() async throws {
+        let original = try JSONDecoder().decode(
+            GoalContractEnvelope.self,
+            from: Data(GoalContractModelsTests.envelopeJSON().utf8)
+        )
+        let viewModel = TaskOrchestrationViewModel(requestData: { request in
+            let data = Data("{\"detail\":{\"reason_code\":\"goal_repair_required\",\"message\":\"Repair required\"}}".utf8)
+            return (data, Self.response(request, status: 409))
+        })
+        viewModel.selectedGoalContract = original
+        viewModel.goalTaskState = GoalProjectionReducer.reduce(original, loading: false, error: nil)
+
+        await viewModel.acceptTaskResult("task-1") {}.value
+
+        #expect(viewModel.selectedGoalContract == original)
+        #expect(viewModel.goalTaskState == GoalProjectionReducer.reduce(original, loading: false, error: nil))
+        #expect(viewModel.goalContractError == "Repair required")
+    }
+
     private static func response(_ request: URLRequest, status: Int) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
     }

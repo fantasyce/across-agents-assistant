@@ -131,6 +131,8 @@ def _display_state(reasons: list[str], execution_state: str, is_complete: bool) 
         return "revalidation_required"
     if "review_pending" in reasons:
         return "waiting_for_review"
+    if "review_failed" in reasons:
+        return "repair_required"
     if execution_state == "running" or "lease_active" in reasons:
         return "running"
     if "criterion_evidence_missing" in reasons:

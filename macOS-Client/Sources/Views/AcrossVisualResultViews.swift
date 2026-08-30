@@ -22,7 +22,10 @@ struct AcrossTaskResultOverview: View {
     }
 
     var body: some View {
-        let decision = AcrossTaskResultDecision(task: task)
+        let goal = viewModel.selectedGoalContract?.contract.taskId == task.taskId
+            ? viewModel.selectedGoalContract
+            : nil
+        let decision = AcrossTaskResultDecision(task: task, goal: goal)
         AcrossVisualResultOverview(
             contract: AcrossVisualResultFactory.make(task: task),
             preferences: preferences,

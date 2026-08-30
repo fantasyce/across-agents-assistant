@@ -7,7 +7,7 @@ enum GoalProjectionValue: Equatable, Hashable, Codable {
     private static let knownValues: Set<String> = [
         "confirmed", "needs_confirmation", "not_started", "running", "finished", "failed", "cancelled",
         "none", "partial", "satisfied", "stale", "pending", "passed", "rejected", "waived", "not_required",
-        "change_pending", "valid", "revalidation_required", "completed", "waiting_for_decision",
+        "change_pending", "valid", "revalidation_required", "repair_required", "completed", "waiting_for_decision",
         "waiting_for_review", "waiting_for_evidence", "goal_needs_confirmation", "dependency_unsatisfied",
         "criterion_evidence_missing", "criterion_evidence_stale", "criterion_evidence_failed", "review_pending",
         "review_failed", "decision_pending", "lease_active", "execution_failed", "execution_cancelled",
@@ -41,12 +41,14 @@ struct GoalContractEnvelope: Decodable, Equatable {
     let evidenceBindings: [GoalEvidenceBinding]
     let invalidations: [GoalInvalidation]
     let reviews: [GoalCriterionReview]
+    let availableActions: [GoalAvailableAction]
 
     enum CodingKeys: String, CodingKey {
         case contract, projection
         case pendingProposals = "pending_proposals"
         case evidenceBindings = "evidence_bindings"
         case invalidations, reviews
+        case availableActions = "available_actions"
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +59,69 @@ struct GoalContractEnvelope: Decodable, Equatable {
         evidenceBindings = try container.decodeIfPresent([GoalEvidenceBinding].self, forKey: .evidenceBindings) ?? []
         invalidations = try container.decodeIfPresent([GoalInvalidation].self, forKey: .invalidations) ?? []
         reviews = try container.decodeIfPresent([GoalCriterionReview].self, forKey: .reviews) ?? []
+        availableActions = try container.decodeIfPresent([GoalAvailableAction].self, forKey: .availableActions) ?? []
+    }
+
+    func availableAction(_ actionId: String) -> GoalAvailableAction? {
+        availableActions.first { $0.actionId == actionId }
+    }
+}
+
+struct GoalAvailableAction: Decodable, Equatable, Identifiable {
+    private static let knownActionIds = Set(["accept_result", "reject_result", "revalidate"])
+
+    let actionId: String
+    let enabled: Bool
+    let disabledReasonCode: String?
+    var id: String { actionId }
+
+    enum CodingKeys: String, CodingKey {
+        case actionId = "action_id"
+        case enabled
+        case disabledReasonCode = "disabled_reason_code"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        actionId = try container.decode(String.self, forKey: .actionId)
+        let serverEnabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        enabled = serverEnabled && Self.knownActionIds.contains(actionId)
+        disabledReasonCode = try container.decodeIfPresent(String.self, forKey: .disabledReasonCode)
+            ?? (Self.knownActionIds.contains(actionId) ? nil : "unknown_goal_action")
+    }
+}
+
+extension GoalContractEnvelope: AcrossGoalActionProviding {
+    var actionTaskId: String { contract.taskId }
+
+    func isGoalActionEnabled(_ actionId: String) -> Bool {
+        availableAction(actionId)?.enabled == true
+    }
+}
+
+struct TaskResultDecisionResponse: Decodable {
+    let taskReview: TaskOrchestrationTaskReviewResponse
+    let goal: GoalContractEnvelope
+    let decisionReceipt: GoalDecisionReceipt
+
+    enum CodingKeys: String, CodingKey {
+        case taskReview = "task_review"
+        case goal
+        case decisionReceipt = "decision_receipt"
+    }
+}
+
+struct GoalDecisionReceipt: Decodable, Equatable {
+    let receiptId: String
+    let purpose: String
+    let receiptHash: String
+    let integrityStatus: String
+
+    enum CodingKeys: String, CodingKey {
+        case receiptId = "receipt_id"
+        case purpose
+        case receiptHash = "receipt_hash"
+        case integrityStatus = "integrity_status"
     }
 }
 
@@ -372,8 +437,11 @@ enum GoalProjectionReducer {
             || envelope.pendingProposals.contains(where: { $0.decisionState == "pending" }) {
             return .decisionRequired
         }
-        if projection.evidenceState.rawValue == "failed" || projection.reviewState.rawValue == "failed" {
+        if projection.evidenceState.rawValue == "failed" {
             return .error(projection.reasonCodes.first?.rawValue ?? "goal_validation_failed")
+        }
+        if projection.reviewState.rawValue == "failed" {
+            return .active(projection.displayState)
         }
         return .active(projection.displayState)
     }

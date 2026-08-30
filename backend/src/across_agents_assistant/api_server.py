@@ -16174,13 +16174,18 @@ async def accept_task_result(task_id: str):
                 request_id=f"task-result-review:{task_id}",
                 idempotency_key=f"task-result-review:{task_id}",
             )
-        return {
+        task_review = {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
-            "approval_receipt": approval_receipt,
-            **({"goal": goal_envelope} if contract is not None else {}),
         }
+        if contract is not None:
+            return {
+                "task_review": task_review,
+                "goal": goal_envelope,
+                "decision_receipt": approval_receipt,
+            }
+        return {**task_review, "approval_receipt": approval_receipt}
     except HTTPException:
         raise
     except GoalContractStoreError as exc:
@@ -16262,13 +16267,18 @@ async def reject_task_result(task_id: str):
                 request_id=f"task-result-review:{task_id}:reject",
                 idempotency_key=f"task-result-review:{task_id}:reject",
             )
-        return {
+        task_review = {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
-            "approval_receipt": approval_receipt,
-            **({"goal": goal_envelope} if contract is not None else {}),
         }
+        if contract is not None:
+            return {
+                "task_review": task_review,
+                "goal": goal_envelope,
+                "decision_receipt": approval_receipt,
+            }
+        return {**task_review, "approval_receipt": approval_receipt}
     except HTTPException:
         raise
     except GoalContractStoreError as exc:

@@ -40,6 +40,87 @@ def test_goal_api_returns_authoritative_revision_coverage_and_reason_codes(monke
         "review_pending",
     ]
     assert len(payload["projection"]["criterion_coverage"]) == 2
+    actions = {item["action_id"]: item for item in payload["available_actions"]}
+    assert actions["accept_result"] == {
+        "action_id": "accept_result",
+        "enabled": False,
+        "disabled_reason_code": "goal_evidence_missing",
+    }
+    assert actions["reject_result"]["enabled"] is True
+    assert actions["revalidate"]["enabled"] is False
+
+
+def test_goal_actions_require_new_attempt_after_rejection_and_enable_revalidation(monkeypatch, tmp_path):
+    _, service = _client(monkeypatch, tmp_path)
+    from across_agents_assistant.goal_contract.service import GoalContractService
+
+    goals = GoalContractService(service)
+    contract = service.goal_contracts.get_current("task-001")
+    criterion_ids = [item["criterion_id"] for item in contract["acceptance_criteria"]]
+    first = [
+        goals.record_execution_evidence(
+            task_id="task-001",
+            goal_revision=1,
+            criterion_id=criterion_id,
+            artifact_digests={f"{criterion_id}.json": f"{index}" * 64},
+            executor="across-orchestrator",
+            run_id="run-1",
+            attempt_id="attempt-1",
+            validator_id="aaa-host:artifact-validator",
+            validator_authority="aaa-host",
+            verdict="verified",
+            input_fingerprint="a" * 64,
+            receipt_hash=None,
+            idempotency_key=f"actions-first-{criterion_id}",
+        )
+        for index, criterion_id in enumerate(criterion_ids, start=1)
+    ]
+    ready = {item["action_id"]: item for item in goals.get_goal("task-001")["available_actions"]}
+    assert ready["accept_result"]["enabled"] is True
+
+    goals.record_result_review(
+        task_id="task-001",
+        expected_revision=1,
+        decision="rejected",
+        reason="Repair is required.",
+        reviewer_id="human:local",
+        basis_evidence_ids=[item["evidence_id"] for item in first],
+        attempt_id="attempt-1",
+        idempotency_key="actions-reject-first",
+    )
+    rejected = {item["action_id"]: item for item in goals.get_goal("task-001")["available_actions"]}
+    assert rejected["accept_result"]["enabled"] is False
+    assert rejected["accept_result"]["disabled_reason_code"] == "goal_repair_required"
+
+    for index, criterion_id in enumerate(criterion_ids, start=3):
+        goals.record_execution_evidence(
+            task_id="task-001",
+            goal_revision=1,
+            criterion_id=criterion_id,
+            artifact_digests={f"{criterion_id}.json": f"{index}" * 64},
+            executor="across-orchestrator",
+            run_id="run-2",
+            attempt_id="attempt-2",
+            validator_id="aaa-host:artifact-validator",
+            validator_authority="aaa-host",
+            verdict="verified",
+            input_fingerprint="b" * 64,
+            receipt_hash=None,
+            idempotency_key=f"actions-second-{criterion_id}",
+        )
+    repaired = {item["action_id"]: item for item in goals.get_goal("task-001")["available_actions"]}
+    assert repaired["accept_result"]["enabled"] is True
+
+    goals.request_revalidation(
+        task_id="task-001",
+        expected_revision=1,
+        criterion_ids=[criterion_ids[0]],
+        reason="The source changed.",
+        idempotency_key="actions-revalidate",
+    )
+    stale = {item["action_id"]: item for item in goals.get_goal("task-001")["available_actions"]}
+    assert stale["accept_result"]["enabled"] is False
+    assert stale["revalidate"]["enabled"] is True
 
 
 def test_unconfirmed_proposal_is_idempotent_and_blocks_completion_without_rewriting_goal(monkeypatch, tmp_path):
@@ -580,7 +661,8 @@ def test_missing_orchestrator_runs_goal_tracked_direct_agent_task(monkeypatch, t
     assert task.direct_response == "Verified direct result"
     assert detail.status == "completed"
     assert detail.direct_response == "Verified direct result"
-    assert accepted["review_status"] == "accepted"
+    assert accepted["task_review"]["review_status"] == "accepted"
+    assert accepted["goal"]["projection"]["is_complete"] is True
     goal = service.goal_contracts.get_current(response.task_id)
     assert goal is not None
     assert goal["execution_profile"] == "direct"
@@ -643,10 +725,13 @@ def test_goal_backed_rejection_requires_a_new_execution_attempt_before_acceptanc
         return rejected, same_attempt_status, same_attempt_reason, accepted
 
     rejected, same_attempt_status, same_attempt_reason, accepted = asyncio.run(scenario())
-    assert rejected["review_status"] == "rejected"
+    assert set(rejected) == {"task_review", "goal", "decision_receipt"}
+    assert rejected["task_review"]["review_status"] == "rejected"
     assert same_attempt_status == 409
     assert same_attempt_reason == "goal_repair_required"
-    assert accepted["review_status"] == "accepted"
+    assert set(accepted) == {"task_review", "goal", "decision_receipt"}
+    assert accepted["task_review"]["review_status"] == "accepted"
+    assert accepted["goal"]["projection"]["is_complete"] is True
     envelope = GoalContractService(service).get_goal(info.task_id)
     assert [item["status"] for item in envelope["reviews"]] == ["rejected", "passed"]
     assert envelope["projection"]["is_complete"] is True

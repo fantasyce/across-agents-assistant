@@ -59,13 +59,21 @@ class GoalContractService:
             active_lease_count=0,
             execution_state="finished",
         )
+        projection = project_goal_state(facts)
         return {
             "contract": contract,
-            "projection": project_goal_state(facts),
+            "projection": projection,
             "pending_proposals": pending,
             "evidence_bindings": evidence,
             "invalidations": invalidations,
             "reviews": reviews,
+            "available_actions": _available_goal_actions(
+                contract=contract,
+                projection=projection,
+                evidence=evidence,
+                invalidations=invalidations,
+                reviews=reviews,
+            ),
         }
 
     def authorize_execution_contract(self, claimed: Mapping[str, Any]) -> dict[str, Any]:
@@ -913,6 +921,90 @@ def _apply_operation(document: dict[str, Any], operation: Mapping[str, Any]) -> 
 
 def _unescape_pointer(value: str) -> str:
     return value.replace("~1", "/").replace("~0", "~")
+
+
+def _available_goal_actions(
+    *,
+    contract: Mapping[str, Any],
+    projection: Mapping[str, Any],
+    evidence: Sequence[Mapping[str, Any]],
+    invalidations: Sequence[Mapping[str, Any]],
+    reviews: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    required = {
+        str(item["criterion_id"])
+        for item in contract.get("acceptance_criteria") or ()
+        if item.get("required", True)
+    }
+    stale = {
+        str(criterion_id)
+        for invalidation in invalidations
+        if invalidation.get("state") == "pending"
+        for criterion_id in invalidation.get("criterion_ids") or ()
+    }
+    superseded = {
+        str(evidence_id)
+        for binding in evidence
+        for evidence_id in binding.get("supersedes_evidence_ids") or ()
+    }
+    selected: dict[str, Mapping[str, Any]] = {}
+    for binding in reversed(evidence):
+        if (
+            binding.get("trust_state") != "verified"
+            or binding.get("verdict") != "verified"
+            or binding.get("evidence_id") in superseded
+        ):
+            continue
+        for criterion_id in binding.get("criterion_ids") or ():
+            normalized = str(criterion_id)
+            if normalized in required and normalized not in stale:
+                selected.setdefault(normalized, binding)
+    attempts = {str(item.get("attempt_id") or "") for item in selected.values() if item.get("attempt_id")}
+    evidence_ready = set(selected) == required and len(attempts) == 1
+    current_attempt = next(iter(attempts), "")
+    result_reviews = [item for item in reviews if item.get("schema_version") == "across-goal-result-review/1.1"]
+    latest_review = result_reviews[-1] if result_reviews else None
+    rejected_current_attempt = bool(
+        latest_review
+        and latest_review.get("status") == "rejected"
+        and latest_review.get("attempt_id") == current_attempt
+    )
+    complete = bool(projection.get("is_complete"))
+
+    if complete:
+        accept_reason = "goal_already_complete"
+    elif stale:
+        accept_reason = "goal_revalidation_required"
+    elif rejected_current_attempt:
+        accept_reason = "goal_repair_required"
+    elif not evidence_ready:
+        accept_reason = "goal_evidence_missing" if len(attempts) <= 1 else "goal_evidence_conflict"
+    else:
+        accept_reason = None
+    accept_enabled = accept_reason is None
+
+    reject_enabled = not complete and not rejected_current_attempt
+    reject_reason = None if reject_enabled else (
+        "goal_already_complete" if complete else "goal_repair_required"
+    )
+    revalidate_enabled = bool(stale)
+    return [
+        {
+            "action_id": "accept_result",
+            "enabled": accept_enabled,
+            "disabled_reason_code": accept_reason,
+        },
+        {
+            "action_id": "reject_result",
+            "enabled": reject_enabled,
+            "disabled_reason_code": reject_reason,
+        },
+        {
+            "action_id": "revalidate",
+            "enabled": revalidate_enabled,
+            "disabled_reason_code": None if revalidate_enabled else "goal_revalidation_not_required",
+        },
+    ]
 
 
 def _digest(value: Any) -> str:

@@ -189,6 +189,31 @@ struct VisualResultContractTests {
         #expect(decision.canInspectEvidence)
     }
 
+    @Test func goalBackedDecisionsUseServerActionsInsteadOfTerminalTaskHeuristics() throws {
+        let task = try decodeTask("""
+        {
+          "task_id": "task-1",
+          "description": "Server-governed review",
+          "status": "completed",
+          "subtasks": [], "waves": [],
+          "artifacts": [{"id":"report","file_name":"report.md","file_path":"report.md","file_size":"1 KB"}],
+          "review_status": "pending",
+          "quality_health": {"delivery_quality":"passed"}
+        }
+        """)
+        let goalJSON = GoalContractModelsTests.envelopeJSON()
+            .replacingOccurrences(
+                of: "{\"action_id\":\"accept_result\",\"enabled\":true,\"disabled_reason_code\":null}",
+                with: "{\"action_id\":\"accept_result\",\"enabled\":false,\"disabled_reason_code\":\"goal_repair_required\"}"
+            )
+        let goal = try JSONDecoder().decode(GoalContractEnvelope.self, from: Data(goalJSON.utf8))
+
+        let decision = AcrossTaskResultDecision(task: task, goal: goal)
+
+        #expect(!decision.canAccept)
+        #expect(!decision.canReject)
+    }
+
     @Test func acceptedResultNeverReturnsToAwaitingConfirmationWhenAuxiliaryProofIsPartial() throws {
         let task = try decodeTask("""
         {

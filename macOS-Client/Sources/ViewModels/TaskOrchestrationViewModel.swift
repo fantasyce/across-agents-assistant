@@ -254,127 +254,121 @@ class TaskOrchestrationViewModel: ObservableObject {
         return directory == projectRoot || directory.hasPrefix(projectRoot + "/")
     }
 
-    func acceptTaskResult(_ taskId: String, onAccepted: @escaping () -> Void) {
+    @discardableResult
+    func acceptTaskResult(_ taskId: String, onAccepted: @escaping () -> Void) -> Task<Void, Never> {
         Task { @MainActor in
-            guard !isAcceptingTask else { return }
-            guard selectedTask?.taskId == taskId else { return }
-            isAcceptingTask = true
-            errorMessage = nil
+            await performTaskResultDecision(
+                taskId: taskId,
+                action: "accept",
+                isAccepting: true,
+                completion: onAccepted
+            )
+        }
+    }
 
-            guard let baseURL else {
-                errorMessage = "Server URL not configured"
-                isAcceptingTask = false
-                return
+    @discardableResult
+    func rejectTaskResult(_ taskId: String, onRejected: @escaping () -> Void) -> Task<Void, Never> {
+        Task { @MainActor in
+            await performTaskResultDecision(
+                taskId: taskId,
+                action: "reject",
+                isAccepting: false,
+                completion: onRejected
+            )
+        }
+    }
+
+    @MainActor
+    private func performTaskResultDecision(
+        taskId: String,
+        action: String,
+        isAccepting: Bool,
+        completion: @escaping () -> Void
+    ) async {
+        guard selectedTask?.taskId == taskId || selectedGoalContract?.contract.taskId == taskId else { return }
+        if isAccepting {
+            guard !isAcceptingTask else { return }
+            isAcceptingTask = true
+        } else {
+            guard !isRejectingTask else { return }
+            isRejectingTask = true
+        }
+        defer {
+            if isAccepting { isAcceptingTask = false } else { isRejectingTask = false }
+        }
+        errorMessage = nil
+
+        guard let baseURL else {
+            let message = "Server URL not configured"
+            errorMessage = message
+            if selectedGoalContract != nil { goalContractError = message }
+            return
+        }
+
+        do {
+            var request = URLRequest(url: baseURL.appendingPathComponent("api/tasks/\(taskId)/\(action)"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await requestData(request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                let detail = Self.backendErrorMessage(from: data)
+                throw NSError(
+                    domain: "TaskReview",
+                    code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                    userInfo: [NSLocalizedDescriptionKey: detail ?? "Unable to \(action) this result"]
+                )
             }
 
-            do {
-                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/accept")
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200...299).contains(httpResponse.statusCode) else {
-                    let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
-                    throw NSError(
-                        domain: "TaskReview",
-                        code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                        userInfo: [NSLocalizedDescriptionKey: detail ?? "Unable to accept this result"]
-                    )
+            let review: TaskReviewResponse
+            if let decision = try? JSONDecoder().decode(TaskResultDecisionResponse.self, from: data) {
+                guard decision.goal.contract.taskId == taskId,
+                      decision.goal.projection.taskId == taskId else {
+                    throw URLError(.badServerResponse)
                 }
-
-                let review = try JSONDecoder().decode(TaskReviewResponse.self, from: data)
-                if let task = selectedTask, task.taskId == review.taskId {
-                    selectedTask = task.replacing(
-                        reviewStatus: review.reviewStatus,
-                        acceptedAt: review.acceptedAt
-                    )
-                }
-                tasks = tasks.map { summary in
-                    guard summary.taskId == review.taskId else { return summary }
-                    return TaskSummary(
-                        taskId: summary.taskId,
-                        description: summary.description,
-                        status: summary.status,
-                        progress: summary.progress,
-                        completedCount: summary.completedCount,
-                        totalCount: summary.totalCount,
-                        projectDir: summary.projectDir,
-                        ownerAgent: summary.ownerAgent,
-                        deliveryMode: summary.deliveryMode,
-                        externalTask: summary.externalTask,
-                        reviewStatus: review.reviewStatus,
-                        acceptedAt: review.acceptedAt
-                    )
-                }
-                isAcceptingTask = false
-                onAccepted()
-            } catch {
-                errorMessage = error.localizedDescription
-                isAcceptingTask = false
+                review = decision.taskReview
+                goalRequestGeneration += 1
+                selectedGoalContract = decision.goal
+                goalContractError = nil
+                goalTaskState = GoalProjectionReducer.reduce(decision.goal, loading: false, error: nil)
+            } else {
+                review = try JSONDecoder().decode(TaskReviewResponse.self, from: data)
+            }
+            applyTaskReview(review)
+            completion()
+        } catch {
+            let message = error.localizedDescription
+            errorMessage = message
+            if selectedGoalContract != nil {
+                goalContractError = message
             }
         }
     }
 
-    func rejectTaskResult(_ taskId: String, onRejected: @escaping () -> Void) {
-        Task { @MainActor in
-            guard !isRejectingTask else { return }
-            guard selectedTask?.taskId == taskId else { return }
-            isRejectingTask = true
-            errorMessage = nil
-
-            guard let baseURL else {
-                errorMessage = "Server URL not configured"
-                isRejectingTask = false
-                return
-            }
-
-            do {
-                let url = baseURL.appendingPathComponent("api/tasks/\(taskId)/reject")
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200...299).contains(httpResponse.statusCode) else {
-                    let detail = Self.backendErrorMessage(from: data)
-                    throw NSError(
-                        domain: "TaskReview",
-                        code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                        userInfo: [NSLocalizedDescriptionKey: detail ?? "Unable to reject this result"]
-                    )
-                }
-
-                let review = try JSONDecoder().decode(TaskReviewResponse.self, from: data)
-                if let task = selectedTask, task.taskId == review.taskId {
-                    selectedTask = task.replacing(
-                        reviewStatus: review.reviewStatus,
-                        acceptedAt: review.acceptedAt
-                    )
-                }
-                tasks = tasks.map { summary in
-                    guard summary.taskId == review.taskId else { return summary }
-                    return TaskSummary(
-                        taskId: summary.taskId,
-                        description: summary.description,
-                        status: summary.status,
-                        progress: summary.progress,
-                        completedCount: summary.completedCount,
-                        totalCount: summary.totalCount,
-                        projectDir: summary.projectDir,
-                        ownerAgent: summary.ownerAgent,
-                        deliveryMode: summary.deliveryMode,
-                        externalTask: summary.externalTask,
-                        reviewStatus: review.reviewStatus,
-                        acceptedAt: review.acceptedAt
-                    )
-                }
-                isRejectingTask = false
-                onRejected()
-            } catch {
-                errorMessage = error.localizedDescription
-                isRejectingTask = false
-            }
+    @MainActor
+    private func applyTaskReview(_ review: TaskReviewResponse) {
+        if let task = selectedTask, task.taskId == review.taskId {
+            selectedTask = task.replacing(
+                reviewStatus: review.reviewStatus,
+                acceptedAt: review.acceptedAt
+            )
+        }
+        tasks = tasks.map { summary in
+            guard summary.taskId == review.taskId else { return summary }
+            return TaskSummary(
+                taskId: summary.taskId,
+                description: summary.description,
+                status: summary.status,
+                progress: summary.progress,
+                completedCount: summary.completedCount,
+                totalCount: summary.totalCount,
+                projectDir: summary.projectDir,
+                ownerAgent: summary.ownerAgent,
+                deliveryMode: summary.deliveryMode,
+                externalTask: summary.externalTask,
+                reviewStatus: review.reviewStatus,
+                acceptedAt: review.acceptedAt
+            )
         }
     }
 
