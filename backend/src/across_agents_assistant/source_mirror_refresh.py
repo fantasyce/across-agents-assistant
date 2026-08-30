@@ -59,7 +59,7 @@ DEFAULT_RELEASE_SOURCES = {
     },
     "across-orchestrator": {
         "url": "https://github.com/fantasyce/across-orchestrator.git",
-        "ref": "v0.12.1",
+        "ref": "v0.12.2",
     },
     "across-context": {
         "url": "https://github.com/fantasyce/across-context.git",

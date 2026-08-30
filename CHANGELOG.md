@@ -13,7 +13,7 @@
   mutation checks that reject partial durable writes.
 - Added an immutable four-component release-train lock for source, payload,
   executable, App, capability, and acceptance-baseline hashes.
-- Integrated the released Orchestrator `v0.12.1` revalidation protocol,
+- Integrated the released Orchestrator `v0.12.2` revalidation protocol,
   receipt-safe public redaction, and verified four-platform Worker artifacts;
   also added explicit confirmation before a human rejection invalidates an
   accepted Goal result.

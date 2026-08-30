@@ -46,7 +46,7 @@ def _git_repo(path: Path, version: str) -> Path:
 def _candidate_fixture(tmp_path: Path) -> dict:
     components = {}
     versions = {
-        "orchestrator": "0.12.1",
+        "orchestrator": "0.12.2",
         "context": "0.12.0",
         "autopilot": "0.6.0",
         "aaa": "0.17.0",
@@ -164,7 +164,7 @@ def test_candidate_versions_are_goalboard_train_versions():
     ).read_text(encoding="utf-8")
 
     assert 'version = "0.17.0"' in aaa_pyproject
-    assert 'version = "0.12.1"' in orchestrator_pyproject
+    assert 'version = "0.12.2"' in orchestrator_pyproject
 
 
 def test_packaged_acceptance_requires_and_records_release_train_lock():
