@@ -413,8 +413,16 @@ class GoalContractService:
         if not pending:
             raise GoalContractStoreError("goal_revalidation_missing", "no matching pending invalidation exists")
         normalized_attempt = dict(attempt)
-        if normalized_attempt.get("schema_version") != "across-goal-revalidation-attempt/1.0":
+        if normalized_attempt.get("schema_version") != "across-goal-revalidation-attempt/1.1":
             raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt schema is invalid")
+        if normalized_attempt.get("state") != "completed":
+            raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt is not completed")
+        if (
+            normalized_attempt.get("goal_id") != contract["goal_id"]
+            or int(normalized_attempt.get("goal_revision") or 0) != expected_revision
+            or normalized_attempt.get("task_id") != task_id
+        ):
+            raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt authority does not match")
         if sorted(set(map(str, normalized_attempt.get("criterion_ids") or ()))) != selected:
             raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt criteria do not match")
         attempt_id = str(normalized_attempt.get("attempt_id") or "").strip()
@@ -441,7 +449,6 @@ class GoalContractService:
             supersedes_evidence_ids=superseded,
             idempotency_key=f"{idempotency_key}:evidence",
         )
-        normalized_attempt["state"] = "completed"
         normalized_attempt["replacement_evidence_ids"] = [binding["evidence_id"]]
         completed = self.store.complete_invalidations(
             goal_id=contract["goal_id"],
@@ -544,16 +551,54 @@ class GoalContractService:
                     if criterion_id in set(map(str, item.get("criterion_ids") or ()))
                 ],
             }
-        return {
-            "graph": {"criteria": criteria},
-            "changed_fingerprints": changed,
+        authority = {
+            "goal_id": contract["goal_id"],
+            "goal_revision": expected_revision,
+            "task_id": task_id,
             "criterion_ids": selected,
+            "changed_fingerprints": changed,
+        }
+        return {
+            "schema_version": "across-goal-revalidation-request/1.1",
+            "graph": {"criteria": criteria},
+            **authority,
+            "input_fingerprint": _digest(authority),
             "prior_attempt_number": sum(
                 1
                 for item in self.store.list_invalidations(contract["goal_id"], expected_revision)
                 if item.get("attempt")
             ),
         }
+
+    def attach_revalidation_attempt(
+        self,
+        *,
+        task_id: str,
+        expected_revision: int,
+        criterion_ids: Sequence[str],
+        attempt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        contract = self._current(task_id, expected_revision)
+        selected = sorted(set(map(str, criterion_ids)))
+        normalized = dict(attempt)
+        if normalized.get("schema_version") != "across-goal-revalidation-attempt/1.1":
+            raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt schema is invalid")
+        if normalized.get("state") not in {"awaiting_host_evidence", "queued", "running"}:
+            raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt is not active")
+        if (
+            normalized.get("goal_id") != contract["goal_id"]
+            or int(normalized.get("goal_revision") or 0) != expected_revision
+            or normalized.get("task_id") != task_id
+            or sorted(set(map(str, normalized.get("criterion_ids") or ()))) != selected
+        ):
+            raise GoalContractStoreError("goal_revalidation_invalid", "revalidation attempt authority does not match")
+        attached = self.store.attach_revalidation_attempt(
+            goal_id=contract["goal_id"],
+            revision=expected_revision,
+            criterion_ids=selected,
+            attempt=normalized,
+        )
+        return attached[0]
 
     def _current(self, task_id: str, expected_revision: int) -> dict[str, Any]:
         contract = self.store.get_current(task_id)

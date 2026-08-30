@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,7 +15,9 @@ from ..plugin_runtime import (
     PluginLifecycleError,
     build_direct_goal_revalidation_attempt,
     run_managed_goal_contract_probe,
-    run_managed_goal_revalidation_attempt,
+    run_managed_goal_revalidation_complete,
+    run_managed_goal_revalidation_plan,
+    run_managed_goal_revalidation_start,
 )
 from .service import GoalContractService
 
@@ -143,19 +147,46 @@ def install_goal_contract_routes(
                 expected_revision=request.expected_revision,
                 criterion_ids=request.criterion_ids,
             )
+            provider_managed = True
             try:
-                attempt = run_managed_goal_revalidation_attempt(attempt_payload)
+                plan = await asyncio.to_thread(run_managed_goal_revalidation_plan, attempt_payload)
+                attempt = await asyncio.to_thread(
+                    run_managed_goal_revalidation_start,
+                    {
+                        **attempt_payload,
+                        "execution_mode": "host_validation",
+                        "idempotency_key": f"{request.idempotency_key}:provider-start",
+                        "plan_hash": plan["plan_hash"],
+                    },
+                )
             except PluginLifecycleError:
                 contract = service.get_goal(task_id)["contract"]
                 if contract.get("execution_profile") != "direct":
                     raise
-                attempt = build_direct_goal_revalidation_attempt(attempt_payload)
+                provider_managed = False
+                attempt = build_direct_goal_revalidation_attempt(
+                    {**attempt_payload, "idempotency_key": f"{request.idempotency_key}:direct-start"}
+                )
+            service.attach_revalidation_attempt(
+                task_id=task_id,
+                expected_revision=request.expected_revision,
+                criterion_ids=request.criterion_ids,
+                attempt=attempt,
+            )
             material = await revalidation_verifier(
                 task_id,
                 request.expected_revision,
                 request.criterion_ids,
                 attempt,
             )
+            if provider_managed:
+                receipt = _host_validation_receipt(attempt, material)
+                attempt = await asyncio.to_thread(
+                    run_managed_goal_revalidation_complete,
+                    {"attempt_id": attempt["attempt_id"], "receipt": receipt},
+                )
+            else:
+                attempt = {**attempt, "state": "completed"}
             return service.complete_revalidation(
                 task_id=task_id,
                 expected_revision=request.expected_revision,
@@ -204,6 +235,23 @@ def install_goal_contract_routes(
             ) from exc
 
     app.include_router(router)
+
+
+def _host_validation_receipt(attempt: dict[str, Any], material: dict[str, Any]) -> dict[str, Any]:
+    unsigned = {
+        "schema_version": "across-goal-host-validation-evidence/1.1",
+        "attempt_id": attempt["attempt_id"],
+        "goal_id": attempt["goal_id"],
+        "goal_revision": attempt["goal_revision"],
+        "task_id": attempt["task_id"],
+        "criterion_ids": attempt["criterion_ids"],
+        "artifact_digests": material["artifact_digests"],
+        "input_fingerprint": attempt["input_fingerprint"],
+        "validator_id": material["validator_id"],
+        "verdict": material["verdict"],
+    }
+    canonical = json.dumps(unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return {**unsigned, "receipt_hash": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
 def _translate(operation: Callable[[], Any]) -> Any:

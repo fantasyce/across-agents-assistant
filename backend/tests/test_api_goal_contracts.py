@@ -226,14 +226,19 @@ def test_completed_revalidation_creates_new_attempt_keeps_old_evidence_and_resto
         verdict="verified",
         input_fingerprint="d" * 64,
         attempt={
-            "schema_version": "across-goal-revalidation-attempt/1.0",
+            "schema_version": "across-goal-revalidation-attempt/1.1",
             "attempt_id": "revalidation-attempt-test-001",
             "attempt_number": 1,
+            "goal_id": "goal-task-001",
+            "goal_revision": 1,
+            "task_id": "task-001",
             "criterion_ids": ["criterion-36bc8486dd50ddc0"],
             "changed_fingerprints": ["source fingerprint changed"],
             "supersedes_evidence_ids": [old["evidence_id"]],
             "preserved_evidence_ids": [],
-            "state": "queued",
+            "execution_mode": "host_validation",
+            "input_fingerprint": "d" * 64,
+            "state": "completed",
         },
         idempotency_key="revalidation-complete",
     )
@@ -310,7 +315,24 @@ def test_goal_plugin_probe_does_not_block_other_api_work(monkeypatch, tmp_path):
     assert result["status"] == "passed"
 
 
-def test_revalidation_api_uses_orchestrator_attempt_and_restores_selected_criterion(monkeypatch, tmp_path):
+def test_revalidation_payload_carries_complete_goal_and_task_authority(monkeypatch, tmp_path):
+    _, service = _client(monkeypatch, tmp_path)
+    from across_agents_assistant.goal_contract.service import GoalContractService
+
+    payload = GoalContractService(service).revalidation_attempt_payload(
+        task_id="task-001",
+        expected_revision=1,
+        criterion_ids=["criterion-36bc8486dd50ddc0"],
+    )
+
+    assert payload["schema_version"] == "across-goal-revalidation-request/1.1"
+    assert payload["goal_id"] == "goal-task-001"
+    assert payload["goal_revision"] == 1
+    assert payload["task_id"] == "task-001"
+    assert len(payload["input_fingerprint"]) == 64
+
+
+def test_revalidation_api_persists_provider_attempt_before_host_verification(monkeypatch, tmp_path):
     from fastapi import FastAPI
     import across_agents_assistant.goal_contract.api as goal_api
     from across_agents_assistant.goal_contract.api import install_goal_contract_routes
@@ -338,29 +360,55 @@ def test_revalidation_api_uses_orchestrator_attempt_and_restores_selected_criter
     )
     observed = {}
 
-    def fake_attempt(payload):
+    def fake_plan(payload):
         observed["payload"] = payload
         return {
-            "schema_version": "across-goal-revalidation-attempt/1.0",
+            "schema_version": "across-goal-revalidation-plan/1.1",
+            "plan_hash": "e" * 64,
+        }
+
+    def fake_start(payload):
+        observed["start"] = payload
+        return {
+            "schema_version": "across-goal-revalidation-attempt/1.1",
             "attempt_id": "revalidation-attempt-api",
             "attempt_number": 1,
+            "goal_id": "goal-task-001",
+            "goal_revision": 1,
+            "task_id": "task-001",
             "criterion_ids": ["criterion-36bc8486dd50ddc0"],
             "changed_fingerprints": payload["changed_fingerprints"],
             "supersedes_evidence_ids": [old["evidence_id"]],
             "preserved_evidence_ids": [],
-            "state": "queued",
+            "execution_mode": "host_validation",
+            "input_fingerprint": payload["input_fingerprint"],
+            "state": "awaiting_host_evidence",
+        }
+
+    def fake_complete(payload):
+        observed["completion"] = payload
+        return {
+            **observed["attempt"],
+            "state": "completed",
+            "evidence_receipt_hash": payload["receipt"]["receipt_hash"],
         }
 
     async def verifier(task_id, revision, criterion_ids, attempt):
         observed["verification"] = (task_id, revision, criterion_ids, attempt["attempt_id"])
+        observed["attempt"] = attempt
+        pending = service.goal_contracts.list_invalidations("goal-task-001", 1)
+        assert pending[0]["attempt"]["attempt_id"] == attempt["attempt_id"]
+        assert pending[0]["attempt"]["state"] == "awaiting_host_evidence"
         return {
             "artifact_digests": {"report.json": "c" * 64},
             "validator_id": "aaa-host:goal-revalidation",
             "verdict": "verified",
-            "input_fingerprint": "d" * 64,
+            "input_fingerprint": attempt["input_fingerprint"],
         }
 
-    monkeypatch.setattr(goal_api, "run_managed_goal_revalidation_attempt", fake_attempt)
+    monkeypatch.setattr(goal_api, "run_managed_goal_revalidation_plan", fake_plan)
+    monkeypatch.setattr(goal_api, "run_managed_goal_revalidation_start", fake_start)
+    monkeypatch.setattr(goal_api, "run_managed_goal_revalidation_complete", fake_complete)
     app = FastAPI()
     install_goal_contract_routes(app, service_provider=lambda: service, revalidation_verifier=verifier)
     client = TestClient(app)
@@ -381,6 +429,9 @@ def test_revalidation_api_uses_orchestrator_attempt_and_restores_selected_criter
         "task-001", 1, ["criterion-36bc8486dd50ddc0"], "revalidation-attempt-api"
     )
     assert observed["payload"]["criterion_ids"] == ["criterion-36bc8486dd50ddc0"]
+    assert observed["start"]["execution_mode"] == "host_validation"
+    assert observed["start"]["plan_hash"] == "e" * 64
+    assert observed["completion"]["receipt"]["attempt_id"] == "revalidation-attempt-api"
     replay = client.post(
         "/api/tasks/task-001/goal/revalidate",
         json={

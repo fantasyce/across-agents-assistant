@@ -305,6 +305,48 @@ class GoalContractStore:
             ).fetchall()
         return [json.loads(row["payload_json"]) for row in rows]
 
+    def attach_revalidation_attempt(
+        self,
+        *,
+        goal_id: str,
+        revision: int,
+        criterion_ids: list[str],
+        attempt: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Durably bind a provider Attempt to matching pending invalidations."""
+
+        selected = set(map(str, criterion_ids))
+        attached: list[dict[str, Any]] = []
+        with self.db.get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT invalidation_id, payload_json FROM goal_invalidation_events
+                   WHERE goal_id = ? AND from_revision = ? ORDER BY created_at, invalidation_id""",
+                (str(goal_id), int(revision)),
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["payload_json"])
+                affected = set(map(str, payload.get("criterion_ids") or ()))
+                if payload.get("state") != "pending" or not affected or not affected.issubset(selected):
+                    continue
+                existing = payload.get("attempt")
+                if existing is not None and existing != dict(attempt):
+                    raise GoalContractStoreError(
+                        "goal_revalidation_conflict",
+                        "pending invalidation is already bound to a different Attempt",
+                    )
+                payload["attempt"] = dict(attempt)
+                conn.execute(
+                    "UPDATE goal_invalidation_events SET payload_json = ? WHERE invalidation_id = ?",
+                    (_canonical(payload), row["invalidation_id"]),
+                )
+                attached.append(payload)
+        if not attached:
+            raise GoalContractStoreError(
+                "goal_revalidation_missing", "no matching pending invalidation exists"
+            )
+        return attached
+
     def complete_invalidations(
         self,
         *,

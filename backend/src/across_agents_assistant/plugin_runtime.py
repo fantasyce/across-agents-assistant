@@ -467,21 +467,61 @@ def run_managed_goal_contract_probe(
     }
 
 
-def run_managed_goal_revalidation_attempt(
+def _run_managed_goal_revalidation_phase(
+    phase: str,
     payload: Mapping[str, Any],
     *,
     env: Mapping[str, str] | None = None,
+    expected_schema: str,
 ) -> dict[str, Any]:
-    """Ask the installed Orchestrator to compute one selective revalidation attempt."""
     encoded = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     result = _run_cli_json(
         "across-orchestrator",
-        ["goal-revalidation", "--payload-json", encoded, "--json"],
+        ["goal-revalidation", phase, "--payload-json", encoded, "--json"],
         env=env,
         timeout=15,
     )
-    if not isinstance(result, dict) or result.get("schema_version") != "across-goal-revalidation-attempt/1.0":
-        raise PluginLifecycleError("Across Orchestrator returned an invalid revalidation attempt")
+    if not isinstance(result, dict) or result.get("schema_version") != expected_schema:
+        raise PluginLifecycleError(f"Across Orchestrator returned an invalid revalidation {phase} response")
+    return result
+
+
+def run_managed_goal_revalidation_plan(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    return _run_managed_goal_revalidation_phase(
+        "plan",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-plan/1.1",
+    )
+
+
+def run_managed_goal_revalidation_start(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    result = _run_managed_goal_revalidation_phase(
+        "start",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-attempt/1.1",
+    )
+    if result.get("state") not in {"awaiting_host_evidence", "queued", "running"}:
+        raise PluginLifecycleError("Across Orchestrator returned an invalid revalidation start state")
+    return result
+
+
+def run_managed_goal_revalidation_complete(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    result = _run_managed_goal_revalidation_phase(
+        "complete",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-attempt/1.1",
+    )
+    if result.get("state") != "completed":
+        raise PluginLifecycleError("Across Orchestrator did not complete the revalidation attempt")
     return result
 
 
@@ -503,14 +543,20 @@ def build_direct_goal_revalidation_attempt(payload: Mapping[str, Any]) -> dict[s
         for evidence_id in dict(raw or {}).get("evidence_ids") or ()
     }
     return {
-        "schema_version": "across-goal-revalidation-attempt/1.0",
+        "schema_version": "across-goal-revalidation-attempt/1.1",
         "attempt_id": f"direct-revalidation-attempt-{uuid.uuid4().hex}",
         "attempt_number": max(0, int(payload.get("prior_attempt_number") or 0)) + 1,
+        "goal_id": str(payload.get("goal_id") or ""),
+        "goal_revision": int(payload.get("goal_revision") or 0),
+        "task_id": str(payload.get("task_id") or ""),
         "criterion_ids": selected,
         "changed_fingerprints": sorted(set(map(str, payload.get("changed_fingerprints") or ()))),
         "supersedes_evidence_ids": superseded,
         "preserved_evidence_ids": sorted(all_evidence - set(superseded)),
-        "state": "queued",
+        "execution_mode": "host_validation",
+        "input_fingerprint": str(payload.get("input_fingerprint") or ""),
+        "state": "awaiting_host_evidence",
+        "job_ids": [],
     }
 
 

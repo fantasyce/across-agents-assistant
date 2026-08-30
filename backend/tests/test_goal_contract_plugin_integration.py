@@ -99,42 +99,59 @@ def test_goal_contract_probe_handles_legacy_and_rejects_future_schema(tmp_path):
         plugin_runtime.run_managed_goal_contract_probe(future, env={"ACROSS_HOME": str(tmp_path), "PATH": ""})
 
 
-def test_goal_revalidation_uses_isolated_installed_orchestrator(monkeypatch, tmp_path):
+def test_goal_revalidation_phases_use_isolated_installed_orchestrator(monkeypatch, tmp_path):
     across_home = tmp_path / "across"
     command = across_home / "bin" / "across-orchestrator"
     command.parent.mkdir(parents=True)
     command.write_text(
         f"#!{sys.executable}\n"
         "import json, sys\n"
-        "assert sys.argv[1:3] == ['goal-revalidation', '--payload-json']\n"
-        "payload = json.loads(sys.argv[3])\n"
-        "print(json.dumps({\n"
-        " 'schema_version': 'across-goal-revalidation-attempt/1.0',\n"
-        " 'attempt_id': 'revalidation-attempt-installed',\n"
-        " 'attempt_number': 1,\n"
-        " 'criterion_ids': payload['criterion_ids'],\n"
-        " 'changed_fingerprints': payload['changed_fingerprints'],\n"
-        " 'supersedes_evidence_ids': ['evidence-old'],\n"
-        " 'preserved_evidence_ids': ['evidence-kept'],\n"
-        " 'state': 'queued'\n"
-        "}))\n",
+        "assert sys.argv[1] == 'goal-revalidation'\n"
+        "phase = sys.argv[2]\n"
+        "assert sys.argv[3] == '--payload-json'\n"
+        "payload = json.loads(sys.argv[4])\n"
+        "if phase == 'plan':\n"
+        " print(json.dumps({'schema_version': 'across-goal-revalidation-plan/1.1', 'plan_hash': 'a' * 64}))\n"
+        "elif phase == 'start':\n"
+        " print(json.dumps({'schema_version': 'across-goal-revalidation-attempt/1.1', 'attempt_id': 'revalidation-attempt-installed', 'criterion_ids': payload['criterion_ids'], 'state': 'awaiting_host_evidence'}))\n"
+        "else:\n"
+        " print(json.dumps({'schema_version': 'across-goal-revalidation-attempt/1.1', 'attempt_id': payload['attempt_id'], 'state': 'completed'}))\n",
         encoding="utf-8",
     )
     command.chmod(0o755)
     monkeypatch.setattr(plugin_runtime, "_command_integrity_issues", lambda *_args: [])
     payload = {
-        "graph": {"criteria": {}},
+        "schema_version": "across-goal-revalidation-request/1.1",
+        "graph": {"criteria": {"criterion-a": {"input_fingerprints": ["source-a"]}}},
         "changed_fingerprints": ["source-a"],
         "criterion_ids": ["criterion-a"],
         "prior_attempt_number": 0,
+        "goal_id": "goal-a",
+        "goal_revision": 1,
+        "task_id": "task-a",
+        "input_fingerprint": "b" * 64,
     }
 
-    result = plugin_runtime.run_managed_goal_revalidation_attempt(
+    plan = plugin_runtime.run_managed_goal_revalidation_plan(
         payload, env={"ACROSS_HOME": str(across_home), "PATH": ""}
+    )
+    result = plugin_runtime.run_managed_goal_revalidation_start(
+        {
+            **payload,
+            "execution_mode": "host_validation",
+            "idempotency_key": "installed-start",
+            "plan_hash": plan["plan_hash"],
+        },
+        env={"ACROSS_HOME": str(across_home), "PATH": ""},
+    )
+    completed = plugin_runtime.run_managed_goal_revalidation_complete(
+        {"attempt_id": result["attempt_id"], "receipt": {"receipt_hash": "c" * 64}},
+        env={"ACROSS_HOME": str(across_home), "PATH": ""},
     )
 
     assert result["attempt_id"] == "revalidation-attempt-installed"
     assert result["criterion_ids"] == ["criterion-a"]
+    assert completed["state"] == "completed"
 
 
 def test_direct_goal_revalidation_preserves_unaffected_evidence_without_orchestrator():
