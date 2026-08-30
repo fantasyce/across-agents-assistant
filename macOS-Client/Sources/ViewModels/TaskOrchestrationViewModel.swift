@@ -108,6 +108,35 @@ class TaskOrchestrationViewModel: ObservableObject {
         orchestratorPluginStatus?.install.installable == true && !isInstallingOrchestratorPlugin
     }
 
+    static func taskSubmissionErrorMessage(from data: Data, statusCode: Int) -> String {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return "Failed to submit task (HTTP \(statusCode))"
+        }
+        if let detail = root["detail"] as? String, !detail.isEmpty {
+            return detail
+        }
+        guard let detail = root["detail"] as? [String: Any] else {
+            return "Failed to submit task (HTTP \(statusCode))"
+        }
+        if let code = detail["code"] as? String,
+           code == "capability_decision_required",
+           let decisionIDs = detail["decision_ids"] as? [String] {
+            if decisionIDs.contains("compatible_worker_workflow_required") {
+                return "compatible_worker_workflow_required"
+            }
+            if decisionIDs.contains("approve_risky_capabilities") {
+                return "approve_risky_capabilities"
+            }
+            return "capability_decision_required"
+        }
+        for key in ["message", "reason", "code"] {
+            if let message = detail[key] as? String, !message.isEmpty {
+                return message
+            }
+        }
+        return "Failed to submit task (HTTP \(statusCode))"
+    }
+
     typealias DeliveryTaskType = TaskOrchestrationDeliveryTaskType
     typealias AutoTaskSubmitResponse = TaskOrchestrationAutoTaskSubmitResponse
     typealias TaskSummary = TaskOrchestrationTaskSummary
@@ -1065,20 +1094,10 @@ class TaskOrchestrationViewModel: ObservableObject {
                         onCompletion?(false)
                     }
                 } else {
-                    // Try to parse error detail from response
-                    if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let detail = errorJson["detail"] as? [String: Any],
-                       let decisionIDs = detail["decision_ids"] as? [String],
-                       decisionIDs.contains("compatible_worker_workflow_required") {
-                        errorMessage = "compatible_worker_workflow_required"
-                    } else if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                              let detail = errorJson["detail"] as? String {
-                        errorMessage = detail
-                    } else if let text = String(data: data, encoding: .utf8), !text.isEmpty {
-                        errorMessage = text
-                    } else {
-                        errorMessage = "Failed to submit task (HTTP \(httpResponse.statusCode))"
-                    }
+                    errorMessage = Self.taskSubmissionErrorMessage(
+                        from: data,
+                        statusCode: httpResponse.statusCode
+                    )
                     onCompletion?(false)
                 }
 

@@ -3,6 +3,22 @@ import Testing
 @testable import AcrossAgentsAssistantClient
 
 struct GoalContractViewModelTests {
+    @Test
+    func taskSubmissionErrorParsesStructuredCapabilityDecisions() {
+        let data = Data("""
+        {"detail":{"code":"capability_decision_required","decision_ids":["approve_risky_capabilities"]}}
+        """.utf8)
+
+        #expect(TaskOrchestrationViewModel.taskSubmissionErrorMessage(
+            from: data,
+            statusCode: 409
+        ) == "approve_risky_capabilities")
+        #expect(!TaskOrchestrationViewModel.taskSubmissionErrorMessage(
+            from: data,
+            statusCode: 409
+        ).contains("{"))
+    }
+
     @Test @MainActor
     func missingGoalIsAStableLegacyState() async {
         let viewModel = TaskOrchestrationViewModel(requestData: { request in

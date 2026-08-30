@@ -70,12 +70,22 @@ struct AppleMinimalUIContractTests {
             "work.submit.orchestratorUnavailable",
             localeIdentifier: "zh-Hans"
         ).contains("输入已经保留"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.riskApprovalRequired",
+            localeIdentifier: "zh-Hans"
+        ).contains("明确批准"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.capabilityDecisionRequired",
+            localeIdentifier: "en"
+        ).contains("capability decision"))
 
         let actions = try Self.source("macOS-Client/Sources/Views/MainPanelActions.swift")
         let emptyState = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
         #expect(actions.contains("guard submitted else { return }"))
         #expect(emptyState.contains("submissionErrorMessage"))
         #expect(emptyState.contains("compatible_worker_workflow_required"))
+        #expect(emptyState.contains("approve_risky_capabilities"))
+        #expect(emptyState.contains("capability_decision_required"))
         #expect(emptyState.contains("External Across Orchestrator runtime is unavailable."))
     }
 

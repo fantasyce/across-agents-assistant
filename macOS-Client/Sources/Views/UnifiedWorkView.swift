@@ -256,6 +256,10 @@ struct UnifiedWorkEmptyState: View {
         switch value {
         case "compatible_worker_workflow_required":
             return preferences.text("work.submit.remoteWorkflowRequired")
+        case "approve_risky_capabilities":
+            return preferences.text("work.submit.riskApprovalRequired")
+        case "capability_decision_required":
+            return preferences.text("work.submit.capabilityDecisionRequired")
         case "External Across Orchestrator runtime is unavailable.":
             return preferences.text("work.submit.orchestratorUnavailable")
         default:

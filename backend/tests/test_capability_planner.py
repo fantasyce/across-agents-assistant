@@ -184,6 +184,53 @@ def test_risky_capability_plan_requires_explicit_approval():
     assert plan["automatic"] is False
 
 
+def test_negated_file_mutation_constraint_does_not_require_risk_approval():
+    plugins = [
+        _plugin(
+            "task-runtime",
+            capabilities=["task_execution"],
+            permissions={"filesystem": "write", "execute": True},
+        )
+    ]
+
+    plan = build_task_capability_plan(
+        user_goal=(
+            "Read the report and verify its digest; do not create, edit, rename, "
+            "or delete any file."
+        ),
+        project_signals={},
+        plugins=plugins,
+        configured_providers=["openai"],
+        primary_provider="openai",
+    )
+
+    assert plan["required_user_decisions"] == []
+    assert plan["automatic"] is True
+
+
+def test_later_consequential_action_is_not_hidden_by_an_earlier_negation():
+    plugins = [
+        _plugin(
+            "deploy-runtime",
+            capabilities=["deployment"],
+            permissions={"filesystem": "write", "network": True, "execute": True},
+        )
+    ]
+
+    plan = build_task_capability_plan(
+        user_goal=(
+            "Do not delete any files, but deploy the approved release to production."
+        ),
+        project_signals={"required_capabilities": ["deployment"]},
+        plugins=plugins,
+        configured_providers=["openai"],
+        primary_provider="openai",
+    )
+
+    assert [item["kind"] for item in plan["required_user_decisions"]] == ["risk_approval"]
+    assert plan["automatic"] is False
+
+
 def test_release_domain_language_does_not_imply_external_publication():
     plugins = [
         _plugin(

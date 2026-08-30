@@ -27,6 +27,15 @@ _MATERIAL_RISK_PATTERNS = (
     re.compile(r"\b(?:delete|remove|rotate|revoke)\b.{0,40}\b(?:data|files?|credentials?|secrets?|keys?|tokens?|deployment|production)\b"),
     re.compile(r"\b(?:payment|credential|secret|private\s*key|api\s*key)\b.{0,32}\b(?:write|change|use|send|expose|rotate|delete)\b"),
 )
+_MATERIAL_RISK_NEGATION_RE = re.compile(
+    r"(?:不要|不得|禁止|无需|不需要|不必).{0,64}$|"
+    r"\b(?:do\s+not|don't|must\s+not|never)\b.{0,64}$",
+    re.IGNORECASE,
+)
+_MATERIAL_RISK_SCOPE_BOUNDARY_RE = re.compile(
+    r"[.!?。！？；;\n]|\b(?:but|however|yet)\b|(?:但是|然而|但)",
+    re.IGNORECASE,
+)
 
 
 def build_task_capability_plan(
@@ -177,10 +186,23 @@ def _choice_rank(choice: Mapping[str, Any]) -> tuple[int, int]:
 
 
 def _is_risky_choice(choice: Mapping[str, Any], goal: str) -> bool:
-    if not any(pattern.search(goal.lower()) for pattern in _MATERIAL_RISK_PATTERNS):
+    if not _contains_non_negated_material_risk(goal):
         return False
     permissions = " ".join(_flatten_strings(choice.get("permissions"))).lower()
     return any(term in permissions for term in _RISK_PERMISSION_TERMS)
+
+
+def _contains_non_negated_material_risk(goal: str) -> bool:
+    text = str(goal or "").lower()
+    for pattern in _MATERIAL_RISK_PATTERNS:
+        for match in pattern.finditer(text):
+            prior = text[: match.start()]
+            boundaries = list(_MATERIAL_RISK_SCOPE_BOUNDARY_RE.finditer(prior))
+            clause_prefix = prior[boundaries[-1].end() :] if boundaries else prior
+            if _MATERIAL_RISK_NEGATION_RE.search(clause_prefix):
+                continue
+            return True
+    return False
 
 
 def _flatten_strings(value: Any) -> list[str]:
