@@ -63,7 +63,10 @@ extension MainPanelView {
             speechInput.finish(preservingDraft: viewModel.inputText)
             return
         }
-        guard !speechInput.state.isActive else { return }
+        if speechInput.state.isActive {
+            speechInput.cancel(preservingDraft: viewModel.inputText)
+            return
+        }
 
         // Prevent synthesized replies from being captured as fresh user input.
         TTSEngine.shared.stop()

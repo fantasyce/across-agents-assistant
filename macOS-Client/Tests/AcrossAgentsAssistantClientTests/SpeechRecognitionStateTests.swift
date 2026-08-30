@@ -119,6 +119,23 @@ struct SpeechRecognitionStateTests {
         service.emit(.segmentTranscript("重新连接后继续。"))
         #expect(coordinator.draftText == "current draft 重新连接后继续。")
     }
+
+    @MainActor
+    @Test
+    func permissionRequestTimesOutToARecoverableCancelledState() async throws {
+        let service = PendingPermissionSpeechRecognitionService()
+        let coordinator = SpeechInputCoordinator(
+            service: service,
+            permissionRequestTimeoutNanoseconds: 1_000_000
+        )
+
+        coordinator.start(existingDraft: "keep this draft", localeIdentifier: "en-US")
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        #expect(service.cancelCount == 1)
+        #expect(coordinator.state == .cancelled)
+        #expect(coordinator.draftText == "keep this draft")
+    }
 }
 
 @MainActor
@@ -154,6 +171,33 @@ private final class FakeSpeechRecognitionService: SpeechRecognitionService {
     }
 
     func emit(_ state: SpeechRecognitionState) {
+        self.state = state
+        onStateChange?(state)
+    }
+}
+
+@MainActor
+private final class PendingPermissionSpeechRecognitionService: SpeechRecognitionService {
+    private(set) var state: SpeechRecognitionState = .idle
+    var onStateChange: ((SpeechRecognitionState) -> Void)?
+    private(set) var cancelCount = 0
+
+    func start(localeIdentifier: String) async {
+        emit(.requestingPermission)
+    }
+
+    func retry(localeIdentifier: String) async {
+        emit(.requestingPermission)
+    }
+
+    func finish() {}
+
+    func cancel() {
+        cancelCount += 1
+        emit(.cancelled)
+    }
+
+    private func emit(_ state: SpeechRecognitionState) {
         self.state = state
         onStateChange?(state)
     }
