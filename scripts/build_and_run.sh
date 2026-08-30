@@ -12,6 +12,7 @@ ROLLBACK_STAGING="$ROLLBACK_ROOT/.$APP_NAME.rollback-staging.$$.app"
 INSTALL_STAGING="/Applications/.$APP_NAME.installing.$$.app"
 PREVIOUS_INSTALL="/Applications/.$APP_NAME.previous.$$.app"
 INSTALL_COMMITTED=0
+USE_RELEASED_PINS="${ACROSS_BUILD_USE_RELEASED_PINS:-0}"
 
 restore_previous_install() {
   local exit_code=$?
@@ -31,17 +32,20 @@ trap restore_previous_install EXIT
 # released archives when build_app.sh is invoked directly; this convenience
 # path deliberately prefers adjacent producer checkouts and records their
 # provenance as local candidates in the bundled catalog.
-if [[ -z "${ACROSS_BUILD_CONTEXT_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_CONTEXT_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-context/package.json" && \
       -d "$PROJECT_ROOT/../across-context/src" ]]; then
     export ACROSS_BUILD_CONTEXT_SOURCE_ROOT="$PROJECT_ROOT/../across-context"
 fi
-if [[ -z "${ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-autopilot/package.json" && \
       -d "$PROJECT_ROOT/../across-autopilot/src" ]]; then
     export ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT="$PROJECT_ROOT/../across-autopilot"
 fi
-if [[ -z "${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-orchestrator/pyproject.toml" && \
       -d "$PROJECT_ROOT/../across-orchestrator/src/across_orchestrator" ]]; then
     export ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT="$PROJECT_ROOT/../across-orchestrator"

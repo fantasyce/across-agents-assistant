@@ -27,6 +27,14 @@ def test_formal_local_build_prefers_all_adjacent_plugin_producers() -> None:
     )
 
 
+def test_formal_release_build_can_require_published_plugin_pins() -> None:
+    script = (ROOT / "scripts" / "build_and_run.sh").read_text(encoding="utf-8")
+
+    assert "ACROSS_BUILD_USE_RELEASED_PINS" in script
+    assert 'ACROSS_BUILD_USE_RELEASED_PINS:-0' in script
+    assert '"$USE_RELEASED_PINS" != "1"' in script
+
+
 def test_formal_local_build_cleans_orphaned_worker_control_runtime() -> None:
     script = (ROOT / "scripts" / "build_and_run.sh").read_text(encoding="utf-8")
 

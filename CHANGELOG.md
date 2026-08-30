@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.0 - 2026-08-30
+
+- Added versioned Goal Contracts with immutable Goal Store revisions,
+  human-confirmed acceptance criteria, stale-evidence invalidation, and
+  host-authoritative dispatch validation.
+- Added Goal Board inspection and recovery journeys for contract review,
+  revision changes, execution evidence, and explicit human acceptance.
+- Integrated Orchestrator `v0.11.0` with crash-safe terminal transactions and
+  hash-valid, review-required Goal receipts; Autopilot `v0.6.0` with
+  required-criterion-only bindings; and Context `v0.12.0` with the governed
+  Goal Contract memory schema.
+- Refreshed bundled plugin provenance, source mirrors, Live E2E, four-platform
+  Worker downloads, and the scenario-simulation pack to the producer-first
+  releases.
+
 ## 0.15.0 - 2026-08-26
 
 - Added generic local stdio MCP plugin import from standard `.mcp.json`

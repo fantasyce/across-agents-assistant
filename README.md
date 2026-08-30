@@ -51,10 +51,10 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.15.0` |
-| Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.11.1` |
-| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.10.12` |
-| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.5.4` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.16.0` |
+| Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.12.0` |
+| Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.11.0` |
+| Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.6.0` |
 
 Install or repair the three optional components from **Settings → Plugins**.
 Packaged builds carry verified plugin payloads, so the one-click path does not
@@ -74,7 +74,22 @@ than a fourth first-party managed component.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.15.0` Includes
+## What `v0.16.0` Includes
+
+- Added versioned Goal Contracts with immutable revisions, explicit human
+  confirmation, stale-evidence invalidation, and host-authoritative execution
+  checks before any Orchestrator dispatch.
+- Added Goal Board review and recovery paths that keep required acceptance
+  criteria, execution bindings, receipts, and revalidation visible without
+  allowing a runtime to self-approve delivery.
+- Integrated Context `v0.12.0`, Orchestrator `v0.11.0`, and Autopilot `v0.6.0`
+  as symmetric managed plugins. Their released contracts preserve governed
+  memory, crash-safe terminal receipts, required-criterion binding, and human
+  review as the final trust boundary.
+- Refreshed the four-platform Worker catalog and scenario-simulation pack from
+  the producer releases, including published SHA-256 verification.
+
+### Previous `v0.15.0` release
 
 - Local stdio MCP plugins can now be imported from a standard `.mcp.json`
   manifest, persisted across AAA restarts, replaced atomically by stable server

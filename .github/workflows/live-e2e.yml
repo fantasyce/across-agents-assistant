@@ -36,7 +36,7 @@ jobs:
 
       - name: Install Across Orchestrator
         run: |
-          python -m pip install "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.12"
+          python -m pip install "git+https://github.com/fantasyce/across-orchestrator.git@v0.11.0"
 
       - name: Run live E2E
         env:
