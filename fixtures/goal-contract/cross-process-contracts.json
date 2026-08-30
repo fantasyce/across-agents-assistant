@@ -1,0 +1,83 @@
+{
+  "schema_version": "across-goal-cross-process-catalog/1.0",
+  "provider_id": "across-orchestrator",
+  "consumer_id": "across-agents-assistant",
+  "contracts": [
+    {
+      "contract_id": "goal-contract",
+      "phase": "probe",
+      "command": ["goal-contract", "--contract-json", "{payload_json}", "--json"],
+      "input_schema": "across-goal-contract/1.0",
+      "output_schema": "across-goal-contract-probe/1.0",
+      "required_bindings": [
+        "goal_id",
+        "revision",
+        "task_id",
+        "acceptance_criteria"
+      ],
+      "mutation_policy": "each_required_binding",
+      "durable_write": false
+    },
+    {
+      "contract_id": "goal-revalidation-plan",
+      "phase": "plan",
+      "command": ["goal-revalidation", "plan", "--payload-json", "{payload_json}", "--json"],
+      "input_schema": "across-goal-revalidation-request/1.1",
+      "output_schema": "across-goal-revalidation-plan/1.1",
+      "required_bindings": [
+        "graph",
+        "changed_fingerprints",
+        "criterion_ids",
+        "goal_id",
+        "goal_revision",
+        "task_id",
+        "input_fingerprint"
+      ],
+      "mutation_policy": "each_required_binding",
+      "durable_write": false
+    },
+    {
+      "contract_id": "goal-revalidation-start",
+      "phase": "start",
+      "command": ["goal-revalidation", "start", "--payload-json", "{payload_json}", "--json"],
+      "input_schema": "across-goal-revalidation-start/1.1",
+      "output_schema": "across-goal-revalidation-attempt/1.1",
+      "required_bindings": [
+        "graph",
+        "changed_fingerprints",
+        "criterion_ids",
+        "goal_id",
+        "goal_revision",
+        "task_id",
+        "input_fingerprint",
+        "plan_hash",
+        "execution_mode",
+        "idempotency_key"
+      ],
+      "mutation_policy": "each_required_binding",
+      "durable_write": true
+    },
+    {
+      "contract_id": "goal-revalidation-complete",
+      "phase": "complete",
+      "command": ["goal-revalidation", "complete", "--payload-json", "{payload_json}", "--json"],
+      "input_schema": "across-goal-revalidation-complete/1.1",
+      "output_schema": "across-goal-revalidation-attempt/1.1",
+      "required_bindings": [
+        "attempt_id",
+        "receipt.attempt_id",
+        "receipt.goal_id",
+        "receipt.goal_revision",
+        "receipt.task_id",
+        "receipt.criterion_ids",
+        "receipt.artifact_digests",
+        "receipt.input_fingerprint",
+        "receipt.validator_id",
+        "receipt.verdict",
+        "receipt.receipt_hash"
+      ],
+      "mutation_policy": "each_required_binding",
+      "durable_write": true
+    }
+  ]
+}

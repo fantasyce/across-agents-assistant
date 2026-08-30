@@ -694,3 +694,18 @@ def test_acceptance_runner_does_not_leak_source_overrides_into_producer_tests():
     assert "env -u ACROSS_ORCHESTRATOR_SOURCE" in autopilot_gate
     assert "-u ACROSS_CONTEXT_SOURCE" in autopilot_gate
     assert "-u ACROSS_AUTOPILOT_SOURCE" in autopilot_gate
+
+
+def test_acceptance_runner_blocks_release_on_real_goal_provider_consumer_contracts():
+    script = (ROOT / "scripts/run_vnext_single_release_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    packaged = (ROOT / "scripts/run_packaged_app_cross_plugin_e2e.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "goal_contract_real_provider_consumer" in script
+    assert "run_goal_contract_provider_consumer_e2e.sh" in script
+    assert "goal_revalidation_complete" in packaged
+    assert "result_review_rejected" in packaged
+    assert "replacement_attempt" in packaged

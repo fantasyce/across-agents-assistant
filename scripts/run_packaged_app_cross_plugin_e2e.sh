@@ -133,6 +133,50 @@ request POST '/api/goal-contract/plugin-probe' "$TMP_DIR/goal-probe.json" "$GOAL
 request POST '/api/autopilot/runs' "$TMP_DIR/run.json" '{"spec":"aaa-release-readiness-gate","trigger":"packaged-cross-plugin-e2e"}'
 
 TMP_DIR="$TMP_DIR" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["TMP_DIR"])
+payload = json.loads((root / "run.json").read_text(encoding="utf-8"))
+task_ids = payload.get("run", {}).get("orchestrator_tasks") or []
+if not task_ids or not isinstance(task_ids[0], str):
+    raise SystemExit("The packaged workflow did not return an Orchestrator task identity.")
+(root / "goal-task-id.txt").write_text(task_ids[0] + "\n", encoding="utf-8")
+PY
+IFS= read -r GOAL_TASK_ID < "$TMP_DIR/goal-task-id.txt"
+request GET "/api/tasks/$GOAL_TASK_ID" "$TMP_DIR/goal-task.json"
+request GET "/api/tasks/$GOAL_TASK_ID/goal" "$TMP_DIR/goal-initial.json"
+request POST "/api/tasks/$GOAL_TASK_ID/reject" "$TMP_DIR/goal-rejected.json"
+TMP_DIR="$TMP_DIR" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["TMP_DIR"])
+goal = json.loads((root / "goal-initial.json").read_text(encoding="utf-8"))["contract"]
+criterion_ids = [
+    item["criterion_id"]
+    for item in goal["acceptance_criteria"]
+    if item.get("required", True)
+]
+request = {
+    "expected_revision": goal["revision"],
+    "criterion_ids": criterion_ids,
+    "reason": "The human reviewer rejected the first Attempt; verify the replacement Attempt.",
+    "idempotency_key": "packaged-goal-repair-revalidation",
+}
+(root / "goal-revalidation-request.json").write_text(
+    json.dumps(request, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+GOAL_REVALIDATION_BODY="$(tr -d '\n' < "$TMP_DIR/goal-revalidation-request.json")"
+request POST "/api/tasks/$GOAL_TASK_ID/goal/revalidate" "$TMP_DIR/goal-revalidated.json" "$GOAL_REVALIDATION_BODY"
+request POST "/api/tasks/$GOAL_TASK_ID/accept" "$TMP_DIR/goal-accepted.json"
+request GET "/api/tasks/$GOAL_TASK_ID/goal" "$TMP_DIR/goal-final.json"
+
+TMP_DIR="$TMP_DIR" python3 - <<'PY'
 from __future__ import annotations
 
 import json
@@ -152,6 +196,11 @@ for plugin_id in ("across-context", "across-orchestrator", "across-autopilot"):
 
 payload = json.loads((root / "run.json").read_text(encoding="utf-8"))
 goal_probe = json.loads((root / "goal-probe.json").read_text(encoding="utf-8"))
+goal_task = json.loads((root / "goal-task.json").read_text(encoding="utf-8"))
+goal_rejected = json.loads((root / "goal-rejected.json").read_text(encoding="utf-8"))
+goal_revalidated = json.loads((root / "goal-revalidated.json").read_text(encoding="utf-8"))
+goal_accepted = json.loads((root / "goal-accepted.json").read_text(encoding="utf-8"))
+goal_final = json.loads((root / "goal-final.json").read_text(encoding="utf-8"))
 if goal_probe.get("status") != "passed" or set(goal_probe.get("plugins", {})) != {
     "across-context", "across-orchestrator", "across-autopilot"
 }:
@@ -167,6 +216,38 @@ if not run.get("orchestrator_tasks"):
     raise SystemExit("The packaged workflow did not produce an Orchestrator task.")
 if not run.get("memory_ids"):
     raise SystemExit("The packaged workflow did not produce a pending Context memory record.")
+if goal_task.get("status") != "completed":
+    raise SystemExit("The Goal-backed packaged task was not completed before review.")
+if goal_rejected.get("task_review", {}).get("review_status") != "rejected":
+    raise SystemExit("The first packaged Goal Attempt was not rejected by the review action.")
+rejected_reviews = goal_rejected.get("goal", {}).get("reviews") or []
+if not rejected_reviews or rejected_reviews[-1].get("status") != "rejected":
+    raise SystemExit("The Goal rejection did not remain in the authoritative review ledger.")
+first_attempt_id = rejected_reviews[-1].get("attempt_id")
+replacement_attempt = goal_revalidated.get("attempt", {})
+if replacement_attempt.get("state") != "completed":
+    raise SystemExit("The installed Orchestrator did not complete Goal revalidation.")
+if not first_attempt_id or replacement_attempt.get("attempt_id") == first_attempt_id:
+    raise SystemExit("Goal repair reused the rejected Attempt instead of creating a replacement.")
+if goal_revalidated.get("projection", {}).get("validity_state") != "valid":
+    raise SystemExit("Replacement evidence did not clear the Goal invalidation.")
+if goal_accepted.get("task_review", {}).get("review_status") != "accepted":
+    raise SystemExit("The replacement Goal Attempt was not accepted.")
+if goal_final.get("projection", {}).get("is_complete") is not True:
+    raise SystemExit("The accepted packaged Goal did not reach completion.")
+result_review_states = [
+    item.get("status")
+    for item in goal_final.get("reviews", [])
+    if item.get("schema_version") == "across-goal-result-review/1.1"
+]
+if result_review_states[-2:] != ["rejected", "passed"]:
+    raise SystemExit("The packaged Goal review ledger lost the reject-to-pass history.")
+replacement_evidence = [
+    item for item in goal_final.get("evidence_bindings", [])
+    if item.get("attempt_id") == replacement_attempt.get("attempt_id")
+]
+if not replacement_evidence:
+    raise SystemExit("The replacement Attempt did not produce criterion-scoped evidence.")
 actions = {item.get("adapter"): item for item in evidence.get("actions", [])}
 for action_id in ("orchestrator_task_dispatch", "memory_write_candidate"):
     if actions.get(action_id, {}).get("status") != "passed":
@@ -178,6 +259,9 @@ print(json.dumps({
     "plugin_convergence": "passed",
     "plugin_lifecycle_install_repair_upgrade_uninstall_reinstall": "passed",
     "goal_contract_probe": "passed",
+    "goal_revalidation_complete": "passed",
+    "result_review_rejected": "passed",
+    "replacement_attempt": "passed",
     "autopilot_to_orchestrator": "passed",
     "orchestrator_to_context": "passed",
     "cleanup": "trap-enforced",
