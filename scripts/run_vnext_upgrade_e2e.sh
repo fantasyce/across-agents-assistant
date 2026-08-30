@@ -25,6 +25,7 @@ done
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/across-vnext-e2e.XXXXXX")"
 ACROSS_HOME="$TMP_ROOT/across"
+ACROSS_AGENTS_HOME="$TMP_ROOT/aaa"
 FIXTURE_REPO="$TMP_ROOT/incident-correlation-service"
 SUMMARY_PATH="$TMP_ROOT/vnext-e2e-summary.json"
 SERVER_PID=""
@@ -49,6 +50,31 @@ FIXTURE_AGENT_ENABLED=0
 if [[ "$AGENT_MODE" == "fixture" ]]; then
   mkdir -p "$TMP_ROOT/fixture-bin"
   ln -s "$ROOT_DIR/scripts/vnext_fixture_codex.py" "$TMP_ROOT/fixture-bin/codex"
+  ACROSS_AGENTS_HOME="$ACROSS_AGENTS_HOME" FIXTURE_CODEX="$TMP_ROOT/fixture-bin/codex" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["ACROSS_AGENTS_HOME"])
+fixture_codex = os.environ["FIXTURE_CODEX"]
+root.mkdir(parents=True, exist_ok=True)
+(root / "local_agents.json").write_text(
+    json.dumps(
+        {
+            "agents": {
+                "codex": {
+                    "executable_path": fixture_codex,
+                    "model": "auto",
+                }
+            }
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
   E2E_PATH="$TMP_ROOT/fixture-bin:$PATH"
   FIXTURE_AGENT_ENABLED=1
 fi
@@ -184,6 +210,7 @@ env \
   "PATH=$E2E_PATH" \
   "PYTHONPATH=$ROOT_DIR/backend/src" \
   "ACROSS_HOME=$ACROSS_HOME" \
+  "ACROSS_AGENTS_HOME=$ACROSS_AGENTS_HOME" \
   "ACROSS_VNEXT_E2E_FIXTURE_AGENT=$FIXTURE_AGENT_ENABLED" \
   "ACROSS_CONTEXT_COMMAND=$ACROSS_HOME/bin/across-context" \
   "ACROSS_ORCHESTRATOR_COMMAND=$ORCHESTRATOR_COMMAND_JSON" \

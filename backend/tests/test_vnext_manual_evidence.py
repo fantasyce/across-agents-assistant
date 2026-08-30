@@ -728,3 +728,13 @@ def test_acceptance_runner_blocks_release_on_real_goal_provider_consumer_contrac
     assert "local_agents.json" in packaged
     assert '"executable_path": fixture_codex' in packaged
     assert '"model": "auto"' in packaged
+
+
+def test_vnext_fixture_e2e_pins_the_isolated_fixture_agent():
+    script = (ROOT / "scripts/run_vnext_upgrade_e2e.sh").read_text(encoding="utf-8")
+
+    assert 'ACROSS_AGENTS_HOME="$TMP_ROOT/aaa"' in script
+    assert "local_agents.json" in script
+    assert '"executable_path": fixture_codex' in script
+    assert '"model": "auto"' in script
+    assert '"ACROSS_AGENTS_HOME=$ACROSS_AGENTS_HOME"' in script
