@@ -527,7 +527,10 @@ struct AcrossTaskResultDecision {
         isAccepted = ["accepted", "approved"].contains(review)
         isRejected = review == "rejected"
         canAccept = Self.isSuccessfulDelivery(task) && !isAccepted && !isRejected
-        canReject = isTerminal && !isAccepted && !isRejected && !canAccept
+        // Automated checks decide whether acceptance is allowed; they must not
+        // take away the human reviewer's ability to reject a semantically
+        // incorrect terminal result and send it back for repair.
+        canReject = isTerminal && !isAccepted && !isRejected
         canInspectEvidence = ["completed", "completed_with_failures"].contains(status)
             || task.qualityHealth != nil
             || task.deliveryReport != nil

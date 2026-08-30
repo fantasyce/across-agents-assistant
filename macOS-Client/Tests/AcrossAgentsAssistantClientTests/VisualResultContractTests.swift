@@ -146,9 +146,12 @@ struct VisualResultContractTests {
         """)
 
         let result = AcrossVisualResultFactory.make(task: task)
+        let decision = AcrossTaskResultDecision(task: task)
 
         #expect(result.verdict == .needsReview)
         #expect(result.attentionStack.first(where: { $0.id == "review" })?.priority == .inspectSoon)
+        #expect(decision.canAccept)
+        #expect(decision.canReject)
     }
 
     @Test func partialWorkerDeliveryCannotBeAcceptedAndCanBeRejected() throws {
