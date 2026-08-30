@@ -714,6 +714,17 @@ def test_acceptance_runner_blocks_release_on_real_goal_provider_consumer_contrac
     assert "'/api/tasks/auto'" in packaged
     assert '"/api/tasks/$GOAL_TASK_ID/run"' in packaged
     assert '"/api/tasks/$GOAL_TASK_ID/status"' in packaged
+    assert 'GOAL_TASK_STATUS=""' in packaged
+    assert 'Goal Task did not reach completed before review' in packaged
+    assert packaged.index('GOAL_TASK_STATUS=""') < packaged.index(
+        '"/api/tasks/$GOAL_TASK_ID/reject"'
+    )
     assert "goal-task-submit.json" in packaged
     assert 'payload.get("run", {}).get("orchestrator_tasks") or []' not in packaged
     assert 'task_ids[0]' not in packaged
+    assert "--fail-with-body" in packaged
+    assert "Packaged API error response" in packaged
+    assert "Goal Task terminal payload" in packaged
+    assert "local_agents.json" in packaged
+    assert '"executable_path": fixture_codex' in packaged
+    assert '"model": "auto"' in packaged

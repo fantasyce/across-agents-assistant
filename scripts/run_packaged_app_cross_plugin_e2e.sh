@@ -35,6 +35,32 @@ fi
 
 mkdir -p "$TMP_DIR/project" "$TMP_DIR/tmp" "$TMP_DIR/fixture-bin"
 ln -s "$ROOT_DIR/scripts/packaged_goal_fixture_codex.py" "$TMP_DIR/fixture-bin/codex"
+ACROSS_AGENTS_HOME="$ACROSS_AGENTS_HOME" FIXTURE_CODEX="$TMP_DIR/fixture-bin/codex" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["ACROSS_AGENTS_HOME"])
+fixture_codex = os.environ["FIXTURE_CODEX"]
+root.mkdir(parents=True, exist_ok=True)
+(root / "local_agents.json").write_text(
+    json.dumps(
+        {
+            "agents": {
+                "codex": {
+                    "executable_path": fixture_codex,
+                    "model": "auto",
+                }
+            }
+        },
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
 cat > "$TMP_DIR/project/package.json" <<'JSON'
 {
   "name": "across-packaged-cross-plugin-fixture",
@@ -80,14 +106,20 @@ request() {
   local output="$3"
   local body="${4:-}"
   local arguments=(
-    --fail --silent --show-error --max-time 600
+    --fail-with-body --silent --show-error --max-time 600
     --unix-socket "$SOCKET_PATH"
     -X "$method"
   )
   if [[ -n "$body" ]]; then
     arguments+=( -H 'Content-Type: application/json' --data "$body" )
   fi
-  /usr/bin/curl "${arguments[@]}" "http://localhost$endpoint" > "$output"
+  if ! /usr/bin/curl "${arguments[@]}" "http://localhost$endpoint" > "$output"; then
+    if [[ -s "$output" ]]; then
+      echo "Packaged API error response for $method $endpoint:" >&2
+      cat "$output" >&2
+    fi
+    return 1
+  fi
 }
 
 for plugin_id in across-context across-orchestrator across-autopilot; do
@@ -175,7 +207,35 @@ if payload.get("implementation") != "external" or payload.get("external_task") i
 PY
 IFS= read -r GOAL_TASK_ID < "$TMP_DIR/goal-task-id.txt"
 request POST "/api/tasks/$GOAL_TASK_ID/run" "$TMP_DIR/goal-task-run.json"
-request GET "/api/tasks/$GOAL_TASK_ID/status" "$TMP_DIR/goal-task-status.json"
+GOAL_TASK_STATUS=""
+for _ in $(seq 1 240); do
+  request GET "/api/tasks/$GOAL_TASK_ID/status" "$TMP_DIR/goal-task-status.json"
+  GOAL_TASK_STATUS="$(TMP_DIR="$TMP_DIR" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+payload = json.loads((Path(os.environ["TMP_DIR"]) / "goal-task-status.json").read_text(encoding="utf-8"))
+print(str(payload.get("status") or ""))
+PY
+)"
+  case "$GOAL_TASK_STATUS" in
+    completed)
+      break
+      ;;
+    failed|cancelled|canceled|completed_with_failures|blocked)
+      echo "Goal Task entered terminal non-success status before review: $GOAL_TASK_STATUS" >&2
+      echo "Goal Task terminal payload:" >&2
+      cat "$TMP_DIR/goal-task-status.json" >&2
+      exit 1
+      ;;
+  esac
+  sleep 0.25
+done
+if [[ "$GOAL_TASK_STATUS" != "completed" ]]; then
+  echo "Goal Task did not reach completed before review; last status: ${GOAL_TASK_STATUS:-missing}" >&2
+  exit 1
+fi
 request GET "/api/tasks/$GOAL_TASK_ID" "$TMP_DIR/goal-task.json"
 request GET "/api/tasks/$GOAL_TASK_ID/goal" "$TMP_DIR/goal-initial.json"
 request POST "/api/tasks/$GOAL_TASK_ID/reject" "$TMP_DIR/goal-rejected.json"
