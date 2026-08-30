@@ -179,6 +179,21 @@ def audit_sources() -> list[Finding]:
         if marker not in capabilities_source:
             findings.append(Finding(capabilities_path, 1, "Capabilities must list only ready local Agents and configured cloud models"))
 
+    goal_path = VIEWS_ROOT / "GoalContractViews.swift"
+    goal_source = goal_path.read_text(encoding="utf-8")
+    for marker in (
+        "struct GoalContractSummaryView",
+        "MinimalDisclosureSection(",
+        ".confirmationDialog(",
+        ".accessibilityLabel(",
+        "expectedRevision: envelope.contract.revision",
+    ):
+        if marker not in goal_source:
+            findings.append(Finding(goal_path, 1, f"Goal Contract detail requires {marker}"))
+    for forbidden in ("GoalProjectionReducer.reduce", "DisclosureGroup", "LinearGradient", "Color.blue"):
+        if forbidden in goal_source:
+            findings.append(Finding(goal_path, 1, f"Goal Contract detail must not contain {forbidden}"))
+
     return sorted(findings, key=lambda item: (str(item.path), item.line, item.message))
 
 

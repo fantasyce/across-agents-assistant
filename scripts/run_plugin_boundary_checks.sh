@@ -46,6 +46,14 @@ ACROSS_CONTEXT_COMMAND="$TMP_DIR/missing-context" \
 ACROSS_ORCHESTRATOR_COMMAND="$TMP_DIR/missing-orchestrator" \
   node "$AUTOPILOT_ROOT/src/cli.js" health --json > "$TMP_DIR/autopilot.json"
 
+GOAL_CONTRACT_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' "$ROOT_DIR/fixtures/goal-contract/simple.json")"
+ACROSS_HOME="$TMP_DIR/context-home" \
+  node "$CONTEXT_ROOT/src/cli.js" goal-contract --contract-json "$GOAL_CONTRACT_JSON" --json > "$TMP_DIR/context-goal.json"
+ACROSS_HOME="$TMP_DIR/orchestrator-home" \
+  "$ORCHESTRATOR_COMMAND" goal-contract --contract-json "$GOAL_CONTRACT_JSON" --json > "$TMP_DIR/orchestrator-goal.json"
+ACROSS_HOME="$TMP_DIR/autopilot-home" \
+  node "$AUTOPILOT_ROOT/src/cli.js" goal-contract --contract-json "$GOAL_CONTRACT_JSON" --json > "$TMP_DIR/autopilot-goal.json"
+
 (
   cd "$TMP_DIR/project"
   ACROSS_HOME="$TMP_DIR/autopilot-home" \
@@ -81,6 +89,10 @@ for name in ("context.json", "orchestrator.json", "autopilot.json"):
     if payload.get("status") not in {"ok", "healthy"}:
         raise SystemExit(f"Standalone health failed: {name}")
 
+goal_results = [load(name) for name in ("context-goal.json", "orchestrator-goal.json", "autopilot-goal.json")]
+if any(item != goal_results[0] for item in goal_results[1:]):
+    raise SystemExit("Standalone plugin Goal Contract probes do not match.")
+
 standalone = load("autopilot-standalone-run.json")
 if standalone.get("run", {}).get("status") != "completed":
     raise SystemExit("Autopilot's local workflow did not complete without AAA or sibling plugins.")
@@ -110,5 +122,6 @@ print(json.dumps({
     "standalone_autopilot": "passed",
     "optional_context_degradation": "passed",
     "required_plugin_preflight": "passed",
+    "goal_contract_cli_parity": "passed",
 }, indent=2, sort_keys=True))
 PY

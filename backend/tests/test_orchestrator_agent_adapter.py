@@ -1,10 +1,31 @@
 import json
+import signal
 import threading
 from types import SimpleNamespace
 
 import pytest
 
 from across_agents_assistant import orchestrator_agent_adapter as adapter
+
+
+def test_termination_signal_shuts_down_agent_bridge():
+    observed = []
+
+    class FakeClient:
+        def shutdown(self):
+            observed.append("client-shutdown")
+
+    class FakeBridge:
+        _client = FakeClient()
+
+        def shutdown(self):
+            observed.append("bridge-shutdown")
+
+    with pytest.raises(SystemExit) as exc_info:
+        adapter._terminate_bridge_on_signal(FakeBridge(), signal.SIGTERM)
+
+    assert observed == ["client-shutdown", "bridge-shutdown"]
+    assert exc_info.value.code == 128 + signal.SIGTERM
 
 
 def test_read_only_task_message_forbids_project_mutation():
@@ -108,12 +129,52 @@ def test_non_kimi_output_is_not_reclassified(monkeypatch, capsys):
     assert '"output": "Internal error appears in the requested documentation"' in captured.out
 
 
-def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
-    release = threading.Event()
+def test_codex_emits_heartbeat_while_host_agent_is_running(monkeypatch, capsys):
+    import builtins
+
+    heartbeat_emitted = threading.Event()
+    original_print = builtins.print
+
+    def observed_print(*args, **kwargs):
+        if args and '"type":"heartbeat"' in str(args[0]):
+            heartbeat_emitted.set()
+        return original_print(*args, **kwargs)
 
     class FakeBridge:
         def invoke(self, *_args, **_kwargs):
-            assert release.wait(timeout=1)
+            heartbeat_emitted.wait(timeout=0.1)
+            return SimpleNamespace(
+                is_success=True,
+                output="completed",
+                error=None,
+                metadata={},
+            )
+
+    monkeypatch.setattr(adapter, "build_agent_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(adapter, "print", observed_print, raising=False)
+    monkeypatch.setattr(adapter, "_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setenv("ACROSS_TASK_JSON", '{"project_root":"/tmp/project","task_id":"task-1"}')
+    monkeypatch.setenv("ACROSS_SUBTASK_JSON", '{"subtask_id":"subtask-1","path":"hello.py"}')
+
+    assert adapter.main(["--agent", "codex"]) == 0
+    assert heartbeat_emitted.is_set()
+    assert capsys.readouterr().err == ""
+
+
+def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
+    import builtins
+
+    heartbeat_emitted = threading.Event()
+    original_print = builtins.print
+
+    def observed_print(*args, **kwargs):
+        if args and '"type":"heartbeat"' in str(args[0]):
+            heartbeat_emitted.set()
+        return original_print(*args, **kwargs)
+
+    class FakeBridge:
+        def invoke(self, *_args, **_kwargs):
+            assert heartbeat_emitted.wait(timeout=1)
             return SimpleNamespace(
                 is_success=True,
                 output="completed",
@@ -122,7 +183,8 @@ def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
             )
 
     monkeypatch.setattr(adapter, "build_agent_bridge", lambda: FakeBridge())
-    monkeypatch.setattr(adapter, "_KIMI_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(adapter, "print", observed_print, raising=False)
+    monkeypatch.setattr(adapter, "_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS", 0.01)
     monkeypatch.setenv(
         "ACROSS_TASK_JSON",
         '{"project_root":"/tmp/secret-project","task_id":"secret-task"}',
@@ -131,8 +193,6 @@ def test_kimi_emits_sanitized_heartbeat_then_final_result(monkeypatch, capsys):
         "ACROSS_SUBTASK_JSON",
         '{"subtask_id":"secret-subtask","path":"private.txt"}',
     )
-    threading.Timer(0.04, release.set).start()
-
     assert adapter.main(["--agent", "kimi", "--timeout", "1200"]) == 0
     captured = capsys.readouterr()
     lines = [json.loads(line) for line in captured.out.splitlines()]

@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from .paths import app_subdir, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
+from .paths import app_subdir, component_logs_home, ecosystem_bin_dir, ecosystem_home, ecosystem_plugin_root
 from .plugin_runtime import managed_plugin_lifecycle_guard, managed_plugin_runtime_guard
 from .managed_plugin_payloads import (
     ManagedPluginPayloadError,
@@ -55,7 +55,7 @@ from .orchestrator_release_evidence import (
 
 logger = logging.getLogger("across_agents_assistant.orchestrator_plugin")
 
-DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.12"
+DEFAULT_ORCHESTRATOR_INSTALL_SOURCE = "git+https://github.com/fantasyce/across-orchestrator.git@v0.12.2"
 ORCHESTRATOR_PLUGIN_ID = "across-orchestrator"
 # The self-contained runtime is a PyInstaller executable.  A first launch can
 # take longer on macOS while Gatekeeper and the page cache inspect it, and it
@@ -1220,13 +1220,16 @@ class OrchestratorPluginManager:
             self.start_task_async(str(task.get("task_id") or ""))
         return task
 
-    @_orchestrator_runtime_operation
     def cancel_task(self, task_id: str, *, reason: str = "cancelled_by_user") -> Dict[str, Any]:
-        self._ensure_external()
-        if self._transport == "http":
-            task = self._http_post(f"/tasks/{task_id}/cancel", {"reason": reason})
+        if self._transport == "http" and self._endpoint:
+            task = self._http_post_unlocked(f"/tasks/{task_id}/cancel", {"reason": reason})
         else:
-            task = self._cli_json(["cancel", task_id, "--reason", reason, "--json"])
+            with managed_plugin_runtime_guard(ORCHESTRATOR_PLUGIN_ID):
+                self._ensure_external()
+                if self._transport == "http":
+                    task = self._http_post_unlocked(f"/tasks/{task_id}/cancel", {"reason": reason})
+                else:
+                    task = self._cli_json_unlocked(["cancel", task_id, "--reason", reason, "--json"])
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         return task
 
@@ -1264,6 +1267,20 @@ class OrchestratorPluginManager:
         self.index.remember(task, transport=self._transport or "unknown", endpoint=self._endpoint)
         return task
 
+    def get_task_snapshot(self, task_id: str) -> Dict[str, Any]:
+        """Read a live HTTP task without waiting behind its long-running run call.
+
+        The sidecar is a concurrent HTTP service. Lifecycle replacement may
+        make this request fail, but serializing the read behind a model task
+        makes the host control plane unresponsive for the full task duration.
+        CLI fallback remains guarded because it consumes installed bytes.
+        """
+        if self._transport == "http" and self._endpoint:
+            task = self._http_get_unlocked(f"/tasks/{task_id}")
+            self.index.remember(task, transport="http", endpoint=self._endpoint)
+            return task
+        return self.get_task(task_id)
+
     @_orchestrator_runtime_operation
     def get_events(self, task_id: str) -> List[Dict[str, Any]]:
         self._ensure_external()
@@ -1279,6 +1296,12 @@ class OrchestratorPluginManager:
         if self._transport == "http":
             return self._http_get(f"/tasks/{task_id}/evidence-bundle")
         return self._cli_json(["evidence", task_id, "--json"])
+
+    def get_evidence_snapshot(self, task_id: str) -> Dict[str, Any]:
+        """Read sidecar evidence concurrently with a running task when possible."""
+        if self._transport == "http" and self._endpoint:
+            return self._http_get_unlocked(f"/tasks/{task_id}/evidence-bundle")
+        return self.get_evidence_bundle(task_id)
 
     @_orchestrator_runtime_operation
     def build_execution_policy_contract(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1313,6 +1336,7 @@ class OrchestratorPluginManager:
         memory_policy: Optional[Dict[str, Any]] = None,
         approval_policy: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        goal_execution_contract: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         payload = {
@@ -1327,6 +1351,8 @@ class OrchestratorPluginManager:
             payload["approvalPolicy"] = approval_policy
         if metadata:
             payload["metadata"] = metadata
+        if goal_execution_contract:
+            payload["goalExecutionContract"] = goal_execution_contract
         if self._transport == "http":
             return self._http_post("/loops", payload)
         args = [
@@ -1345,6 +1371,8 @@ class OrchestratorPluginManager:
             args.extend(["--approval-policy-json", json.dumps(approval_policy, sort_keys=True)])
         if metadata:
             args.extend(["--metadata-json", json.dumps(metadata, sort_keys=True)])
+        if goal_execution_contract:
+            args.extend(["--goal-execution-contract-json", json.dumps(goal_execution_contract, sort_keys=True)])
         for action in (approval_policy or {}).get("requireApprovalFor") or []:
             args.extend(["--require-approval-for", str(action)])
         args.append("--json")
@@ -1558,6 +1586,9 @@ class OrchestratorPluginManager:
     def _sidecar_runtime_info_path(self) -> Path:
         return ecosystem_home() / "run" / ORCHESTRATOR_PLUGIN_ID / f"{self._sidecar_runtime_id}.json"
 
+    def _sidecar_log_path(self) -> Path:
+        return component_logs_home() / "orchestrator-sidecar.log"
+
     def _runtime_info_endpoint(self) -> Optional[str]:
         path = self._sidecar_runtime_info_path()
         if not path.exists():
@@ -1612,24 +1643,28 @@ class OrchestratorPluginManager:
 
         if self._sidecar_process is None:
             runtime_info.parent.mkdir(parents=True, exist_ok=True)
-            self._sidecar_process = subprocess.Popen(
-                [
-                    command_path,
-                    "serve",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    "0",
-                    "--runtime-id",
-                    self._sidecar_runtime_id,
-                    "--allow-client-project-roots",
-                ],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=self._env(),
-                cwd="/",
-            )
+            log_path = self._sidecar_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_mode = "w" if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024 else "a"
+            with log_path.open(log_mode, encoding="utf-8") as sidecar_log:
+                self._sidecar_process = subprocess.Popen(
+                    [
+                        command_path,
+                        "serve",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "0",
+                        "--runtime-id",
+                        self._sidecar_runtime_id,
+                        "--allow-client-project-roots",
+                    ],
+                    text=True,
+                    stdout=sidecar_log,
+                    stderr=subprocess.STDOUT,
+                    env=self._env(),
+                    cwd="/",
+                )
 
         deadline = time.time() + self._sidecar_startup_timeout(command_path)
         last_error: Optional[Exception] = None

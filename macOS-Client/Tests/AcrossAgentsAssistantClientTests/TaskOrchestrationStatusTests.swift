@@ -3,6 +3,12 @@ import Testing
 @testable import AcrossAgentsAssistantClient
 
 struct TaskOrchestrationStatusTests {
+    @Test func recentWorkDoesNotClaimCompletionBeforeReviewAcceptance() {
+        #expect(UnifiedWorkRecentStatus.displayStatus(taskStatus: "completed", reviewStatus: "pending") == "needs_review")
+        #expect(UnifiedWorkRecentStatus.displayStatus(taskStatus: "completed", reviewStatus: "accepted") == "completed")
+        #expect(UnifiedWorkRecentStatus.displayStatus(taskStatus: "running", reviewStatus: "pending") == "running")
+    }
+
     @Test func displayStatusKeepsTerminalStatuses() {
         let completed = TaskOrchestrationViewModel.ResumableTask(
             taskId: "task-1",

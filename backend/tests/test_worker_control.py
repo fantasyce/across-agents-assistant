@@ -524,6 +524,21 @@ def test_public_snapshot_redacts_keys_paths_and_verification_code(tmp_path):
     assert "/Users/" not in rendered
 
 
+def test_public_worker_projection_preserves_task_ids_while_redacting_real_secrets():
+    from across_agents_assistant.worker_control import _safe_public
+
+    task_id = "task-gca-final-public-worker-0121-1788104489"
+    secret_value = "sk-" + "example-secret-value"
+
+    public = _safe_public({
+        "task_id": task_id,
+        "message": f"credential {secret_value} must stay private",
+    })
+
+    assert public["task_id"] == task_id
+    assert public["message"] == "credential [redacted] must stay private"
+
+
 def test_corrupt_store_recovers_without_exposing_corrupt_contents(tmp_path):
     path = tmp_path / "worker.json"
     path.write_text('{"private_key":"secret"')

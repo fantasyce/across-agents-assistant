@@ -70,12 +70,22 @@ struct AppleMinimalUIContractTests {
             "work.submit.orchestratorUnavailable",
             localeIdentifier: "zh-Hans"
         ).contains("输入已经保留"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.riskApprovalRequired",
+            localeIdentifier: "zh-Hans"
+        ).contains("明确批准"))
+        #expect(AppPreferences.localizedString(
+            "work.submit.capabilityDecisionRequired",
+            localeIdentifier: "en"
+        ).contains("capability decision"))
 
         let actions = try Self.source("macOS-Client/Sources/Views/MainPanelActions.swift")
         let emptyState = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
         #expect(actions.contains("guard submitted else { return }"))
         #expect(emptyState.contains("submissionErrorMessage"))
         #expect(emptyState.contains("compatible_worker_workflow_required"))
+        #expect(emptyState.contains("approve_risky_capabilities"))
+        #expect(emptyState.contains("capability_decision_required"))
         #expect(emptyState.contains("External Across Orchestrator runtime is unavailable."))
     }
 
@@ -323,6 +333,8 @@ struct AppleMinimalUIContractTests {
         #expect(shared.contains("isExpanded.toggle()"))
         #expect(shared.contains("isExpanded ? \"chevron.down\" : \"chevron.right\""))
         #expect(shared.contains(".contentShape(Rectangle())"))
+        #expect(shared.contains(".buttonStyle(.plain)\n                .focusable(true)"))
+        #expect(shared.contains(".onKeyPress(.return)"))
         #expect(loop.contains(".truncationMode(.tail)"))
         #expect(!loop.contains("if let endpoint = action.endpoint"))
         #expect(!loop.contains("if let endpoint = section.endpoint"))
@@ -401,7 +413,23 @@ struct AppleMinimalUIContractTests {
         #expect(editor.contains("event.keyCode == 48"))
         #expect(editor.contains("window?.selectNextKeyView(self)"))
         #expect(editor.contains("window?.selectPreviousKeyView(self)"))
+        #expect(editor.contains("override var acceptsFirstResponder: Bool { true }"))
+        #expect(editor.contains("window?.makeFirstResponder(documentView)"))
         #expect(chat.contains("accessibilityLabel: inputPlaceholder"))
+    }
+
+    @Test
+    func recentWorkRowsJoinTheKeyboardFocusChain() throws {
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
+        let recent = try #require(Self.slice(
+            work,
+            from: "if !recentTasks.isEmpty {",
+            to: "Spacer(minLength: 80)"
+        ))
+
+        #expect(recent.contains(".focusable(true)"))
+        #expect(recent.contains(".onKeyPress(.return)"))
+        #expect(recent.contains("onOpenTask(task)"))
     }
 
     @Test
@@ -410,13 +438,31 @@ struct AppleMinimalUIContractTests {
         let toolbar = try Self.source("macOS-Client/Sources/Views/MainPanelToolbarControls.swift")
         let assistant = try Self.source("macOS-Client/Sources/Views/MinimalAssistantComponents.swift")
         let composer = try Self.source("macOS-Client/Sources/Views/MainPanelChat.swift")
+        let work = try Self.source("macOS-Client/Sources/Views/UnifiedWorkView.swift")
 
         #expect(navigation.contains(".focusable(true)"))
         #expect(navigation.contains(".focused($focusedSurface"))
         #expect(navigation.contains(".focusEffectDisabled()"))
         #expect(!toolbar.contains(".focusable(!isDisabled)"))
         #expect(assistant.contains("action: onToggleMute\n            )\n            .focusable(true)"))
+        #expect(assistant.contains(".disabled(!isEnabled)\n        .focusable(true)"))
+        #expect(assistant.contains(".onKeyPress(.return)"))
         #expect(composer.contains(".toggleStyle(.checkbox)\n                        .focusable(true)"))
+        #expect(navigation.contains(".buttonStyle(.plain)\n        .focusable(true)\n        .focused($settingsIsFocused)"))
+        #expect(navigation.contains(".onKeyPress(.return)"))
+        #expect(work.contains(".disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)\n                .focusable(true)"))
+        #expect(work.contains(".onKeyPress(.return)"))
+    }
+
+    @Test
+    func resultDecisionControlsJoinTheKeyboardFocusChain() throws {
+        let results = try Self.source("macOS-Client/Sources/Views/AcrossVisualResultViews.swift")
+
+        #expect(results.contains("Button(action: onSecondaryAction)"))
+        #expect(results.contains("Button(action: onPrimaryAction)"))
+        #expect(results.contains(".focusable(true)"))
+        #expect(results.contains("onSecondaryAction()\n                    return .handled"))
+        #expect(results.contains("onPrimaryAction()\n                    return .handled"))
     }
 
     @Test
@@ -504,6 +550,11 @@ struct AppleMinimalUIContractTests {
         #expect(!runs.contains("DisclosureGroup(isExpanded: $showsArtifactDetails)"))
         #expect(runs.contains("Array(artifacts.prefix(8))"))
         #expect(visualResults.contains("viewModel.acceptTaskResult(task.taskId)"))
+        #expect(visualResults.contains("@State private var isShowingRejectConfirmation = false"))
+        #expect(visualResults.contains("isShowingRejectConfirmation = true"))
+        #expect(visualResults.contains(".confirmationDialog("))
+        #expect(visualResults.contains("preferences.text(\"tasks.review.reject.confirm.title\")"))
+        #expect(visualResults.contains("viewModel.rejectTaskResult(task.taskId)"))
         #expect(runs.contains("AcrossTaskResultOverview("))
         #expect(work.contains("AcrossTaskResultOverview("))
         #expect(work.contains("showsResultOverview: false"))
@@ -512,9 +563,13 @@ struct AppleMinimalUIContractTests {
         let resultOverview = try #require(
             Self.slice(visualResults, from: "struct AcrossVisualResultOverview", to: "struct AcrossTrustCompassView")
         )
+        let resultActions = try #require(
+            Self.slice(resultOverview, from: "private var actionRow", to: "private var hasActions")
+        )
         #expect(!resultOverview.contains("DisclosureGroup"))
         #expect(!resultOverview.contains("AcrossEvidenceRouteView"))
         #expect(resultOverview.contains("result.review.awaiting"))
+        #expect(resultActions.components(separatedBy: ".contentShape(Rectangle())").count - 1 >= 3)
         #expect(!visualResults.contains("AcrossTheme.recessedFill"))
         #expect(evidence.contains("@State private var showsDecisionBasis = false"))
         #expect(evidence.contains("@State private var showsVerificationScope = false"))
@@ -646,6 +701,11 @@ struct AppleMinimalUIContractTests {
         #expect(mainPanel.contains("workspaceOperationsViewModel.reviewSignals"))
         #expect(!actions.contains("openHumanReviewItem"))
         #expect(actions.contains("submitProtectedTask"))
+        let protectedSubmission = try #require(
+            Self.slice(actions, from: "private func submitProtectedTask", to: "private func protectedTaskDescription")
+        )
+        #expect(protectedSubmission.contains("let ownerAgent = \"auto\""))
+        #expect(!protectedSubmission.contains("preferredAgentId"))
         #expect(actions.contains("workSubmissionMode.usesProtectedDelivery"))
         #expect(actions.contains("submitDirectAgentWork"))
         #expect(!actions.contains("work.setupRequired"))

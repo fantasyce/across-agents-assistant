@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import base_label, configured_providers, request
+from client import base_label, request, require_live_model_route
 
 
 def check_backend() -> bool:
@@ -33,14 +33,6 @@ def check_backend() -> bool:
         return True
     except Exception:
         return False
-
-
-def check_keys() -> dict:
-    """Return provider -> status mapping."""
-    try:
-        return {provider: "configured" for provider in configured_providers()}
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def check_orchestrator_runtime() -> tuple[bool, str]:
@@ -70,14 +62,9 @@ def main():
         print(f"   Expected at: {base_label()}")
         sys.exit(1)
 
-    keys = check_keys()
-    configured = [k for k, v in keys.items() if v == "configured"]
     print(f"✅ Backend reachable at {base_label()}")
-    print(f"🔑 Configured providers: {configured or 'NONE'}")
-    if not configured:
-        print("⚠️  No API keys — only readiness check will pass.\n")
-    else:
-        print(f"   (keys: {', '.join(configured)})\n")
+    model_route = require_live_model_route()
+    print(f"🧠 Live model route: {model_route['kind']}:{model_route['id']}\n")
 
     orchestrator_available, orchestrator_note = check_orchestrator_runtime()
     print(f"🧭 External Orchestrator: {orchestrator_note}")

@@ -326,7 +326,10 @@ def test_installed_plugin_compatibility_requires_all_three_first_party_plugins()
     )
 
 
-def test_installed_plugin_compatibility_terminates_timed_out_process_and_sanitizes_failure(tmp_path):
+def test_installed_plugin_compatibility_terminates_timed_out_process_and_sanitizes_failure(
+    tmp_path,
+    monkeypatch,
+):
     row, payload = _write_mcp_fixture(
         tmp_path,
         "across-context",
@@ -334,6 +337,15 @@ def test_installed_plugin_compatibility_terminates_timed_out_process_and_sanitiz
         respond=False,
     )
     pid_dir = tmp_path / "pids"
+    observed_pids = []
+    real_popen = interop.subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        observed_pids.append(process.pid)
+        return process
+
+    monkeypatch.setattr(interop.subprocess, "Popen", recording_popen)
 
     result = _probe_installed_plugin_compatibility(
         [row],
@@ -347,7 +359,8 @@ def test_installed_plugin_compatibility_terminates_timed_out_process_and_sanitiz
         "severity": "error",
         "message": "The installed MCP server could not provide a bounded tool list.",
     }]
-    pid = int((pid_dir / "across-context.pid").read_text(encoding="utf-8"))
+    assert len(observed_pids) == 1
+    pid = observed_pids[0]
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         try:

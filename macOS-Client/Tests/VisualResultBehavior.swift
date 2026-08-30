@@ -53,6 +53,25 @@ struct VisualResultBehavior {
         precondition(acceptedDecision.isAccepted)
         precondition(!acceptedDecision.canAccept)
 
+        let pendingHumanReviewTask = try JSONDecoder().decode(
+            TaskOrchestrationTaskDetail.self,
+            from: Data("""
+            {
+              "task_id": "visual-pending-human-review",
+              "description": "Automated checks passed but a human may still reject the semantics",
+              "status": "completed",
+              "subtasks": [],
+              "waves": [],
+              "artifacts": [{"id":"report","file_name":"report.md","file_path":"report.md","file_size":"1 KB","status":"verified"}],
+              "review_status": "pending",
+              "quality_health": {"delivery_quality":"passed","quality_gate":"passed"}
+            }
+            """.utf8)
+        )
+        let pendingHumanDecision = AcrossTaskResultDecision(task: pendingHumanReviewTask)
+        precondition(pendingHumanDecision.canAccept)
+        precondition(pendingHumanDecision.canReject)
+
         let blockedTask = try JSONDecoder().decode(
             TaskOrchestrationTaskDetail.self,
             from: Data("""

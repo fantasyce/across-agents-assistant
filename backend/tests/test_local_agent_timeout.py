@@ -108,6 +108,14 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
         lambda agent_id: "gpt-5.3-codex-spark",
     )
     monkeypatch.setattr(local_agent_health, "codex_model_is_available", lambda model: True)
+    monkeypatch.setenv("ACROSS_SANDBOX_FILESYSTEM_POLICY", "run_scoped")
+    monkeypatch.setenv("ACROSS_SANDBOX_NETWORK_POLICY", "adapter_scoped")
+    unused_default_workspace = tmp_path / "unused-default-workspace"
+    monkeypatch.setattr(
+        client_mod,
+        "default_local_agent_workspace",
+        lambda: unused_default_workspace,
+    )
 
     class FakeProcess:
         returncode = 0
@@ -142,10 +150,13 @@ def test_universal_agent_client_passes_configured_model_to_codex(monkeypatch, tm
     assert reply.text == "codex completed"
     assert observed["args"][:5] == ["/usr/local/bin/codex", "exec", "--json", "--model", "gpt-5.3-codex-spark"]
     assert "--ask-for-approval" not in observed["args"]
+    assert "--ephemeral" in observed["args"]
+    assert observed["args"][observed["args"].index("--sandbox") + 1] == "danger-full-access"
     assert "--cd" in observed["args"]
     assert str(tmp_path) in observed["args"]
     assert observed["stdin"] is client_mod.subprocess.DEVNULL
     assert observed["start_new_session"] is True
+    assert not unused_default_workspace.exists()
 
 
 def test_universal_agent_client_configures_task_scoped_codex_mcp_proxy(monkeypatch, tmp_path):
@@ -301,6 +312,25 @@ def test_universal_agent_client_terminates_process_group(monkeypatch):
 
     assert observed["signals"] == [(67890, client_mod.signal.SIGTERM)]
     assert observed["waits"] == [2.0]
+
+
+def test_universal_agent_client_shutdown_terminates_unscoped_active_processes(monkeypatch):
+    from across_agents_assistant.local_agent import client as client_mod
+
+    observed = []
+    process = object()
+    client = client_mod.UniversalAgentClient.__new__(client_mod.UniversalAgentClient)
+    client.active_processes = {"invocation-1": process}
+    monkeypatch.setattr(
+        client_mod.UniversalAgentClient,
+        "_terminate_process_tree",
+        staticmethod(lambda active: observed.append(active)),
+    )
+
+    client.shutdown()
+
+    assert observed == [process]
+    assert client.active_processes == {}
 
 
 def test_universal_agent_client_ignores_unavailable_configured_codex_model(monkeypatch, tmp_path):

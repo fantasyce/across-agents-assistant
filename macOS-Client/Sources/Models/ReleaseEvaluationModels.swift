@@ -564,6 +564,18 @@ struct TaskEvidenceBundle: Decodable, Identifiable {
         return "\(benchmark.status) · score \(score) · \(repairs) \(repairWord)"
     }
 
+    func isVerifiedForPresentation(resultContract: AcrossVisualResultContract?) -> Bool {
+        guard ["passed", "completed"].contains(benchmark.status),
+              ["completed", "passed"].contains(taskStatus) else {
+            return false
+        }
+        guard let resultContract else { return true }
+        guard resultContract.taskID == taskId else { return false }
+        return [AcrossTrustDimension.outcome, .proof, .safety].allSatisfy {
+            resultContract.trustCompass.state(for: $0) == .confirmed
+        }
+    }
+
     var usesReleaseE2EBenchmark: Bool {
         Set(audit.expectedFiles) == Set(Self.releaseE2EExpectedFiles)
             && Set(audit.requiredProbes) == Set(Self.releaseE2ERequiredProbes)

@@ -373,7 +373,14 @@ class MCPPluginManager: ObservableObject {
                         var newArgs = builtIn.args
                         var savedPath = savedMatch.args.last ?? ""
                         let builtInDefaultPath = builtIn.args.last ?? ""
-                        if Self.isObsoleteAcrossHiddenPath(savedPath)
+                        let runtimeRebasedPath = Self.rebasedBuiltInManagedPath(
+                            pluginId: builtIn.id,
+                            savedPath: savedPath,
+                            builtInDefaultPath: builtInDefaultPath
+                        )
+                        if runtimeRebasedPath != savedPath {
+                            savedPath = runtimeRebasedPath
+                        } else if Self.isObsoleteAcrossHiddenPath(savedPath)
                             || Self.isObsoleteDocumentsDefaultPath(pluginId: builtIn.id, path: savedPath) {
                             savedPath = builtIn.args.last ?? ""
                             shouldSaveMergedPlugins = true
@@ -420,6 +427,30 @@ class MCPPluginManager: ObservableObject {
         let components = URL(fileURLWithPath: expanded).pathComponents
         let obsoleteNames = [".across_agents", ".across-context", ".across-orchestrator"]
         return components.contains { obsoleteNames.contains($0) }
+    }
+
+    static func rebasedBuiltInManagedPath(
+        pluginId: String,
+        savedPath: String,
+        builtInDefaultPath: String
+    ) -> String {
+        guard !savedPath.isEmpty, !builtInDefaultPath.isEmpty else { return savedPath }
+        let expectedLeaf: String
+        switch pluginId {
+        case "local_kb": expectedLeaf = "local-knowledge"
+        case "sqlite": expectedLeaf = "assistant.db"
+        case "filesystem": expectedLeaf = "workspace"
+        default: return savedPath
+        }
+        let saved = URL(fileURLWithPath: (savedPath as NSString).expandingTildeInPath).standardizedFileURL
+        let current = URL(fileURLWithPath: (builtInDefaultPath as NSString).expandingTildeInPath).standardizedFileURL
+        guard saved.path != current.path else { return savedPath }
+        let suffix = ["data", "across-agents-assistant", expectedLeaf]
+        guard saved.pathComponents.count >= suffix.count,
+              Array(saved.pathComponents.suffix(suffix.count)) == suffix else {
+            return savedPath
+        }
+        return builtInDefaultPath
     }
 
     private static func isObsoleteDocumentsDefaultPath(pluginId: String, path: String) -> Bool {

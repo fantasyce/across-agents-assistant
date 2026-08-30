@@ -30,6 +30,7 @@ from .runtime_boundary import (
     is_product_mode,
     sanitized_product_runtime_env,
 )
+from .goal_contract.protocol import normalize_goal_contract, stable_goal_hash
 
 
 @dataclass(frozen=True)
@@ -51,16 +52,16 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-context",
         install_command="across-context install host-plugin",
         install_source_env="ACROSS_AGENTS_CONTEXT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.11.1",
+        default_install_source="git+https://github.com/fantasyce/across-context.git#v0.12.0",
     ),
     KnownAcrossPlugin(
         plugin_id="across-orchestrator",
         display_name="Across Orchestrator",
         kind="task-runtime",
         command="across-orchestrator",
-        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.10.12",
+        install_command="python3 -m pip install git+https://github.com/fantasyce/across-orchestrator.git@v0.12.2",
         install_source_env="ACROSS_AGENTS_ORCHESTRATOR_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.10.12",
+        default_install_source="git+https://github.com/fantasyce/across-orchestrator.git@v0.12.2",
     ),
     KnownAcrossPlugin(
         plugin_id="across-autopilot",
@@ -69,7 +70,7 @@ KNOWN_PLUGINS: tuple[KnownAcrossPlugin, ...] = (
         command="across-autopilot",
         install_command="across-autopilot install host-plugin",
         install_source_env="ACROSS_AGENTS_AUTOPILOT_INSTALL_SOURCE",
-        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.5.4",
+        default_install_source="git+https://github.com/fantasyce/across-autopilot.git#v0.6.0",
     ),
 )
 
@@ -419,6 +420,144 @@ def run_autopilot_cli_json(
         allowed_returncodes=allowed_returncodes,
         cwd=cwd,
     )
+
+
+def run_managed_goal_contract_probe(
+    contract: Mapping[str, Any] | None,
+    *,
+    env: Mapping[str, str] | None = None,
+    allow_missing: bool = False,
+) -> dict[str, Any]:
+    if contract is None:
+        return {
+            "schema_version": "across-goal-contract-probe-matrix/1.0",
+            "status": "legacy_without_goal",
+            "goal_contract": None,
+            "plugins": {},
+            "missing_plugins": [],
+        }
+    normalized = normalize_goal_contract(contract)
+    expected = {
+        "schema_version": "across-goal-contract-probe/1.0",
+        "goal_id": normalized["goal_id"],
+        "goal_revision": normalized["revision"],
+        "criterion_ids": sorted(item["criterion_id"] for item in normalized["acceptance_criteria"]),
+        "evidence_hash": stable_goal_hash(normalized),
+    }
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    results: dict[str, Any] = {}
+    missing: list[str] = []
+    for command in ("across-context", "across-orchestrator", "across-autopilot"):
+        try:
+            result = _run_cli_json(command, ["goal-contract", "--contract-json", payload, "--json"], env=env)
+        except PluginLifecycleError as exc:
+            if allow_missing and "not installed" in str(exc):
+                missing.append(command)
+                continue
+            raise
+        if result != expected:
+            raise PluginLifecycleError(f"{command} returned a mismatched Goal Contract binding")
+        results[command] = result
+    return {
+        "schema_version": "across-goal-contract-probe-matrix/1.0",
+        "status": "passed" if not missing else "degraded",
+        "goal_contract": expected,
+        "plugins": results,
+        "missing_plugins": missing,
+    }
+
+
+def _run_managed_goal_revalidation_phase(
+    phase: str,
+    payload: Mapping[str, Any],
+    *,
+    env: Mapping[str, str] | None = None,
+    expected_schema: str,
+) -> dict[str, Any]:
+    encoded = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    result = _run_cli_json(
+        "across-orchestrator",
+        ["goal-revalidation", phase, "--payload-json", encoded, "--json"],
+        env=env,
+        timeout=15,
+    )
+    if not isinstance(result, dict) or result.get("schema_version") != expected_schema:
+        raise PluginLifecycleError(f"Across Orchestrator returned an invalid revalidation {phase} response")
+    return result
+
+
+def run_managed_goal_revalidation_plan(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    return _run_managed_goal_revalidation_phase(
+        "plan",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-plan/1.1",
+    )
+
+
+def run_managed_goal_revalidation_start(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    result = _run_managed_goal_revalidation_phase(
+        "start",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-attempt/1.1",
+    )
+    if result.get("state") not in {"awaiting_host_evidence", "queued", "running"}:
+        raise PluginLifecycleError("Across Orchestrator returned an invalid revalidation start state")
+    return result
+
+
+def run_managed_goal_revalidation_complete(
+    payload: Mapping[str, Any], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    result = _run_managed_goal_revalidation_phase(
+        "complete",
+        payload,
+        env=env,
+        expected_schema="across-goal-revalidation-attempt/1.1",
+    )
+    if result.get("state") != "completed":
+        raise PluginLifecycleError("Across Orchestrator did not complete the revalidation attempt")
+    return result
+
+
+def build_direct_goal_revalidation_attempt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the equivalent host-owned attempt when a Direct Agent has no Orchestrator."""
+    graph = dict(payload.get("graph") or {})
+    criteria = dict(graph.get("criteria") or {})
+    selected = sorted(set(map(str, payload.get("criterion_ids") or ())))
+    if not selected or not set(selected).issubset(set(map(str, criteria))):
+        raise PluginLifecycleError("Direct Agent revalidation criteria are invalid")
+    superseded = sorted({
+        str(evidence_id)
+        for criterion_id in selected
+        for evidence_id in dict(criteria.get(criterion_id) or {}).get("evidence_ids") or ()
+    })
+    all_evidence = {
+        str(evidence_id)
+        for raw in criteria.values()
+        for evidence_id in dict(raw or {}).get("evidence_ids") or ()
+    }
+    return {
+        "schema_version": "across-goal-revalidation-attempt/1.1",
+        "attempt_id": f"direct-revalidation-attempt-{uuid.uuid4().hex}",
+        "attempt_number": max(0, int(payload.get("prior_attempt_number") or 0)) + 1,
+        "goal_id": str(payload.get("goal_id") or ""),
+        "goal_revision": int(payload.get("goal_revision") or 0),
+        "task_id": str(payload.get("task_id") or ""),
+        "criterion_ids": selected,
+        "changed_fingerprints": sorted(set(map(str, payload.get("changed_fingerprints") or ()))),
+        "supersedes_evidence_ids": superseded,
+        "preserved_evidence_ids": sorted(all_evidence - set(superseded)),
+        "execution_mode": "host_validation",
+        "input_fingerprint": str(payload.get("input_fingerprint") or ""),
+        "state": "awaiting_host_evidence",
+        "job_ids": [],
+    }
 
 
 def list_context_memories(

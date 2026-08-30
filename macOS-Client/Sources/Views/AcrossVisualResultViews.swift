@@ -4,6 +4,7 @@ struct AcrossTaskResultOverview: View {
     let task: TaskOrchestrationTaskDetail
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var viewModel: TaskOrchestrationViewModel
+    @State private var isShowingRejectConfirmation = false
     let allowsAcceptance: Bool
     let onOpenEvidence: () -> Void
 
@@ -22,7 +23,10 @@ struct AcrossTaskResultOverview: View {
     }
 
     var body: some View {
-        let decision = AcrossTaskResultDecision(task: task)
+        let goal = viewModel.selectedGoalContract?.contract.taskId == task.taskId
+            ? viewModel.selectedGoalContract
+            : nil
+        let decision = AcrossTaskResultDecision(task: task, goal: goal)
         AcrossVisualResultOverview(
             contract: AcrossVisualResultFactory.make(task: task),
             preferences: preferences,
@@ -31,11 +35,30 @@ struct AcrossTaskResultOverview: View {
             isPrimaryActionDisabled: viewModel.isAcceptingTask || viewModel.isRejectingTask,
             isPrimaryActionLoading: viewModel.isAcceptingTask || viewModel.isRejectingTask,
             onPrimaryAction: primaryAction(decision),
+            destructiveActionTitle: decision.canAccept && decision.canReject
+                ? preferences.text("tasks.review.reject")
+                : nil,
+            isDestructiveActionDisabled: viewModel.isAcceptingTask || viewModel.isRejectingTask,
+            onDestructiveAction: decision.canAccept && decision.canReject
+                ? { isShowingRejectConfirmation = true }
+                : nil,
             secondaryActionTitle: decision.canInspectEvidence
                 ? preferences.text("tasks.evidence.view")
                 : nil,
             onSecondaryAction: decision.canInspectEvidence ? onOpenEvidence : nil
         )
+        .confirmationDialog(
+            preferences.text("tasks.review.reject.confirm.title"),
+            isPresented: $isShowingRejectConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(preferences.text("tasks.review.reject"), role: .destructive) {
+                viewModel.rejectTaskResult(task.taskId) {}
+            }
+            Button(preferences.text("tasks.cancel"), role: .cancel) {}
+        } message: {
+            Text(preferences.text("tasks.review.reject.confirm.message"))
+        }
     }
 
     private func primaryActionTitle(_ decision: AcrossTaskResultDecision) -> String? {
@@ -57,7 +80,7 @@ struct AcrossTaskResultOverview: View {
             return { viewModel.acceptTaskResult(task.taskId) {} }
         }
         if decision.canReject && allowsAcceptance {
-            return { viewModel.rejectTaskResult(task.taskId) {} }
+            return { isShowingRejectConfirmation = true }
         }
         return nil
     }
@@ -72,6 +95,9 @@ struct AcrossVisualResultOverview: View {
     private let isPrimaryActionDisabled: Bool
     private let isPrimaryActionLoading: Bool
     private let onPrimaryAction: (() -> Void)?
+    private let destructiveActionTitle: String?
+    private let isDestructiveActionDisabled: Bool
+    private let onDestructiveAction: (() -> Void)?
     private let secondaryActionTitle: String?
     private let secondaryActionSystemImage: String
     private let onSecondaryAction: (() -> Void)?
@@ -84,6 +110,9 @@ struct AcrossVisualResultOverview: View {
         isPrimaryActionDisabled: Bool = false,
         isPrimaryActionLoading: Bool = false,
         onPrimaryAction: (() -> Void)? = nil,
+        destructiveActionTitle: String? = nil,
+        isDestructiveActionDisabled: Bool = false,
+        onDestructiveAction: (() -> Void)? = nil,
         secondaryActionTitle: String? = nil,
         secondaryActionSystemImage: String = "doc.text.magnifyingglass",
         onSecondaryAction: (() -> Void)? = nil
@@ -95,6 +124,9 @@ struct AcrossVisualResultOverview: View {
         self.isPrimaryActionDisabled = isPrimaryActionDisabled
         self.isPrimaryActionLoading = isPrimaryActionLoading
         self.onPrimaryAction = onPrimaryAction
+        self.destructiveActionTitle = destructiveActionTitle
+        self.isDestructiveActionDisabled = isDestructiveActionDisabled
+        self.onDestructiveAction = onDestructiveAction
         self.secondaryActionTitle = secondaryActionTitle
         self.secondaryActionSystemImage = secondaryActionSystemImage
         self.onSecondaryAction = onSecondaryAction
@@ -165,6 +197,28 @@ struct AcrossVisualResultOverview: View {
                     Label(secondaryActionTitle, systemImage: secondaryActionSystemImage)
                 }
                 .buttonStyle(.bordered)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
+                .focusable(true)
+                .onKeyPress(.return) {
+                    onSecondaryAction()
+                    return .handled
+                }
+            }
+            if let destructiveActionTitle, let onDestructiveAction {
+                Button(role: .destructive, action: onDestructiveAction) {
+                    Label(destructiveActionTitle, systemImage: "xmark")
+                }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
+                .disabled(isDestructiveActionDisabled)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    guard !isDestructiveActionDisabled else { return .ignored }
+                    onDestructiveAction()
+                    return .handled
+                }
             }
             if let primaryActionTitle, let onPrimaryAction {
                 Button(action: onPrimaryAction) {
@@ -177,7 +231,15 @@ struct AcrossVisualResultOverview: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
                 .disabled(isPrimaryActionDisabled || isPrimaryActionLoading)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    guard !isPrimaryActionDisabled, !isPrimaryActionLoading else { return .ignored }
+                    onPrimaryAction()
+                    return .handled
+                }
             }
         }
         .controlSize(.regular)
@@ -185,6 +247,7 @@ struct AcrossVisualResultOverview: View {
 
     private var hasActions: Bool {
         (primaryActionTitle != nil && onPrimaryAction != nil)
+            || (destructiveActionTitle != nil && onDestructiveAction != nil)
             || (secondaryActionTitle != nil && onSecondaryAction != nil)
     }
 

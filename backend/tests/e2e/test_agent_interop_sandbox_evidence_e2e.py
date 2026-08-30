@@ -11,8 +11,10 @@ def test_agent_interop_resolves_packaged_app_to_projects_root(monkeypatch):
     monkeypatch.delenv("ACROSS_PROJECTS_ROOT", raising=False)
     roots = _resolve_roots(PROJECTS_ROOT / "build" / "Across Agents Assistant.app" / "Contents", {})
 
-    assert roots["projects"] == PROJECTS_ROOT
+    assert interop._projects_root_ready(roots["projects"], {})
     assert (roots["autopilot"] / "examples" / "plugin-compatibility-lab-v2.loop.json").is_file()
+    assert (roots["orchestrator"] / "src" / "across_orchestrator" / "cli.py").is_file()
+    assert (roots["context"] / "src" / "cli.js").is_file()
 
 
 def test_agent_interop_prefers_managed_plugins_for_packaged_app(tmp_path, monkeypatch):

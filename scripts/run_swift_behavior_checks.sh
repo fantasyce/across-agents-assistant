@@ -126,6 +126,11 @@ swiftc -parse-as-library \
   macOS-Client/Tests/ReleaseVerificationBehavior.swift \
   macOS-Client/Sources/Models/ReleaseVerificationModels.swift \
   macOS-Client/Sources/Models/ReleaseEvaluationModels.swift \
+  macOS-Client/Sources/Models/AcrossVisualResultModels.swift \
+  macOS-Client/Sources/Models/OperationsWorkbenchModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationCoreModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationExecutionModels.swift \
+  macOS-Client/Sources/Models/TaskOrchestrationQualityModels.swift \
   macOS-Client/Sources/Models/StartupDiagnosticsModels.swift \
   -o "$TMP_DIR/ReleaseVerificationBehavior"
 "$TMP_DIR/ReleaseVerificationBehavior"

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import tempfile
 
 import pytest
 
@@ -31,11 +32,20 @@ def isolate_orchestrator_plugin_runtime(monkeypatch, tmp_path, request):
     )
     try:
         import across_agents_assistant.api_server as api_server
+        from across_agents_assistant.persistence.service import PersistenceService
+        from across_agents_assistant.task_history.state import TaskState
         from across_agents_assistant.worker_control import reset_worker_network_runtime_for_tests
     except Exception:
         yield
         return
     reset_worker_network_runtime_for_tests()
+    isolated_runtime = tempfile.TemporaryDirectory(prefix="aaa-test-runtime-")
+    isolated_persistence = PersistenceService(str(Path(isolated_runtime.name) / "assistant.db"))
+    isolated_task_state = TaskState()
+    isolated_task_state.set_persistence(isolated_persistence.tasks)
+    monkeypatch.setattr(api_server, "persistence", isolated_persistence)
+    monkeypatch.setattr(api_server, "_task_state", isolated_task_state)
+    monkeypatch.setattr(api_server, "_task_persistence_initialized", True)
     api_server._orchestrator_plugin_manager = None
     api_server._orchestrator_plugin_signature = None
     try:
@@ -44,6 +54,7 @@ def isolate_orchestrator_plugin_runtime(monkeypatch, tmp_path, request):
         reset_worker_network_runtime_for_tests()
         api_server._orchestrator_plugin_manager = None
         api_server._orchestrator_plugin_signature = None
+        isolated_runtime.cleanup()
 
 
 def pytest_collection_modifyitems(config, items):

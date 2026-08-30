@@ -786,6 +786,19 @@ def test_auto_task_uses_external_orchestrator_plugin_boundary(monkeypatch, tmp_p
                 "type": "command",
                 "command": captured["agent_adapters"]["deepseek"]["command"],
                 "description": "AAA host-provided agent execution adapter.",
+                "sandboxPolicy": {
+                    "network_policy": "adapter_scoped",
+                    "execution": {
+                        "timeout_seconds": 90,
+                        "refresh_timeout_on_output": True,
+                        "max_wall_timeout_seconds": 1200,
+                    },
+                    "filesystem_policy": {
+                        "mode": "run_scoped",
+                        "runtime_state_roots": [],
+                        "runtime_state_files": [],
+                    },
+                },
             },
         },
     }

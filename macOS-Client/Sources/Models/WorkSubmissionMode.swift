@@ -14,11 +14,11 @@ enum WorkSubmissionMode: Equatable {
     }
 
     var usesProtectedDelivery: Bool {
-        self == .protectedDelivery
+        self != .directAgent
     }
 
     var usesDirectAgent: Bool {
-        !usesProtectedDelivery
+        self == .directAgent
     }
 
     var showsOrchestratorUpgradeHint: Bool {

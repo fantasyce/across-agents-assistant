@@ -41,6 +41,86 @@ def test_automatic_capability_plan_has_zero_user_decisions(monkeypatch):
     assert body["automatic"] is True
 
 
+def test_explicit_available_local_agent_satisfies_model_capability_without_cloud_key(monkeypatch):
+    """A selected runnable local Agent is a real model route, not a missing provider."""
+    plugins = [_plugin("across-orchestrator", capabilities=[{"id": "task_execution"}])]
+    monkeypatch.setattr(api_server, "discover_across_plugins", lambda **_: plugins)
+    monkeypatch.setattr(api_server, "_known_provider_ids", lambda: ("openai",))
+    monkeypatch.setattr(api_server, "_provider_has_backend_key", lambda _provider_id: False)
+    monkeypatch.setattr(api_server, "_check_llm_provider_readiness", lambda: ["openai"])
+    monkeypatch.setattr(api_server, "load_llm_config", lambda: SimpleNamespace(primary_provider="openai"))
+    monkeypatch.setattr(
+        api_server,
+        "_available_local_agent_ids",
+        lambda: ["codex"],
+        raising=False,
+    )
+
+    request = api_server.AutoTaskRequest(
+        description="Implement and verify the requested code change",
+        task_types=["functional", "artifact"],
+        owner_agent="codex",
+    )
+    plan = api_server._derive_auto_task_capability_plan(
+        request,
+        plugin_status={"available": True},
+        workflow_resolution=api_server._empty_workflow_resolution(request.description),
+    )
+
+    assert plan["chosen_providers"] == ["local-agent"]
+    assert "configure_model_provider" not in [
+        item["id"] for item in plan["required_user_decisions"]
+    ]
+    assert plan["automatic"] is True
+
+
+def test_automatic_execution_agent_matches_planned_cloud_provider():
+    request = api_server.AutoTaskRequest(
+        description="Implement and verify the requested code change",
+        task_types=["functional", "artifact"],
+        owner_agent="auto",
+    )
+
+    owner = api_server._resolved_external_execution_agent(
+        request,
+        {"chosen_providers": ["minimax"]},
+    )
+
+    assert owner == "minimax"
+
+
+def test_automatic_execution_agent_also_owns_planned_subtasks():
+    request = api_server.AutoTaskRequest(
+        description="Create output-a.md and output-b.md",
+        task_types=["artifact"],
+        owner_agent="auto",
+    )
+
+    subtasks = api_server._planned_subtasks_for_external_task(
+        request,
+        ["output-a.md", "output-b.md"],
+        owner_agent="minimax",
+    )
+
+    assert [item["agent"] for item in subtasks] == ["minimax", "minimax"]
+
+
+def test_automatic_execution_agent_uses_runnable_local_route(monkeypatch):
+    request = api_server.AutoTaskRequest(
+        description="Implement and verify the requested code change",
+        task_types=["functional", "artifact"],
+        owner_agent="auto",
+    )
+    monkeypatch.setattr(api_server, "_available_local_agent_ids", lambda: ["claude", "codex"])
+
+    owner = api_server._resolved_external_execution_agent(
+        request,
+        {"chosen_providers": ["local-agent"]},
+    )
+
+    assert owner == "codex"
+
+
 def test_explicit_remote_worker_request_without_matching_pack_is_blocked(monkeypatch):
     plugins = [_plugin("across-orchestrator", capabilities=["task_execution"])]
     monkeypatch.setattr(api_server, "discover_across_plugins", lambda **_: plugins)
@@ -100,6 +180,53 @@ def test_risky_capability_plan_requires_explicit_approval():
     )
 
     assert plan["chosen_capabilities"][0]["plugin_id"] == "deploy-runtime"
+    assert [item["kind"] for item in plan["required_user_decisions"]] == ["risk_approval"]
+    assert plan["automatic"] is False
+
+
+def test_negated_file_mutation_constraint_does_not_require_risk_approval():
+    plugins = [
+        _plugin(
+            "task-runtime",
+            capabilities=["task_execution"],
+            permissions={"filesystem": "write", "execute": True},
+        )
+    ]
+
+    plan = build_task_capability_plan(
+        user_goal=(
+            "Read the report and verify its digest; do not create, edit, rename, "
+            "or delete any file."
+        ),
+        project_signals={},
+        plugins=plugins,
+        configured_providers=["openai"],
+        primary_provider="openai",
+    )
+
+    assert plan["required_user_decisions"] == []
+    assert plan["automatic"] is True
+
+
+def test_later_consequential_action_is_not_hidden_by_an_earlier_negation():
+    plugins = [
+        _plugin(
+            "deploy-runtime",
+            capabilities=["deployment"],
+            permissions={"filesystem": "write", "network": True, "execute": True},
+        )
+    ]
+
+    plan = build_task_capability_plan(
+        user_goal=(
+            "Do not delete any files, but deploy the approved release to production."
+        ),
+        project_signals={"required_capabilities": ["deployment"]},
+        plugins=plugins,
+        configured_providers=["openai"],
+        primary_provider="openai",
+    )
+
     assert [item["kind"] for item in plan["required_user_decisions"]] == ["risk_approval"]
     assert plan["automatic"] is False
 
@@ -243,7 +370,8 @@ def test_missing_autopilot_keeps_generic_orchestrator_tasks_usable(monkeypatch, 
         "route": "local",
         "phases": ["local-run"],
     }
-    assert captured["submission"]["agent"] == "demo"
+    assert captured["submission"]["agent"] == "openai"
+    assert "openai" in captured["submission"]["agent_adapters"]
 
 
 def test_explicit_workflow_requires_autopilot_instead_of_silent_generic_fallback(monkeypatch, tmp_path):

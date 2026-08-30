@@ -145,6 +145,43 @@ func testSavedBuiltInPathsInObsoleteAcrossHiddenDirsUseManagedDefaults() {
     UserDefaults.standard.removeObject(forKey: migrationKey)
 }
 
+func testSavedManagedPathsRebaseToTheActiveRuntimeRoot() {
+    let formal = NSHomeDirectory() + "/.across/data/across-agents-assistant"
+    let isolated = "/tmp/across-isolated-profile/data/across-agents-assistant"
+    assert(
+        MCPPluginManager.rebasedBuiltInManagedPath(
+            pluginId: "local_kb",
+            savedPath: formal + "/local-knowledge",
+            builtInDefaultPath: isolated + "/local-knowledge"
+        ) == isolated + "/local-knowledge",
+        "Managed local knowledge must follow the active ACROSS_HOME instead of a saved formal profile path"
+    )
+    assert(
+        MCPPluginManager.rebasedBuiltInManagedPath(
+            pluginId: "sqlite",
+            savedPath: formal + "/assistant.db",
+            builtInDefaultPath: isolated + "/assistant.db"
+        ) == isolated + "/assistant.db",
+        "Managed SQLite must follow the active ACROSS_HOME"
+    )
+    assert(
+        MCPPluginManager.rebasedBuiltInManagedPath(
+            pluginId: "filesystem",
+            savedPath: formal + "/workspace",
+            builtInDefaultPath: isolated + "/workspace"
+        ) == isolated + "/workspace",
+        "Managed filesystem must follow the active ACROSS_HOME"
+    )
+    assert(
+        MCPPluginManager.rebasedBuiltInManagedPath(
+            pluginId: "filesystem",
+            savedPath: NSHomeDirectory() + "/Documents/custom-project",
+            builtInDefaultPath: isolated + "/workspace"
+        ) == NSHomeDirectory() + "/Documents/custom-project",
+        "An explicit user-selected directory must not be rewritten as a managed default"
+    )
+}
+
 func testEmptySavedBuiltInPathsUseManagedDefaults() {
     let key = "across_agents_mcp_plugins"
     let migrationKey = "across_agents_mcp_plugins_default_enabled_migration_v044"
@@ -594,6 +631,7 @@ struct MCPPluginBehavior {
         testBuiltInPluginsDefaultEnabledAndConfiguredBuiltInsAutoConnect()
         testAcrossContextDefaultsToExternalPluginMode()
         testSavedBuiltInPathsInObsoleteAcrossHiddenDirsUseManagedDefaults()
+        testSavedManagedPathsRebaseToTheActiveRuntimeRoot()
         testEmptySavedBuiltInPathsUseManagedDefaults()
         testSavedBuiltInDocumentsDefaultsUseManagedDefaults()
         testAcrossContextImplementationLabelsAreStable()

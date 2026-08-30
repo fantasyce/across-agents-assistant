@@ -7,28 +7,28 @@
   "summary": "Across starts as a simple project workspace and grows through optional memory, durable execution, goal-driven workflows, and approved remote Worker capacity, while keeping evidence, credentials, and final approval under local user control.",
   "current_releases": {
     "across_agents_assistant": {
-      "version": "v0.15.0",
-      "published_at": "2026-08-26",
-      "tag": "v0.15.0",
-      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.15.0"
+      "version": "v0.17.0",
+      "published_at": "2026-08-30",
+      "tag": "v0.17.0",
+      "release_url": "https://github.com/fantasyce/across-agents-assistant/releases/tag/v0.17.0"
     },
     "across_autopilot": {
-      "version": "v0.5.4",
-      "published_at": "2026-08-26",
-      "tag": "v0.5.4",
-      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.5.4"
+      "version": "v0.6.0",
+      "published_at": "2026-08-30",
+      "tag": "v0.6.0",
+      "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.6.0"
     },
     "across_orchestrator": {
-      "version": "v0.10.12",
-      "published_at": "2026-08-26",
-      "tag": "v0.10.12",
-      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.10.12"
+      "version": "v0.11.0",
+      "published_at": "2026-08-30",
+      "tag": "v0.11.0",
+      "release_url": "https://github.com/fantasyce/across-orchestrator/releases/tag/v0.11.0"
     },
     "across_context": {
-      "version": "v0.11.1",
-      "published_at": "2026-07-20",
-      "tag": "v0.11.1",
-      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.11.1"
+      "version": "v0.12.0",
+      "published_at": "2026-08-30",
+      "tag": "v0.12.0",
+      "release_url": "https://github.com/fantasyce/across-context/releases/tag/v0.12.0"
     },
     "agent_runtime_proof": {
       "version": "v1.0.1",

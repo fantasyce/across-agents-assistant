@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+enum UnifiedWorkRecentStatus {
+    static func displayStatus(taskStatus: String, reviewStatus: String) -> String {
+        if taskStatus == "completed" && reviewStatus != "accepted" {
+            return "needs_review"
+        }
+        return taskStatus
+    }
+}
+
 struct UnifiedWorkEmptyState: View {
     let projectName: String?
     let projectPath: String?
@@ -95,13 +104,17 @@ struct UnifiedWorkEmptyState: View {
 
                     ForEach(Array(recentTasks.prefix(3))) { task in
                         let isAccepted = task.reviewStatus == "accepted"
+                        let displayStatus = UnifiedWorkRecentStatus.displayStatus(
+                            taskStatus: task.status,
+                            reviewStatus: task.reviewStatus
+                        )
                         Button { onOpenTask(task) } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: isAccepted
                                     ? "checkmark.circle.fill"
-                                    : (task.status == "completed"
-                                        ? "checkmark.circle"
-                                        : (TaskOrchestrationStateReducers.isTerminalStatus(task.status)
+                                    : (displayStatus == "needs_review"
+                                        ? "hand.raised"
+                                        : (TaskOrchestrationStateReducers.isTerminalStatus(displayStatus)
                                             ? "exclamationmark.circle"
                                             : "circle.dotted")))
                                     .foregroundStyle(isAccepted ? Color.green : Color.secondary)
@@ -109,7 +122,7 @@ struct UnifiedWorkEmptyState: View {
                                     .font(.system(size: 12))
                                     .lineLimit(1)
                                 Spacer()
-                                Text(preferences.statusText(task.status))
+                                Text(preferences.statusText(displayStatus))
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                                 Image(systemName: "chevron.right")
@@ -120,6 +133,11 @@ struct UnifiedWorkEmptyState: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .focusable(true)
+                        .onKeyPress(.return) {
+                            onOpenTask(task)
+                            return .handled
+                        }
                         .overlay(alignment: .bottom) { Divider() }
                     }
                 }
@@ -200,6 +218,14 @@ struct UnifiedWorkEmptyState: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(beginnerMission.isRunning || projectPath == nil || normalizedBeginnerGoal == nil)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    guard let goal = normalizedBeginnerGoal,
+                          !beginnerMission.isRunning,
+                          projectPath != nil else { return .ignored }
+                    onRunBeginnerMission(goal)
+                    return .handled
+                }
                 .help(normalizedBeginnerGoal == nil
                     ? preferences.text("work.beginner.goalRequired")
                     : preferences.text("work.beginner.run"))
@@ -230,6 +256,10 @@ struct UnifiedWorkEmptyState: View {
         switch value {
         case "compatible_worker_workflow_required":
             return preferences.text("work.submit.remoteWorkflowRequired")
+        case "approve_risky_capabilities":
+            return preferences.text("work.submit.riskApprovalRequired")
+        case "capability_decision_required":
+            return preferences.text("work.submit.capabilityDecisionRequired")
         case "External Across Orchestrator runtime is unavailable.":
             return preferences.text("work.submit.orchestratorUnavailable")
         default:

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import configured_providers, request
+from client import assert_release_task_checkpoint, live_project_dir, live_task_agent_fields, request, require_live_model_route
 
 
 def _req(method: str, path: str, body: dict = None, expect: int = 200) -> dict:
@@ -62,12 +62,13 @@ def _wait_task(task_id: str, timeout: int = 900, poll: int = 5) -> dict:
 class TestE2ERestApi:
     """Create a FastAPI REST API task and verify delivery contract exposure."""
     task_id: str = None
+    model_route: dict = None
 
     @pytest.fixture(autouse=True)
     def check_backend(self):
         _req("GET", "/api/llm/status")
-        if not configured_providers():
-            pytest.skip("No model provider configured — REST API live task requires one")
+        if TestE2ERestApi.model_route is None:
+            TestE2ERestApi.model_route = require_live_model_route()
 
     def test_01_submit_rest_api_task(self):
         result = _req(
@@ -81,9 +82,9 @@ class TestE2ERestApi:
                     "3. A requirements.txt with fastapi and uvicorn\n"
                     "4. A config.py with basic settings"
                 ),
-                "project_dir": f"/tmp/restapi-e2e-{int(time.time())}",
+                "project_dir": str(live_project_dir("rest-api")),
                 "task_types": ["functional", "artifact"],
-                "allowed_subtask_agents": [],
+                **live_task_agent_fields(TestE2ERestApi.model_route),
                 "strict_dependency": True,
                 "enable_wave_gate": True,
             },
@@ -129,14 +130,7 @@ class TestE2ERestApi:
         """Run to completion and check artifacts + acceptance records."""
         assert TestE2ERestApi.task_id, "submit task first"
         info = _wait_task(TestE2ERestApi.task_id, timeout=900)
-        status = info.get("status", "unknown")
-        assert status == "completed", f"Task ended with unexpected status: {status}"
-        delivery_quality = (
-            (info.get("last_owner_decision") or {}).get("delivery_quality")
-            or (info.get("quality_health") or {}).get("delivery_quality_report")
-            or {}
-        )
-        assert delivery_quality.get("delivery_quality") == "passed", delivery_quality
+        assert_release_task_checkpoint(info)
 
         has_artifacts = info.get("artifacts")
         has_acceptance = info.get("acceptance_records")
@@ -144,8 +138,6 @@ class TestE2ERestApi:
         print(f"Acceptance records: {len(has_acceptance) if has_acceptance else 0}")
         print(f"Delivery report: {info.get('delivery_report', {}).get('summary')}")
 
-        assert has_artifacts is not None, f"No artifacts field: {info}"
-        assert has_acceptance, f"No acceptance_records: {info}"
         assert "quality_health" in info
         assert "delivery_report" in info
 

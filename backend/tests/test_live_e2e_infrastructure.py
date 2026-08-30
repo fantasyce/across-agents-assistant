@@ -1,6 +1,9 @@
 import subprocess
 import re
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,6 +11,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _load_live_e2e_client():
+    path = ROOT / "backend/tests/e2e/client.py"
+    spec = importlib.util.spec_from_file_location("aaa_live_e2e_client", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_live_e2e_runner_enables_live_gate_and_legacy_socket_e2e():
@@ -31,18 +43,113 @@ def test_live_e2e_runner_enables_live_gate_and_legacy_socket_e2e():
     assert '../across-orchestrator' not in script
 
 
-def test_live_e2e_distinguishes_no_key_readiness_from_model_backed_tasks():
+def test_live_e2e_runner_records_interrupts_as_failed_evidence():
+    script = _read("scripts/run_live_e2e.sh")
+
+    assert 'INTERRUPTED_EXIT_CODE=""' in script
+    assert 'trap \'INTERRUPTED_EXIT_CODE=130\' INT' in script
+    assert 'trap \'INTERRUPTED_EXIT_CODE=143\' TERM' in script
+    assert 'if [[ -n "$INTERRUPTED_EXIT_CODE" ]]; then' in script
+    assert 'exit_code="$INTERRUPTED_EXIT_CODE"' in script
+
+
+def test_live_e2e_requires_real_model_backed_tasks_instead_of_skipping():
     minimal = _read("backend/tests/e2e/test_e2e_minimal_task.py")
     rest_api = _read("backend/tests/e2e/test_e2e_rest_api.py")
     complex_task = _read("backend/tests/e2e/test_e2e_complex_multi_wave.py")
     legacy = _read("backend/tests/e2e/test_api_e2e.py")
 
-    assert 'expect=412' in minimal
-    assert 'detail.get("code") == "capability_decision_required"' in minimal
-    assert '"configure_model_provider" in (detail.get("decision_ids") or [])' in minimal
-    assert "if not configured_providers():" in rest_api
-    assert "if not configured_providers():" in complex_task
-    assert "skip_if_model_provider_unavailable(resp)" in legacy
+    assert "require_live_model_route()" in minimal
+    assert "live_task_agent_fields" in minimal
+    assert "require_live_model_route()" in rest_api
+    assert "live_task_agent_fields" in rest_api
+    assert "require_live_model_route()" in complex_task
+    assert "live_task_agent_fields" in complex_task
+    assert "skip_if_model_provider_unavailable" not in legacy
+    assert 'sys.path.insert(0, str(Path(__file__).resolve().parent))' in legacy
+
+
+def test_live_e2e_uses_an_available_local_agent_when_the_isolated_profile_has_no_cloud_key(monkeypatch):
+    client = _load_live_e2e_client()
+
+    def fake_request(_method, path, _body=None, _expect=200):
+        if path == "/api/keys/status":
+            return {"providers": {"minimax": "not_configured"}}
+        if path == "/api/agents/detect":
+            return {
+                "codex": {"available": True},
+                "kimi": {"available": True},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request", fake_request)
+    monkeypatch.delenv("ACROSS_AGENTS_LIVE_E2E_AGENT", raising=False)
+
+    route = client.require_live_model_route()
+
+    assert route == {"kind": "local_agent", "id": "codex"}
+    assert client.live_task_agent_fields(route) == {
+        "owner_agent": "codex",
+        "allowed_subtask_agents": ["codex"],
+    }
+
+
+def test_live_e2e_fails_instead_of_skipping_when_no_real_model_route_exists(monkeypatch):
+    client = _load_live_e2e_client()
+    monkeypatch.setattr(
+        client,
+        "request",
+        lambda _method, path, _body=None, _expect=200: (
+            {"providers": {}} if path == "/api/keys/status" else {}
+        ),
+    )
+    monkeypatch.delenv("ACROSS_AGENTS_LIVE_E2E_AGENT", raising=False)
+
+    with pytest.raises(AssertionError, match="real model route"):
+        client.require_live_model_route()
+
+
+def test_live_e2e_projects_stay_under_the_runner_owned_root(monkeypatch, tmp_path):
+    client = _load_live_e2e_client()
+    owned_root = tmp_path / "projects"
+    monkeypatch.setenv("ACROSS_AGENTS_LIVE_E2E_PROJECT_ROOT", str(owned_root))
+
+    project_dir = client.live_project_dir("REST API / release")
+
+    assert project_dir.parent == owned_root
+    assert project_dir.is_dir()
+    assert project_dir.name.startswith("rest-api-release-")
+
+
+def test_live_e2e_accepts_a_structurally_passing_human_review_checkpoint():
+    client = _load_live_e2e_client()
+
+    client.assert_release_task_checkpoint({
+        "status": "completed",
+        "artifacts": [{"id": "artifact-1"}],
+        "acceptance_records": [{
+            "decision": "review",
+            "deterministic_passed": True,
+            "failed_checks": [],
+        }],
+        "delivery_report": {"quality_gate": "manual_required"},
+    })
+
+
+def test_live_e2e_rejects_a_failed_deterministic_gate_at_the_review_checkpoint():
+    client = _load_live_e2e_client()
+
+    with pytest.raises(AssertionError, match="deterministic acceptance gates"):
+        client.assert_release_task_checkpoint({
+            "status": "completed",
+            "artifacts": [{"id": "artifact-1"}],
+            "acceptance_records": [{
+                "decision": "review",
+                "deterministic_passed": False,
+                "failed_checks": ["required artifact is missing"],
+            }],
+            "delivery_report": {"quality_gate": "manual_required"},
+        })
 
 
 def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
@@ -50,7 +157,7 @@ def test_live_e2e_workflow_is_manual_and_uses_pinned_orchestrator():
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" not in workflow
-    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.10.12" in workflow
+    assert "git+https://github.com/fantasyce/across-orchestrator.git@v0.12.2" in workflow
     assert "scripts/run_live_e2e.sh" in workflow
     assert "ACROSS_AGENTS_ORCHESTRATOR_COMMAND" in workflow
     assert "ACROSS_AGENTS_LIVE_E2E_GATE_ID=\"github_live_e2e\"" in workflow
@@ -171,7 +278,7 @@ def test_packaged_backend_dispatches_autopilot_review_cli():
 
 def test_candidate_app_lifecycle_extracts_health_json_from_noisy_output():
     completed = subprocess.run(
-        ["bash", str(ROOT / "scripts/candidate_app_lifecycle.sh"), "extract-json-object"],
+        ["/bin/bash", str(ROOT / "scripts/candidate_app_lifecycle.sh"), "extract-json-object"],
         input='launch noise {"status":"ok","ready":true} trailing noise {"ignored":true}',
         text=True,
         stdout=subprocess.PIPE,

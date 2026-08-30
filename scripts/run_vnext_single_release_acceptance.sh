@@ -11,6 +11,7 @@ RUN_DIR="$REPORT_ROOT/$RUN_ID"
 SUMMARY_PATH="$RUN_DIR/summary.json"
 AUTOMATED_ONLY=0
 INCLUDE_PACKAGED_APP="${ACROSS_VNEXT_INCLUDE_PACKAGED_APP:-0}"
+RELEASE_TRAIN_CANDIDATE="${ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE:-}"
 
 usage() {
   echo "usage: $0 [--automated-only] [--include-packaged-app]"
@@ -116,6 +117,7 @@ run_gate orchestrator_check "$ORCHESTRATOR_ROOT" "bash scripts/check.sh"
 run_gate context_check "$CONTEXT_ROOT" "bash scripts/check.sh"
 run_gate autopilot_check "$AUTOPILOT_ROOT" "env -u ACROSS_ORCHESTRATOR_SOURCE -u ACROSS_CONTEXT_SOURCE -u ACROSS_AUTOPILOT_SOURCE bash scripts/check.sh && npm audit --audit-level=high"
 run_gate plugin_boundary_contracts "$ROOT_DIR" "bash scripts/run_plugin_boundary_checks.sh"
+run_gate goal_contract_real_provider_consumer "$ROOT_DIR" "ACROSS_ORCHESTRATOR_SOURCE='$ORCHESTRATOR_ROOT' bash scripts/run_goal_contract_provider_consumer_e2e.sh"
 run_gate growth_asset_regeneration "$ROOT_DIR" "uv run --with pillow python scripts/prepare_growth_asset_atlases.py"
 run_gate aaa_local_gates "$ROOT_DIR" "bash scripts/run_pre_release_local_gates.sh"
 run_gate fresh_profile_plugin_no_key_e2e "$ROOT_DIR" "bash scripts/run_fresh_profile_plugin_no_key_e2e.sh"
@@ -133,6 +135,10 @@ if [[ "$INCLUDE_PACKAGED_APP" == "1" ]]; then
     "ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT='$ORCHESTRATOR_ROOT' ACROSS_BUILD_CONTEXT_SOURCE_ROOT='$CONTEXT_ROOT' ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT='$AUTOPILOT_ROOT' bash scripts/build_and_run.sh"
   run_gate packaged_app_runtime "$ROOT_DIR" "bash scripts/verify_packaged_vnext_runtime.sh"
   run_gate packaged_app_cross_plugin_e2e "$ROOT_DIR" "bash scripts/run_packaged_app_cross_plugin_e2e.sh"
+  run_gate \
+    goalboard_release_train_lock \
+    "$ROOT_DIR" \
+    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goalboard-release-train-lock.json' && '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --verify '$RUN_DIR/goalboard-release-train-lock.json'"
 fi
 
 SUMMARY_GENERATION_EXIT=0
@@ -183,7 +189,10 @@ gates = []
 for path in sorted(run_dir.glob("*.json")):
     if path.name == "summary.json":
         continue
-    gates.append(json.loads(path.read_text(encoding="utf-8")))
+    candidate = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(candidate, dict) or not candidate.get("gate_id"):
+        continue
+    gates.append(candidate)
 
 report_root = run_dir.parent
 manual_definitions = [
@@ -304,6 +313,11 @@ if [[ "$SUMMARY_GENERATION_EXIT" -ne 0 ]]; then
   exit "$SUMMARY_GENERATION_EXIT"
 fi
 if [[ "$FAILED" -ne 0 ]]; then
+  exit 1
+fi
+AUTOMATED_PASSED="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["automated_passed"]).lower())' "$SUMMARY_PATH")"
+if [[ "$AUTOMATED_PASSED" != "true" ]]; then
+  echo "vNext automated acceptance summary did not pass." >&2
   exit 1
 fi
 if [[ "$AUTOMATED_ONLY" -eq 0 ]]; then

@@ -1,0 +1,42 @@
+{
+  "schema_version": "across-goal-contract/1.0",
+  "goal_id": "goal-task-001",
+  "revision": 1,
+  "task_id": "task-001",
+  "statement": "Ship a verifiable change",
+  "success_outcome": "The user can verify the change.",
+  "scope": {
+    "includes": [
+      "implementation",
+      "tests"
+    ],
+    "excludes": [
+      "release",
+      "promotion"
+    ]
+  },
+  "acceptance_criteria": [
+    {
+      "criterion_id": "criterion-36bc8486dd50ddc0",
+      "description": "All required tests pass.",
+      "required": true,
+      "validator_kind": "test_suite",
+      "review_policy": "automatic",
+      "source": "user_confirmed"
+    },
+    {
+      "criterion_id": "criterion-5691b86a398c721e",
+      "description": "Installed application exposes the result.",
+      "required": true,
+      "validator_kind": "installed_user_journey",
+      "review_policy": "human",
+      "source": "user_confirmed"
+    }
+  ],
+  "dependencies": [],
+  "execution_profile": "orchestrated",
+  "source": "user",
+  "confirmed_by": "human:user",
+  "confirmed_at": "2026-08-28T00:00:00Z",
+  "created_at": "2026-08-28T00:00:00Z"
+}

@@ -27,6 +27,14 @@ def test_formal_local_build_prefers_all_adjacent_plugin_producers() -> None:
     )
 
 
+def test_formal_release_build_can_require_published_plugin_pins() -> None:
+    script = (ROOT / "scripts" / "build_and_run.sh").read_text(encoding="utf-8")
+
+    assert "ACROSS_BUILD_USE_RELEASED_PINS" in script
+    assert 'ACROSS_BUILD_USE_RELEASED_PINS:-0' in script
+    assert '"$USE_RELEASED_PINS" != "1"' in script
+
+
 def test_formal_local_build_cleans_orphaned_worker_control_runtime() -> None:
     script = (ROOT / "scripts" / "build_and_run.sh").read_text(encoding="utf-8")
 
@@ -41,3 +49,24 @@ def test_formal_local_build_stops_task_owned_descendants_before_rebuild() -> Non
     assert "descendant_pids()" in script
     assert 'pgrep -P "$parent_pid"' in script
     assert "kill $all_pids" in script
+
+
+def test_formal_local_build_preserves_verified_rollback_before_atomic_install() -> None:
+    script = (ROOT / "scripts" / "build_and_run.sh").read_text(encoding="utf-8")
+
+    assert "ROLLBACK_PATH=" in script
+    assert "INSTALL_STAGING=" in script
+    assert "PREVIOUS_INSTALL=" in script
+    assert "restore_previous_install()" in script
+    assert 'codesign --verify --deep --strict "$ROLLBACK_STAGING"' in script
+    assert 'codesign --verify --deep --strict "$INSTALL_STAGING"' in script
+    assert script.index('ditto "$INSTALL_PATH" "$ROLLBACK_STAGING"') < script.index(
+        'mv "$INSTALL_PATH" "$PREVIOUS_INSTALL"'
+    )
+    assert script.index('mv "$INSTALL_PATH" "$PREVIOUS_INSTALL"') < script.index(
+        'mv "$INSTALL_STAGING" "$INSTALL_PATH"'
+    )
+    assert script.count('rm -rf "$INSTALL_PATH"') == 1
+    assert script.index('rm -rf "$INSTALL_PATH"') < script.index(
+        'echo "=== 3. Installing local build to /Applications ==="'
+    )

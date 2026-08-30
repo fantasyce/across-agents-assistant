@@ -20,6 +20,9 @@ from pathlib import Path
 import pytest
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from client import live_project_dir, live_task_agent_fields, require_live_model_route
+
 SOCKET_PATH = os.path.expanduser(os.environ.get("ACROSS_AGENTS_SOCKET", "~/.across/run/across-agents-assistant/across-agents.sock"))
 SERVER_START_TIMEOUT = 15
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -68,7 +71,7 @@ def make_client():
 
 
 def skip_if_orchestrator_unavailable(response):
-    """Skip live E2E when the local backend has no external Orchestrator runtime."""
+    """Fail the live release gate when its required Orchestrator is unavailable."""
     if response.status_code != 503:
         return
     try:
@@ -80,23 +83,7 @@ def skip_if_orchestrator_unavailable(response):
         or "unavailable" in detail
         or "no endpoint or executable" in detail
     ):
-        pytest.skip(f"External Across Orchestrator runtime unavailable: {detail}")
-
-
-def skip_if_model_provider_unavailable(response):
-    """Skip task mutation checks when the isolated live-E2E profile has no model."""
-    if response.status_code != 412:
-        return
-    try:
-        detail = response.json().get("detail") or {}
-    except Exception:
-        return
-    if (
-        isinstance(detail, dict)
-        and detail.get("code") == "capability_decision_required"
-        and "configure_model_provider" in (detail.get("decision_ids") or [])
-    ):
-        pytest.skip("未配置模型服务；无密钥拦截已由 live E2E readiness 验证")
+        raise AssertionError(f"External Across Orchestrator runtime unavailable: {detail}")
 
 
 class TestBackendAPI:
@@ -108,7 +95,7 @@ class TestBackendAPI:
         cls.proc = start_backend()
         if not wait_for_socket(SOCKET_PATH):
             cls.proc.terminate()
-            pytest.skip("后端服务启动失败 (Unix socket 未就绪)")
+            raise AssertionError("后端服务启动失败 (Unix socket 未就绪)")
         print("✅ 后端服务已启动 (Unix socket 就绪)")
 
     @classmethod
@@ -131,15 +118,14 @@ class TestBackendAPI:
         client = make_client()
         payload = {
             "description": "Build a simple hello world Python script",
-            "project_dir": "/tmp/e2e-test-hello",
+            "project_dir": str(live_project_dir("legacy-hello")),
             "task_types": ["artifact"],
-            "allowed_subtask_agents": [],
+            **live_task_agent_fields(require_live_model_route()),
             "strict_dependency": True,
             "enable_wave_gate": True,
         }
         resp = client.post("http://localhost/api/tasks/auto", json=payload)
         skip_if_orchestrator_unavailable(resp)
-        skip_if_model_provider_unavailable(resp)
         assert resp.status_code in (200, 201, 202), f"创建任务失败: {resp.status_code} {resp.text}"
         data = resp.json()
         task_id = data.get("task_id") or data.get("taskId")
@@ -150,8 +136,7 @@ class TestBackendAPI:
     def test_get_task_detail(self):
         """GET /api/tasks/{id} - 任务详情"""
         task_id = self.__class__._task_id
-        if not task_id:
-            pytest.skip("需要先创建任务")
+        assert task_id, "需要先创建任务"
 
         client = make_client()
         resp = client.get(f"http://localhost/api/tasks/{task_id}")
@@ -166,8 +151,7 @@ class TestBackendAPI:
     def test_sse_stream(self):
         """GET /api/tasks/{id}/stream - SSE 流"""
         task_id = self.__class__._task_id
-        if not task_id:
-            pytest.skip("需要先创建任务")
+        assert task_id, "需要先创建任务"
 
         events = []
         error_msg = [None]
@@ -190,9 +174,7 @@ class TestBackendAPI:
         t.start()
         t.join(timeout=15)
 
-        if error_msg[0]:
-            print(f"  ⚠️  SSE client error: {error_msg[0]}")
-            pytest.skip(f"SSE 连接异常: {error_msg[0]}")
+        assert not error_msg[0], f"SSE 连接异常: {error_msg[0]}"
 
         print(f"  ✅ SSE 流连接成功，收到 {len(events)} 条事件")
         if events:
@@ -207,8 +189,7 @@ class TestBackendAPI:
     def test_pause_resume_cancel(self):
         """POST /api/tasks/{id}/pause|resume|cancel"""
         task_id = self.__class__._task_id
-        if not task_id:
-            pytest.skip("需要先创建任务")
+        assert task_id, "需要先创建任务"
 
         client = make_client()
 

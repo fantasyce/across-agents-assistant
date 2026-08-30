@@ -166,11 +166,21 @@ def _should_fetch_external_task_evidence(task_payload: Dict[str, Any]) -> bool:
     return str((task_payload or {}).get("status") or "").strip().lower() in _EXTERNAL_TASK_EVIDENCE_STATUSES
 
 
+def _external_task_snapshot(plugin: Any, task_id: str) -> Dict[str, Any]:
+    getter = getattr(plugin, "get_task_snapshot", None) or plugin.get_task
+    return getter(task_id)
+
+
+def _external_evidence_snapshot(plugin: Any, task_id: str) -> Dict[str, Any]:
+    getter = getattr(plugin, "get_evidence_snapshot", None) or plugin.get_evidence_bundle
+    return getter(task_id)
+
+
 async def _external_task_evidence_async(plugin: Any, task_id: str, task_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not _should_fetch_external_task_evidence(task_payload):
         return None
     try:
-        return await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        return await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
     except Exception:
         return None
 
@@ -179,7 +189,7 @@ def _external_task_evidence_sync(plugin: Any, task_id: str, task_payload: Dict[s
     if not _should_fetch_external_task_evidence(task_payload):
         return None
     try:
-        return plugin.get_evidence_bundle(task_id)
+        return _external_evidence_snapshot(plugin, task_id)
     except Exception:
         return None
 
@@ -289,6 +299,11 @@ from .tools.tool_registry import registry
 from .tools.mcp_client import mcp_manager
 from .persistence.service import persistence
 from .persistence.promotion_package_store import PromotionPackageStoreError
+from .persistence.goal_contract_store import GoalContractStoreError
+from .goal_contract.api import install_goal_contract_routes
+from .goal_contract.execution_evidence import build_execution_evidence_material
+from .goal_contract.protocol import criterion_id, stable_goal_hash
+from .goal_contract.service import GoalContractService
 from .approval.receipts import (
     ApprovalReceiptError,
     evaluate_promotion_authorization,
@@ -464,6 +479,7 @@ _task_state = TaskState()
 _task_persistence_initialized = False
 _server_started_at = time.time()
 _autopilot_trigger_scheduler: AutopilotTriggerScheduler | None = None
+_direct_task_runners: Dict[str, asyncio.Task] = {}
 
 
 def get_autopilot_client() -> AutopilotClient:
@@ -585,7 +601,6 @@ def _init_task_persistence():
     if _task_persistence_initialized:
         return
 
-    from .persistence.service import persistence
     _task_state.set_persistence(persistence.tasks)
     _task_persistence_initialized = True
 
@@ -975,6 +990,14 @@ async def _api_lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Across Agents Assistant API", lifespan=_api_lifespan)
+
+install_goal_contract_routes(
+    app,
+    service_provider=lambda: persistence,
+    revalidation_verifier=lambda task_id, revision, criterion_ids, attempt: _verify_goal_revalidation(
+        task_id, revision, criterion_ids, attempt
+    ),
+)
 
 
 async def _external_task_info_with_worker(task_payload: Mapping[str, Any], *, evidence: Mapping[str, Any] | None = None) -> Dict[str, Any]:
@@ -10764,7 +10787,8 @@ def _promotion_task_evidence(task_id: str) -> Dict[str, Any]:
             ),
         }
 
-    bundle = get_orchestrator_plugin_manager().get_evidence_bundle(task_id)
+    plugin = get_orchestrator_plugin_manager()
+    bundle = _external_evidence_snapshot(plugin, task_id)
     if not isinstance(bundle, Mapping):
         raise PromotionPackageBlocked(("task_receipts_verified",))
     raw_receipt = (
@@ -11882,6 +11906,8 @@ async def build_external_replay_plan(payload: Dict[str, Any]):
 
 
 class AgentLoopStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     goal: str
     project_dir: Optional[str] = None
     agent: str = "owner"
@@ -11889,6 +11915,7 @@ class AgentLoopStartRequest(BaseModel):
     memory_policy: Optional[Dict[str, Any]] = None
     approval_policy: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    goal_execution_contract: Optional[Dict[str, Any]] = None
 
 
 class AgentLoopReasonRequest(BaseModel):
@@ -11898,6 +11925,17 @@ class AgentLoopReasonRequest(BaseModel):
 @app.post("/api/orchestrator/loops")
 async def start_external_agent_loop(req: AgentLoopStartRequest):
     """Start a durable agent loop through the external Across Orchestrator plugin."""
+    authoritative_goal_execution_contract = None
+    if req.goal_execution_contract is not None:
+        try:
+            authoritative_goal_execution_contract = GoalContractService(persistence).authorize_execution_contract(
+                req.goal_execution_contract
+            )
+        except GoalContractStoreError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"reason_code": exc.code, "message": str(exc)},
+            ) from exc
     manager = get_orchestrator_plugin_manager()
     try:
         loop = await asyncio.to_thread(
@@ -11909,6 +11947,7 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
             memory_policy=req.memory_policy,
             approval_policy=req.approval_policy,
             metadata=req.metadata,
+            goal_execution_contract=authoritative_goal_execution_contract,
         )
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:
@@ -14538,7 +14577,7 @@ def _public_agent_card(card: Dict[str, Any], native_skills: List[Dict[str, Any]]
 def _load_task_info_read_only(task_id: str) -> "TaskInfo":
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = plugin.get_task(task_id)
+        task_payload = _external_task_snapshot(plugin, task_id)
         evidence = _external_task_evidence_sync(plugin, task_id, task_payload)
         return TaskInfo(**external_task_to_app_info(task_payload, evidence=evidence))
     task = _task_state.get_task(task_id)
@@ -15934,9 +15973,11 @@ async def get_task(task_id: str):
     try:
         if _is_external_orchestrator_task(task_id):
             plugin = get_orchestrator_plugin_manager()
-            task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+            task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
             evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
-            return _attach_task_user_review(TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence))))
+            info = TaskInfo(**(await _external_task_info_with_worker(task_payload, evidence=evidence)))
+            _synchronize_goal_execution_evidence(info, runtime_evidence=evidence)
+            return _attach_task_user_review(info)
 
         # Lightweight watchdog: repair missing state / wave approval / orphan dispatch
         _repair_task_dispatch_if_possible(task_id, reason="api_detail_poll")
@@ -15948,14 +15989,101 @@ async def get_task(task_id: str):
             if _task_state._persistence:
                 full_task = _task_state._persistence.get_full_task(task_id)
                 if full_task:
-                    return _attach_task_user_review(_task_info_from_db(full_task))
+                    info = _task_info_from_db(full_task)
+                    _synchronize_goal_execution_evidence(info)
+                    return _attach_task_user_review(info)
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        return _attach_task_user_review(_task_to_info(task, _task_state))
+        info = _task_to_info(task, _task_state)
+        _synchronize_goal_execution_evidence(info)
+        return _attach_task_user_review(info)
     except HTTPException:
         raise
     except Exception as e:
         raise _safe_http_500("Get task")
+
+
+def _synchronize_goal_execution_evidence(
+    info: TaskInfo,
+    *,
+    runtime_evidence: Mapping[str, Any] | None = None,
+) -> None:
+    contract = persistence.goal_contracts.get_current(info.task_id)
+    if contract is None:
+        return
+    materials = build_execution_evidence_material(contract, _pydantic_dump(info), runtime_evidence)
+    goals = GoalContractService(persistence)
+    for material in materials:
+        goals.record_execution_evidence(
+            task_id=info.task_id,
+            goal_revision=int(contract["revision"]),
+            criterion_id=material["criterion_id"],
+            artifact_digests=material["artifact_digests"],
+            executor=material["executor"],
+            run_id=material["run_id"],
+            attempt_id=material["attempt_id"],
+            validator_id=material["validator_id"],
+            validator_authority=material["validator_authority"],
+            verdict=material["verdict"],
+            input_fingerprint=material["input_fingerprint"],
+            receipt_hash=material.get("receipt_hash"),
+            idempotency_key=(
+                f"task-execution-evidence:{info.task_id}:{contract['revision']}:"
+                f"{material['criterion_id']}:{material['attempt_id']}:{material['input_fingerprint']}"
+            ),
+        )
+
+
+def _goal_result_review_basis(
+    task_id: str,
+    *,
+    require_complete: bool = True,
+    info: TaskInfo | None = None,
+) -> tuple[list[str], str]:
+    envelope = GoalContractService(persistence).get_goal(task_id)
+    required = {
+        str(item["criterion_id"])
+        for item in envelope["contract"]["acceptance_criteria"]
+        if item.get("required", True)
+    }
+    stale = {
+        str(criterion_id)
+        for invalidation in envelope["invalidations"]
+        if invalidation.get("state") == "pending"
+        for criterion_id in invalidation.get("criterion_ids") or ()
+    }
+    superseded = {
+        str(evidence_id)
+        for binding in envelope["evidence_bindings"]
+        for evidence_id in binding.get("supersedes_evidence_ids") or ()
+    }
+    selected: dict[str, dict[str, Any]] = {}
+    for binding in reversed(envelope["evidence_bindings"]):
+        if (
+            binding.get("trust_state") != "verified"
+            or binding.get("verdict") != "verified"
+            or binding.get("evidence_id") in superseded
+        ):
+            continue
+        for criterion_id_value in binding.get("criterion_ids") or ():
+            criterion_id_text = str(criterion_id_value)
+            if criterion_id_text in required and criterion_id_text not in stale:
+                selected.setdefault(criterion_id_text, binding)
+    if require_complete and set(selected) != required:
+        raise GoalContractStoreError(
+            "goal_evidence_missing", "result review requires verified execution evidence"
+        )
+    bindings = list({item["evidence_id"]: item for item in selected.values()}.values())
+    attempt_ids = {str(item.get("attempt_id") or "") for item in bindings if item.get("attempt_id")}
+    if len(attempt_ids) > 1:
+        raise GoalContractStoreError(
+            "goal_evidence_conflict", "result review evidence belongs to multiple Attempts"
+        )
+    attempt_id = next(iter(attempt_ids), "")
+    if not attempt_id and info is not None:
+        serialized = json.dumps(_pydantic_dump(info), sort_keys=True, default=str).encode("utf-8")
+        attempt_id = f"task-attempt-{hashlib.sha256(serialized).hexdigest()[:24]}"
+    return sorted(item["evidence_id"] for item in bindings), attempt_id
 
 
 @app.post("/api/tasks/{task_id}/accept")
@@ -15992,44 +16120,79 @@ async def accept_task_result(task_id: str):
         if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
-        if current["review_status"] == "rejected":
-            raise HTTPException(status_code=409, detail="Rejected work cannot be accepted")
-        if current["review_status"] == "accepted":
-            review = current
-        else:
+        contract = persistence.goal_contracts.get_current(task_id)
+        if contract is not None:
+            basis_evidence_ids, attempt_id = _goal_result_review_basis(task_id)
+            result_review = GoalContractService(persistence).record_result_review(
+                task_id=task_id,
+                expected_revision=int(contract["revision"]),
+                decision="passed",
+                reason="The current verified delivery was accepted by the local human reviewer.",
+                reviewer_id="human:local",
+                basis_evidence_ids=basis_evidence_ids,
+                attempt_id=attempt_id,
+                idempotency_key=(
+                    f"goal-result-review:{task_id}:{contract['revision']}:{attempt_id}:passed:"
+                    f"{hashlib.sha256('|'.join(basis_evidence_ids).encode('utf-8')).hexdigest()[:16]}"
+                ),
+            )
             review = task_persistence.save_task_user_review(
                 task_id,
                 "accepted",
                 accepted_at=time.time(),
             )
-        approval_receipt = _record_approval_receipt(
-            subject_type="task_result",
-            subject_id=task_id,
-            subject_payload={
-                "task_id": task_id,
-                "status": info.status,
-                "artifact_ids": [
-                    str(artifact.get("id") or artifact.get("artifact_id"))
-                    for artifact in info.artifacts
-                    if artifact.get("id") or artifact.get("artifact_id")
-                ],
-            },
-            scope="task_result_review",
-            decision="approved",
-            proposer_id=info.owner_agent or "task-owner",
-            approver_id="local-human",
-            risk_level="medium",
-            request_id=f"task-result-review:{task_id}",
-            idempotency_key=f"task-result-review:{task_id}",
-        )
-        return {
+            approval_receipt = result_review["review"]["decision_receipt"]
+            goal_envelope = GoalContractService(persistence).get_goal(task_id)
+        else:
+            if current["review_status"] == "rejected":
+                raise HTTPException(status_code=409, detail="Rejected work cannot be accepted")
+            if current["review_status"] == "accepted":
+                review = current
+            else:
+                review = task_persistence.save_task_user_review(
+                    task_id,
+                    "accepted",
+                    accepted_at=time.time(),
+                )
+            approval_receipt = _record_approval_receipt(
+                subject_type="task_result",
+                subject_id=task_id,
+                subject_payload={
+                    "task_id": task_id,
+                    "status": info.status,
+                    "artifact_ids": [
+                        str(artifact.get("id") or artifact.get("artifact_id"))
+                        for artifact in info.artifacts
+                        if artifact.get("id") or artifact.get("artifact_id")
+                    ],
+                },
+                scope="task_result_review",
+                decision="approved",
+                proposer_id=info.owner_agent or "task-owner",
+                approver_id="local-human",
+                risk_level="medium",
+                request_id=f"task-result-review:{task_id}",
+                idempotency_key=f"task-result-review:{task_id}",
+            )
+        task_review = {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
-            "approval_receipt": approval_receipt,
         }
+        if contract is not None:
+            return {
+                "task_review": task_review,
+                "goal": goal_envelope,
+                "decision_receipt": approval_receipt,
+            }
+        return {**task_review, "approval_receipt": approval_receipt}
     except HTTPException:
         raise
+    except GoalContractStoreError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": exc.code, "message": str(exc)},
+        ) from exc
     except Exception:
         raise _safe_http_500("Accept task result")
 
@@ -16055,48 +16218,106 @@ async def reject_task_result(task_id: str):
         if not task_persistence or not hasattr(task_persistence, "save_task_user_review"):
             raise HTTPException(status_code=503, detail="Task review persistence is unavailable")
 
-        if current["review_status"] == "accepted":
-            raise HTTPException(status_code=409, detail="Accepted work cannot be rejected")
-        if current["review_status"] == "rejected":
-            review = current
-        else:
-            review = task_persistence.save_task_user_review(
-                task_id,
-                "rejected",
-                accepted_at=None,
+        contract = persistence.goal_contracts.get_current(task_id)
+        if contract is not None:
+            basis_evidence_ids, attempt_id = _goal_result_review_basis(task_id, require_complete=False, info=info)
+            result_review = GoalContractService(persistence).record_result_review(
+                task_id=task_id,
+                expected_revision=int(contract["revision"]),
+                decision="rejected",
+                reason="The current delivery was rejected by the local human reviewer and requires repair.",
+                reviewer_id="human:local",
+                basis_evidence_ids=basis_evidence_ids,
+                attempt_id=attempt_id,
+                idempotency_key=f"goal-result-review:{task_id}:{contract['revision']}:{attempt_id}:rejected",
             )
-        approval_receipt = _record_approval_receipt(
-            subject_type="task_result",
-            subject_id=task_id,
-            subject_payload={
-                "task_id": task_id,
-                "status": info.status,
-                "quality_gate": (info.quality_health or {}).get("quality_gate"),
-                "delivery_quality": (info.quality_health or {}).get("delivery_quality"),
-                "artifact_ids": [
-                    str(artifact.get("id") or artifact.get("artifact_id"))
-                    for artifact in info.artifacts
-                    if artifact.get("id") or artifact.get("artifact_id")
-                ],
-            },
-            scope="task_result_review",
-            decision="rejected",
-            proposer_id=info.owner_agent or "task-owner",
-            approver_id="local-human",
-            risk_level="medium",
-            request_id=f"task-result-review:{task_id}:reject",
-            idempotency_key=f"task-result-review:{task_id}:reject",
-        )
-        return {
+            review = task_persistence.save_task_user_review(task_id, "rejected", accepted_at=None)
+            approval_receipt = result_review["review"]["decision_receipt"]
+            goal_envelope = GoalContractService(persistence).get_goal(task_id)
+        else:
+            if current["review_status"] == "accepted":
+                raise HTTPException(status_code=409, detail="Accepted work cannot be rejected")
+            if current["review_status"] == "rejected":
+                review = current
+            else:
+                review = task_persistence.save_task_user_review(
+                    task_id,
+                    "rejected",
+                    accepted_at=None,
+                )
+            approval_receipt = _record_approval_receipt(
+                subject_type="task_result",
+                subject_id=task_id,
+                subject_payload={
+                    "task_id": task_id,
+                    "status": info.status,
+                    "quality_gate": (info.quality_health or {}).get("quality_gate"),
+                    "delivery_quality": (info.quality_health or {}).get("delivery_quality"),
+                    "artifact_ids": [
+                        str(artifact.get("id") or artifact.get("artifact_id"))
+                        for artifact in info.artifacts
+                        if artifact.get("id") or artifact.get("artifact_id")
+                    ],
+                },
+                scope="task_result_review",
+                decision="rejected",
+                proposer_id=info.owner_agent or "task-owner",
+                approver_id="local-human",
+                risk_level="medium",
+                request_id=f"task-result-review:{task_id}:reject",
+                idempotency_key=f"task-result-review:{task_id}:reject",
+            )
+        task_review = {
             "task_id": task_id,
             "review_status": review["review_status"],
             "accepted_at": review.get("accepted_at"),
-            "approval_receipt": approval_receipt,
         }
+        if contract is not None:
+            return {
+                "task_review": task_review,
+                "goal": goal_envelope,
+                "decision_receipt": approval_receipt,
+            }
+        return {**task_review, "approval_receipt": approval_receipt}
     except HTTPException:
         raise
+    except GoalContractStoreError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": exc.code, "message": str(exc)},
+        ) from exc
     except Exception:
         raise _safe_http_500("Reject task result")
+
+def _external_task_infos_for_listing(seen_task_ids: set[str]) -> List[TaskInfo]:
+    """Hydrate external task rows without occupying the API event loop.
+
+    An Orchestrator status read can legitimately wait while a local Agent
+    adapter is executing.  Keep that wait in the worker pool so core health,
+    cancellation, and other control-plane requests remain responsive.
+    """
+    external_infos: List[TaskInfo] = []
+    plugin = get_orchestrator_plugin_manager()
+    for row in plugin.list_task_summaries():
+        task_id = row.get("task_id")
+        if not task_id or task_id in seen_task_ids:
+            continue
+        try:
+            task_payload = _external_task_snapshot(plugin, str(task_id))
+            bridge = get_worker_task_bridge()
+            worker_info = bridge.optional_status(str(task_id))
+            app_info = external_task_to_app_info(task_payload)
+            if worker_info:
+                app_info = bridge.project_task_info(app_info, worker_info)
+            external_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
+            seen_task_ids.add(str(task_id))
+        except Exception as exc:
+            # Historical host indexes can outlive an Orchestrator runtime or
+            # its task-retention window. One stale row must not hide every
+            # current task from the App.
+            logger.debug("Skipping stale external Orchestrator task %s: %s", task_id, exc)
+    return external_infos
+
 
 @app.get("/api/tasks", response_model=List[TaskInfo])
 async def list_tasks():
@@ -16127,19 +16348,9 @@ async def list_tasks():
                 seen_task_ids.add(task_id)
 
         try:
-            plugin = get_orchestrator_plugin_manager()
-            for row in plugin.list_task_summaries():
-                task_id = row.get("task_id")
-                if not task_id or task_id in seen_task_ids:
-                    continue
-                task_payload = plugin.get_task(str(task_id))
-                bridge = get_worker_task_bridge()
-                worker_info = bridge.optional_status(str(task_id))
-                app_info = external_task_to_app_info(task_payload)
-                if worker_info:
-                    app_info = bridge.project_task_info(app_info, worker_info)
-                task_infos.append(_attach_task_user_review(TaskInfo(**app_info)))
-                seen_task_ids.add(str(task_id))
+            task_infos.extend(
+                await asyncio.to_thread(_external_task_infos_for_listing, seen_task_ids)
+            )
         except Exception as exc:
             logger.debug("Skipping external Orchestrator tasks: %s", exc)
 
@@ -16243,12 +16454,43 @@ def _external_owner_agent(req: AutoTaskRequest) -> str:
     return external_owner_agent(_external_task_planning_request(req))
 
 
-def _planned_subtasks_for_external_task(req: AutoTaskRequest, deliverables: List[str]) -> List[Dict[str, Any]]:
-    return planned_subtasks_for_external_task(_external_task_planning_request(req), deliverables)
+def _planned_subtasks_for_external_task(
+    req: AutoTaskRequest,
+    deliverables: List[str],
+    *,
+    owner_agent: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    planning_request = _external_task_planning_request(req)
+    if owner_agent and external_owner_agent(planning_request) == "demo":
+        planning_request = ExternalTaskPlanningRequest(
+            description=planning_request.description,
+            task_types=planning_request.task_types,
+            owner_agent=owner_agent,
+            allowed_subtask_agents=[owner_agent],
+            project_dir=planning_request.project_dir,
+            strict_dependency=planning_request.strict_dependency,
+            enable_wave_gate=planning_request.enable_wave_gate,
+        )
+    return planned_subtasks_for_external_task(planning_request, deliverables)
 
 
-def _agent_adapters_for_external_task(req: AutoTaskRequest) -> Dict[str, Dict[str, Any]]:
-    return agent_adapters_for_external_task(_external_task_planning_request(req))
+def _agent_adapters_for_external_task(
+    req: AutoTaskRequest,
+    *,
+    owner_agent: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    planning_request = _external_task_planning_request(req)
+    if owner_agent and external_owner_agent(planning_request) == "demo":
+        planning_request = ExternalTaskPlanningRequest(
+            description=planning_request.description,
+            task_types=planning_request.task_types,
+            owner_agent=owner_agent,
+            allowed_subtask_agents=[owner_agent],
+            project_dir=planning_request.project_dir,
+            strict_dependency=planning_request.strict_dependency,
+            enable_wave_gate=planning_request.enable_wave_gate,
+        )
+    return agent_adapters_for_external_task(planning_request)
 
 
 def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -> HTTPException:
@@ -16259,6 +16501,47 @@ def _external_orchestrator_unavailable_response(plugin_status: Dict[str, Any]) -
             or "Across Orchestrator is required for task orchestration. Install or connect the plugin first."
         ),
     )
+
+
+def _available_local_agent_ids() -> List[str]:
+    """Return runnable local Agent ids without treating them as cloud credentials."""
+    from .local_agent_health import detect_local_agents
+
+    detected = detect_local_agents()
+    return [
+        agent_id
+        for agent_id in LOCAL_CLI_AGENT_IDS
+        if bool((detected.get(agent_id) or {}).get("available"))
+    ]
+
+
+def _resolved_external_execution_agent(
+    req: AutoTaskRequest,
+    capability_plan: Mapping[str, Any],
+) -> str:
+    """Resolve the concrete runtime Agent for an automatic protected task."""
+    requested = _external_owner_agent(req)
+    if requested != "demo":
+        return requested
+
+    chosen_providers = [
+        str(provider_id).strip()
+        for provider_id in capability_plan.get("chosen_providers") or []
+        if str(provider_id).strip()
+    ]
+    for provider_id in chosen_providers:
+        if provider_id != "local-agent":
+            return provider_id
+
+    if "local-agent" in chosen_providers:
+        available = set(_available_local_agent_ids())
+        # Prefer the task-oriented local runtimes with the strongest bounded,
+        # non-interactive execution contract. The user can still explicitly
+        # select any other Agent from task configuration surfaces.
+        for agent_id in ("codex", "kimi", "claude", "opencode", "cursor", "hermes", LOCAL_AGENT_ID):
+            if agent_id in available:
+                return agent_id
+    return requested
 
 
 def _derive_auto_task_capability_plan(
@@ -16286,6 +16569,15 @@ def _derive_auto_task_capability_plan(
     configured_providers = [
         provider_id for provider_id in _known_provider_ids() if _provider_has_backend_key(provider_id)
     ]
+    selected_local_agents = _selected_local_agents_for_capability_request(
+        req.owner_agent,
+        req.allowed_subtask_agents,
+    )
+    available_local_agents = set(_available_local_agent_ids())
+    if not configured_providers and any(
+        agent_id in available_local_agents for agent_id in selected_local_agents
+    ):
+        configured_providers = ["local-agent"]
     # Tests and legacy callers may supply readiness through the existing aggregate check.
     if not configured_providers and not _check_llm_provider_readiness():
         configured_providers = [llm_config.primary_provider]
@@ -16547,6 +16839,255 @@ def _required_capability_plan_error(plan: Mapping[str, Any]) -> HTTPException | 
     )
 
 
+def _goal_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _create_submitted_goal_contract(
+    *,
+    task_id: str,
+    statement: str,
+    deliverables: List[str],
+    execution_profile: str,
+) -> Dict[str, Any]:
+    """Persist the user's submitted Work goal before AAA reports submission success."""
+    normalized_task_id = str(task_id).strip()
+    normalized_statement = str(statement).strip()
+    normalized_deliverables = list(dict.fromkeys(str(item).strip() for item in deliverables if str(item).strip()))
+    if not normalized_task_id or not normalized_statement or not normalized_deliverables:
+        raise ValueError("Submitted work requires a task id, goal statement, and deliverables")
+    now = _goal_timestamp()
+    criteria = []
+    for deliverable in normalized_deliverables:
+        description = f"Deliver and verify {deliverable}"
+        criteria.append(
+            {
+                "criterion_id": criterion_id(description, "task_result_review"),
+                "description": description,
+                "required": True,
+                "validator_kind": "task_result_review",
+                "review_policy": "human",
+                "source": "user_confirmed",
+            }
+        )
+    contract = {
+        "schema_version": "across-goal-contract/1.0",
+        "goal_id": f"goal-{normalized_task_id}",
+        "revision": 1,
+        "task_id": normalized_task_id,
+        "statement": normalized_statement,
+        "success_outcome": "All submitted deliverables are verified and the completed result is accepted.",
+        "scope": {
+            "includes": normalized_deliverables,
+            "excludes": [],
+        },
+        "acceptance_criteria": criteria,
+        "dependencies": [],
+        "execution_profile": execution_profile,
+        "source": "user",
+        "confirmed_by": "local-human:work-submit",
+        "confirmed_at": now,
+        "created_at": now,
+    }
+    return persistence.goal_contracts.create_revision(
+        contract,
+        expected_revision=0,
+        idempotency_key=f"work-submit-goal:{normalized_task_id}",
+    )
+
+
+def _goal_acceptance_evidence_material(task_id: str, info: TaskInfo) -> Dict[str, Any]:
+    artifact_digests: Dict[str, str] = {}
+    for index, raw_artifact in enumerate(info.artifacts):
+        artifact = dict(raw_artifact)
+        logical_id = str(
+            artifact.get("id")
+            or artifact.get("artifact_id")
+            or artifact.get("name")
+            or f"artifact-{index + 1}"
+        )
+        supplied_digest = str(artifact.get("sha256") or artifact.get("digest") or "").lower()
+        digest = supplied_digest if re.fullmatch(r"[0-9a-f]{64}", supplied_digest) else hashlib.sha256(
+            json.dumps(artifact, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        artifact_digests[logical_id] = digest
+    evidence_facts = {
+        "task_id": task_id,
+        "status": info.status,
+        "artifacts": info.artifacts,
+        "quality_health": info.quality_health,
+        "delivery_report": info.delivery_report,
+        "direct_response": getattr(info, "direct_response", None),
+    }
+    input_fingerprint = hashlib.sha256(
+        json.dumps(evidence_facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    if not artifact_digests:
+        artifact_digests["task-result-review"] = input_fingerprint
+    return {
+        "artifact_digests": artifact_digests,
+        "input_fingerprint": input_fingerprint,
+        "validator_id": "aaa-host:task-result-review",
+        "verdict": "verified",
+    }
+
+
+async def _verify_goal_revalidation(
+    task_id: str,
+    revision: int,
+    criterion_ids: list[str],
+    attempt: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Re-run the host's terminal-result validator for a new Orchestrator attempt."""
+    del revision, criterion_ids, attempt
+    info = await get_task(task_id)
+    if info.status != TaskStatus.COMPLETED.value:
+        raise GoalContractStoreError(
+            "goal_revalidation_not_ready", "only successfully completed work can be revalidated"
+        )
+    blocking_quality = {"failed", "failure", "partial", "blocked", "error", "inconsistent"}
+    quality_values = [
+        str((info.quality_health or {}).get("delivery_quality") or "").lower(),
+        str((info.quality_health or {}).get("quality_gate") or "").lower(),
+        str((info.delivery_report or {}).get("quality_gate") or "").lower(),
+    ]
+    if any(value in blocking_quality for value in quality_values if value):
+        raise GoalContractStoreError(
+            "goal_revalidation_failed", "task result no longer passes its quality gates"
+        )
+    material = _goal_acceptance_evidence_material(task_id, info)
+    material["validator_id"] = "aaa-host:goal-revalidation"
+    return material
+
+
+async def _run_direct_goal_task(
+    *,
+    task_id: str,
+    statement: str,
+    owner_agent: str,
+    project_dir: Optional[str],
+) -> None:
+    try:
+        task = _task_state.get_task(task_id)
+        if task is None or task.status == TaskStatus.CANCELLED:
+            return
+        _task_state.set_task_status(task_id, TaskStatus.RUNNING)
+        for subtask in task.subtasks:
+            _task_state.update_subtask_status(task_id, subtask.subtask_id, JobStatus.RUNNING)
+        response = await _chat_with_model_capability(
+            message=statement,
+            system_prompt=(
+                "Complete this user goal as a Direct Agent task. Stay inside the selected project, "
+                "return a concise result, and do not claim completion without checking the requested outcome."
+            ),
+            agent_id=owner_agent,
+            project_dir=project_dir,
+            scope="task.direct",
+            max_tokens=4096,
+            max_wall_timeout=1800,
+        )
+        _task_state.finish_direct_task(task_id, response=response.text or "Direct Agent task completed.")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Direct Agent task failed for task=%s", task_id)
+        _task_state.finish_direct_task(task_id, error=_safe_error_message("Direct Agent task"))
+
+
+def _schedule_direct_goal_task(
+    *,
+    task_id: str,
+    statement: str,
+    owner_agent: str,
+    project_dir: Optional[str],
+) -> None:
+    runner = asyncio.create_task(
+        _run_direct_goal_task(
+            task_id=task_id,
+            statement=statement,
+            owner_agent=owner_agent,
+            project_dir=project_dir,
+        ),
+        name=f"aaa-direct-task-{task_id}",
+    )
+    _direct_task_runners[task_id] = runner
+
+    def discard(completed: asyncio.Task) -> None:
+        if _direct_task_runners.get(task_id) is completed:
+            _direct_task_runners.pop(task_id, None)
+
+    runner.add_done_callback(discard)
+
+
+def _submit_direct_goal_task(req: AutoTaskRequest) -> AutoTaskResponse:
+    planning_request = _external_task_planning_request(req)
+    if requests_remote_worker(planning_request):
+        raise _external_orchestrator_unavailable_response(
+            {"connection_note": "Across Orchestrator is required for an explicitly requested remote Worker."}
+        )
+    requested_workflow = str(
+        (req.project_signals or {}).get("requested_workflow_id")
+        or (req.project_signals or {}).get("workflow_id")
+        or ""
+    ).strip()
+    if requested_workflow:
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "capability_decision_required",
+                "decision_ids": ["install_requested_workflow", "install_orchestrator"],
+            },
+        )
+    _init_task_persistence()
+    owner_agent = (
+        normalize_agent_id(req.owner_agent)
+        or normalize_agent_id(agent_manager.get_active_agent())
+        or LOCAL_AGENT_ID
+    )
+    deliverables = _deliverables_for_external_task(req)
+    task = _task_state.create_task(
+        description=req.description,
+        project_dir=req.project_dir,
+        owner_agent=owner_agent,
+        allowed_subtask_agents=[owner_agent],
+        task_types=req.task_types,
+        delivery_mode="direct",
+    )
+    direct_subtask = _task_state.add_subtask(
+        task.task_id,
+        req.description,
+        owner_agent,
+        subtask_id=f"st-direct-{task.task_id.removeprefix('task-')}",
+    )
+    try:
+        _create_submitted_goal_contract(
+            task_id=task.task_id,
+            statement=req.description,
+            deliverables=deliverables,
+            execution_profile="direct",
+        )
+    except Exception:
+        _task_state.cancel_task(task.task_id)
+        raise
+    if direct_subtask is None:
+        _task_state.cancel_task(task.task_id)
+        raise RuntimeError("Direct Agent task could not create its execution unit")
+    _schedule_direct_goal_task(
+        task_id=task.task_id,
+        statement=req.description,
+        owner_agent=owner_agent,
+        project_dir=req.project_dir,
+    )
+    return AutoTaskResponse(
+        task_id=task.task_id,
+        status="pending",
+        message="Task submitted to the AAA Direct Agent runtime",
+        implementation="direct",
+        external_task=False,
+        execution_route="direct",
+    )
+
+
 async def _submit_auto_orchestrated_task(
     req: AutoTaskRequest,
 ) -> AutoTaskResponse:
@@ -16593,9 +17134,13 @@ async def _submit_auto_orchestrated_task(
                     agent_adapters = _autopilot_agent_adapters_for_plan(workflow_execution_plan)
             else:
                 deliverables = _deliverables_for_external_task(req)
-                planned_subtasks = _planned_subtasks_for_external_task(req, deliverables)
-                owner_agent = _external_owner_agent(req)
-                agent_adapters = _agent_adapters_for_external_task(req)
+                owner_agent = _resolved_external_execution_agent(req, capability_plan)
+                planned_subtasks = _planned_subtasks_for_external_task(
+                    req,
+                    deliverables,
+                    owner_agent=owner_agent,
+                )
+                agent_adapters = _agent_adapters_for_external_task(req, owner_agent=owner_agent)
             submit_kwargs = {
                 "goal": req.description,
                 "project_dir": req.project_dir or _default_external_orchestrator_project_dir(),
@@ -16624,10 +17169,27 @@ async def _submit_auto_orchestrated_task(
                 plugin.submit_task,
                 **submit_kwargs,
             )
+            task_id = str(task.get("task_id") or "")
+            try:
+                _create_submitted_goal_contract(
+                    task_id=task_id,
+                    statement=req.description,
+                    deliverables=deliverables,
+                    execution_profile="workflow-pack" if execution_contract.get("workflow_id") else "orchestrated",
+                )
+            except Exception:
+                try:
+                    await asyncio.to_thread(
+                        plugin.cancel_task,
+                        task_id,
+                        reason="goal_contract_persistence_failed",
+                    )
+                except Exception:
+                    logger.exception("Unable to cancel the parent task after Goal Contract persistence failed")
+                raise
             worker_execution = None
             workflow_id = str(execution_contract.get("workflow_id") or "")
             if execution_contract.get("route") == "worker":
-                task_id = str(task.get("task_id") or "")
                 try:
                     worker_execution = await asyncio.to_thread(
                         get_worker_task_bridge().submit_workflow,
@@ -16647,7 +17209,7 @@ async def _submit_auto_orchestrated_task(
                         logger.exception("Unable to cancel the parent task after Worker dispatch failed")
                     raise
             return AutoTaskResponse(
-                task_id=str(task.get("task_id") or ""),
+                task_id=task_id,
                 status=str(task.get("status") or "created"),
                 message="Task submitted to external Across Orchestrator",
                 implementation="external",
@@ -16660,7 +17222,13 @@ async def _submit_auto_orchestrated_task(
         except Exception as exc:
             logger.exception("External Across Orchestrator task submission failed")
             raise HTTPException(status_code=502, detail=_safe_error_message("External Across Orchestrator task submission"))
-    raise _external_orchestrator_unavailable_response(plugin_status)
+    try:
+        return _submit_direct_goal_task(req)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Direct Agent task submission failed")
+        raise HTTPException(status_code=502, detail=_safe_error_message("Direct Agent task submission"))
 
 
 @app.get("/api/release/e2e/scenarios", response_model=ReleaseE2EScenarioListResponse)
@@ -16951,7 +17519,7 @@ async def get_task_quality_benchmark(
 
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
         projected = await _external_task_info_with_worker(task_payload)
         if projected.get("remote_execution"):
             declared_outputs = _worker_expected_outputs(projected)
@@ -16965,7 +17533,7 @@ async def get_task_quality_benchmark(
             )
             report["app_version"] = __version__
             return _redact_sensitive_evidence(report)
-        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
         report = build_external_quality_benchmark(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -17018,7 +17586,7 @@ async def get_task_execution_trajectory(
                 source = "worker_projection"
             else:
                 plugin = get_orchestrator_plugin_manager()
-                evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+                evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
                 if not isinstance(evidence, Mapping):
                     raise _ExecutionTrajectoryEvidenceInvalid
                 snapshot = deepcopy(dict(evidence))
@@ -17087,7 +17655,7 @@ async def get_task_evidence_bundle(
 
     if _is_external_orchestrator_task(task_id):
         plugin = get_orchestrator_plugin_manager()
-        task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+        task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
         projected = await _external_task_info_with_worker(task_payload)
         if projected.get("remote_execution"):
             payload = _sanitize_public_payload(projected)
@@ -17132,7 +17700,7 @@ async def get_task_evidence_bundle(
                     "required_probes": probes,
                 },
             }
-        evidence = await asyncio.to_thread(plugin.get_evidence_bundle, task_id)
+        evidence = await asyncio.to_thread(_external_evidence_snapshot, plugin, task_id)
         bundle = external_evidence_to_app_bundle(
             _redact_sensitive_evidence(evidence),
             expected_files=_comma_separated_values(expected_files),
@@ -17199,7 +17767,7 @@ async def task_stream(task_id: str):
         async def external_event_generator():
             try:
                 plugin = get_orchestrator_plugin_manager()
-                task_payload = await asyncio.to_thread(plugin.get_task, task_id)
+                task_payload = await asyncio.to_thread(_external_task_snapshot, plugin, task_id)
                 evidence = await _external_task_evidence_async(plugin, task_id, task_payload)
                 task_info = await _external_task_info_with_worker(task_payload, evidence=evidence)
                 status_changed_data = {
@@ -17453,6 +18021,9 @@ async def cancel_task(task_id: str):
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         _task_state.cancel_task(task_id)
+        runner = _direct_task_runners.pop(task_id, None)
+        if runner is not None and not runner.done():
+            runner.cancel()
         return {"status": "success", "task_id": task_id}
     except HTTPException:
         raise

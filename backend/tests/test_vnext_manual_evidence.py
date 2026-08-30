@@ -663,6 +663,8 @@ def test_acceptance_runner_cannot_report_success_when_summary_generation_fails()
     assert 'python3 - <<\'PY\' || SUMMARY_GENERATION_EXIT="$?"' in script
     assert 'if [[ "$SUMMARY_GENERATION_EXIT" -ne 0 ]]' in script
     assert 'exit "$SUMMARY_GENERATION_EXIT"' in script
+    assert 'if not isinstance(candidate, dict) or not candidate.get("gate_id")' in script
+    assert 'if [[ "$AUTOMATED_PASSED" != "true" ]]' in script
     assert "import tomllib" not in script
     assert '"waived"' in script
 
@@ -694,3 +696,45 @@ def test_acceptance_runner_does_not_leak_source_overrides_into_producer_tests():
     assert "env -u ACROSS_ORCHESTRATOR_SOURCE" in autopilot_gate
     assert "-u ACROSS_CONTEXT_SOURCE" in autopilot_gate
     assert "-u ACROSS_AUTOPILOT_SOURCE" in autopilot_gate
+
+
+def test_acceptance_runner_blocks_release_on_real_goal_provider_consumer_contracts():
+    script = (ROOT / "scripts/run_vnext_single_release_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    packaged = (ROOT / "scripts/run_packaged_app_cross_plugin_e2e.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "goal_contract_real_provider_consumer" in script
+    assert "run_goal_contract_provider_consumer_e2e.sh" in script
+    assert "goal_revalidation_complete" in packaged
+    assert "result_review_rejected" in packaged
+    assert "replacement_attempt" in packaged
+    assert "'/api/tasks/auto'" in packaged
+    assert '"/api/tasks/$GOAL_TASK_ID/run"' in packaged
+    assert '"/api/tasks/$GOAL_TASK_ID/status"' in packaged
+    assert 'GOAL_TASK_STATUS=""' in packaged
+    assert 'Goal Task did not reach completed before review' in packaged
+    assert packaged.index('GOAL_TASK_STATUS=""') < packaged.index(
+        '"/api/tasks/$GOAL_TASK_ID/reject"'
+    )
+    assert "goal-task-submit.json" in packaged
+    assert 'payload.get("run", {}).get("orchestrator_tasks") or []' not in packaged
+    assert 'task_ids[0]' not in packaged
+    assert "--fail-with-body" in packaged
+    assert "Packaged API error response" in packaged
+    assert "Goal Task terminal payload" in packaged
+    assert "local_agents.json" in packaged
+    assert '"executable_path": fixture_codex' in packaged
+    assert '"model": "auto"' in packaged
+
+
+def test_vnext_fixture_e2e_pins_the_isolated_fixture_agent():
+    script = (ROOT / "scripts/run_vnext_upgrade_e2e.sh").read_text(encoding="utf-8")
+
+    assert 'ACROSS_AGENTS_HOME="$TMP_ROOT/aaa"' in script
+    assert "local_agents.json" in script
+    assert '"executable_path": fixture_codex' in script
+    assert '"model": "auto"' in script
+    assert '"ACROSS_AGENTS_HOME=$ACROSS_AGENTS_HOME"' in script

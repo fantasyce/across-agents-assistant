@@ -507,6 +507,11 @@ enum AcrossVisualResultFactory {
     }
 }
 
+protocol AcrossGoalActionProviding {
+    var actionTaskId: String { get }
+    func isGoalActionEnabled(_ actionId: String) -> Bool
+}
+
 struct AcrossTaskResultDecision {
     let isTerminal: Bool
     let isAccepted: Bool
@@ -515,7 +520,7 @@ struct AcrossTaskResultDecision {
     let canReject: Bool
     let canInspectEvidence: Bool
 
-    init(task: TaskOrchestrationTaskDetail) {
+    init(task: TaskOrchestrationTaskDetail, goal: (any AcrossGoalActionProviding)? = nil) {
         let status = task.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let review = task.reviewStatus
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -526,8 +531,18 @@ struct AcrossTaskResultDecision {
         isTerminal = ["completed", "completed_with_failures", "failed", "cancelled"].contains(status)
         isAccepted = ["accepted", "approved"].contains(review)
         isRejected = review == "rejected"
-        canAccept = Self.isSuccessfulDelivery(task) && !isAccepted && !isRejected
-        canReject = isTerminal && !isAccepted && !isRejected && !canAccept
+        let legacyCanAccept = Self.isSuccessfulDelivery(task) && !isAccepted && !isRejected
+        // Automated checks decide whether acceptance is allowed; they must not
+        // take away the human reviewer's ability to reject a semantically
+        // incorrect terminal result and send it back for repair.
+        let legacyCanReject = isTerminal && !isAccepted && !isRejected
+        if let goal, goal.actionTaskId == task.taskId {
+            canAccept = goal.isGoalActionEnabled("accept_result")
+            canReject = goal.isGoalActionEnabled("reject_result")
+        } else {
+            canAccept = legacyCanAccept
+            canReject = legacyCanReject
+        }
         canInspectEvidence = ["completed", "completed_with_failures"].contains(status)
             || task.qualityHealth != nil
             || task.deliveryReport != nil

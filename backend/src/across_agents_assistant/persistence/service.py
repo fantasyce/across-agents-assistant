@@ -12,6 +12,7 @@ from .audit_logger import AuditLogger
 from .permissions import ToolPermissionStore
 from .task_persistence import TaskPersistenceService
 from .promotion_package_store import PromotionPackageStore
+from .goal_contract_store import GoalContractStore
 from ..paths import app_subdir, data_file
 from ..runtime_boundary import safe_runtime_override
 from ..approval.receipts import ApprovalReceiptStore, ApprovalReceiptSubject
@@ -49,6 +50,7 @@ class PersistenceService:
         self.tasks = TaskPersistenceService(self.db)
         # 确保 schema 已初始化
         self.db.init_schema()
+        self.goal_contracts = GoalContractStore(self.db)
         # 启动时自动迁移旧数据
         self._auto_migrate()
         logger.info(f"PersistenceService initialized at {db_path}")
@@ -389,6 +391,7 @@ class PersistenceService:
         subject_id: str,
         subject_payload: Dict[str, Any],
         scope: str,
+        purpose: Optional[str] = None,
         decision: str,
         proposer_id: str,
         approver_id: str,
@@ -405,6 +408,7 @@ class PersistenceService:
                 subject_sha256=subject_sha256,
             ),
             scope=scope,
+            purpose=purpose,
             decision=decision,
             proposer_id=proposer_id,
             approver_id=approver_id,

@@ -391,6 +391,34 @@ class TaskState:
             self._persist_task(task)
             return True
 
+    def finish_direct_task(
+        self,
+        task_id: str,
+        *,
+        response: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> bool:
+        """Finish one host-owned Direct Agent task without reviving a cancelled task."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.status == TaskStatus.CANCELLED:
+                return False
+            task.can_handle_directly = True
+            task.direct_response = response
+            task.error = error
+            task.status = TaskStatus.FAILED if error else TaskStatus.COMPLETED
+            task.updated_at = time.time()
+            terminal_status = JobStatus.FAILED if error else JobStatus.COMPLETED
+            for subtask in task.subtasks:
+                if subtask.status not in {JobStatus.CANCELLED, JobStatus.COMPLETED}:
+                    subtask.status = terminal_status
+                    subtask.progress = 1.0
+                    if error:
+                        subtask.error_message = error
+                    self._persist_subtask(subtask)
+            self._persist_task(task)
+            return True
+
     def save_acceptance_record(self, record: AcceptanceRecord) -> None:
         """Persist an acceptance record if persistence is configured."""
         if self._persistence is None:

@@ -41,6 +41,13 @@ class WorkerTaskBridge:
                 return self.status(task_id)
 
         plan, manifest, input_bytes = _validated_worker_job_plan(job_plan)
+        manifest_task_id = str(manifest.get("task_id") or "")
+        if manifest.get("goal_id") and manifest_task_id != task_id:
+            raise WorkerControlError(
+                "Worker Goal binding does not match the host Task.",
+                code="worker_job_goal_binding_mismatch",
+                status_code=422,
+            )
         run_id = str(manifest["run_id"])
         job_id = str(manifest["job_id"])
         workflow_id = str(plan["workflow_id"])

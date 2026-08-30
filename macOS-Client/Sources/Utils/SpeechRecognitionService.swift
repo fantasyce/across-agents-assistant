@@ -254,11 +254,17 @@ final class SpeechInputCoordinator: ObservableObject {
     @Published private(set) var draftText: String?
 
     private let service: any SpeechRecognitionService
+    private let permissionRequestTimeoutNanoseconds: UInt64
     private var workingDraft = ""
+    private var permissionTimeoutTask: Task<Void, Never>?
 
-    init(service: (any SpeechRecognitionService)? = nil) {
+    init(
+        service: (any SpeechRecognitionService)? = nil,
+        permissionRequestTimeoutNanoseconds: UInt64 = 12_000_000_000
+    ) {
         let resolvedService = service ?? NativeSpeechRecognitionService()
         self.service = resolvedService
+        self.permissionRequestTimeoutNanoseconds = permissionRequestTimeoutNanoseconds
         self.state = resolvedService.state
         resolvedService.onStateChange = { [weak self] state in
             self?.receive(state)
@@ -269,12 +275,14 @@ final class SpeechInputCoordinator: ObservableObject {
         workingDraft = existingDraft
         draftText = nil
         Task { await service.start(localeIdentifier: localeIdentifier) }
+        schedulePermissionTimeout()
     }
 
     func retry(existingDraft: String, localeIdentifier: String) {
         workingDraft = existingDraft
         draftText = nil
         Task { await service.retry(localeIdentifier: localeIdentifier) }
+        schedulePermissionTimeout()
     }
 
     func finish(preservingDraft draft: String? = nil) {
@@ -292,6 +300,16 @@ final class SpeechInputCoordinator: ObservableObject {
         draftText = workingDraft
     }
 
+    private func schedulePermissionTimeout() {
+        permissionTimeoutTask?.cancel()
+        let timeout = permissionRequestTimeoutNanoseconds
+        permissionTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: timeout)
+            guard !Task.isCancelled, self?.state == .requestingPermission else { return }
+            self?.service.cancel()
+        }
+    }
+
     func userEditedDraft(_ draft: String) {
         guard state.isActive, draftText != draft else { return }
         cancel(preservingDraft: draft)
@@ -299,6 +317,10 @@ final class SpeechInputCoordinator: ObservableObject {
 
     private func receive(_ state: SpeechRecognitionState) {
         self.state = state
+        if state != .requestingPermission && state != .retrying {
+            permissionTimeoutTask?.cancel()
+            permissionTimeoutTask = nil
+        }
         switch state {
         case .segmentTranscript(let transcript):
             workingDraft = SpeechDraftMerger.merge(existingDraft: workingDraft, transcript: transcript)

@@ -63,7 +63,10 @@ extension MainPanelView {
             speechInput.finish(preservingDraft: viewModel.inputText)
             return
         }
-        guard !speechInput.state.isActive else { return }
+        if speechInput.state.isActive {
+            speechInput.cancel(preservingDraft: viewModel.inputText)
+            return
+        }
 
         // Prevent synthesized replies from being captured as fresh user input.
         TTSEngine.shared.stop()
@@ -136,7 +139,9 @@ extension MainPanelView {
             viewModel.showErrorMessage(appPreferences.text("work.projectRequired"))
             return
         }
-        let ownerAgent = settingsViewModel.preferredAgentId(current: viewModel.selectedAgentId) ?? "auto"
+        // Protected delivery is presented as automatic planning. Do not let a
+        // hidden, persisted chat Agent selection silently pin task execution.
+        let ownerAgent = "auto"
         let description = protectedTaskDescription(text: text, attachedFiles: attachedFiles)
 
         Task {

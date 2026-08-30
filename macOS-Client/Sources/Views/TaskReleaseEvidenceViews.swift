@@ -791,8 +791,7 @@ struct TaskEvidenceBundleSheet: View {
     }
 
     private var evidenceVerdict: some View {
-        let passed = ["passed", "completed"].contains(bundle.benchmark.status)
-            && ["completed", "passed"].contains(bundle.taskStatus)
+        let passed = bundle.isVerifiedForPresentation(resultContract: resultContract)
         // maxRemediationAttempts is the configured ceiling, not evidence that
         // repair actually ran.  Only scenario receipts can prove attempts.
         let repairCount = bundle.benchmark.scenarios.map(\.remediationAttempts).max() ?? 0

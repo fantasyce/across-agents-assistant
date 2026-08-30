@@ -4,13 +4,14 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
 import threading
 import time
 from typing import Any
 
 
-_KIMI_HEARTBEAT_INTERVAL_SECONDS = 15.0
+_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS = 15.0
 _KIMI_MAX_ATTEMPTS = 2
 _KIMI_INTERNAL_FAILURE_RE = re.compile(
     r"logger\s+write\s+failed|internal\s+error|eperm\b[^\r\n]{0,80}\boperation\s+not\s+permitted|大脑没有返回任何内容",
@@ -94,21 +95,24 @@ def main(argv: list[str] | None = None) -> int:
         "project_dir": project_dir,
     }
     message = build_orchestrator_agent_message(task, subtask)
-    if agent_id == "kimi":
-        response = None
-        for attempt in range(_KIMI_MAX_ATTEMPTS):
-            try:
-                bridge = build_agent_bridge()
-                response = _invoke_kimi_with_heartbeat(bridge, agent_id, message, **invoke_kwargs)
-            except Exception:
-                response = None
-            if response and response.is_success and not _KIMI_INTERNAL_FAILURE_RE.search(str(response.output or "")):
-                break
-            if attempt + 1 < _KIMI_MAX_ATTEMPTS:
-                time.sleep(1)
-    else:
-        bridge = build_agent_bridge()
-        response = bridge.invoke(agent_id, message, **invoke_kwargs)
+    bridge = build_agent_bridge()
+    restore_signal_handlers = _install_termination_handlers(bridge)
+    try:
+        if agent_id == "kimi":
+            response = None
+            for attempt in range(_KIMI_MAX_ATTEMPTS):
+                try:
+                    response = _invoke_with_heartbeat(bridge, agent_id, message, **invoke_kwargs)
+                except Exception:
+                    response = None
+                if response and response.is_success and not _KIMI_INTERNAL_FAILURE_RE.search(str(response.output or "")):
+                    break
+                if attempt + 1 < _KIMI_MAX_ATTEMPTS:
+                    time.sleep(1)
+        else:
+            response = _invoke_with_heartbeat(bridge, agent_id, message, **invoke_kwargs)
+    finally:
+        restore_signal_handlers()
     if not response or not response.is_success:
         error = (
             "Kimi host agent adapter failed"
@@ -136,15 +140,15 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _invoke_kimi_with_heartbeat(bridge, agent_id: str, message: str, **kwargs):
+def _invoke_with_heartbeat(bridge, agent_id: str, message: str, **kwargs):
     stop = threading.Event()
 
     def emit_heartbeats() -> None:
-        while not stop.wait(_KIMI_HEARTBEAT_INTERVAL_SECONDS):
+        while not stop.wait(_HOST_AGENT_HEARTBEAT_INTERVAL_SECONDS):
             try:
                 print(
                     json.dumps(
-                        {"type": "heartbeat", "agent": "kimi", "status": "running"},
+                        {"type": "heartbeat", "agent": agent_id, "status": "running"},
                         separators=(",", ":"),
                     ),
                     flush=True,
@@ -174,6 +178,32 @@ def build_agent_bridge():
         llm_gateway=get_gateway(),
         host_tool_provider=HostMCPToolProvider(),
     )
+
+
+def _terminate_bridge_on_signal(bridge, signum: int) -> None:
+    client = getattr(bridge, "_client", None)
+    shutdown_client = getattr(client, "shutdown", None)
+    if callable(shutdown_client):
+        shutdown_client()
+    bridge.shutdown()
+    raise SystemExit(128 + signum)
+
+
+def _install_termination_handlers(bridge):
+    previous = {}
+
+    def handle(signum, _frame):
+        _terminate_bridge_on_signal(bridge, signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        previous[signum] = signal.getsignal(signum)
+        signal.signal(signum, handle)
+
+    def restore() -> None:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+    return restore
 
 
 def _json_env(name: str) -> dict[str, Any]:

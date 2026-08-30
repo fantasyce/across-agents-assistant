@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import configured_providers, request
+from client import assert_release_task_checkpoint, live_project_dir, live_task_agent_fields, request, require_live_model_route
 
 
 def _req(method: str, path: str, body: dict = None, expect: int = 200) -> dict:
@@ -57,12 +57,13 @@ def _wait_task(task_id: str, timeout: int = 1200, poll: int = 10) -> dict:
 class TestE2EComplexMultiWave:
     """FastAPI + Docker + tests — full DAG exercise."""
     task_id: str = None
+    model_route: dict = None
 
     @pytest.fixture(autouse=True)
     def check_backend(self):
         _req("GET", "/api/llm/status")
-        if not configured_providers():
-            pytest.skip("No model provider configured — complex live task requires one")
+        if TestE2EComplexMultiWave.model_route is None:
+            TestE2EComplexMultiWave.model_route = require_live_model_route()
 
     def test_01_submit_complex_task(self):
         result = _req(
@@ -79,9 +80,9 @@ class TestE2EComplexMultiWave:
                     "6. tests/test_api.py with pytest tests for all endpoints\n"
                     "7. A README.md with build and run instructions"
                 ),
-                "project_dir": f"/tmp/complex-e2e-{int(time.time())}",
+                "project_dir": str(live_project_dir("complex")),
                 "task_types": ["functional", "artifact"],
-                "allowed_subtask_agents": [],
+                **live_task_agent_fields(TestE2EComplexMultiWave.model_route),
                 "strict_dependency": True,
                 "enable_wave_gate": True,
             },
@@ -122,15 +123,7 @@ class TestE2EComplexMultiWave:
         assert TestE2EComplexMultiWave.task_id, "submit task first"
         info = _wait_task(TestE2EComplexMultiWave.task_id, timeout=1200)
         status = info.get("status", "unknown")
-        assert status == "completed", f"Task ended with unexpected status: {status}"
-        delivery_quality = (
-            (info.get("last_owner_decision") or {}).get("delivery_quality")
-            or (info.get("quality_health") or {}).get("delivery_quality_report")
-            or {}
-        )
-        assert delivery_quality.get("delivery_quality") == "passed", delivery_quality
-        assert info.get("artifacts") is not None, "No artifacts field"
-        assert info.get("acceptance_records") is not None, "No acceptance_records"
+        assert_release_task_checkpoint(info)
         print(f"\nFinal status: {status}")
         print(f"Artifacts: {len(info.get('artifacts', []))}")
         print(f"Acceptance records: {len(info.get('acceptance_records', []))}")

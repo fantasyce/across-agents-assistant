@@ -1,11 +1,40 @@
 import concurrent.futures
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from across_agents_assistant.agent_bridge.agent import AgentSession
 from across_agents_assistant.tools import builtin_tools  # noqa: F401 - registers built-in tools
+
+
+def test_fresh_agent_adapter_process_registers_workspace_file_tools(tmp_path):
+    script = """
+import json
+from across_agents_assistant.agent_bridge.agent import AgentSession
+session = AgentSession(agent_id='minimax', client=object())
+registry = session._build_workspace_tool_registry(PROJECT_DIR, ['result.md'])
+print(json.dumps(sorted(tool['name'] for tool in registry.get_all_tools_schema())))
+""".replace("PROJECT_DIR", repr(str(tmp_path)))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    tool_names = json.loads(result.stdout)
+    assert "read_file" in tool_names
+    assert "write_file" in tool_names
 
 
 def test_execution_prompt_discourages_clarifying_questions():
@@ -291,6 +320,26 @@ def test_cloud_tool_outcome_treats_review_diff_with_artifacts_as_success():
     assert success is True
     assert error is None
     assert "/tmp/demo/frontend/index.html" in output
+
+
+def test_cloud_tool_outcome_rejects_gateway_error_text_without_artifacts():
+    session = AgentSession(agent_id="minimax", client=object())
+    result = SimpleNamespace(
+        success=True,
+        error=None,
+        final_answer="Error: All LLM providers failed. Last error: DNS unavailable",
+    )
+
+    success, error, output = session._resolve_cloud_tool_outcome(
+        result=result,
+        created_files=[],
+        modified_files=[],
+        tool_failures=[],
+    )
+
+    assert success is False
+    assert error == "cloud_llm_invocation_failed"
+    assert output == ""
 
 
 def test_cloud_llm_timeout_does_not_wait_for_executor_shutdown(monkeypatch):

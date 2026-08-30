@@ -6,23 +6,46 @@ PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 APP_NAME="Across Agents Assistant"
 APP_PATH="$PROJECT_ROOT/build/$APP_NAME.app"
 INSTALL_PATH="/Applications/$APP_NAME.app"
+ROLLBACK_ROOT="${ACROSS_LOCAL_APP_ROLLBACK_ROOT:-$HOME/.across/data/across-agents-assistant/rollback-apps}"
+ROLLBACK_PATH="$ROLLBACK_ROOT/$APP_NAME.last-known-good.app"
+ROLLBACK_STAGING="$ROLLBACK_ROOT/.$APP_NAME.rollback-staging.$$.app"
+INSTALL_STAGING="/Applications/.$APP_NAME.installing.$$.app"
+PREVIOUS_INSTALL="/Applications/.$APP_NAME.previous.$$.app"
+INSTALL_COMMITTED=0
+USE_RELEASED_PINS="${ACROSS_BUILD_USE_RELEASED_PINS:-0}"
+
+restore_previous_install() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ "$INSTALL_COMMITTED" != "1" && -d "$PREVIOUS_INSTALL" ]]; then
+    rm -rf "$INSTALL_PATH"
+    mv "$PREVIOUS_INSTALL" "$INSTALL_PATH"
+  fi
+  rm -rf "$INSTALL_STAGING" "$ROLLBACK_STAGING" "$PREVIOUS_INSTALL"
+  exit "$exit_code"
+}
+
+trap restore_previous_install EXIT
 
 # A formal local candidate must exercise the same current producer sources that
 # the developer is validating. Public/reproducible builds still use the pinned
 # released archives when build_app.sh is invoked directly; this convenience
 # path deliberately prefers adjacent producer checkouts and records their
 # provenance as local candidates in the bundled catalog.
-if [[ -z "${ACROSS_BUILD_CONTEXT_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_CONTEXT_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-context/package.json" && \
       -d "$PROJECT_ROOT/../across-context/src" ]]; then
     export ACROSS_BUILD_CONTEXT_SOURCE_ROOT="$PROJECT_ROOT/../across-context"
 fi
-if [[ -z "${ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-autopilot/package.json" && \
       -d "$PROJECT_ROOT/../across-autopilot/src" ]]; then
     export ACROSS_BUILD_AUTOPILOT_SOURCE_ROOT="$PROJECT_ROOT/../across-autopilot"
 fi
-if [[ -z "${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}" && \
+if [[ "$USE_RELEASED_PINS" != "1" && \
+      -z "${ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT:-}" && \
       -f "$PROJECT_ROOT/../across-orchestrator/pyproject.toml" && \
       -d "$PROJECT_ROOT/../across-orchestrator/src/across_orchestrator" ]]; then
     export ACROSS_BUILD_ORCHESTRATOR_SOURCE_ROOT="$PROJECT_ROOT/../across-orchestrator"
@@ -91,11 +114,27 @@ echo "=== 2. Building app bundle ==="
 "$PROJECT_ROOT/build_app.sh"
 
 echo "=== 3. Installing local build to /Applications ==="
-rm -rf "$INSTALL_PATH"
-/usr/bin/ditto "$APP_PATH" "$INSTALL_PATH"
-xattr -cr "$INSTALL_PATH" || true
+mkdir -p "$ROLLBACK_ROOT"
+rm -rf "$INSTALL_STAGING" "$ROLLBACK_STAGING" "$PREVIOUS_INSTALL"
+/usr/bin/ditto "$APP_PATH" "$INSTALL_STAGING"
+xattr -cr "$INSTALL_STAGING" || true
+codesign --verify --deep --strict "$INSTALL_STAGING"
+
+if [[ -d "$INSTALL_PATH" ]]; then
+  /usr/bin/ditto "$INSTALL_PATH" "$ROLLBACK_STAGING"
+  codesign --verify --deep --strict "$ROLLBACK_STAGING"
+  rm -rf "$ROLLBACK_PATH"
+  mv "$ROLLBACK_STAGING" "$ROLLBACK_PATH"
+  mv "$INSTALL_PATH" "$PREVIOUS_INSTALL"
+fi
+
+mv "$INSTALL_STAGING" "$INSTALL_PATH"
 
 echo "=== 4. Opening clean app ==="
 open "$INSTALL_PATH"
+
+INSTALL_COMMITTED=1
+rm -rf "$PREVIOUS_INSTALL"
+trap - EXIT
 
 echo "=== Done. Running $INSTALL_PATH ==="

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.17.0 - 2026-08-30
+
+- Completed the GoalBoard-inspired Goal Contract loop with criterion-scoped
+  execution evidence, human result review, repair Attempts, and selective
+  invalidation/revalidation without importing a second Goal authority.
+- Added server-authoritative Goal actions and immediate macOS state
+  reconciliation so accept, reject, repair, and revalidate remain consistent
+  across API, installed runtime, and visible UI state.
+- Added release-blocking real-provider contracts for Goal normalization and
+  Orchestrator revalidation plan/start/complete, including per-binding
+  mutation checks that reject partial durable writes.
+- Added an immutable four-component release-train lock for source, payload,
+  executable, App, capability, and acceptance-baseline hashes.
+- Integrated the released Orchestrator `v0.12.2` revalidation protocol,
+  receipt-safe public redaction, and verified four-platform Worker artifacts;
+  also added explicit confirmation before a human rejection invalidates an
+  accepted Goal result.
+
+## 0.16.0 - 2026-08-30
+
+- Added versioned Goal Contracts with immutable Goal Store revisions,
+  human-confirmed acceptance criteria, stale-evidence invalidation, and
+  host-authoritative dispatch validation.
+- Added Goal Board inspection and recovery journeys for contract review,
+  revision changes, execution evidence, and explicit human acceptance.
+- Integrated Orchestrator `v0.11.0` with crash-safe terminal transactions and
+  hash-valid, review-required Goal receipts; Autopilot `v0.6.0` with
+  required-criterion-only bindings; and Context `v0.12.0` with the governed
+  Goal Contract memory schema.
+- Refreshed bundled plugin provenance, source mirrors, Live E2E, four-platform
+  Worker downloads, and the scenario-simulation pack to the producer-first
+  releases.
+
 ## 0.15.0 - 2026-08-26
 
 - Added generic local stdio MCP plugin import from standard `.mcp.json`

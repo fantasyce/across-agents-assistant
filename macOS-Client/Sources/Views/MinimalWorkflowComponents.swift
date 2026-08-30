@@ -303,6 +303,11 @@ struct MinimalDisclosureRow<Label: View, Trailing: View, Content: View>: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .focusable(true)
+                .onKeyPress(.return) {
+                    isExpanded.toggle()
+                    return .handled
+                }
                 .accessibilityLabel(accessibilityLabel)
                 .accessibilityValue(
                     preferences.text(

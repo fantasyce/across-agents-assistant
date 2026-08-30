@@ -274,6 +274,27 @@ def _arguments() -> dict[str, object]:
     }
 
 
+def _goal_state() -> dict[str, object]:
+    return {
+        "schema_version": "across-goal-state-projection/1.0",
+        "goal_id": "goal-task-zeta",
+        "goal_revision": 2,
+        "task_id": "task-zeta",
+        "criterion_coverage": [
+            {
+                "criterion_id": "criterion-release",
+                "required": True,
+                "evidence_state": "verified",
+                "review_state": "passed",
+                "satisfied": True,
+            }
+        ],
+        "reason_codes": [],
+        "is_complete": True,
+        "validity_state": "valid",
+    }
+
+
 def _blocked(arguments: dict[str, object]) -> tuple[str, ...]:
     with pytest.raises(PromotionPackageBlocked) as captured:
         build_promotion_package(**arguments)
@@ -842,3 +863,25 @@ def test_blocks_invalid_missing_unsupported_and_non_ready_receipts(mutation, exp
     mutation(task)
 
     assert _blocked(arguments) == (expected_check,)
+
+
+def test_goal_aware_promotion_package_carries_revision_coverage_and_revalidation_state():
+    arguments = _arguments()
+    arguments["goal_state"] = _goal_state()
+    package = build_promotion_package(**arguments)
+    goal = package["components"]["goal_contract"]
+    assert goal["goal_id"] == "goal-task-zeta"
+    assert goal["goal_revision"] == 2
+    assert goal["criterion_coverage"][0]["criterion_id"] == "criterion-release"
+    assert goal["revalidation_state"] == "valid"
+    assert "goal_contract_ready" in package["checks"]
+
+
+def test_goal_aware_promotion_package_blocks_stale_or_incomplete_goal_state():
+    arguments = _arguments()
+    goal = _goal_state()
+    goal["validity_state"] = "revalidation_required"
+    goal["is_complete"] = False
+    goal["reason_codes"] = ["criterion_evidence_stale"]
+    arguments["goal_state"] = goal
+    assert _blocked(arguments) == ("goal_contract_ready",)

@@ -29,10 +29,9 @@ struct TaskListSidebar: View {
                 Button(action: { viewModel.enterCreateMode() }) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(viewModel.isOrchestratorPluginUnavailable ? .secondary.opacity(0.5) : AcrossTheme.accent)
+                        .foregroundColor(AcrossTheme.accent)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isOrchestratorPluginUnavailable)
                 .help(appPreferences.text("tasks.new"))
             }
             .padding(.horizontal, 16)
