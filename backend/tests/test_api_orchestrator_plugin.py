@@ -716,6 +716,11 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         monkeypatch.setenv("ACROSS_AGENTS_ORCHESTRATOR_ENDPOINT", server.endpoint)
         _reset_plugin_manager()
         client = TestClient(app)
+        goal_execution_contract = {
+            "schema_version": "across-goal-execution-contract/1.0",
+            "goal_id": "goal-api", "goal_revision": 2, "task_id": "task-host",
+            "criterion_ids": ["criterion-tests"], "input_fingerprint": "a" * 64,
+        }
 
         created = client.post(
             "/api/orchestrator/loops",
@@ -726,6 +731,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
                 "max_turns": 8,
                 "memory_policy": {"read": False, "writeCandidates": False},
                 "metadata": {"scenario": "aaa-api"},
+                "goal_execution_contract": goal_execution_contract,
             },
         )
         assert created.status_code == 200
@@ -746,6 +752,7 @@ def test_api_proxies_external_agent_loop_lifecycle(monkeypatch, tmp_path):
         snapshot_stream = client.get(f"/api/orchestrator/loops/{loop_id}/events/stream", params={"follow": "false"})
 
     assert loop_id == "loop-api-external"
+    assert server.last_loop_submit["goalExecutionContract"] == goal_execution_contract
     run_body = run.json()
     assert run_body["status"] == "completed"
     assert run_body["health"]["status"] == "completed"

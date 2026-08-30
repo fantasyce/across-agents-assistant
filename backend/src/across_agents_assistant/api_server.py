@@ -11905,6 +11905,8 @@ async def build_external_replay_plan(payload: Dict[str, Any]):
 
 
 class AgentLoopStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     goal: str
     project_dir: Optional[str] = None
     agent: str = "owner"
@@ -11912,6 +11914,7 @@ class AgentLoopStartRequest(BaseModel):
     memory_policy: Optional[Dict[str, Any]] = None
     approval_policy: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    goal_execution_contract: Optional[Dict[str, Any]] = None
 
 
 class AgentLoopReasonRequest(BaseModel):
@@ -11932,6 +11935,7 @@ async def start_external_agent_loop(req: AgentLoopStartRequest):
             memory_policy=req.memory_policy,
             approval_policy=req.approval_policy,
             metadata=req.metadata,
+            goal_execution_contract=req.goal_execution_contract,
         )
         return _sanitize_public_payload(loop)
     except OrchestratorPluginUnavailable as exc:

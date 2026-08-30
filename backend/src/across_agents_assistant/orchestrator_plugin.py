@@ -1336,6 +1336,7 @@ class OrchestratorPluginManager:
         memory_policy: Optional[Dict[str, Any]] = None,
         approval_policy: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        goal_execution_contract: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._ensure_external()
         payload = {
@@ -1350,6 +1351,8 @@ class OrchestratorPluginManager:
             payload["approvalPolicy"] = approval_policy
         if metadata:
             payload["metadata"] = metadata
+        if goal_execution_contract:
+            payload["goalExecutionContract"] = goal_execution_contract
         if self._transport == "http":
             return self._http_post("/loops", payload)
         args = [
@@ -1368,6 +1371,8 @@ class OrchestratorPluginManager:
             args.extend(["--approval-policy-json", json.dumps(approval_policy, sort_keys=True)])
         if metadata:
             args.extend(["--metadata-json", json.dumps(metadata, sort_keys=True)])
+        if goal_execution_contract:
+            args.extend(["--goal-execution-contract-json", json.dumps(goal_execution_contract, sort_keys=True)])
         for action in (approval_policy or {}).get("requireApprovalFor") or []:
             args.extend(["--require-approval-for", str(action)])
         args.append("--json")
