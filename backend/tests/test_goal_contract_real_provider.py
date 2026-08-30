@@ -4,8 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
+import sys
 from copy import deepcopy
 
 import pytest
@@ -45,6 +45,14 @@ def test_provider_consumer_runner_uses_the_standard_backend_environment_with_dev
     assert "No AAA Python environment is available" in runner
 
 
+def test_quality_workflow_provisions_the_pinned_real_orchestrator_provider():
+    workflow = (ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+
+    assert "repository: fantasyce/across-orchestrator" in workflow
+    assert "ref: v0.12.2" in workflow
+    assert "ACROSS_ORCHESTRATOR_PROVIDER_ROOT:" in workflow
+
+
 @pytest.fixture(scope="module")
 def real_orchestrator_runtime(tmp_path_factory):
     root = tmp_path_factory.mktemp("real-orchestrator-provider")
@@ -56,19 +64,26 @@ def real_orchestrator_runtime(tmp_path_factory):
         )
     ).resolve()
     assert (provider_root / "pyproject.toml").is_file(), provider_root
-    uv = shutil.which("uv")
-    assert uv, "uv is required to build the real provider contract fixture"
     distribution = root / "dist"
     subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(distribution), str(provider_root)],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--wheel-dir",
+            str(distribution),
+            str(provider_root),
+        ],
         check=True,
     )
     wheels = list(distribution.glob("across_orchestrator-*.whl"))
     assert len(wheels) == 1, wheels
     environment = root / "venv"
-    subprocess.run([uv, "venv", str(environment), "--python", "3.11"], check=True)
+    subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
     subprocess.run(
-        [uv, "pip", "install", "--python", str(environment / "bin" / "python"), str(wheels[0])],
+        [str(environment / "bin" / "python"), "-m", "pip", "install", str(wheels[0])],
         check=True,
     )
     across_home = root / "across"
