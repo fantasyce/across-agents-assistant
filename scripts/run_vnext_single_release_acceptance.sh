@@ -189,7 +189,10 @@ gates = []
 for path in sorted(run_dir.glob("*.json")):
     if path.name == "summary.json":
         continue
-    gates.append(json.loads(path.read_text(encoding="utf-8")))
+    candidate = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(candidate, dict) or not candidate.get("gate_id"):
+        continue
+    gates.append(candidate)
 
 report_root = run_dir.parent
 manual_definitions = [
@@ -310,6 +313,11 @@ if [[ "$SUMMARY_GENERATION_EXIT" -ne 0 ]]; then
   exit "$SUMMARY_GENERATION_EXIT"
 fi
 if [[ "$FAILED" -ne 0 ]]; then
+  exit 1
+fi
+AUTOMATED_PASSED="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["automated_passed"]).lower())' "$SUMMARY_PATH")"
+if [[ "$AUTOMATED_PASSED" != "true" ]]; then
+  echo "vNext automated acceptance summary did not pass." >&2
   exit 1
 fi
 if [[ "$AUTOMATED_ONLY" -eq 0 ]]; then

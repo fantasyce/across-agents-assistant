@@ -663,6 +663,8 @@ def test_acceptance_runner_cannot_report_success_when_summary_generation_fails()
     assert 'python3 - <<\'PY\' || SUMMARY_GENERATION_EXIT="$?"' in script
     assert 'if [[ "$SUMMARY_GENERATION_EXIT" -ne 0 ]]' in script
     assert 'exit "$SUMMARY_GENERATION_EXIT"' in script
+    assert 'if not isinstance(candidate, dict) or not candidate.get("gate_id")' in script
+    assert 'if [[ "$AUTOMATED_PASSED" != "true" ]]' in script
     assert "import tomllib" not in script
     assert '"waived"' in script
 
