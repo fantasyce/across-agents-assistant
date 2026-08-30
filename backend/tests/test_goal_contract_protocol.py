@@ -37,6 +37,13 @@ def test_goal_hash_uses_canonical_object_keys_without_reordering_arrays():
     assert stable_goal_hash(reversed_criteria) != EXPECTED_GOAL_HASH
 
 
+def test_goal_hash_accepts_only_cross_runtime_safe_integers():
+    with pytest.raises(ValueError, match="integer|canonical JSON"):
+        stable_goal_hash({"value": 1e-7})
+    assert stable_goal_hash({"value": 1.0}) == stable_goal_hash({"value": 1})
+    assert stable_goal_hash({"value": -0.0}) == stable_goal_hash({"value": 0})
+
+
 def test_goal_contract_normalization_preserves_the_confirmed_fixture():
     fixture = load_fixture("simple.json")
     assert normalize_goal_contract(fixture) == fixture

@@ -270,6 +270,34 @@ def test_bridge_rejects_a_worker_plan_whose_input_hash_does_not_match(tmp_path):
     assert client.calls == []
 
 
+def test_bridge_rejects_goal_bound_worker_plan_for_another_host_task(tmp_path):
+    client = FakeWorkerClient()
+    bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
+    plan = _worker_job_plan()
+    plan["manifest"].update({
+        "task_id": "task-foreign",
+        "goal_id": "goal-worker",
+        "goal_revision": 2,
+        "goal_node_id": "worker-execution",
+        "criterion_ids": ["criterion-tests"],
+        "input_fingerprint": "a" * 64,
+        "required_evidence": ["test_receipt"],
+    })
+
+    try:
+        bridge.submit_workflow(
+            task_id="task-host",
+            goal="Bounded remote analysis",
+            project_dir=str(tmp_path),
+            job_plan=plan,
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "worker_job_goal_binding_mismatch"
+    else:
+        raise AssertionError("A foreign Goal-bound Worker plan must not reach Orchestrator")
+    assert client.calls == []
+
+
 def test_bridge_rejects_an_unbounded_or_unknown_quality_contract(tmp_path):
     client = FakeWorkerClient()
     bridge = WorkerTaskBridge(tmp_path / "links.json", client=client)
