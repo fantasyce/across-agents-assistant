@@ -4,6 +4,7 @@ struct AcrossTaskResultOverview: View {
     let task: TaskOrchestrationTaskDetail
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var viewModel: TaskOrchestrationViewModel
+    @State private var isShowingRejectConfirmation = false
     let allowsAcceptance: Bool
     let onOpenEvidence: () -> Void
 
@@ -39,13 +40,25 @@ struct AcrossTaskResultOverview: View {
                 : nil,
             isDestructiveActionDisabled: viewModel.isAcceptingTask || viewModel.isRejectingTask,
             onDestructiveAction: decision.canAccept && decision.canReject
-                ? { viewModel.rejectTaskResult(task.taskId) {} }
+                ? { isShowingRejectConfirmation = true }
                 : nil,
             secondaryActionTitle: decision.canInspectEvidence
                 ? preferences.text("tasks.evidence.view")
                 : nil,
             onSecondaryAction: decision.canInspectEvidence ? onOpenEvidence : nil
         )
+        .confirmationDialog(
+            preferences.text("tasks.review.reject.confirm.title"),
+            isPresented: $isShowingRejectConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(preferences.text("tasks.review.reject"), role: .destructive) {
+                viewModel.rejectTaskResult(task.taskId) {}
+            }
+            Button(preferences.text("tasks.cancel"), role: .cancel) {}
+        } message: {
+            Text(preferences.text("tasks.review.reject.confirm.message"))
+        }
     }
 
     private func primaryActionTitle(_ decision: AcrossTaskResultDecision) -> String? {
@@ -67,7 +80,7 @@ struct AcrossTaskResultOverview: View {
             return { viewModel.acceptTaskResult(task.taskId) {} }
         }
         if decision.canReject && allowsAcceptance {
-            return { viewModel.rejectTaskResult(task.taskId) {} }
+            return { isShowingRejectConfirmation = true }
         }
         return nil
     }
