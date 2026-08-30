@@ -4,6 +4,54 @@ import Testing
 
 struct TaskEvidenceBundleCompatibilityTests {
     @Test
+    func passedBenchmarkDoesNotClaimVerifiedWhenGoalProofIsPartial() throws {
+        let bundle = try JSONDecoder().decode(TaskEvidenceBundle.self, from: Data(
+            """
+            {
+              "task_id": "task-goal-incomplete",
+              "task_status": "completed",
+              "benchmark": {
+                "benchmark_id": "goal-incomplete",
+                "benchmark_version": "1.0",
+                "status": "passed",
+                "summary": {
+                  "scenario_count": 1,
+                  "passed_scenarios": 1,
+                  "failed_scenarios": 0,
+                  "min_quality_score": 100,
+                  "max_remediation_attempts": 0
+                },
+                "scenarios": []
+              },
+              "audit": {
+                "read_only": true,
+                "repair_or_resume_triggered": false,
+                "secrets_redacted": true,
+                "expected_files": ["across-results/task-review.md"],
+                "required_probes": []
+              }
+            }
+            """.utf8
+        ))
+        let resultContract = AcrossVisualResultContract(
+            taskID: bundle.taskId,
+            verdict: .needsReview,
+            trustCompass: AcrossTrustCompass(
+                outcome: .confirmed,
+                proof: .partial,
+                safety: .confirmed,
+                humanControl: .partial
+            ),
+            loopTrail: [],
+            evidenceConstellation: AcrossEvidenceConstellation(nodes: [], relations: []),
+            attentionStack: [],
+            nextAction: .reviewDecision
+        )
+
+        #expect(!bundle.isVerifiedForPresentation(resultContract: resultContract))
+    }
+
+    @Test
     func redactedStringAuditFlagRemainsDecodable() throws {
         let data = Data(
             """
