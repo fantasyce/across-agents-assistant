@@ -91,6 +91,8 @@ def test_goal_actions_require_new_attempt_after_rejection_and_enable_revalidatio
     rejected = {item["action_id"]: item for item in goals.get_goal("task-001")["available_actions"]}
     assert rejected["accept_result"]["enabled"] is False
     assert rejected["accept_result"]["disabled_reason_code"] == "goal_repair_required"
+    assert rejected["revalidate"]["enabled"] is True
+    assert rejected["revalidate"]["disabled_reason_code"] is None
 
     for index, criterion_id in enumerate(criterion_ids, start=3):
         goals.record_execution_evidence(

@@ -30,6 +30,8 @@ struct GoalContractViewContractTests {
         #expect(goal.contains("Revalidate stale evidence"))
         #expect(goal.contains("Reject criterion review"))
         #expect(goal.contains("Pass criterion review"))
+        #expect(goal.contains("Create replacement Attempt"))
+        #expect(goal.contains("envelope.revalidationCriterionIds"))
         #expect(goal.contains(".disabled(selectedOperationIndexes"))
     }
 
@@ -50,6 +52,8 @@ struct GoalContractViewContractTests {
         #expect(AppPreferences.localizedString("tasks.goal.title", localeIdentifier: "en") == "Goal and acceptance")
         #expect(AppPreferences.localizedString("tasks.goal.title", localeIdentifier: "zh-Hans") == "目标与验收")
         #expect(AppPreferences.localizedString("tasks.goal.revalidate", localeIdentifier: "zh-Hans").contains("重新验证"))
+        #expect(AppPreferences.localizedString("tasks.goal.repairAttempt", localeIdentifier: "en").contains("replacement Attempt"))
+        #expect(AppPreferences.localizedString("tasks.goal.repairAttempt", localeIdentifier: "zh-Hans").contains("替代尝试"))
     }
 
     private func source(_ relativePath: String) throws -> String {

@@ -18,6 +18,7 @@ struct GoalContractSummaryView: View {
     private let acceptSelectedAccessibilityLabel = "Accept selected changes"
     private let rejectAccessibilityLabel = "Reject changes"
     private let revalidateAccessibilityLabel = "Revalidate stale evidence"
+    private let replacementAttemptAccessibilityLabel = "Create replacement Attempt"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -61,11 +62,11 @@ struct GoalContractSummaryView: View {
             Button(appPreferences.text("tasks.goal.cancel"), role: .cancel) { pendingDecision = nil }
         }
         .confirmationDialog(
-            appPreferences.text("tasks.goal.confirmRevalidation"),
+            revalidationConfirmationTitle,
             isPresented: $pendingRevalidation,
             titleVisibility: .visible
         ) {
-            Button(appPreferences.text("tasks.goal.revalidate")) { submitRevalidation() }
+            Button(revalidationActionTitle) { submitRevalidation() }
             Button(appPreferences.text("tasks.goal.cancel"), role: .cancel) { pendingRevalidation = false }
         }
         .confirmationDialog(
@@ -125,6 +126,16 @@ struct GoalContractSummaryView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                Spacer(minLength: 8)
+                if envelope.needsReplacementAttempt,
+                   envelope.availableAction("revalidate")?.enabled == true {
+                    Button(appPreferences.text("tasks.goal.repairAttempt")) {
+                        pendingRevalidation = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .accessibilityLabel(replacementAttemptAccessibilityLabel)
+                }
             }
 
             if case .completed = viewModel.goalTaskState {
@@ -201,7 +212,8 @@ struct GoalContractSummaryView: View {
                             }
                         }
                     }
-                    if envelope.availableAction("revalidate")?.enabled == true {
+                    if !envelope.needsReplacementAttempt,
+                       envelope.availableAction("revalidate")?.enabled == true {
                         Button(appPreferences.text("tasks.goal.revalidate")) { pendingRevalidation = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -343,11 +355,15 @@ struct GoalContractSummaryView: View {
 
     private func submitRevalidation() {
         guard let envelope = viewModel.selectedGoalContract else { return }
+        let criterionIds = envelope.revalidationCriterionIds
+        guard !criterionIds.isEmpty else { return }
         viewModel.requestGoalRevalidation(
             taskId: taskId,
             expectedRevision: envelope.contract.revision,
-            criterionIds: staleCriterionIds(envelope),
-            reason: "User requested revalidation of stale criterion evidence",
+            criterionIds: criterionIds,
+            reason: envelope.needsReplacementAttempt
+                ? "User requested a replacement Attempt after rejecting the current result"
+                : "User requested revalidation of stale criterion evidence",
             idempotencyKey: UUID().uuidString
         )
         pendingRevalidation = false
@@ -368,10 +384,20 @@ struct GoalContractSummaryView: View {
         pendingCriterionReview = nil
     }
 
-    private func staleCriterionIds(_ envelope: GoalContractEnvelope) -> [String] {
-        envelope.projection.criterionCoverage
-            .filter { $0.evidenceState.rawValue == "stale" }
-            .map(\.criterionId)
+    private var revalidationActionTitle: String {
+        appPreferences.text(
+            viewModel.selectedGoalContract?.needsReplacementAttempt == true
+                ? "tasks.goal.repairAttempt"
+                : "tasks.goal.revalidate"
+        )
+    }
+
+    private var revalidationConfirmationTitle: String {
+        appPreferences.text(
+            viewModel.selectedGoalContract?.needsReplacementAttempt == true
+                ? "tasks.goal.confirmRepairAttempt"
+                : "tasks.goal.confirmRevalidation"
+        )
     }
 
     private func satisfiedCount(_ envelope: GoalContractEnvelope) -> Int {

@@ -987,7 +987,7 @@ def _available_goal_actions(
     reject_reason = None if reject_enabled else (
         "goal_already_complete" if complete else "goal_repair_required"
     )
-    revalidate_enabled = bool(stale)
+    revalidate_enabled = bool(stale or rejected_current_attempt)
     return [
         {
             "action_id": "accept_result",

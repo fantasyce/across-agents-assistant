@@ -65,6 +65,26 @@ struct GoalContractEnvelope: Decodable, Equatable {
     func availableAction(_ actionId: String) -> GoalAvailableAction? {
         availableActions.first { $0.actionId == actionId }
     }
+
+    var needsReplacementAttempt: Bool {
+        projection.reasonCodes.contains(.known("review_failed"))
+            || projection.criterionCoverage.contains {
+                $0.required && $0.reviewState == .known("rejected")
+            }
+    }
+
+    var revalidationCriterionIds: [String] {
+        let stale = projection.criterionCoverage
+            .filter { $0.required && $0.evidenceState == .known("stale") }
+            .map(\.criterionId)
+        if !stale.isEmpty {
+            return stale
+        }
+        guard needsReplacementAttempt else { return [] }
+        return projection.criterionCoverage
+            .filter { $0.required && $0.reviewState == .known("rejected") }
+            .map(\.criterionId)
+    }
 }
 
 struct GoalAvailableAction: Decodable, Equatable, Identifiable {

@@ -184,6 +184,8 @@ struct AcrossVisualResultOverview: View {
                     Label(secondaryActionTitle, systemImage: secondaryActionSystemImage)
                 }
                 .buttonStyle(.bordered)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
                 .focusable(true)
                 .onKeyPress(.return) {
                     onSecondaryAction()
@@ -195,6 +197,8 @@ struct AcrossVisualResultOverview: View {
                     Label(destructiveActionTitle, systemImage: "xmark")
                 }
                 .buttonStyle(.bordered)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
                 .disabled(isDestructiveActionDisabled)
                 .focusable(true)
                 .onKeyPress(.return) {
@@ -214,6 +218,8 @@ struct AcrossVisualResultOverview: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
                 .disabled(isPrimaryActionDisabled || isPrimaryActionLoading)
                 .focusable(true)
                 .onKeyPress(.return) {

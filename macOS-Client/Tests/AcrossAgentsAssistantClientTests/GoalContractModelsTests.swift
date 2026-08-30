@@ -57,6 +57,25 @@ struct GoalContractModelsTests {
         #expect(reviewObject["reviewer_id"] as? String == "human:local")
     }
 
+    @Test func rejectedCriterionTargetsAReplacementAttempt() throws {
+        var json = Self.envelopeJSON(
+            displayState: "repair_required",
+            evidenceState: "satisfied",
+            reasons: ["review_failed"]
+        )
+        json = json.replacingOccurrences(
+            of: "\"evidence_state\": \"missing\", \"review_state\": \"pending\"",
+            with: "\"evidence_state\": \"verified\", \"review_state\": \"rejected\""
+        )
+        let envelope = try JSONDecoder().decode(
+            GoalContractEnvelope.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(envelope.needsReplacementAttempt)
+        #expect(envelope.revalidationCriterionIds == ["criterion-1"])
+    }
+
     static func envelopeJSON(
         displayState: String = "running",
         evidenceState: String = "partial",

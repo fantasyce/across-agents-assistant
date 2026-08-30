@@ -558,9 +558,13 @@ struct AppleMinimalUIContractTests {
         let resultOverview = try #require(
             Self.slice(visualResults, from: "struct AcrossVisualResultOverview", to: "struct AcrossTrustCompassView")
         )
+        let resultActions = try #require(
+            Self.slice(resultOverview, from: "private var actionRow", to: "private var hasActions")
+        )
         #expect(!resultOverview.contains("DisclosureGroup"))
         #expect(!resultOverview.contains("AcrossEvidenceRouteView"))
         #expect(resultOverview.contains("result.review.awaiting"))
+        #expect(resultActions.components(separatedBy: ".contentShape(Rectangle())").count - 1 >= 3)
         #expect(!visualResults.contains("AcrossTheme.recessedFill"))
         #expect(evidence.contains("@State private var showsDecisionBasis = false"))
         #expect(evidence.contains("@State private var showsVerificationScope = false"))
