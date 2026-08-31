@@ -51,7 +51,7 @@ supervised workflow capabilities only after they are installed and healthy.
 
 | Component | What it adds | Current release |
 | --- | --- | --- |
-| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.17.0` |
+| Across Agents Assistant | macOS workspace, generic task entry, approvals, devices, settings, and plugin lifecycle | `v0.17.1` |
 | Across Context | shared memory, provenance, review, forgetting, context packs, and governed Worker experience | `v0.12.0` |
 | Across Orchestrator | task execution, remote Workers, quality gates, sandbox policy, and evidence receipts | `v0.12.2` |
 | Across Autopilot | goal-driven workflow resolution, LoopSpec supervision, repair, and release readiness | `v0.6.0` |
@@ -74,12 +74,21 @@ than a fourth first-party managed component.
 | --- | --- |
 | <img src="assets/readme/product-workers.png" alt="Approved local and remote Worker devices"> | <img src="assets/readme/product-plugins.png" alt="One-click managed first-party plugins, all ready"> |
 
-## What `v0.17.0` Includes
+## What `v0.17.1` Includes
+
+- Uses only Across-owned Goal Contract and Goal review terminology across
+  source, release checks, and public product surfaces.
+- Adds a release-blocking product-language guard that checks all four Across
+  source trees during coordinated acceptance.
+- Keeps the v0.17 Goal Contract behavior and released producer plugin versions
+  unchanged.
+
+### Previous `v0.17.0` release
 
 - Added versioned Goal Contracts with immutable revisions, explicit human
   confirmation, stale-evidence invalidation, and host-authoritative execution
   checks before any Orchestrator dispatch.
-- Added Goal Board review and recovery paths that keep required acceptance
+- Added Goal review and recovery paths that keep required acceptance
   criteria, execution bindings, receipts, and revalidation visible without
   allowing a runtime to self-approve delivery.
 - Integrated Context `v0.12.0`, Orchestrator `v0.12.2`, and Autopilot `v0.6.0`

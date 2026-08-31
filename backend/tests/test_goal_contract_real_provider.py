@@ -60,7 +60,7 @@ def real_orchestrator_runtime(tmp_path_factory):
     provider_root = Path(
         os.environ.get(
             "ACROSS_ORCHESTRATOR_PROVIDER_ROOT",
-            str(aaa_root.parents[1] / "goal-contract-v2" / "across-orchestrator"),
+            str(aaa_root.parent / "across-orchestrator"),
         )
     ).resolve()
     assert (provider_root / "pyproject.toml").is_file(), provider_root

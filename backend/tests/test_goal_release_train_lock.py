@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from copy import deepcopy
@@ -13,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from write_goalboard_release_train_lock import (  # noqa: E402
+from write_goal_release_train_lock import (  # noqa: E402
     ReleaseTrainError,
     build_lock,
     verify_lock,
@@ -50,7 +49,7 @@ def _candidate_fixture(tmp_path: Path) -> dict:
         "orchestrator": "0.12.2",
         "context": "0.12.0",
         "autopilot": "0.6.0",
-        "aaa": "0.17.0",
+        "aaa": "0.17.1",
     }
     for component_id, version in versions.items():
         repository = _git_repo(tmp_path / component_id, version)
@@ -93,7 +92,7 @@ def _candidate_fixture(tmp_path: Path) -> dict:
 def test_lock_captures_clean_immutable_candidate_and_verifies(tmp_path):
     lock = build_lock(_candidate_fixture(tmp_path))
 
-    assert lock["schema_version"] == "goalboard-release-train-lock/1.0"
+    assert lock["schema_version"] == "across-goal-release-train-lock/1.0"
     assert set(lock["components"]) == {"orchestrator", "context", "autopilot", "aaa"}
     assert all(component["dirty"] is False for component in lock["components"].values())
     assert all(len(component["source_sha256"]) == 64 for component in lock["components"].values())
@@ -158,27 +157,24 @@ def test_lock_rejects_executable_and_app_drift(tmp_path):
         verify_lock(restored)
 
 
-def test_candidate_versions_are_goalboard_train_versions():
+def test_candidate_versions_match_release_train():
     aaa_pyproject = (ROOT / "backend/pyproject.toml").read_text(encoding="utf-8")
-    orchestrator_root = Path(
-        os.environ.get(
-            "ACROSS_ORCHESTRATOR_PROVIDER_ROOT",
-            str(ROOT.parents[1] / "goal-contract-v2/across-orchestrator"),
-        )
-    ).resolve()
-    orchestrator_pyproject = (orchestrator_root / "pyproject.toml").read_text(encoding="utf-8")
+    payload_preparation = (ROOT / "scripts/prepare_managed_plugin_payloads.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert 'version = "0.17.0"' in aaa_pyproject
-    assert 'version = "0.12.2"' in orchestrator_pyproject
+    assert 'version = "0.17.1"' in aaa_pyproject
+    assert 'ORCHESTRATOR_VERSION="0.12.2"' in payload_preparation
+    assert 'ORCHESTRATOR_CANDIDATE_VERSION="0.12.2"' in payload_preparation
 
 
 def test_packaged_acceptance_requires_and_records_release_train_lock():
     script = (ROOT / "scripts/run_vnext_single_release_acceptance.sh").read_text(encoding="utf-8")
 
-    assert "ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE" in script
-    assert "write_goalboard_release_train_lock.py" in script
+    assert "ACROSS_GOAL_RELEASE_TRAIN_CANDIDATE" in script
+    assert "write_goal_release_train_lock.py" in script
     packaged_e2e = script.index("packaged_app_cross_plugin_e2e")
-    lock_gate = script.index("goalboard_release_train_lock")
+    lock_gate = script.index("goal_release_train_lock")
     assert packaged_e2e < lock_gate
-    assert "'$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py" in script
-    assert "python3 scripts/write_goalboard_release_train_lock.py" not in script
+    assert "'$ROOT_DIR/backend/.venv/bin/python' scripts/write_goal_release_train_lock.py" in script
+    assert "python3 scripts/write_goal_release_train_lock.py" not in script
