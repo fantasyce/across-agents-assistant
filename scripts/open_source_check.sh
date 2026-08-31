@@ -17,6 +17,9 @@ if [[ -n "$forbidden_tracked" ]]; then
   exit 1
 fi
 
+echo "== product language guard =="
+python3 scripts/check_product_language.py .
+
 echo "== sensitive text scan =="
 SENSITIVE_PATTERN='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|(^|[^A-Za-z0-9])[A-Z0-9_]*API_KEY=|/Users/fanhcy|BEGIN (RSA|OPENSSH|PRIVATE) KEY|Apple Developer|com\.apple\.developer\.team-identifier'
 if command -v rg >/dev/null 2>&1; then

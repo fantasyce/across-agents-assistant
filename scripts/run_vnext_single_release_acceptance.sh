@@ -11,7 +11,7 @@ RUN_DIR="$REPORT_ROOT/$RUN_ID"
 SUMMARY_PATH="$RUN_DIR/summary.json"
 AUTOMATED_ONLY=0
 INCLUDE_PACKAGED_APP="${ACROSS_VNEXT_INCLUDE_PACKAGED_APP:-0}"
-RELEASE_TRAIN_CANDIDATE="${ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE:-}"
+RELEASE_TRAIN_CANDIDATE="${ACROSS_GOAL_RELEASE_TRAIN_CANDIDATE:-}"
 
 usage() {
   echo "usage: $0 [--automated-only] [--include-packaged-app]"
@@ -109,6 +109,11 @@ run_gate \
   "if matches=\$(rg -n -i 'homerail|xiaotianfotos' macOS-Client/Sources backend/src assets README.md CHANGELOG.md build_app.sh); then printf '%s\\n' \"\$matches\"; exit 1; else scan_status=\$?; test \"\$scan_status\" -eq 1; fi"
 
 run_gate \
+  product_language_guard \
+  "$ROOT_DIR" \
+  "python3 scripts/check_product_language.py '$ROOT_DIR' '$ORCHESTRATOR_ROOT' '$CONTEXT_ROOT' '$AUTOPILOT_ROOT'"
+
+run_gate \
   acceptance_environment_setup \
   "$ROOT_DIR" \
   "ACROSS_ORCHESTRATOR_SOURCE='$ORCHESTRATOR_ROOT' bash scripts/prepare_vnext_acceptance_environment.sh"
@@ -136,9 +141,9 @@ if [[ "$INCLUDE_PACKAGED_APP" == "1" ]]; then
   run_gate packaged_app_runtime "$ROOT_DIR" "bash scripts/verify_packaged_vnext_runtime.sh"
   run_gate packaged_app_cross_plugin_e2e "$ROOT_DIR" "bash scripts/run_packaged_app_cross_plugin_e2e.sh"
   run_gate \
-    goalboard_release_train_lock \
+    goal_release_train_lock \
     "$ROOT_DIR" \
-    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOALBOARD_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goalboard-release-train-lock.json' && '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goalboard_release_train_lock.py --verify '$RUN_DIR/goalboard-release-train-lock.json'"
+    "if [[ -z '$RELEASE_TRAIN_CANDIDATE' ]]; then echo 'ACROSS_GOAL_RELEASE_TRAIN_CANDIDATE is required for packaged acceptance.' >&2; exit 2; fi; '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goal_release_train_lock.py --candidate '$RELEASE_TRAIN_CANDIDATE' --output '$RUN_DIR/goal-release-train-lock.json' && '$ROOT_DIR/backend/.venv/bin/python' scripts/write_goal_release_train_lock.py --verify '$RUN_DIR/goal-release-train-lock.json'"
 fi
 
 SUMMARY_GENERATION_EXIT=0

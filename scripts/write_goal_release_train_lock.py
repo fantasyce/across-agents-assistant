@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-SCHEMA_VERSION = "goalboard-release-train-lock/1.0"
+SCHEMA_VERSION = "across-goal-release-train-lock/1.0"
 
 
 class ReleaseTrainError(ValueError):
@@ -225,7 +225,7 @@ def verify_lock(lock: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create or verify an immutable GoalBoard release-train lock.")
+    parser = argparse.ArgumentParser(description="Create or verify an immutable Across Goal release-train lock.")
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verify", type=Path)

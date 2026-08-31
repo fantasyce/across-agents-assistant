@@ -1,8 +1,17 @@
 # Changelog
 
+## 0.17.1 - 2026-09-01
+
+- Standardized Goal Contract and Goal review language across source, release
+  checks, and public product surfaces without changing runtime behavior.
+- Added a release-blocking product-language guard for all four Across source
+  trees and renamed release-train lock surfaces to Across-owned terminology.
+- Preserved the released Context `v0.12.0`, Orchestrator `v0.12.2`, and
+  Autopilot `v0.6.0` plugin payloads.
+
 ## 0.17.0 - 2026-08-30
 
-- Completed the GoalBoard-inspired Goal Contract loop with criterion-scoped
+- Completed the independently designed Goal Contract loop with criterion-scoped
   execution evidence, human result review, repair Attempts, and selective
   invalidation/revalidation without importing a second Goal authority.
 - Added server-authoritative Goal actions and immediate macOS state
@@ -23,7 +32,7 @@
 - Added versioned Goal Contracts with immutable Goal Store revisions,
   human-confirmed acceptance criteria, stale-evidence invalidation, and
   host-authoritative dispatch validation.
-- Added Goal Board inspection and recovery journeys for contract review,
+- Added Goal review and recovery journeys for contract review,
   revision changes, execution evidence, and explicit human acceptance.
 - Integrated Orchestrator `v0.11.0` with crash-safe terminal transactions and
   hash-valid, review-required Goal receipts; Autopilot `v0.6.0` with
