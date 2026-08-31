@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from copy import deepcopy
@@ -160,16 +159,13 @@ def test_lock_rejects_executable_and_app_drift(tmp_path):
 
 def test_candidate_versions_match_release_train():
     aaa_pyproject = (ROOT / "backend/pyproject.toml").read_text(encoding="utf-8")
-    orchestrator_root = Path(
-        os.environ.get(
-            "ACROSS_ORCHESTRATOR_PROVIDER_ROOT",
-            str(ROOT.parents[1] / "goal-contract-v2/across-orchestrator"),
-        )
-    ).resolve()
-    orchestrator_pyproject = (orchestrator_root / "pyproject.toml").read_text(encoding="utf-8")
+    payload_preparation = (ROOT / "scripts/prepare_managed_plugin_payloads.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert 'version = "0.17.1"' in aaa_pyproject
-    assert 'version = "0.12.2"' in orchestrator_pyproject
+    assert 'ORCHESTRATOR_VERSION="0.12.2"' in payload_preparation
+    assert 'ORCHESTRATOR_CANDIDATE_VERSION="0.12.2"' in payload_preparation
 
 
 def test_packaged_acceptance_requires_and_records_release_train_lock():
